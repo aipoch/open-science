@@ -37,6 +37,7 @@ describe('ArchivedPanel', () => {
   let container: HTMLDivElement
   let root: Root
   const updateArchive = vi.fn()
+  const deleteProject = vi.fn()
   const deleteSession = vi.fn()
 
   beforeEach(() => {
@@ -44,7 +45,8 @@ describe('ArchivedPanel', () => {
     document.body.appendChild(container)
     root = createRoot(container)
     updateArchive.mockReset().mockResolvedValue({ ...session, archivedAt: undefined })
-    deleteSession.mockReset().mockResolvedValue(undefined)
+    deleteProject.mockReset().mockResolvedValue(undefined)
+    deleteSession.mockReset().mockResolvedValue({ status: 'deleted', runtimeDetached: true })
     window.api = {
       sessions: { updateArchive, deleteSession },
       acp: { getState: vi.fn().mockResolvedValue({ sessionIds: [] }), deleteSession: vi.fn() }
@@ -52,7 +54,8 @@ describe('ArchivedPanel', () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [project],
-      isLoaded: true
+      isLoaded: true,
+      deleteProject
     })
     useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
     useArchiveUndoStore.setState({ notices: [], restoringKey: undefined })
@@ -121,6 +124,190 @@ describe('ArchivedPanel', () => {
       projectId: project.id,
       sessionId: session.id
     })
+    expect(window.api.acp.getState).not.toHaveBeenCalled()
+    expect(window.api.acp.deleteSession).not.toHaveBeenCalled()
     expect(useArchiveUndoStore.getState().notices).toEqual([])
+  })
+
+  it('keeps the archived Session dialog open and retries the unified deletion command', async () => {
+    deleteSession
+      .mockResolvedValueOnce({
+        status: 'failed',
+        reason: 'persistence',
+        runtimeDetached: true
+      })
+      .mockResolvedValueOnce({ status: 'deleted', runtimeDetached: true })
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete')
+    )
+    await act(async () => openDelete?.click())
+    let dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    let confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toContain(
+      "couldn't delete the saved Session"
+    )
+    expect(deleteSession).toHaveBeenCalledTimes(1)
+
+    confirmDelete = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent === 'Retry'
+    )
+    await act(async () => confirmDelete?.click())
+
+    expect(deleteSession).toHaveBeenCalledTimes(2)
+    expect(deleteSession).toHaveBeenNthCalledWith(2, {
+      projectId: project.id,
+      sessionId: session.id
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
+  it('clears a failed Project deletion error before opening the next confirmation', async () => {
+    const deleteProject = vi.fn().mockRejectedValue(new Error('first deletion failed'))
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [{ ...project, archivedAt: 2 }],
+      isLoaded: true,
+      deleteProject
+    })
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [] })
+    await act(async () =>
+      root.render(
+        <ArchivedPanel view={{ kind: 'project', projectId: project.id }} onNavigate={vi.fn()} />
+      )
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    await act(async () => openDelete?.click())
+    let dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toBe('first deletion failed')
+
+    const close = dialog?.querySelector<HTMLButtonElement>('[aria-label="Close"]')
+    await act(async () => close?.click())
+    await act(async () => openDelete?.click())
+    dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+
+    expect(dialog?.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('delegates archived Project runtime cleanup to the main deletion coordinator', async () => {
+    const archivedProject = { ...project, archivedAt: 2 }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [archivedProject],
+      isLoaded: true,
+      deleteProject
+    })
+    const onNavigate = vi.fn()
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'project', projectId: archivedProject.id }}
+          onNavigate={onNavigate}
+        />
+      )
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    await act(async () => openDelete?.click())
+    const dialog = document.body.querySelector<HTMLElement>('[role=alertdialog]')
+    const confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    expect(deleteProject).toHaveBeenCalledWith(project.id)
+    expect(window.api.acp.getState).not.toHaveBeenCalled()
+    expect(window.api.acp.deleteSession).not.toHaveBeenCalled()
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+  })
+
+  it('shows Project recovery in Settings and keeps deletion unavailable until retry succeeds', async () => {
+    const archivedProject = { ...project, archivedAt: 2 }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [archivedProject],
+      isLoaded: true,
+      deleteProject
+    })
+    const onRetryCatalogRecovery = vi.fn()
+
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'project', projectId: archivedProject.id }}
+          onNavigate={vi.fn()}
+          canDeleteProjects={false}
+          hasCompleteSessionCatalog={false}
+          catalogRecovery={{ kind: 'project-deletion-recovery' }}
+          onRetryCatalogRecovery={onRetryCatalogRecovery}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Project recovery needs attention')
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    await act(async () => retry?.click())
+    expect(onRetryCatalogRecovery).toHaveBeenCalledOnce()
+
+    const deleteButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    expect(deleteButton?.disabled).toBe(true)
+  })
+
+  it('keeps whole-Project deletion available with conservative copy for damaged authority', async () => {
+    const archivedProject = { ...project, archivedAt: 2 }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [archivedProject],
+      isLoaded: true,
+      deleteProject
+    })
+
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'project', projectId: archivedProject.id }}
+          onNavigate={vi.fn()}
+          canDeleteProjects
+          hasCompleteSessionCatalog={false}
+          catalogRecovery={{
+            kind: 'damaged-authority',
+            affectedFileCount: 1
+          }}
+        />
+      )
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    expect(openDelete?.disabled).toBe(false)
+    await act(async () => openDelete?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain(
+      'all of its saved conversations, including any that could not be loaded during recovery'
+    )
   })
 })

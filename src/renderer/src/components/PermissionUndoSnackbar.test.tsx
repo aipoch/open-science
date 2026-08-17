@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { PermissionUndoSnackbar } from './PermissionUndoSnackbar'
@@ -14,7 +15,8 @@ describe('PermissionUndoSnackbar', () => {
   const extendUndo = vi.fn()
   const updateProjectArchive = vi.fn()
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18next.changeLanguage('en')
     vi.useFakeTimers()
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -51,7 +53,9 @@ describe('PermissionUndoSnackbar', () => {
       undo: {
         token: 'undo-1',
         expiresAt: Date.now() + 8_000,
-        message: 'Revoked Local compute · Shell'
+        messageKey: 'Revoked {{family}} · {{capability}}',
+        messageParams: { family: 'Local compute', capability: 'Shell' },
+        translatedMessageParams: ['family', 'capability']
       },
       undoQueue: [],
       isRestoring: false
@@ -89,7 +93,7 @@ describe('PermissionUndoSnackbar', () => {
         undo: {
           token: 'undo-2',
           expiresAt: Date.now() + 8_000,
-          message: 'Revoked Python'
+          messageKey: 'Revoked Python'
         }
       })
     )
@@ -97,6 +101,18 @@ describe('PermissionUndoSnackbar', () => {
 
     await act(async () => vi.advanceTimersByTime(8_000))
     expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+  })
+
+  it('retranslates a permission notice when the language changes', async () => {
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+    expect(container.textContent).toContain('Revoked Local compute · Shell')
+
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+
+    expect(container.textContent).toContain('已撤销 本地计算 · Shell')
+    expect(container.textContent).not.toContain('Revoked Local compute')
   })
 
   it('keeps the shared Undo stack at the top center after Settings has closed', async () => {
@@ -120,7 +136,8 @@ describe('PermissionUndoSnackbar', () => {
           projectId: 'project-1',
           archivedAt: 10,
           expiresAt: Date.now() + 8_000,
-          message: 'Archived project “Project”.'
+          messageKey: 'Archived project “{{name}}”.',
+          messageParams: { name: 'Project' }
         }
       ],
       restoringKey: undefined
@@ -131,6 +148,9 @@ describe('PermissionUndoSnackbar', () => {
     expect(snackbar?.className).toContain('rounded-2xl')
     expect(snackbar?.className).toContain('shadow-lg')
     expect(snackbar?.className).not.toContain('shadow-xl')
+    // The notice carries a key plus params, so the interpolated text proves it is translated at
+    // render time rather than frozen into the store when the project was archived.
+    expect(snackbar?.textContent).toContain('Archived project “Project”.')
     const undo = snackbar?.querySelector<HTMLButtonElement>('button:not([aria-label])')
     await act(async () => undo?.click())
 
@@ -177,7 +197,7 @@ describe('PermissionUndoSnackbar', () => {
       undo: {
         token: 'undo-1',
         expiresAt: Date.now() + 5_000,
-        message: "Couldn't restore permission: owner no longer exists",
+        messageKey: "Couldn't restore permission: owner no longer exists",
         canRestore: false
       }
     })
@@ -202,17 +222,17 @@ describe('PermissionUndoSnackbar', () => {
         {
           token: 'undo-2',
           expiresAt: Date.now() + 8_000,
-          message: 'Revoked Python'
+          messageKey: 'Revoked Python'
         },
         {
           token: 'undo-3',
           expiresAt: Date.now() + 8_000,
-          message: 'Revoked Shell'
+          messageKey: 'Revoked Shell'
         },
         {
           token: 'undo-4',
           expiresAt: Date.now() + 8_000,
-          message: 'Revoked Connector'
+          messageKey: 'Revoked Connector'
         }
       ]
     })

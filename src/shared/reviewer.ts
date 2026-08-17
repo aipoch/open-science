@@ -135,7 +135,40 @@ export type ReviewCheck = {
   resolution: FindingResolution
   sortIndex: number
   reflagCount: number
+  // Latest terminal fix-loop reason when this finding is unaddressed. Optional for legacy rows and
+  // in-memory callers that predate durable disposition projection.
+  unaddressedTrigger?: Exclude<ReviewFindingDispositionTrigger, 'review_submission'>
 }
+
+// The normalized content submitted for one Review Check assessment. Tracked re-review checks keep
+// this content on their immutable disposition event instead of creating a second Finding row.
+export type ReviewCheckAssessment = {
+  status: CheckStatus
+  claim: string
+  evidence: string
+  locator?: FindingLocator
+  artifactVersionId?: string
+  sortIndex: number
+}
+
+// One item in the exact submission that completed a Review. New checks own a Finding row on this
+// Review; tracked checks assess an existing Finding without changing its identity or history.
+export type SubmittedReviewCheck =
+  | {
+      kind: 'new'
+      submissionIndex: number
+      check: ReviewCheck
+    }
+  | {
+      kind: 'tracked'
+      // Legacy dispositions did not persist their position within the mixed submission.
+      submissionIndex: number | null
+      sourceFindingId: string
+      dispositionOutcome: ReviewFindingDispositionOutcome
+      assessedArtifactVersionId?: string
+      assessment: ReviewCheckAssessment | null
+      sourceCheck: ReviewCheck
+    }
 
 // Legacy alias kept for internal use only; external callers should use ReviewCheck.
 /** @deprecated Use ReviewCheck */
@@ -164,7 +197,12 @@ export type Review = {
 
 // A Review with its checks eagerly loaded, as returned by getReviewsForSession.
 // Note: `checks` is the unified list (replaces both old `findings` and `checks` JSON blob).
-export type ReviewWithChecks = Review & { checks: ReviewCheck[] }
+export type ReviewWithChecks = Review & {
+  checks: ReviewCheck[]
+  // Optional only for compatibility with legacy immutable snapshots and in-memory callers. Current
+  // repository reads and runtime pushes always materialize the projection.
+  submittedChecks?: SubmittedReviewCheck[]
+}
 
 // The exact, sanitized blocks exposed to one reviewer run. This is copied into SQLite and an
 // immutable sidecar so a later transcript edit or session deletion cannot rewrite audit evidence.
@@ -196,6 +234,9 @@ export type ArtifactReviewHistoryEvent =
 export type ArtifactVersionReviewProjection = {
   binding: 'version' | 'legacy-turn'
   selectedVersionId: string
+  // Renderer-ready assessment containing only the selected Version and turn-level submission rows.
+  // The source Review objects retained below and in history remain immutable audit records.
+  selectedVersionAssessment: ReviewWithProvenanceEvidence
   currentDirectAssessment?: ReviewWithProvenanceEvidence
   latestChainReview: ReviewWithProvenanceEvidence
   selectedVersionChecks: ReviewCheck[]

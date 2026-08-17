@@ -219,7 +219,12 @@ class ArtifactTurnOwner {
         ...(turn.notebookArtifactSourceScope
           ? { notebookSessionId: turn.notebookArtifactSourceScope.notebookSessionId }
           : {}),
-        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+        allowedMethods: [
+          'artifactReserveWrite',
+          'artifactReleaseWrite',
+          'artifactCreateVersion',
+          'artifactReplayVersion'
+        ]
       })
       if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
 
@@ -339,7 +344,7 @@ class ArtifactTurnOwner {
           kind: input.kind
         })
       : this.options.repository.writePendingFile({
-          projectName: turn.projectId,
+          projectId: turn.projectId,
           sessionId: turn.artifactStorageSessionId,
           runId: turn.runId,
           filename: input.filename,
@@ -509,7 +514,7 @@ class ArtifactTurnOwner {
         .filter(Boolean) as string[]
     } else {
       artifacts = await this.options.repository.listPendingRunFiles({
-        projectName: turn.projectId,
+        projectId: turn.projectId,
         sessionId: turn.artifactStorageSessionId,
         runId: turn.runId
       })
@@ -522,7 +527,7 @@ class ArtifactTurnOwner {
     }
 
     await this.options.repository.prepareRunFinalization({
-      projectName: turn.projectId,
+      projectId: turn.projectId,
       sourceSessionId: turn.artifactStorageSessionId,
       sessionId: turn.appSessionId,
       runId: turn.runId,
@@ -537,7 +542,7 @@ class ArtifactTurnOwner {
     })
 
     const artifactClaimId = this.options.runRegistry.register({
-      projectName: turn.projectId,
+      projectId: turn.projectId,
       artifactSessionId: turn.artifactStorageSessionId,
       sessionId: turn.appSessionId,
       runId: turn.runId,

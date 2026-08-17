@@ -1,15 +1,11 @@
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 
 type SessionArtifactFileResolverDependencies = {
-  compatibilityProjectName: string
+  compatibilityProjectId: string
   resolveVersionContent: (
     identity: NonNullable<ReturnType<typeof parseArtifactVersionLocator>>
   ) => Promise<{ path: string }>
-  resolveLegacyArtifactPath: (
-    projectName: string,
-    sessionId: string,
-    path: string
-  ) => Promise<string>
+  resolveLegacyArtifactPath: (projectId: string, sessionId: string, path: string) => Promise<string>
 }
 
 type SessionArtifactFileResolver = (
@@ -28,9 +24,9 @@ const createSessionArtifactFileResolver =
       try {
         return await dependencies.resolveLegacyArtifactPath(projectId, sessionId, path)
       } catch (projectError) {
-        if (projectId === dependencies.compatibilityProjectName) throw projectError
+        if (projectId === dependencies.compatibilityProjectId) throw projectError
         return dependencies.resolveLegacyArtifactPath(
-          dependencies.compatibilityProjectName,
+          dependencies.compatibilityProjectId,
           sessionId,
           path
         )

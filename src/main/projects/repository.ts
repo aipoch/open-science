@@ -93,6 +93,10 @@ class ProjectRepository {
       data.agentContext = request.agentContext.trim()
     }
 
+    if (!Number.isSafeInteger(request.expectedUpdatedAt) || request.expectedUpdatedAt <= 0) {
+      throw new Error('Project update timestamp is invalid.')
+    }
+
     const client = await this.getClient()
 
     if (
@@ -118,8 +122,16 @@ class ProjectRepository {
 
     if (request.pinned !== undefined) data.pinned = request.pinned
 
-    const row = await client.project.update({ where: { id: request.id }, data })
+    const result = await client.project.updateMany({
+      where: { id: request.id, updatedAt: new Date(request.expectedUpdatedAt) },
+      data
+    })
+    if (result.count !== 1) {
+      throw new Error('Project changed elsewhere.')
+    }
 
+    const row = await client.project.findUnique({ where: { id: request.id } })
+    if (!row) throw new Error('Project not found.')
     return toProject(row)
   }
 

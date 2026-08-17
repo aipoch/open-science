@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, LoaderCircle, RefreshCw, RotateCcw, type LucideIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -18,25 +19,28 @@ type UpdateCapsuleProps = {
 
 const FOCUS_ATTENTION_COOLDOWN_MS = 15 * 60 * 1000
 
-const updateCopy = (status: UpdateStatus): { title: string; action: string; icon: LucideIcon } => {
+const updateCopy = (
+  status: UpdateStatus,
+  t: (key: string, options?: Record<string, unknown>) => string
+): { title: string; action: string; icon: LucideIcon } => {
   if (status.state === 'downloading') {
     return {
-      title: 'Downloading',
+      title: t('Downloading'),
       action: `${Math.round(status.progress ?? 0)}%`,
       icon: LoaderCircle
     }
   }
   if (status.state === 'ready') {
     return {
-      title: 'Update ready',
-      action: status.applyKind === 'installer' ? 'Install' : 'Restart',
+      title: t('Update ready'),
+      action: status.applyKind === 'installer' ? t('Install') : t('Restart'),
       icon: RefreshCw
     }
   }
   if (status.state === 'error') {
-    return { title: 'Update failed', action: 'Retry', icon: RotateCcw }
+    return { title: t('Update failed'), action: t('Retry'), icon: RotateCcw }
   }
-  return { title: 'New version', action: 'Update', icon: ArrowUp }
+  return { title: t('New version'), action: t('Update'), icon: ArrowUp }
 }
 
 const UpdateAttention = (): React.JSX.Element => (
@@ -72,6 +76,7 @@ const UpdateCapsule = ({
   className,
   variant = 'home'
 }: UpdateCapsuleProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const status = useUpdateStore((state) => state.status)
   const openDialog = useUpdateStore((state) => state.openDialog)
   const [focusAttentionCycle, setFocusAttentionCycle] = useState(0)
@@ -107,7 +112,7 @@ const UpdateCapsule = ({
     (status.state === 'error' && Boolean(status.latest))
   if (!isVisible) return null
 
-  const copy = updateCopy(status)
+  const copy = updateCopy(status, t)
   const Icon = copy.icon
   const label = `${copy.title}: ${copy.action}${status.latest ? ` (v${status.latest})` : ''}`
   const hasError = status.state === 'error'

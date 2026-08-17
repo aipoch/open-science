@@ -1168,3 +1168,37 @@ describe('ComputeJobWorkflowOwner.handleJobUpdated', () => {
     expect(fallbackPublish).toHaveBeenCalledWith(job)
   })
 })
+
+describe('ComputeJobWorkflowOwner.submitJob - harvest safety', () => {
+  it('rejects an above-ceiling harvest request before approval and persistence', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo()
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: vi.fn(),
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+    const service = makeOwner(runner, repo, broker, jobRepo)
+
+    await expect(
+      service.submitJob(
+        'ssh:biowulf',
+        'oversized harvest',
+        'echo hi',
+        { harvestConfig: JSON.stringify({ max_total_mb: 501 }) },
+        { sessionId: 's1', projectId: 'p1' }
+      )
+    ).rejects.toThrow(/harvest\.max_total_mb.*500 MiB/i)
+
+    expect(requestWithContext).not.toHaveBeenCalled()
+    expect(createCalls).not.toHaveBeenCalled()
+  })
+})

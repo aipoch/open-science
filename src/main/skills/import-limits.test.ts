@@ -1,12 +1,49 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from './import-limits'
+import {
+  decodeBoundedBase64,
+  getBoundedBase64ByteLength,
+  isSkillPackageBudgetedPath,
+  SKILL_IMPORT_LIMITS
+} from './import-limits'
+
+describe('isSkillPackageBudgetedPath', () => {
+  it('excludes only app-owned metadata at the package root', () => {
+    expect(isSkillPackageBudgetedPath('.source.json')).toBe(false)
+    expect(isSkillPackageBudgetedPath('.specialist-package.json')).toBe(false)
+    expect(isSkillPackageBudgetedPath('nested/.source.json')).toBe(true)
+    expect(isSkillPackageBudgetedPath('nested/.specialist-package.json')).toBe(true)
+    expect(isSkillPackageBudgetedPath('SKILL.md')).toBe(true)
+  })
+})
 
 describe('decodeBoundedBase64', () => {
   it('decodes a bundle within the limit', () => {
     const bytes = Buffer.from('hello world')
     const decoded = decodeBoundedBase64(bytes.toString('base64'))
     expect(decoded.equals(bytes)).toBe(true)
+  })
+
+  it('reports the decoded byte length without relaxing the limit', () => {
+    const encoded = Buffer.from('abc').toString('base64')
+    expect(getBoundedBase64ByteLength(encoded, 3)).toBe(3)
+    expect(() => getBoundedBase64ByteLength(encoded, 2)).toThrow(/exceeds the .* limit/)
+  })
+
+  it('rejects an overlong raw input before allocating a whitespace-stripped copy', () => {
+    const replace = vi.spyOn(String.prototype, 'replace')
+    let thrown: unknown
+    try {
+      getBoundedBase64ByteLength(' '.repeat(9), 3)
+    } catch (error) {
+      thrown = error
+    }
+    const replaceCalls = replace.mock.calls.length
+    replace.mockRestore()
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toMatch(/exceeds the .* limit/)
+    expect(replaceCalls).toBe(0)
   })
 
   it('accepts an upload exactly at the documented total-byte limit', () => {

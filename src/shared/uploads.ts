@@ -1,7 +1,7 @@
-import { DEFAULT_ARTIFACT_PROJECT_NAME } from './artifacts'
+import { DEFAULT_ARTIFACT_PROJECT_ID } from './artifacts'
 
 // Uploads share the default project bucket so they live beside the matching session data.
-export const DEFAULT_UPLOAD_PROJECT_NAME = DEFAULT_ARTIFACT_PROJECT_NAME
+export const DEFAULT_UPLOAD_PROJECT_ID = DEFAULT_ARTIFACT_PROJECT_ID
 // New-conversation uploads are staged here until the runtime returns a durable session id.
 export const PENDING_UPLOAD_SESSION_ID = '.pending'
 // Local-file "Save as artifact" uploads without an associated conversation session.
@@ -73,7 +73,7 @@ export type BeginUploadTransferRequest = Omit<StageLocalUploadRequest, 'sourcePa
 // Save-as-artifact from the local-file preview: the renderer already knows the native path, and
 // main stats the file itself so neither a stale renderer-side size nor a guessed mime type can
 // reach the staging pipeline. The renderer passes its active project id so the upload lands in the
-// correct project bucket; falls back to DEFAULT_UPLOAD_PROJECT_NAME when absent.
+// correct project bucket; falls back to DEFAULT_UPLOAD_PROJECT_ID when absent.
 export type StageLocalPathUploadRequest = Omit<StageLocalUploadRequest, 'size' | 'mimeType'> & {
   projectId?: string
 }

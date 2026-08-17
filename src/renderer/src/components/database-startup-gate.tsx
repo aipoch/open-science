@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import logo from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
@@ -9,6 +10,7 @@ import type { DatabaseStartupState } from '../../../shared/database-startup'
 type DatabaseStartupGateProps = { children: ReactNode }
 
 const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const databaseStartup = (window.api as Partial<Window['api']> | undefined)?.databaseStartup
   const [state, setState] = useState<DatabaseStartupState>(
     databaseStartup ? { phase: 'checking' } : { phase: 'ready' }
@@ -51,28 +53,30 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
       <section className="flex w-full max-w-md flex-col items-center text-center">
         {state.phase === 'blocked' ? (
           <div className="mb-10">
-            <img src={logo} alt="Open Science" className="h-12 w-auto dark:hidden" />
-            <img src={logoDark} alt="Open Science" className="hidden h-12 w-auto dark:block" />
+            <img src={logo} alt={t('Open Science')} className="h-12 w-auto dark:hidden" />
+            <img src={logoDark} alt={t('Open Science')} className="hidden h-12 w-auto dark:block" />
           </div>
         ) : null}
 
         {state.phase === 'blocked' ? (
           <div className="w-full rounded-xl border border-border bg-card p-7 text-left shadow-card">
             <h1 className="text-lg font-semibold text-card-foreground">
-              Open Science couldn’t start
+              {t("Open Science couldn't start")}
             </h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">{state.error.message}</p>
             <p className="mt-4 font-mono text-xs text-muted-foreground">
-              Error code: {state.error.code}
-              {state.error.migrationId ? ` · Migration: ${state.error.migrationId}` : ''}
+              {t('Error code:')} {state.error.code}
+              {state.error.migrationId
+                ? t(' · Migration: {{id}}', { id: state.error.migrationId })
+                : ''}
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <Button variant="outline" onClick={() => void databaseStartup?.quit()}>
-                Quit
+                {t('Quit')}
               </Button>
               {state.error.retryable ? (
                 <Button onClick={retry} disabled={retrying}>
-                  {retrying ? 'Retrying…' : 'Retry'}
+                  {retrying ? t('Retrying…') : t('Retry')}
                 </Button>
               ) : null}
             </div>
@@ -82,11 +86,11 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
             <OpenScienceLogoLoader />
             <div className="flex flex-col items-center gap-4">
               <h1 className="text-base font-medium text-foreground">
-                {state.phase === 'migrating' ? 'Updating database…' : 'Checking database…'}
+                {state.phase === 'migrating' ? t('Updating database…') : t('Checking database…')}
               </h1>
               {state.phase === 'migrating' ? (
                 <p className="text-sm text-muted-foreground">
-                  Keep Open Science open while this finishes.
+                  {t('Keep Open Science open while this finishes.')}
                 </p>
               ) : null}
             </div>

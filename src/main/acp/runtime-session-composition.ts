@@ -123,7 +123,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     capabilities: base.sessionCapabilities,
     presentation: base.sessionPresentationPolicy,
     registry: sessionRegistry,
-    defaultProjectName: options.artifacts?.projectName,
+    defaultProjectId: options.artifacts?.projectId,
     ...(options.sessionCapabilityPolicy
       ? { capabilityPolicy: options.sessionCapabilityPolicy }
       : {}),
@@ -176,7 +176,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       reviewerContextFor: (sessionId) => reviewerSessions.contextFor(sessionId),
       resolveReviewerPermission: (request) => reviewerSessions.resolvePermission(request),
       currentFramework: () => base.backendGeneration.current.framework,
-      resolveProjectId: (sessionId) => sessionEnvironment.projectName(sessionId)
+      resolveProjectId: (sessionId) => sessionEnvironment.projectId(sessionId)
     },
     conversationGrants: options.permissionGrantStore,
     permissionGrantRegistry: options.permissionGrantRegistry,

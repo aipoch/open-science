@@ -10,6 +10,7 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatSession } from '@/stores/session-store'
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { AcpPromptStopReason } from '../../../../shared/acp'
 import { resolveSessionProviderId } from './error-report'
@@ -40,13 +42,6 @@ type ContextWindowDialogProps = {
 }
 
 const tokenFormatter = new Intl.NumberFormat('en-US')
-const timeFormatter = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit'
-})
-
 const formatTokens = (tokens: number): string => {
   if (tokens >= 1_000_000) {
     const value = tokens / 1_000_000
@@ -59,13 +54,16 @@ const formatTokens = (tokens: number): string => {
   return tokenFormatter.format(tokens)
 }
 
-const stopReasonLabel: Record<AcpPromptStopReason, string> = {
+// Catalog keys, not resolved copy: the map is module-level, so resolving here would freeze the
+// label at import time and survive a language switch. `satisfies` keeps an upstream-added stop
+// reason from silently falling through to a raw key.
+const stopReasonLabel = {
   end_turn: 'Completed',
   max_tokens: 'Max tokens',
   max_turn_requests: 'Turn limit',
   refusal: 'Refused',
   cancelled: 'Interrupted'
-}
+} satisfies Record<AcpPromptStopReason, string>
 
 type PointPresentation = Readonly<{
   label: string
@@ -96,6 +94,7 @@ const pointState = (point: ContextWindowTrendPoint): PointPresentation => {
   }
 }
 
+// Catalog keys; resolved at each render site for the same reason as stopReasonLabel.
 const sourceLabel = {
   'provider-response': 'Provider response',
   'provider-update': 'Provider update',
@@ -103,6 +102,8 @@ const sourceLabel = {
 } as const
 
 const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const frameworks = useSettingsStore((state) => state.agentFrameworks)
   const providers = useSettingsStore((state) => state.providers)
   const state = pointState(point)
@@ -141,21 +142,24 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
             className="whitespace-nowrap font-medium text-foreground"
             data-slot="context-window-point-title"
           >
-            Run {point.runNumber} · Message {point.messageNumber}
+            {t('Run {{runNumber}} · Message {{messageNumber}}', {
+              runNumber: point.runNumber,
+              messageNumber: point.messageNumber
+            })}
           </div>
           <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={point.prompt}>
-            {point.prompt || 'Empty prompt'}
+            {point.prompt || t('Empty prompt')}
           </div>
         </div>
         <span className={cn('flex shrink-0 items-center gap-1 text-[11px]', state.color)}>
           <StateIcon className="size-3.5" aria-hidden="true" />
-          {state.label}
+          {t(state.label)}
         </span>
       </div>
 
       <div className="mt-3 border-y border-border py-2.5">
         <div className="flex items-baseline justify-between gap-4">
-          <span className="text-muted-foreground">Window used</span>
+          <span className="text-muted-foreground">{t('Window used')}</span>
           <span className="font-medium tabular-nums text-foreground">
             {formatTokens(point.sample.contextWindow.used)}
             {point.sample.contextWindow.size ? (
@@ -178,7 +182,10 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
         ) : null}
         {cacheReadPercent === undefined ? null : (
           <div className="mt-2 text-[10px] tabular-nums text-muted-foreground">
-            cache-read {cacheReadPercent}% · uncached {100 - cacheReadPercent}%
+            {t('cache-read {{cached}}% · uncached {{uncached}}%', {
+              cached: cacheReadPercent,
+              uncached: 100 - cacheReadPercent
+            })}
           </div>
         )}
       </div>
@@ -192,7 +199,7 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
             <div className="flex min-w-0 items-center gap-1.5">
               <Bot className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
               <span className="truncate">
-                Agent: {point.agentName ?? frameworkLabel}
+                {t('Agent:')} {point.agentName ?? frameworkLabel}
                 {point.agentName && frameworkLabel ? ` · ${frameworkLabel}` : ''}
               </span>
             </div>
@@ -201,7 +208,7 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
             <div className="flex min-w-0 items-center gap-1.5">
               <Brain className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
               <span className="truncate" title={point.runtime?.model}>
-                Model: {point.runtime?.model ?? 'Unknown'}
+                {t('Model:')} {point.runtime?.model ?? t('Unknown')}
                 {providerLabel ? ` · ${providerLabel}` : ''}
               </span>
             </div>
@@ -210,12 +217,12 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
       ) : null}
 
       <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
-        <span>{sourceLabel[point.sample.source]}</span>
-        <span className="shrink-0 tabular-nums">
-          {timeFormatter.format(point.sample.timestamp)}
-        </span>
+        <span>{t(sourceLabel[point.sample.source])}</span>
+        <span className="shrink-0 tabular-nums">{formatDate(point.sample.timestamp)}</span>
       </div>
-      <div className="sr-only">Terminal state code: {state.code}</div>
+      <div className="sr-only">
+        {t('Terminal state code:')} {state.code}
+      </div>
     </div>
   )
 }
@@ -225,6 +232,7 @@ const ContextTrendChart = ({
 }: {
   points: ContextWindowTrendPoint[]
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(720)
   const [hoveredIndex, setHoveredIndex] = useState<number>()
@@ -284,7 +292,9 @@ const ContextTrendChart = ({
         viewBox={`0 0 ${width} ${height}`}
         className="block h-[300px] w-full"
         role="group"
-        aria-label={`Context window chart across ${points.length} terminal outcomes`}
+        aria-label={t('Context window chart across {{count}} terminal outcomes', {
+          count: points.length
+        })}
       >
         {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
           const tickY = plot.bottom - ratio * (plot.bottom - plot.top)
@@ -365,7 +375,11 @@ const ContextTrendChart = ({
               role="img"
               tabIndex={0}
               data-slot="context-window-point"
-              aria-label={`Run ${point.runNumber}, ${state.label}, ${tokenFormatter.format(point.sample.contextWindow.used)} context-window tokens`}
+              aria-label={t('Run {{run}}, {{state}}, {{tokens}} context-window tokens', {
+                run: point.runNumber,
+                state: t(state.label),
+                tokens: tokenFormatter.format(point.sample.contextWindow.used)
+              })}
               onPointerEnter={() => setHoveredIndex(index)}
               onPointerLeave={() => setHoveredIndex(undefined)}
               onFocus={() => setHoveredIndex(index)}
@@ -404,7 +418,7 @@ const ContextTrendChart = ({
           textAnchor="middle"
           className="fill-muted-foreground text-[10px]"
         >
-          Run
+          {t('Run')}
         </text>
       </svg>
 
@@ -441,6 +455,7 @@ const ContextWindowDialog = ({
   session,
   onOpenChange
 }: ContextWindowDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const messages = session?.messages
   const conversationGraph = session?.conversationGraph
   const points = useMemo(
@@ -468,13 +483,14 @@ const ContextWindowDialog = ({
         >
           <div className={dialogHeaderClassName} data-slot="context-window-dialog-header">
             <div className="min-w-0">
-              <Dialog.Title className={dialogTitleClassName}>Context window</Dialog.Title>
+              <Dialog.Title className={dialogTitleClassName}>{t('Context window')}</Dialog.Title>
               <Dialog.Description
                 id="context-window-description"
                 className={cn(dialogDescriptionClassName, 'min-[960px]:whitespace-nowrap')}
               >
-                Final context window for each completed message on the active branch; interrupted
-                and failed attempts remain separate.
+                {t(
+                  'Final context window for each completed message on the active branch; interrupted and failed attempts remain separate.'
+                )}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -483,7 +499,7 @@ const ContextWindowDialog = ({
                 variant="ghost"
                 size="icon-sm"
                 className={dialogCloseButtonClassName}
-                aria-label="Close context window"
+                aria-label={t('Close context window')}
               >
                 <X className="size-4" aria-hidden="true" />
               </Button>
@@ -498,10 +514,13 @@ const ContextWindowDialog = ({
               <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
                 <div className="max-w-sm">
                   <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
-                  <h3 className="mt-3 text-sm font-medium text-foreground">No run history yet</h3>
+                  <h3 className="mt-3 text-sm font-medium text-foreground">
+                    {t('No run history yet')}
+                  </h3>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    A point appears after a run completes, is interrupted, or ends with an error.
-                    Older sessions remain compatible and may not contain trend data.
+                    {t(
+                      'A point appears after a run completes, is interrupted, or ends with an error. Older sessions remain compatible and may not contain trend data.'
+                    )}
                   </p>
                 </div>
               </div>
@@ -513,7 +532,7 @@ const ContextWindowDialog = ({
                       id="context-window-chart-title"
                       className="text-xs font-medium text-foreground"
                     >
-                      CONTEXT PER RUN
+                      {t('CONTEXT PER RUN')}
                     </h3>
                   </div>
                   <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
@@ -522,11 +541,14 @@ const ContextWindowDialog = ({
                         className="h-2.5 w-4 rounded-[2px] border-t-2 border-primary bg-primary/10"
                         aria-hidden="true"
                       />
-                      Window used (actual)
+                      {t('Window used (actual)')}
                     </span>
                     {points.some((point) => point.sample.contextWindow.size) ? (
                       <span className="flex items-center gap-1.5">
-                        <span className="w-4 border-t border-dashed border-success-000" /> Capacity
+                        <>
+                          <span className="w-4 border-t border-dashed border-success-000" />{' '}
+                          {t('Capacity')}
+                        </>
                       </span>
                     ) : null}
                   </div>

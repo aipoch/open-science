@@ -111,8 +111,8 @@ const job = await c.submitJob(
     ],
     harvest: {
       exclude: ['work/**'], // never harvest these paths
-      maxFileMb: 100, // single-file cap (default 100 MB)
-      maxTotalMb: 500 // total-harvest cap (default 500 MB)
+      maxFileMb: 100, // single-file hard maximum (100 MiB)
+      maxTotalMb: 500 // per-job hard maximum, including stdout/stderr (500 MiB)
     }
   }
 )
@@ -123,6 +123,12 @@ print(job.job_id) // end the cell — kernel never blocks on compute
 **End the cell here. Do NOT write a polling loop.** The app runs the poller and harvest in the
 background. When the job finishes, the app automatically starts a new analysis turn in this
 conversation — the conversation is NOT locked while the job runs, so the user can keep chatting.
+
+### Harvest safety boundaries
+
+- Declared output files are selected before `stdout` and `stderr`; logs use the remaining per-job budget.
+- The app rejects model-supplied limits above 100 MiB per file or 500 MiB per job.
+- Harvest also preserves a fixed 2 GiB of free local disk space. Files that do not fit remain remote.
 
 ### Behavior boundaries
 

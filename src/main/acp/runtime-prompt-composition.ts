@@ -64,8 +64,7 @@ const composeAcpRuntimePromptOwners = (
   const activeSession = (sessionId: string) =>
     session.sessionRegistry.lookup(sessionId)?.attachment?.session
   const currentFramework = () => base.backendGeneration.current.framework
-  const projectName = (sessionId: string): string =>
-    session.sessionEnvironment.projectName(sessionId)
+  const projectId = (sessionId: string): string => session.sessionEnvironment.projectId(sessionId)
   const emitState = (): void => session.publication.emitState()
   const diagnosticContext = () => ({
     framework: currentFramework().id,
@@ -101,7 +100,7 @@ const composeAcpRuntimePromptOwners = (
       appSessionId: sessionId,
       artifactStorageSessionId:
         base.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId,
-      projectId: projectName(sessionId),
+      projectId: projectId(sessionId),
       agentName: currentFramework().displayName,
       provenanceContext
     })
@@ -186,6 +185,7 @@ const composeAcpRuntimePromptOwners = (
     finalizer: base.promptOutcomeFinalizer,
     permission: session.permissionContext,
     environment: {
+      connectionGeneration: () => base.connectionResources.epoch,
       backend: () => base.backendGeneration.current,
       tooling: () => session.sessionEnvironment.toolingAvailability(),
       bridgeSkillsAvailable: () => base.connectionResources.bridgeSkillsAvailable,
@@ -201,7 +201,7 @@ const composeAcpRuntimePromptOwners = (
       routeNotification: (notification, sessionId) =>
         session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
       diagnosticContext,
-      pushUserMessage: ({ sessionId, promptMessageId, text }) =>
+      pushUserMessage: ({ sessionId, promptMessageId, text, attribution }) =>
         session.publication.pushEvent({
           kind: 'message',
           level: 'info',
@@ -211,6 +211,7 @@ const composeAcpRuntimePromptOwners = (
           // one Prompt owner instead of inventing two identities for the same turn.
           ...(promptMessageId ? { promptMessageId, messageId: promptMessageId } : {}),
           role: 'user',
+          ...(attribution ? { attribution } : {}),
           text
         })
     },
@@ -236,7 +237,7 @@ const composeAcpRuntimePromptOwners = (
         })
     },
     currentCwd: () => base.snapshotOwner.cwd,
-    resolveProjectName: projectName,
+    resolveProjectId: projectId,
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),

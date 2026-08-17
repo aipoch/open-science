@@ -388,15 +388,18 @@ colors communicate a successful or failed probe/migration result.
 - The App Shell presentation owner selects the only root presentation allowed to be interactive.
   Feature stores retain their own requested/open state; they do not coordinate presentation order
   with one another.
-- Root presentation priority is fixed: close confirmation, missing data-root recovery, legacy data
-  move, update, compute approval, Connector approval, Skill import approval, global search, Settings,
-  preview, then base content. A covered presentation stays requested and resumes when higher-priority
-  work clears.
+- Root presentation priority is fixed: close confirmation, Web event recovery, missing data-root
+  recovery, legacy data move, update, compute approval, Connector approval, Skill import approval,
+  global search, Settings, preview, then base content. A covered presentation stays requested and
+  resumes when higher-priority work clears.
 - Session visibility, App Shell shortcut eligibility, and `Cmd/Ctrl+W` routing must consume that
   projection. Do not rebuild parallel Boolean gate lists in `AppContent` or feature components.
 - When a presentation above preview/base owns the shell, base content is `inert` and
   `aria-hidden`. Nested dialogs and fullscreen viewers retain local priority before base-pane or
   window close behavior.
+- Web event recovery keeps base content blocked until the event cursor is live. An ordinary
+  disconnect offers Reload immediately while retrying up to eight total connection attempts with
+  bounded backoff. Exhausted attempts and unsafe replay both stop reconnecting and require Reload.
 
 ### Button
 
@@ -521,6 +524,18 @@ colors communicate a successful or failed probe/migration result.
 - Outer shell: `ScrollArea className="min-w-0 flex-1"`.
 - Message scroller surface uses `bg-bg-10` with a top fade `bg-gradient-to-b from-bg-10 to-bg-10/0`.
 - Message content is centered in `mx-auto w-full max-w-4xl pb-[56px]`.
+- Desktop conversations with at least two visible human-authored runs show **Run Marks** in the
+  scroller's left gutter. One mark belongs to the visible user Message that admitted the Run; model
+  Turns inside that Run do not create marks. At rest, every mark is the same short gray segment.
+  Pointer hover or keyboard focus emphasizes one mark and tapers nearby segments by distance; the
+  segments use a compact 10px pitch, and the rail stays fixed at the conversation panel midpoint so
+  bottom approval or permission surfaces do not shift it. The current Run remains available through
+  `aria-current` without a persistent visual highlight.
+  Activating a mark scrolls that Message to the top with reduced-motion support. The preview shows
+  the user Message as a dark single-line excerpt plus up to two muted lines from the first visible
+  Agent Message explicitly linked through `responseToMessageId`; historical Agent Messages without
+  that link are not inferred and leave the preview user-only. Hidden control Messages never appear
+  in the rail or preview. Do not render the rail below `md`.
 - User bubble: `ml-auto max-w-[90%] md:max-w-[min(85%,56rem)] rounded-2xl bg-bg-300 px-3.5 py-2 md:px-4 md:py-2.5 text-sm md:text-[15px] text-message-user-text`.
 - Assistant wrapper: `w-full max-w-[56rem] text-sm md:text-[15px] leading-relaxed text-text-000`.
 - Message metadata uses `text-[11px] text-text-000/70 tabular-nums` below the content so timestamps and elapsed status meet WCAG contrast on workspace surfaces. The visible timestamp format is fixed to English `MMM D, h:mm AM/PM`: User Messages show `Sent ...`, completed Agent Messages show `Completed ...`, and failed Agent Messages show `Failed ...`. Terminal timestamps are persisted separately from mutable record update times. Agent footers keep terminal time, elapsed time, and `Usage` on one line without a separator (`Completed ... Elapsed 2m 5s Usage`). `Usage` uses a dashed underline and reveals a compact Context-window-style popover on pointer hover or keyboard focus. The popover has a proportional color bar above its token rows and a divided `Total` row below them. When an adapter reports a reliable agentic model-turn count, show `1 turn` or `N turns` as smaller muted text aligned to the right of the popover title; omit it rather than estimating when unavailable. Show Input, Cache, and Output when only aggregate cache data is available; split Cache into Cache read and Cache write, with distinct colors and bar segments, only when the agent reports both categories. The displayed categories are mutually exclusive and `Total` is their sum.
@@ -557,9 +572,30 @@ colors communicate a successful or failed probe/migration result.
 - Icon buttons: `Button variant="ghost" size="icon"`, `size-8`.
 - Workspace composer shell: `px-4 pb-2`; center content in `mx-auto w-full max-w-4xl`, then use `px-1 md:px-3` so the composer text track aligns with the message content after the form's own `px-3`.
 - Workspace composer form: `relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque`.
+- During a normal running root turn, the primary composer submit action captures the current doc,
+  attachments, permission profile, Specialist, Session, Agent Frame, and Message Branch into a
+  renderer-memory queue instead of overlapping the active runtime prompt. The queue drains one item
+  at a time after the bound Session becomes sendable, including while another Session is selected.
+- Show the queue disclosure at the right edge of the Notebook chrome above the ordinary composer.
+  Expanded rows render as a compact list at the top of the form using its existing surface with
+  hairline separators rather than nested cards. Dragging over another row moves neighboring rows
+  aside to preview whether the item will land before or after it. Each row also supports Arrow
+  Up/Arrow Down keyboard reordering, Edit, Remove, and Send now. Edit moves an item back into an
+  unchanged empty composer; Send now promotes the item, waits for cancellation and prompt admission
+  to settle, then sends it. Cancellation or admission failures keep the row and show a recoverable
+  inline error.
+- Queued messages are transient and Session-scoped. They are not persisted across renderer restart.
+  Bind each item to its admission Message Branch and block branch switching or inline message edits
+  while that Session has queued work so a later dispatch cannot silently retarget it. Pause queue
+  dispatch while a visible root or delegated Permission request is pending. Keep the Permission
+  Profile selector and other Agent controls read-only until that queue is empty so every item retains
+  its captured authorization level and Specialist binding.
 - Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
   approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
   any still-pending Permission approval instead of interrupting the Side Chat in progress.
+- Hide both the Notebook-chrome queue disclosure and its expanded composer rows while Side Chat,
+  Permission, Ask User, or Plan owns the lane; keep the transient queue in memory so it reappears when
+  the ordinary composer returns.
 - Permission approval uses the shared bottom resize handle and replaces the ordinary composer while
   pending. Its embedded content uses the panel's single border rather than nesting another card. The
   panel can grow upward only by the amount of currently hidden scroll overflow, never beyond
@@ -631,12 +667,15 @@ colors communicate a successful or failed probe/migration result.
 - Home reads live Session projections from the application-level runtime owner; it does not mount
   Workspace commands or preview side effects. Background artifacts remain durable, but only the
   foreground Workspace for their owning Project may auto-open a molecule preview.
-- Session activity labels: `running` maps to `Running`; `waiting-permission` and
-  `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
+- Session activity labels: the Home and Project summaries combine every waiting reason as
+  `waiting on you`, while individual Home cards and Workspace rows show the exact shared reason:
+  `waiting-for-user` maps to `Waiting for your answer`, `waiting-permission` maps to
+  `Waiting for permission`, and `waiting-plan-approval` maps to `Waiting for plan approval`.
+  `running` maps to `Running`; unread successful outcomes map to `Completed`. Use the
   existing `session-running`, `session-waiting`, and `success-000` tokens. `session-running` is blue
   in both themes; Running uses a rotating loader in Session update cards and Project counts plus an
   intermittent left-to-right light sweep over the card title, with both title and loader static under
-  reduced motion. Needs you keeps its amber pulse, while Completed uses a static green check in both
+  reduced motion. Waiting keeps its amber pulse, while Completed uses a static green check in both
   the Session update card and message center.
 - Session update cards and the Projects / Recent sessions containers use `shadow-card` without an
   additional border, so its built-in hairline ring matches the New project button instead of
@@ -693,6 +732,7 @@ colors communicate a successful or failed probe/migration result.
 - Nav item: `h-8 w-full rounded-lg px-2 text-sm gap-2 hover:bg-muted`, with a `size-4` leading icon (`text-muted-foreground`) and a truncating label.
 - Active: `bg-muted text-foreground font-medium`; the neutral selection keeps deep green reserved for primary actions, focus, links, enabled switches, and success.
 - Content header: `h-12 border-b border-border px-3`, a space-between row. Left cluster: back / forward `size-7` icon buttons (`ArrowLeft` / `ArrowRight`, `disabled:opacity-40`), a `h-4 w-px bg-border` divider, then either a breadcrumb or a plain `h2 text-sm font-semibold` title. Right cluster: a maximize / restore `size-7` toggle (`Maximize2` / `Minimize2`) and a `size-7` close (`X`); both use `hover:bg-muted hover:text-foreground`.
+- Workspace navigation places a `ChartNoAxesCombined` **Usage** panel immediately above **General**. The panel aggregates the already-hydrated Session and Project stores in the renderer; it never rereads Session files on entry and adds no usage ledger or persisted UI preference. Summary periods use local calendar boundaries, while the full-width heatmap and **Daily token usage** Input / Cache / Output bars show the latest 30 local days without horizontal scrolling. The daily chart states its 30-day total and uses rounded 100% / 50% / 0 axis marks with compact `k` / `M` / `B` labels. Conversation graphs are authoritative over their flat active-Branch compatibility view, and all graph branches contribute actual incurred token cost. Token totals include only provider-reported `turnUsage`; when older Sessions or providers have no usage totals, the page shows reported-run coverage rather than estimating tokens. Total Session / Project / Run / Artifact values are cumulative through now, while New Session / Project / Run / Artifact values are scoped to the selected period and vertically paired with their corresponding totals. New Artifact records persist `createdAt`; historical records without it fall back to the timestamp of their first associated message. Archived Sessions and Projects remain included; deleting their owning record removes its contribution.
 - Breadcrumb: a clickable root segment (`text-muted-foreground hover:text-foreground`), a muted `/` separator, and the truncated current page label in `text-foreground`, all at `text-sm font-semibold`.
 - Right content column uses `bg-card`; its content area scrolls independently (`min-h-0 flex-1 overflow-y-auto`). Panels pad with `p-5`, and maximize mode constrains inner content to `max-w-[880px]`.
 - First-level groups use `SettingsSection`: `text-base font-semibold` title, optional `text-[13px] leading-5 text-muted-foreground` description, and a hairline separator between groups. Do not wrap ordinary sections in cards.
@@ -720,7 +760,7 @@ colors communicate a successful or failed probe/migration result.
 - `storageRoot` is the historical code name for this fixed, non-relocatable `configRoot`; it is not the user-selectable `dataRoot`. Personal and Imported source packages, Settings, and the app-owned agent profiles live below `configRoot`. `dataRoot` holds relocatable artifacts, notebooks, and rebuildable compute/runtime assets and does not participate in user-Skill discovery.
 - Personal and Imported directories are the writable source of truth. The app scans those two sources into one central catalog; agent frameworks do not independently scan them in place. The user-Skill catalog observer watches `<configRoot>/skills`, coalesces bursts to at most one running and one pending reconciliation, and falls back to reconciliation every 30 seconds when recursive watching is unavailable. A catalog fingerprint change refreshes Settings and retires the current agent runtime generation. An active turn finishes against its existing generation, while every later turn resumes through a freshly provisioned generation.
 - User-Skill compatibility hashing is incremental. A rebuildable index at `<configRoot>/runtime-support/user-skill-compatibility-v1.json` stores only relative package/file paths, file size and timestamps, and SHA-256 hashes; it never stores file contents or absolute paths. Unchanged files reuse their hashes, changed files are streamed through the hasher, deleted entries are pruned, and a missing or corrupt index is rebuilt from the Personal and Imported sources. The index lives outside `<configRoot>/skills`, so persisting it cannot trigger the catalog observer.
-- Before an agent runtime starts, the enabled central catalog is copied into that framework's isolated, rebuildable Skill projection: `<configRoot>/claude/skills/os-<catalog-id>`, `<configRoot>/opencode/config/opencode/skills/os-<catalog-id>`, `<configRoot>/codex/skills/os-<catalog-id>`, or `<configRoot>/codex-subscription/skills/os-<catalog-id>`. The internal `os-<catalog-id>` directory is a projection identity, not the user package name. These projections are normalized and made read-only; stale app-owned projections are removed on synchronization, while the Personal/Imported source package remains authoritative.
+- Before an agent runtime starts, the enabled central catalog is copied into that framework's isolated, rebuildable Skill projection. Claude keeps its private profile at `<configRoot>/claude` and publishes Agent-readable Skills at `<configRoot>/runtime-support/agent-skills/claude/v1/<revision>/.claude/skills/<skill-name>`. Shared, isolated, and custom Claude sessions mount that revision as an additional directory for supporting-file access while keeping the workspace `project` settings source disabled. A primary-session-only, allowlisted loader aliases Claude's native `Skill { skill, args? }` call to the selected immutable package; its short always-loaded tool description points Claude to scoped canonical names and descriptions encoded as described constants in the `skill` input schema, avoiding Claude Code's per-tool-description truncation while keeping Featured, Personal, Imported, Connector, and Compute Skills discoverable without enabling workspace project settings. Discovery metadata is bounded to 256 Skills and 64 KiB per session; overflow packages remain explicitly invocable by canonical name through the schema's string fallback. Its Agent-facing server name is the neutral `skills`, so discovery and invocation expose neither an application plugin namespace nor an `os-` catalog marker. Reviewer and restricted inference sessions do not receive this loader or its catalog, and Specialists see only their exact Skill scope. The projection root permits only `.claude/skills`, preventing project settings, hooks, agents, commands, or `CLAUDE.md` from entering through this mount. OpenCode and Codex continue to project into `<configRoot>/opencode/config/opencode/skills/os-<catalog-id>`, `<configRoot>/codex/skills/os-<catalog-id>`, or `<configRoot>/codex-subscription/skills/os-<catalog-id>`; for those backends the internal `os-<catalog-id>` directory remains a projection identity, not the user package name. Projections are normalized and made read-only while preserving executable bits; the Personal/Imported source package remains authoritative. Claude revisions are immutable snapshots so a running session never observes a half-updated Skill tree. The single-instance desktop runtime retains every revision published by its current process for active-session safety, then removes those rebuildable revisions on the next process's first provision.
 - Names beginning with `os-` or `mcp-`, names matching a bundled Featured/Internal Skill, Specialist sidecar IDs colliding with a bundled ID, and duplicate user sidecar IDs are logged and excluded so app-owned packages and user identities stay authoritative. Unsafe sidecar IDs are ignored. Existing newest-wins behavior remains for out-of-band Personal/Imported name duplicates; normal create/import flows prevent those collisions.
 - List toolbar: a single row of `Select` source filter (`w-36`), a flex-1 search `Input` with a leading `Search` icon (`pl-8`, `type="search"`) and platform `Cmd/Ctrl+K` keycaps, then neutral **Manage** and **Add skill** controls.
 - "Add skill" is a neutral (not primary) `DropdownMenu` trigger: `h-8 rounded-lg border border-border bg-card px-2.5 text-sm font-medium hover:bg-muted`, with a leading `Plus` and a trailing `ChevronDown` (`opacity-70`). Its items — Write from scratch, Upload a skill, Import from GitHub — use `gap-2.5`, a leading icon, and a stacked label + `text-xs text-muted-foreground` hint.
@@ -752,6 +792,7 @@ colors communicate a successful or failed probe/migration result.
 | Settings          | Left navigation                                      | `Button ghost` or `TabsTrigger`; active uses `bg-muted`                                  |
 | Settings          | Back / forward                                       | `size-7` icon `button` (`ArrowLeft` / `ArrowRight`), `disabled:opacity-40`               |
 | Settings          | Breadcrumb root                                      | Text `button` (`text-muted-foreground hover:text-foreground`)                            |
+| Settings          | Usage panel                                          | Left navigation `Button ghost` with `ChartNoAxesCombined`; active uses `bg-muted`        |
 | Settings          | Maximize / restore                                   | `size-7` icon `button` (`Maximize2` / `Minimize2`)                                       |
 | Settings          | Close                                                | `size-7` icon `button` (`X`)                                                             |
 | Settings          | Select field                                         | `Select`                                                                                 |

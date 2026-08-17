@@ -40,13 +40,13 @@ regulatory path and trial design.
 
 ## Tools this skill expects
 
-| Purpose | Tool |
-|---|---|
-| ClinicalTrials.gov | `clinical-trials` MCP |
-| Literature | `pubmed` MCP |
-| Web | `WebSearch`, `WebFetch` — FDA guidance, treatment guidelines (NCCN, AASLD, specialty societies), CDC/WHO epidemiology data |
-| Documents | `WebFetch` for remote PDFs; `Read` for local PDFs |
-| Subagents | `Agent` for parallel evidence gathering |
+| Purpose            | Tool                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| ClinicalTrials.gov | `clinical-trials` MCP                                                                                                      |
+| Literature         | `pubmed` MCP                                                                                                               |
+| Web                | `WebSearch`, `WebFetch` — FDA guidance, treatment guidelines (NCCN, AASLD, specialty societies), CDC/WHO epidemiology data |
+| Documents          | `WebFetch` for remote PDFs; `Read` for local PDFs                                                                          |
+| Subagents          | `Agent` for parallel evidence gathering                                                                                    |
 
 If a listed MCP isn't connected, say so and fall back to `WebSearch` against
 the underlying public source (clinicaltrials.gov, pubmed.ncbi.nlm.nih.gov).

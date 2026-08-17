@@ -11,6 +11,7 @@ import {
 } from '../../shared/skill-import'
 import { SKILL_IMPORT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { parseGitHubSkillUrl } from './github-import'
 
 const requestSkillImportToolSchema = {
@@ -192,7 +193,11 @@ const runSkillImportMcpServer = async (
       callSkillImportRpc(environment, attachmentUri, turnToken),
     requestGitHubImport: (githubUrl) => callGitHubSkillImportRpc(environment, githubUrl)
   })
-  await server.connect(new StdioServerTransport())
+  await server.connect(
+    new StdioServerTransport(process.stdin, process.stdout, {
+      maxBufferSize: LOCAL_RESOURCE_BUDGETS.requestBytes
+    })
+  )
 }
 
 export {

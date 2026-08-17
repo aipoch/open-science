@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
@@ -39,6 +40,7 @@ const ThinkingLoadingContent = ({
   sessionId?: string
   agentStatus?: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const session = useSessionStore((state) =>
     sessionId ? state.sessions.find((candidate) => candidate.id === sessionId) : undefined
   )
@@ -59,11 +61,11 @@ const ThinkingLoadingContent = ({
     <>
       <div className="flex items-center gap-2 text-xs text-text-000/70">
         <OpenScienceThinkingIndicator />
-        <span>Thinking</span>
+        <span>{t('Thinking')}</span>
         <span className="tabular-nums" aria-hidden="true">
           {formatElapsed(elapsedMs)}
         </span>
-        {slow ? <span aria-hidden="true">· taking longer than usual</span> : null}
+        {slow ? <span aria-hidden="true">{t('· taking longer than usual')}</span> : null}
       </div>
       {(agentStatus ?? session?.agentStatus) ? (
         <span
@@ -84,6 +86,8 @@ const AgentLoadingIndicator = ({
   phase,
   agentStatus
 }: AgentLoadingIndicatorProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   return (
     <div className="flex min-h-5 flex-col gap-1" role="status" aria-live="polite">
       {phase === 'thinking' ? (
@@ -93,12 +97,12 @@ const AgentLoadingIndicator = ({
           <OpenScienceThinkingIndicator />
           <span>
             {phase === 'resuming'
-              ? 'Resuming session'
+              ? t('Resuming session')
               : phase === 'waiting-for-approval'
-                ? 'Waiting for your approval'
+                ? t('Waiting for your approval')
                 : phase === 'waiting-for-response'
-                  ? 'Waiting for your response'
-                  : 'Interacting with tools'}
+                  ? t('Waiting for your response')
+                  : t('Interacting with tools')}
           </span>
         </div>
       )}

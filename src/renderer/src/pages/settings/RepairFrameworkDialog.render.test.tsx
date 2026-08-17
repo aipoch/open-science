@@ -34,8 +34,8 @@ describe('RepairFrameworkDialog', () => {
           sources={[
             {
               id: 'managed',
-              label: 'Managed',
-              description: 'Install the bundled runtime.',
+              labelKey: 'App-managed download (recommended)',
+              descriptionKey: 'Downloads a self-contained Claude — no Node.js or npm required.',
               displayCommand: '',
               requiresNpm: false
             }

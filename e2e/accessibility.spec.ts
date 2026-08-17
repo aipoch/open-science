@@ -280,7 +280,7 @@ test('reports accessibility violations across representative state combinations'
   page = await app.restart()
   const recoveryAlert = page
     .getByRole('alert')
-    .filter({ hasText: 'Saved conversation data was damaged' })
+    .filter({ hasText: 'Project archive needs attention' })
   await expect(recoveryAlert).toBeVisible()
   await scanAccessibility(page, 'Conversation recovery warning')
 })

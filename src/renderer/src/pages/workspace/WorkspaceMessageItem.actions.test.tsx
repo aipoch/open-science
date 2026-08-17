@@ -51,6 +51,8 @@ const renderItem = async (
     canEditMessage?: boolean
     showUserActions?: boolean
     onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
+    canBranchInNewSession?: boolean
+    onBranchInNewSession?: (messageId: string) => void
     subsequentTurns?: number
     revisionNavigation?: {
       index: number
@@ -58,6 +60,7 @@ const renderItem = async (
       onPrevious?: () => void
       onNext?: () => void
     }
+    reviewerCorrectionActive?: boolean
   } = {}
 ): Promise<void> => {
   await act(async () => {
@@ -71,8 +74,11 @@ const renderItem = async (
         canEditMessage={options.canEditMessage ?? false}
         showUserActions={options.showUserActions}
         onSendEditedMessage={options.onSendEditedMessage}
+        canBranchInNewSession={options.canBranchInNewSession}
+        onBranchInNewSession={options.onBranchInNewSession}
         subsequentTurns={options.subsequentTurns ?? 0}
         revisionNavigation={options.revisionNavigation}
+        reviewerCorrectionActive={options.reviewerCorrectionActive}
       />
     )
   })
@@ -143,6 +149,117 @@ afterEach(() => {
 })
 
 describe('WorkspaceMessageItem user message actions', () => {
+  it('groups Copy tightly before Branch in a completed Agent Message footer', async () => {
+    const onBranchInNewSession = vi.fn()
+    await renderItem(
+      createMessage({
+        id: 'agent-message',
+        role: 'agent',
+        content: 'Completed analysis',
+        completedAt: 1710000001000
+      }),
+      { canBranchInNewSession: true, onBranchInNewSession }
+    )
+
+    const footer = container.querySelector('[data-slot="assistant-message-footer"]')
+    const actionGroup = footer?.querySelector('[data-slot="assistant-message-actions"]')
+    const copyButton = getButton('Copy message')
+    const branchButton = getButton('Branch in new session')
+    const completedTime = footer?.querySelector('time')
+    if (!footer || !actionGroup || !completedTime) {
+      throw new Error('completed Agent Message footer not found')
+    }
+
+    expect(actionGroup.classList.contains('gap-0.5')).toBe(true)
+    expect(actionGroup.contains(copyButton)).toBe(true)
+    expect(actionGroup.contains(branchButton)).toBe(true)
+    expect(
+      copyButton.compareDocumentPosition(branchButton) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(
+      branchButton.compareDocumentPosition(completedTime) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    await click(copyButton)
+    expect(writeText).toHaveBeenCalledWith('Completed analysis')
+    await click(branchButton)
+    expect(onBranchInNewSession).toHaveBeenCalledWith('agent-message')
+  })
+
+  it('keeps the completed Agent Message branch action visible but disabled when unavailable', async () => {
+    const onBranchInNewSession = vi.fn()
+    await renderItem(
+      createMessage({ role: 'agent', content: 'Completed analysis', completedAt: 1710000001000 }),
+      { canBranchInNewSession: false, onBranchInNewSession }
+    )
+
+    const branchButton = getButton('Branch in new session')
+    expect(branchButton.disabled).toBe(true)
+    await click(branchButton)
+    expect(onBranchInNewSession).not.toHaveBeenCalled()
+  })
+
+  it('presents a settled Reviewer Correction as a compact content-free status row', async () => {
+    await renderItem(
+      createMessage({
+        content: '[Auditor] Correct the unsupported claim.',
+        attribution: {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        }
+      }),
+      {
+        canEditMessage: true,
+        revisionNavigation: { index: 0, total: 2, onNext: noop }
+      }
+    )
+
+    expect(container.querySelector('[data-testid="reviewer-correction-message"]')).not.toBeNull()
+    expect(container.textContent).toContain('Corrections requested')
+    expect(container.textContent).toContain('Handed off to the Agent · response started')
+    expect(container.textContent).not.toContain('[Auditor] Correct the unsupported claim.')
+    expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Message revision"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Copy correction"]')).toBeNull()
+    expect(container.querySelector('details')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="reviewer-correction-settled-icon"]')
+    ).not.toBeNull()
+  })
+
+  it('shows the active correction lifecycle without mounting the correction body', async () => {
+    await renderItem(
+      createMessage({
+        content: '[Auditor] Correct the unsupported claim.',
+        attribution: {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        }
+      }),
+      { reviewerCorrectionActive: true }
+    )
+
+    expect(container.textContent).toContain('Reviewer requested corrections')
+    expect(container.textContent).toContain('Agent is addressing the feedback')
+    expect(container.textContent).not.toContain('Handed off to the Agent · response started')
+    expect(container.textContent).not.toContain('[Auditor] Correct the unsupported claim.')
+    const activeIcon = container.querySelector('[data-testid="reviewer-correction-active-icon"]')
+    expect(activeIcon?.getAttribute('class')).toContain('animate-spin')
+    expect(activeIcon?.getAttribute('class')).toContain('motion-reduce:animate-none')
+  })
+
+  it('keeps matching Auditor text human-authored when attribution is absent', async () => {
+    await renderItem(createMessage({ content: '[Auditor] Correct the unsupported claim.' }), {
+      canEditMessage: true
+    })
+
+    expect(container.querySelector('[data-slot="user-message-bubble"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Edit message"]')).not.toBeNull()
+  })
   it('keeps the normal Session transcript gutter by default', async () => {
     await renderItem(createMessage())
 

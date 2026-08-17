@@ -119,6 +119,15 @@ describe('FilePreviewDialog closing lifecycle', () => {
     )
   })
 
+  it('exits the modal after View in context navigates to the origin session', () => {
+    const onClose = vi.fn()
+    act(() => root.render(<FilePreviewDialog item={item} onClose={onClose} />))
+
+    expect(previewSurfaceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ onViewInContextNavigate: onClose })
+    )
+  })
+
   it('releases its focus trap while a nested Streamdown fullscreen is open', async () => {
     act(() => root.render(<FilePreviewDialog item={item} onClose={vi.fn()} />))
 

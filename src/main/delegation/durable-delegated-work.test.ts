@@ -1670,7 +1670,7 @@ describe('durable delegated work', () => {
         versionNumber: 1,
         checksum: 'abc123',
         createdAt: '2026-08-07T00:00:00.000Z',
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'session-1',
         runId: 'artifact-run-1',
         name: 'evidence.md',
@@ -1929,7 +1929,7 @@ describe('durable delegated work', () => {
     const evidenceFor = (attemptId: string): ArtifactFile[] => [
       {
         id: `version-${attemptId}`,
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'session-1',
         name: `${attemptId}.md`,
         path: `/managed/${attemptId}.md`,
@@ -1991,7 +1991,7 @@ describe('durable delegated work', () => {
     })
     const existing = {
       id: 'version-existing',
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       name: 'existing.md',
       path: '/managed/existing.md',
@@ -2056,7 +2056,7 @@ describe('durable delegated work', () => {
     const revoke = vi.fn(async () => undefined)
     const preserved = {
       id: 'version-preserved',
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       name: 'preserved.md',
       path: '/managed/preserved.md',

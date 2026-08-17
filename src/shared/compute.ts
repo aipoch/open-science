@@ -127,7 +127,7 @@ export type ComputeApprovalRequest = {
   remote_workdir?: string
 }
 
-// The job status values for the Phase 3a state machine. 'queued' is reserved for Phase 3c.
+// Job status values, including concurrency-managed queued work.
 export type ComputeJobStatus =
   'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
 

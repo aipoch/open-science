@@ -1,4 +1,5 @@
 import { RefreshCw } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -21,6 +22,7 @@ type EnvironmentStepProps = {
 // First step: confirm the host meets the core requirements (system, storage, secure storage,
 // network). The agent runtime is set up on the next step.
 const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
@@ -37,7 +39,7 @@ const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Elemen
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-        <CardTitle className="text-[15px] font-semibold">Prepare environment</CardTitle>
+        <CardTitle className="text-[15px] font-semibold">{t('Prepare environment')}</CardTitle>
         {/* Re-check lives on the title row (the setup card's own intro row is hidden via hideIntro),
             so the step header and the checklist read as one surface. */}
         <CardAction>
@@ -49,28 +51,28 @@ const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Elemen
             disabled={isCheckingEnvironment}
           >
             <RefreshCw className={cn(isCheckingEnvironment && 'animate-spin')} aria-hidden="true" />
-            {isCheckingEnvironment ? 'Checking…' : 'Check again'}
+            {isCheckingEnvironment ? t('Checking…') : t('Check again')}
           </Button>
         </CardAction>
         <CardDescription className="text-xs leading-5">
-          Open Science confirms its core requirements before your first research session.
+          {t('Open Science confirms its core requirements before your first research session.')}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />
 
       <CardContent className="flex-1 px-6 py-5">
-        <section aria-label="Prepare environment" className="space-y-5">
+        <section aria-label={t('Prepare environment')} className="space-y-5">
           <EnvironmentSetupCard environment={environmentCheck} error={environmentCheckError} />
         </section>
       </CardContent>
       <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
         <p className="text-xs leading-5 text-muted-foreground">
           {hostReady
-            ? 'All required environment checks passed.'
-            : 'Complete every required item above to continue.'}
+            ? t('All required environment checks passed.')
+            : t('Complete every required item above to continue.')}
         </p>
         <Button type="button" onClick={onContinue} disabled={!hostReady} className="px-4">
-          Continue
+          {t('Continue')}
         </Button>
       </CardFooter>
     </>

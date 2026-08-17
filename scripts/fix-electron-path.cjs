@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/explicit-function-return-type */
+/* eslint-disable @typescript-eslint/no-require-imports */
 // Normalize node_modules/electron/path.txt so the electron binary resolves without a trailing
 // newline. Different npmmirror CDNs / extraction paths have shipped this 32-byte file with an
 // appended LF; electron's own index.js reads it via fs.readFileSync(pathFile, 'utf-8') without
@@ -30,5 +30,4 @@ if (normalized === raw) {
 
 fs.writeFileSync(pathFile, normalized, 'utf-8')
 
-// eslint-disable-next-line no-console
 console.log('fix-electron-path: stripped trailing newline from node_modules/electron/path.txt')

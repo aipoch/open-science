@@ -25,7 +25,7 @@ afterEach(async () => {
 })
 
 describe('artifactsCall RPC', () => {
-  it('uses only the control token Project and Session for list and path operations', async () => {
+  it('binds list and path scope to the control token without synthesizing a Frame filter', async () => {
     const list = vi.fn(async () => ({ artifacts: [] }))
     const resolvePath = vi.fn(async () => '/managed/report.csv')
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
@@ -40,15 +40,35 @@ describe('artifactsCall RPC', () => {
 
     const listed = await callArtifacts(control, control.token, {
       op: 'list',
-      options: { session_id: 'narrow-session' },
+      options: { frame_id: 'requested-producer-frame' },
       projectId: 'forged-project',
       sessionId: 'forged-session',
-      project_id: 'all'
+      project_id: 'all',
+      session_id: 'forged-session',
+      frame_id: 'forged-top-level-frame'
     })
     expect(listed).toMatchObject({ response: { status: 200 } })
-    expect(list).toHaveBeenCalledWith(
-      { session_id: 'narrow-session' },
+    expect(list).toHaveBeenNthCalledWith(
+      1,
+      { frame_id: 'requested-producer-frame' },
       { projectId: 'trusted-project', sessionId: 'trusted-session' }
+    )
+
+    const listedWithoutFrame = await callArtifacts(control, control.token, {
+      op: 'list',
+      options: {},
+      projectId: 'forged-project',
+      sessionId: 'forged-session',
+      frame_id: 'forged-top-level-frame'
+    })
+    expect(listedWithoutFrame).toMatchObject({ response: { status: 200 } })
+    expect(list).toHaveBeenNthCalledWith(
+      2,
+      {},
+      {
+        projectId: 'trusted-project',
+        sessionId: 'trusted-session'
+      }
     )
 
     const resolved = await callArtifacts(control, control.token, {

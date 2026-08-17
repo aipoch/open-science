@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -104,6 +105,8 @@ const SpecialistEditor = ({
   editSpecialist,
   initialInput
 }: SpecialistEditorProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const isEdit = editSpecialist !== undefined
   const connectors = useSettingsStore((state) => state.connectors)
   const skills = useSettingsStore((state) => state.skills)
@@ -452,8 +455,8 @@ const SpecialistEditor = ({
         error instanceof Error
           ? error.message
           : isEdit
-            ? 'Could not save changes.'
-            : 'Could not create specialist.'
+            ? t('Could not save changes.')
+            : t('Could not create specialist.')
       // Detect optimistic concurrency conflict — preserve local edits and show the
       // conflict banner instead of a generic error so the user can choose to reload.
       if (/revision conflict/i.test(message)) {
@@ -530,27 +533,30 @@ const SpecialistEditor = ({
                   {editSpecialist.displayName ?? editSpecialist.name}
                 </span>
                 <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {editSpecialist.setupPending ? 'Setup incomplete' : 'Saved'}
+                  {editSpecialist.setupPending ? t('Setup incomplete') : t('Saved')}
                 </span>
               </div>
               <p className="mt-0.5 line-clamp-2 max-w-xl text-xs text-muted-foreground">
-                {editSpecialist.description || 'No description'}
+                {editSpecialist.description || t('No description')}
               </p>
               {editSpecialist.origin === 'imported' ? (
                 <div className="mt-2 text-xs text-muted-foreground">
-                  <strong className="text-foreground">Package provenance</strong>
+                  <strong className="text-foreground">{t('Package provenance')}</strong>
                   <span className="block">
-                    Imported · Original version {editSpecialist.packageVersion ?? '0.1.0'} ·{' '}
-                    {editSpecialist.modifiedSinceImport
-                      ? 'Modified after import'
-                      : 'Unchanged since import'}
+                    {t('Imported · Original version {{version}} · {{status}}', {
+                      version: editSpecialist.packageVersion ?? '0.1.0',
+                      status: editSpecialist.modifiedSinceImport
+                        ? t('Modified after import')
+                        : t('Unchanged since import')
+                    })}
                   </span>
                 </div>
               ) : null}
               {editSpecialist.setupPending ? (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  This imported Specialist is saved but disabled. Save changes to complete setup and
-                  enable it.
+                  {t(
+                    'This imported Specialist is saved but disabled. Save changes to complete setup and enable it.'
+                  )}
                 </p>
               ) : null}
             </div>
@@ -559,9 +565,9 @@ const SpecialistEditor = ({
 
         {/* Identity section */}
         <section className="mb-6">
-          <h3 className="mb-1 text-base font-semibold text-foreground">Identity</h3>
+          <h3 className="mb-1 text-base font-semibold text-foreground">{t('Identity')}</h3>
           <p className="mb-4 text-[13px] leading-5 text-muted-foreground">
-            How this specialist appears in the registry and session picker.
+            {t('How this specialist appears in the registry and session picker.')}
           </p>
 
           {/* Live preview — reflects the current icon + color + name, matching the list */}
@@ -569,25 +575,25 @@ const SpecialistEditor = ({
             <SpecialistAvatar iconKey={form.iconKey} colorKey={form.colorKey} size="lg" />
             <div className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold text-foreground">
-                {form.name.trim() || 'Untitled specialist'}
+                {form.name.trim() || t('Untitled specialist')}
               </span>
               <span className="text-xs text-muted-foreground">
-                Preview — matches the list and picker.
+                {t('Preview — matches the list and picker.')}
               </span>
             </div>
             <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-              Live
+              {t('Live')}
             </span>
           </div>
 
           <div className="mb-4 grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-1.5 block text-xs font-semibold">Icon</label>
+              <label className="mb-1.5 block text-xs font-semibold">{t('Icon')}</label>
               <Select
                 value={form.iconKey}
                 onValueChange={(iconKey) => setForm((prev) => ({ ...prev, iconKey }))}
               >
-                <SelectTrigger aria-label="Specialist icon">
+                <SelectTrigger aria-label={t('Specialist icon')}>
                   <span className="flex items-center gap-2">
                     {(() => {
                       const Icon = AVATAR_ICONS[form.iconKey] ?? AVATAR_ICONS.brain
@@ -612,12 +618,12 @@ const SpecialistEditor = ({
               </Select>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold">Color</label>
+              <label className="mb-1.5 block text-xs font-semibold">{t('Color')}</label>
               <Select
                 value={form.colorKey}
                 onValueChange={(colorKey) => setForm((prev) => ({ ...prev, colorKey }))}
               >
-                <SelectTrigger aria-label="Specialist color">
+                <SelectTrigger aria-label={t('Specialist color')}>
                   <span className="flex items-center gap-2">
                     <span
                       className="size-3.5 shrink-0 rounded border border-black/10"
@@ -650,7 +656,7 @@ const SpecialistEditor = ({
           {/* Name */}
           <div className="mb-4">
             <label htmlFor="sp-name" className="mb-1.5 flex items-baseline justify-between text-xs">
-              <span>{isEdit ? 'Display name' : 'Name'}</span>
+              <span>{isEdit ? t('Display name') : t('Name')}</span>
               <span className="text-[11px] tabular-nums text-muted-foreground">
                 {form.name.length} / {SPECIALIST_NAME_MAX_LENGTH}
               </span>
@@ -663,7 +669,7 @@ const SpecialistEditor = ({
                 setForm((prev) => ({ ...prev, name: e.target.value }))
                 setFieldErrors((prev) => prev.filter((er) => er.field !== 'name'))
               }}
-              placeholder="e.g. RNA-seq Reviewer"
+              placeholder={t('e.g. RNA-seq Reviewer')}
               aria-describedby={getFieldError('name') ? 'sp-name-err' : undefined}
               aria-invalid={!!getFieldError('name')}
               className={cn(getFieldError('name') && 'border-destructive')}
@@ -682,7 +688,10 @@ const SpecialistEditor = ({
               className="mb-1.5 flex items-baseline justify-between text-xs"
             >
               <span>
-                Description <span className="text-muted-foreground">(optional)</span>
+                <Trans
+                  i18nKey="Description <muted>(optional)</muted>"
+                  components={{ muted: <span className="text-muted-foreground" /> }}
+                />
               </span>
               <span className="text-[11px] tabular-nums text-muted-foreground">
                 {form.description.length} / {SPECIALIST_DESCRIPTION_MAX_LENGTH}
@@ -699,7 +708,7 @@ const SpecialistEditor = ({
               aria-describedby={getFieldError('description') ? 'sp-description-err' : undefined}
               aria-invalid={!!getFieldError('description')}
               className={cn(getFieldError('description') && 'border-destructive')}
-              placeholder="Short description shown in the list and picker"
+              placeholder={t('Short description shown in the list and picker')}
             />
             {getFieldError('description') ? (
               <p id="sp-description-err" className="mt-1 text-xs text-destructive" role="alert">
@@ -712,7 +721,7 @@ const SpecialistEditor = ({
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="sp-package-version" className="mb-1.5 block text-xs font-semibold">
-                  Package version
+                  {t('Package version')}
                 </label>
                 <Input
                   id="sp-package-version"
@@ -740,14 +749,14 @@ const SpecialistEditor = ({
               </div>
               <div>
                 <label htmlFor="sp-specialist-name" className="mb-1.5 block text-xs font-semibold">
-                  Specialist name
+                  {t('Specialist name')}
                 </label>
                 <Input id="sp-specialist-name" value={editSpecialist.name} readOnly />
-                <p className="mt-1 text-xs text-muted-foreground">Fixed after creation.</p>
+                <p className="mt-1 text-xs text-muted-foreground">{t('Fixed after creation.')}</p>
               </div>
               <div>
                 <label htmlFor="sp-specialist-id" className="mb-1.5 block text-xs font-semibold">
-                  Specialist ID
+                  {t('Specialist ID')}
                 </label>
                 <Input id="sp-specialist-id" value={editSpecialist.id} readOnly />
               </div>
@@ -757,21 +766,22 @@ const SpecialistEditor = ({
 
         {/* Instructions section */}
         <section className="mb-6 border-t border-border pt-5">
-          <h3 className="mb-1 text-base font-semibold text-foreground">Instructions</h3>
+          <h3 className="mb-1 text-base font-semibold text-foreground">{t('Instructions')}</h3>
           <p className="mb-4 text-[13px] leading-5 text-muted-foreground">
-            Appended to the app&rsquo;s base prompt — does not replace safety rules or tool
-            instructions. Optional.
+            {t(
+              "Appended to the app's base prompt — does not replace safety rules or tool instructions. Optional."
+            )}
           </p>
           <div className="relative">
             <label htmlFor="sp-system-prompt" className="sr-only">
-              Instructions
+              {t('Instructions')}
             </label>
             <Textarea
               id="sp-system-prompt"
               value={form.systemPrompt}
               onChange={(e) => setForm((prev) => ({ ...prev, systemPrompt: e.target.value }))}
               maxLength={SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH}
-              placeholder="Optional — leave empty to use the base prompt as-is."
+              placeholder={t('Optional — leave empty to use the base prompt as-is.')}
               className="min-h-[120px] resize-y pb-7 text-[13px]"
             />
             <span className="pointer-events-none absolute bottom-2 right-3 text-[11px] tabular-nums text-muted-foreground">
@@ -786,10 +796,11 @@ const SpecialistEditor = ({
 
         {/* Capabilities */}
         <section className="border-t border-border pt-5">
-          <h3 className="mb-1 text-base font-semibold text-foreground">Capabilities</h3>
+          <h3 className="mb-1 text-base font-semibold text-foreground">{t('Capabilities')}</h3>
           <p className="mb-4 text-[13px] leading-5 text-muted-foreground">
-            Skills and connectors this specialist can use. Anything not chosen here stays invisible
-            and unreachable in its sessions, even when enabled globally.
+            {t(
+              'Skills and connectors this specialist can use. Anything not chosen here stays invisible and unreachable in its sessions, even when enabled globally.'
+            )}
           </p>
 
           {/* Full access — single option, default selected. Loads every Main Agent skill and
@@ -798,7 +809,7 @@ const SpecialistEditor = ({
             type="button"
             role="switch"
             aria-checked={isFullAccess}
-            aria-label="Full access"
+            aria-label={t('Full access')}
             onClick={() =>
               setForm((prev) => ({
                 ...prev,
@@ -820,21 +831,24 @@ const SpecialistEditor = ({
             </span>
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2 text-[13px] font-semibold">
-                Full access
+                {t('Full access')}
                 <span className="rounded bg-primary px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wide text-primary-foreground">
-                  Default
+                  {t('Default')}
                 </span>
               </span>
               <span className="mt-0.5 block text-[11.5px] leading-snug text-muted-foreground">
-                Use all of the Main Agent&rsquo;s skills and connectors, including new ones added
-                later. No need to configure each item.
+                {t(
+                  "Use all of the Main Agent's skills and connectors, including new ones added later. No need to configure each item."
+                )}
               </span>
             </span>
           </button>
 
           <div className="my-3 flex items-center gap-3" aria-hidden="true">
             <span className="h-px flex-1 bg-border" />
-            <span className="text-[11px] text-text-300">or choose specific capabilities</span>
+            <span className="text-[11px] text-text-300">
+              {t('or choose specific capabilities')}
+            </span>
             <span className="h-px flex-1 bg-border" />
           </div>
 
@@ -851,7 +865,7 @@ const SpecialistEditor = ({
                 <div
                   className="inline-flex gap-0.5 rounded-lg bg-muted p-1"
                   role="tablist"
-                  aria-label="Capability type"
+                  aria-label={t('Capability type')}
                 >
                   <button
                     type="button"
@@ -865,7 +879,7 @@ const SpecialistEditor = ({
                         : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
-                    Skills{' '}
+                    {t('Skills')}{' '}
                     <span className="ml-0.5 text-[11px] opacity-75">
                       {form.selectedSkillIds.length}
                     </span>
@@ -882,7 +896,7 @@ const SpecialistEditor = ({
                         : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
-                    Connectors{' '}
+                    {t('Connectors')}{' '}
                     <span className="ml-0.5 text-[11px] opacity-75">
                       {form.connectorIds.length}
                     </span>
@@ -902,7 +916,7 @@ const SpecialistEditor = ({
                       }}
                       className="flex h-[28px] items-center rounded-lg border border-dashed border-border bg-card px-3 text-[12px] text-muted-foreground hover:bg-muted"
                     >
-                      ＋ Add a skill
+                      {t('＋ Add a skill')}
                     </button>
                     {skillPopoverOpen ? (
                       <div className="absolute right-0 top-full z-50 mt-1 flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card shadow-md">
@@ -910,9 +924,9 @@ const SpecialistEditor = ({
                           <input
                             ref={skillSearchRef}
                             type="search"
-                            aria-label="Search skills to add"
+                            aria-label={t('Search skills to add')}
                             aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
-                            placeholder="Search skills…"
+                            placeholder={t('Search skills…')}
                             value={skillSearchQuery}
                             onChange={(e) => setSkillSearchQuery(e.target.value)}
                             className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
@@ -921,7 +935,9 @@ const SpecialistEditor = ({
                         <div className="flex-1">
                           {filteredAddableSkills.length === 0 ? (
                             <p className="px-3 py-3 text-[12px] text-muted-foreground">
-                              {skillSearchQuery ? 'No matching skills' : 'No more skills to add'}
+                              {skillSearchQuery
+                                ? t('No matching skills')
+                                : t('No more skills to add')}
                             </p>
                           ) : (
                             filteredAddableSkills.map((skill) => (
@@ -956,7 +972,7 @@ const SpecialistEditor = ({
                       }}
                       className="flex h-[28px] items-center rounded-lg border border-dashed border-border bg-card px-3 text-[12px] text-muted-foreground hover:bg-muted"
                     >
-                      ＋ Add a connector
+                      {t('＋ Add a connector')}
                     </button>
                     {connectorPopoverOpen ? (
                       <div className="absolute right-0 top-full z-50 mt-1 flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card shadow-md">
@@ -964,9 +980,9 @@ const SpecialistEditor = ({
                           <input
                             ref={connectorSearchRef}
                             type="search"
-                            aria-label="Search connectors to add"
+                            aria-label={t('Search connectors to add')}
                             aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
-                            placeholder="Search connectors…"
+                            placeholder={t('Search connectors…')}
                             value={connectorSearchQuery}
                             onChange={(e) => setConnectorSearchQuery(e.target.value)}
                             className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
@@ -976,8 +992,8 @@ const SpecialistEditor = ({
                           {filteredAddableConnectors.length === 0 ? (
                             <p className="px-3 py-3 text-[12px] text-muted-foreground">
                               {connectorSearchQuery
-                                ? 'No matching connectors'
-                                : 'No more connectors to add'}
+                                ? t('No matching connectors')
+                                : t('No more connectors to add')}
                             </p>
                           ) : (
                             filteredAddableConnectors.map((connector) => (
@@ -1008,7 +1024,7 @@ const SpecialistEditor = ({
                   <div className="overflow-hidden rounded-lg border border-border">
                     {selectedSkillRows.length === 0 ? (
                       <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
-                        No skills added yet.
+                        {t('No skills added yet.')}
                       </p>
                     ) : (
                       selectedSkillRows.map((skill) => (
@@ -1026,7 +1042,7 @@ const SpecialistEditor = ({
                           </div>
                           {skill.missing ? (
                             <span className="shrink-0 text-[11px] text-muted-foreground">
-                              Missing · unavailable
+                              {t('Missing · unavailable')}
                             </span>
                           ) : (
                             <>
@@ -1037,13 +1053,13 @@ const SpecialistEditor = ({
                               ) : null}
                               {!skill.mainEnabled ? (
                                 <span className="shrink-0 text-[11px] text-muted-foreground">
-                                  Main disabled · available here
+                                  {t('Main disabled · available here')}
                                 </span>
                               ) : null}
                             </>
                           )}
                           <SettingsIconAction
-                            label={`Remove ${skill.name}`}
+                            label={t('Remove {{name}}', { name: skill.name })}
                             icon={X}
                             onClick={() => removeSkill(skill.id)}
                             danger
@@ -1055,8 +1071,9 @@ const SpecialistEditor = ({
                   <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
                     <span aria-hidden="true">ⓘ</span>
                     <span>
-                      Skills start empty and must be added. Skills not listed here are hidden from
-                      this specialist, and Skill calls to them are rejected.
+                      {t(
+                        'Skills start empty and must be added. Skills not listed here are hidden from this specialist, and Skill calls to them are rejected.'
+                      )}
                     </span>
                   </p>
                 </div>
@@ -1067,7 +1084,7 @@ const SpecialistEditor = ({
                   <div className="overflow-hidden rounded-lg border border-border">
                     {selectedConnectorRows.length === 0 ? (
                       <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
-                        No connectors added yet.
+                        {t('No connectors added yet.')}
                       </p>
                     ) : (
                       selectedConnectorRows.map((connector) => (
@@ -1085,15 +1102,17 @@ const SpecialistEditor = ({
                           </div>
                           {!connector.available ? (
                             <span className="shrink-0 text-[11px] text-muted-foreground">
-                              Unavailable — {connector.availability ?? 'not installed'}
+                              {t('Unavailable — {{reason}}', {
+                                reason: connector.availability ?? t('not installed')
+                              })}
                             </span>
                           ) : !connector.mainEnabled ? (
                             <span className="shrink-0 text-[11px] text-muted-foreground">
-                              Main disabled · available here
+                              {t('Main disabled · available here')}
                             </span>
                           ) : null}
                           <SettingsIconAction
-                            label={`Remove ${connector.name}`}
+                            label={t('Remove {{name}}', { name: connector.name })}
                             icon={X}
                             onClick={() => removeConnector(connector.id)}
                             danger
@@ -1105,8 +1124,9 @@ const SpecialistEditor = ({
                   <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
                     <span aria-hidden="true">ⓘ</span>
                     <span>
-                      Connectors start empty and must be added. Connectors not listed here are
-                      blocked at runtime for this specialist&rsquo;s sessions.
+                      {t(
+                        "Connectors start empty and must be added. Connectors not listed here are blocked at runtime for this specialist's sessions."
+                      )}
                     </span>
                   </p>
                 </div>
@@ -1116,7 +1136,7 @@ const SpecialistEditor = ({
             {isFullAccess ? (
               <button
                 type="button"
-                aria-label="Enable select capabilities"
+                aria-label={t('Enable select capabilities')}
                 onClick={() => setForm((prev) => ({ ...prev, capabilityMode: 'selected' }))}
                 className="absolute inset-0 cursor-pointer rounded-lg"
               />
@@ -1129,14 +1149,17 @@ const SpecialistEditor = ({
         {hasConflict ? (
           <div
             role="alert"
-            aria-label="Revision conflict"
+            aria-label={t('Revision conflict')}
             className="mt-4 flex items-start gap-3 rounded-lg border border-border bg-muted/50 p-3 text-sm"
           >
             <div className="min-w-0 flex-1">
-              <p className="font-semibold text-foreground">Someone else saved a newer version</p>
+              <p className="font-semibold text-foreground">
+                {t('Someone else saved a newer version')}
+              </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Your local edits are preserved. Reload to get the latest version (your unsaved
-                changes will be discarded), or cancel and try again.
+                {t(
+                  'Your local edits are preserved. Reload to get the latest version (your unsaved changes will be discarded), or cancel and try again.'
+                )}
               </p>
             </div>
             {onReload ? (
@@ -1148,7 +1171,7 @@ const SpecialistEditor = ({
                 disabled={isReloading}
                 className="shrink-0"
               >
-                {isReloading ? 'Reloading…' : 'Reload'}
+                {isReloading ? t('Reloading…') : t('Reload')}
               </Button>
             ) : null}
           </div>
@@ -1157,7 +1180,7 @@ const SpecialistEditor = ({
         {/* Footer actions */}
         <div className="mt-6 flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={isSaving}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button
             type="button"
@@ -1166,11 +1189,11 @@ const SpecialistEditor = ({
           >
             {isSaving
               ? isEdit
-                ? 'Saving…'
-                : 'Creating…'
+                ? t('Saving…')
+                : t('Creating…')
               : isEdit
-                ? 'Save changes'
-                : 'Create specialist'}
+                ? t('Save changes')
+                : t('Create specialist')}
           </Button>
         </div>
       </div>

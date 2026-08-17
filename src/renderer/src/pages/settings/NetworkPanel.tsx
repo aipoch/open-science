@@ -1,5 +1,6 @@
 import { EthernetPort, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { PackageMirror } from '../../../../shared/mirror'
 import type { NetworkConnectionType, NetworkInfo } from '../../../../shared/network'
@@ -12,7 +13,7 @@ import { useNetworkStore } from '@/stores/network-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { isMirrorConfigured, mirrorStatusText, MIRROR_HELP_URL } from './mirror-view'
-import { MODE_LABELS, NetworkProxyForm } from './NetworkProxyForm'
+import { NetworkProxyForm } from './NetworkProxyForm'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const actionButtonClassName =
@@ -23,13 +24,14 @@ const actionButtonClassName =
 type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
 type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
 
-// Shared identity of the single check row this panel renders (and its pending placeholder).
-const NETWORK_CHECK_BASE = {
-  id: 'install-network',
-  label: 'Internet connection'
-} as const satisfies Pick<EnvironmentCheckItem, 'id' | 'label'>
+// Identity of the single check row this panel renders (and its pending placeholder). Only the id
+// lives here: the label travels to the row as *data* rather than as JSX, so holding it as a bare
+// English constant would put it on screen untranslated. It is built with t() below instead.
+const NETWORK_CHECK_ID = 'install-network' as const satisfies EnvironmentCheckItem['id']
 
-// Display labels for the main-process connection types; 'unknown' has no label and drops out.
+// Display labels for the main-process connection types; 'unknown' has no label and drops out. These
+// are English source text, translated where they are read — a runtime connection type can't be
+// interpolated into a natural-language key.
 const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
   wifi: 'Wi-Fi',
   ethernet: 'Ethernet'
@@ -42,13 +44,14 @@ const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
 // fetches at a mirror instead. The "Claude Science domains" egress allowlist from the mockup is
 // phase-3 (spec §14, §9) and is intentionally not built here.
 const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery, a
   // background cadence, and Retry), so this panel and the header/sidebar indicators never
-  // disagree. 'unknown' renders as Checking….
+  // disagree. 'unknown' renders as Checking…; 'probe-failed' remains retryable.
   const connectivity = useNetworkStore((state) => state.connectivity)
   const probeConnectivity = useNetworkStore((state) => state.probeConnectivity)
 
@@ -113,41 +116,56 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
       await setPackageMirror(draft)
       onNavigate({ kind: 'list' })
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not save the package mirror.')
+      // An IPC-supplied error message is passed through verbatim; only the fallback is translated.
+      setMessage(error instanceof Error ? error.message : t('Could not save the package mirror.'))
     } finally {
       setIsSaving(false)
     }
   }
 
   // Connection type + IP fold into the check row's detail line, e.g. "Wi-Fi · 192.168.1.42".
-  const typeLabel = networkInfo ? CONNECTION_TYPE_LABELS[networkInfo.connectionType] : undefined
+  const typeSource = networkInfo ? CONNECTION_TYPE_LABELS[networkInfo.connectionType] : undefined
+  const typeLabel = typeSource ? t(typeSource) : undefined
   const interfaceDetail =
     [typeLabel ?? null, networkInfo?.ipAddress ?? null]
       .filter((part) => part !== null)
       .join(' · ') || undefined
+
+  const networkLabel = t('Internet connection')
 
   // The Network status row is an EnvironmentCheckItem so it renders with the exact same row
   // component as the onboarding environment step's network check. A live link with unreachable
   // internet is amber (warning) rather than red — the machine is connected, the path out is not.
   const networkCheck: EnvironmentCheckItem = !isOnline
     ? {
-        ...NETWORK_CHECK_BASE,
+        id: NETWORK_CHECK_ID,
+        label: networkLabel,
         status: 'failed',
-        summary: 'This machine is offline.'
+        summary: t('This machine is offline.')
       }
     : connectivity === 'unreachable'
       ? {
-          ...NETWORK_CHECK_BASE,
+          id: NETWORK_CHECK_ID,
+          label: networkLabel,
           status: 'warning',
-          summary: 'The network link is up, but the internet is unreachable.',
+          summary: t('The network link is up, but the internet is unreachable.'),
           detail: interfaceDetail
         }
-      : {
-          ...NETWORK_CHECK_BASE,
-          status: 'passed',
-          summary: 'The internet is reachable.',
-          detail: interfaceDetail
-        }
+      : connectivity === 'probe-failed'
+        ? {
+            id: NETWORK_CHECK_ID,
+            label: networkLabel,
+            status: 'warning',
+            summary: t('Could not check whether the internet is reachable.'),
+            detail: interfaceDetail
+          }
+        : {
+            id: NETWORK_CHECK_ID,
+            label: networkLabel,
+            status: 'passed',
+            summary: t('The internet is reachable.'),
+            detail: interfaceDetail
+          }
 
   // 'unknown' only ever means a probe is in flight (offline settles on 'unreachable'), so it
   // always renders as Checking… — including an offline Retry.
@@ -165,27 +183,31 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   return (
     <div className="space-y-6 p-5">
       {!isConfiguring ? (
-        <section aria-label="Network status">
-          <h3 className="mb-1 text-sm font-semibold text-foreground">Network status</h3>
+        <section aria-label={t('Network status')}>
+          <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Network status')}</h3>
           <p className="mb-3 text-xs text-muted-foreground">
-            Whether this machine can currently reach the internet.
+            {t('Whether this machine can currently reach the internet.')}
           </p>
 
           <div className="rounded-xl border border-border px-4">
             <ul aria-live="polite">
               {isChecking ? (
-                <PendingCheckRow {...NETWORK_CHECK_BASE} pendingText="Checking…" />
+                <PendingCheckRow
+                  id={NETWORK_CHECK_ID}
+                  label={networkLabel}
+                  pendingText={t('Checking…')}
+                />
               ) : (
                 <EnvironmentCheckRow check={networkCheck} icon={networkIcon} />
               )}
             </ul>
 
-            {!isOnline || connectivity === 'unreachable' ? (
+            {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
               <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
                 <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
-                  {!isOnline ? <li>Check your cable or Wi-Fi connection.</li> : null}
-                  <li>Check proxy, VPN, or firewall settings.</li>
-                  <li>Check the package mirror configuration below.</li>
+                  {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
+                  <li>{t('Check proxy, VPN, or firewall settings.')}</li>
+                  <li>{t('Check the package mirror configuration below.')}</li>
                 </ol>
                 <Button
                   type="button"
@@ -196,7 +218,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                   disabled={isChecking}
                 >
                   <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
-                  {isChecking ? 'Checking…' : 'Check again'}
+                  {isChecking ? t('Checking…') : t('Check again')}
                 </Button>
               </div>
             ) : null}
@@ -205,21 +227,31 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
       ) : null}
 
       {!isConfiguring ? (
-        <section aria-label="Proxy">
-          <h3 className="mb-1 text-sm font-semibold text-foreground">Proxy</h3>
+        <section aria-label={t('Proxy')}>
+          <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Proxy')}</h3>
           <p className="mb-3 text-xs text-muted-foreground">
-            How Open Science, ACP agents, notebook runtimes, and installers reach the internet.
+            {t(
+              'How Open Science, ACP agents, notebook runtimes, and installers reach the internet.'
+            )}
           </p>
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-foreground">{MODE_LABELS[networkProxy.mode]}</p>
+                <p className="text-sm text-foreground">
+                  {t(
+                    networkProxy.mode === 'system'
+                      ? 'System'
+                      : networkProxy.mode === 'manual'
+                        ? 'Manual'
+                        : 'Direct'
+                  )}
+                </p>
                 <p className="truncate text-xs text-muted-foreground">
                   {networkProxy.mode === 'manual'
                     ? networkProxy.server
                     : networkProxy.mode === 'system'
-                      ? 'Follows this device'
-                      : 'Connects without a proxy'}
+                      ? t('Follows this device')
+                      : t('Connects without a proxy')}
                 </p>
               </div>
               <button
@@ -227,39 +259,40 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                 onClick={() => onNavigate({ kind: 'proxy' })}
                 className={actionButtonClassName}
               >
-                Configure proxy
+                {t('Configure proxy')}
               </button>
             </div>
           </div>
         </section>
       ) : null}
 
-      <section aria-label="Package mirror">
-        <h3 className="mb-1 text-sm font-semibold text-foreground">Package mirror</h3>
+      <section aria-label={t('Package mirror')}>
+        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Package mirror')}</h3>
         <p className="mb-3 text-xs text-muted-foreground">
-          Where the notebook environment fetches conda and Python packages from when installing or
-          updating.
+          {t(
+            'Where the notebook environment fetches conda and Python packages from when installing or updating.'
+          )}
         </p>
 
         <div className="rounded-xl border border-border p-4">
           {!isConfiguring ? (
             <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-foreground">{mirrorStatusText(packageMirror)}</span>
+              <span className="text-sm text-foreground">{mirrorStatusText(packageMirror, t)}</span>
               <button type="button" onClick={handleConfigure} className={actionButtonClassName}>
-                {isMirrorConfigured(packageMirror) ? 'Edit' : 'Configure'}
+                {isMirrorConfigured(packageMirror) ? t('Edit') : t('Configure')}
               </button>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
               <div className="space-y-1.5">
                 <label className={fieldLabelClassName} htmlFor="mirror-conda-channel">
-                  Conda channel mirror
+                  {t('Conda channel mirror')}
                 </label>
                 <Input
                   id="mirror-conda-channel"
-                  aria-label="Conda channel mirror"
+                  aria-label={t('Conda channel mirror')}
                   value={draft.condaChannel ?? ''}
-                  placeholder="https://mirrors.example.com/conda-forge/"
+                  placeholder={t('https://mirrors.example.com/conda-forge/')}
                   onChange={(event) =>
                     setDraft((current) => ({ ...current, condaChannel: event.target.value }))
                   }
@@ -268,13 +301,13 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
 
               <div className="space-y-1.5">
                 <label className={fieldLabelClassName} htmlFor="mirror-pypi-index">
-                  Python package index (pip)
+                  {t('Python package index (pip)')}
                 </label>
                 <Input
                   id="mirror-pypi-index"
-                  aria-label="Python package index (pip)"
+                  aria-label={t('Python package index (pip)')}
                   value={draft.pypiIndex ?? ''}
-                  placeholder="https://mirrors.example.com/pypi/simple"
+                  placeholder={t('https://mirrors.example.com/pypi/simple')}
                   onChange={(event) =>
                     setDraft((current) => ({ ...current, pypiIndex: event.target.value }))
                   }
@@ -283,19 +316,22 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
 
               <div className="space-y-1.5">
                 <label className={fieldLabelClassName} htmlFor="mirror-ca-bundle">
-                  CA bundle path <span className="text-muted-foreground">(optional)</span>
+                  {t('CA bundle path')}{' '}
+                  <span className="text-muted-foreground">{t('(optional)')}</span>
                 </label>
                 <Input
                   id="mirror-ca-bundle"
-                  aria-label="CA bundle path"
+                  aria-label={t('CA bundle path')}
                   value={draft.caBundle ?? ''}
-                  placeholder="/path/to/corp-ca-bundle.pem"
+                  placeholder={t('/path/to/corp-ca-bundle.pem')}
                   onChange={(event) =>
                     setDraft((current) => ({ ...current, caBundle: event.target.value }))
                   }
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  PEM bundle for a corporate TLS proxy; trusted by conda, pip, and R downloads.
+                  {t(
+                    'PEM bundle for a corporate TLS proxy; trusted by conda, pip, and R downloads.'
+                  )}
                 </p>
               </div>
 
@@ -312,7 +348,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                   disabled={isSaving}
                   className="rounded-lg border border-border px-3 py-1.5 text-sm transition-colors hover:bg-muted disabled:opacity-50"
                 >
-                  Cancel
+                  {t('Cancel')}
                 </button>
                 <button
                   type="button"
@@ -320,7 +356,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                   disabled={isSaving}
                   className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                 >
-                  {isSaving ? 'Saving…' : 'Save'}
+                  {isSaving ? t('Saving…') : t('Save')}
                 </button>
               </div>
             </div>
@@ -328,7 +364,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         </div>
 
         <p className="mt-3 text-xs text-muted-foreground">
-          <ExternalTextLink href={MIRROR_HELP_URL}>View available mirrors</ExternalTextLink>
+          <ExternalTextLink href={MIRROR_HELP_URL}>{t('View available mirrors')}</ExternalTextLink>
         </p>
       </section>
     </div>

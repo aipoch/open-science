@@ -24,7 +24,7 @@ const provenance = (): ArtifactVersionProvenance => ({
     checksum: 'a'.repeat(64),
     createdAt: '2026-08-06T00:00:00.000Z',
     state: 'finalized',
-    projectName: 'project-1',
+    projectId: 'project-1',
     sessionId: 'session-1',
     runId: 'artifact-run-1',
     name: 'cos.png',

@@ -72,7 +72,7 @@ export const createProvenanceTestFixture = async (): Promise<{
     repository,
     stagePng: async (payload, filename = 'plot.png') => {
       await compatibilityRepository.writePendingFile({
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'artifact-session-1',
         runId: 'artifact-run-1',
         filename,

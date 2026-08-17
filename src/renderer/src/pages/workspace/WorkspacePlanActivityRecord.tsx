@@ -10,8 +10,10 @@ import {
   X
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { projectGeneratePlanActivity } from './generate-plan-activity-projection'
+import { planConfidenceLabelKey } from './session-plan/plan-confidence-label'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 
@@ -29,6 +31,8 @@ const WorkspacePlanActivityRecord = ({
   hasDurablePlanAuthority = false,
   contentPaddingClassName = 'px-4 md:px-6'
 }: WorkspacePlanActivityRecordProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const projection = projectGeneratePlanActivity(activity, hasDurablePlanAuthority)
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(() => new Set())
   const [showAllSteps, setShowAllSteps] = useState(false)
@@ -39,7 +43,7 @@ const WorkspacePlanActivityRecord = ({
   const isActive =
     !hasDurablePlanAuthority && (activity.status === 'pending' || activity.status === 'in_progress')
   const failureDetails =
-    projection.kind === 'failed' ? buildToolActivityDetails(activity) : undefined
+    projection.kind === 'failed' ? buildToolActivityDetails(activity, t) : undefined
   const projectedTaskSummary = projection.kind === 'content' ? projection.taskSummary : undefined
 
   const toggleStep = (stepNumber: number): void => {
@@ -129,7 +133,7 @@ const WorkspacePlanActivityRecord = ({
     <MessageScrollerItem messageId={`plan-activity-${activity.id}`} className="min-w-0">
       <div className={`${contentPaddingClassName} pb-1 pt-5`}>
         <section
-          aria-label="Plan call record"
+          aria-label={t('Plan call record')}
           aria-live={isActive ? 'polite' : undefined}
           className="w-full overflow-hidden rounded-[12px] border border-border-200 bg-bg-200/70"
           data-testid="plan-call-record"
@@ -138,11 +142,14 @@ const WorkspacePlanActivityRecord = ({
             <span className="inline-flex size-[17px] shrink-0 items-center justify-center text-text-100">
               {statusIcon}
             </span>
-            <span>{projection.heading}</span>
+            <span>{t(projection.heading)}</span>
             {projection.kind === 'content' ? (
               <>
                 <span className="ml-auto shrink-0 tabular-nums text-text-300">
-                  {projection.steps.length} {projection.steps.length === 1 ? 'step' : 'steps'}
+                  {t('{{count}} steps', {
+                    count: projection.steps.length,
+                    defaultValue_one: '{{count}} step'
+                  })}
                 </span>
                 <button
                   type="button"
@@ -152,7 +159,7 @@ const WorkspacePlanActivityRecord = ({
                   className="rounded-[5px] px-1.5 py-0.5 text-[11px] text-text-100 transition-colors duration-150 hover:bg-bg-000/70 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none"
                   onClick={toggleAll}
                 >
-                  {everythingExpanded ? 'Collapse all' : 'Expand all'}
+                  {everythingExpanded ? t('Collapse all') : t('Expand all')}
                 </button>
               </>
             ) : null}
@@ -181,7 +188,7 @@ const WorkspacePlanActivityRecord = ({
                     className="mt-1 rounded-[4px] p-0 text-[11px] text-text-300 transition-colors duration-150 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none"
                     onClick={() => setTaskSummaryExpanded((expanded) => !expanded)}
                   >
-                    {taskSummaryExpanded ? 'Show less' : 'Show full task'}
+                    {taskSummaryExpanded ? t('Show less') : t('Show full task')}
                   </button>
                 ) : null}
               </div>
@@ -228,23 +235,26 @@ const WorkspacePlanActivityRecord = ({
               </ol>
               {remainingStepCount > 0 ? (
                 <div className="ml-5 mt-[7px] text-[11px] text-text-300">
-                  + {remainingStepCount} more {remainingStepCount === 1 ? 'step' : 'steps'}
+                  {t('+ {{count}} more steps', {
+                    count: remainingStepCount,
+                    defaultValue_one: '+ {{count}} more step'
+                  })}
                 </div>
               ) : null}
               <div className="mt-3 flex items-start gap-2 border-t border-border-200 pt-[9px] text-[11px] text-text-300">
                 <span className="shrink-0 whitespace-nowrap rounded-[5px] bg-accent/10 px-1.5 py-0.5 text-[10px] text-text-100">
-                  {projection.feasibility.confidence} confidence
+                  {t(planConfidenceLabelKey(projection.feasibility.confidence))}
                 </span>
                 <span>{projection.feasibility.summary}</span>
               </div>
             </div>
           ) : projection.kind === 'revision-conflict' ? (
             <div className="mb-[7px] ml-[31px] mr-[7px] rounded-[9px] border border-warning-100/50 bg-warning-100/10 px-[13px] py-[11px] text-[12px] text-text-300">
-              {projection.detail}
+              {t(projection.detail)}
             </div>
           ) : projection.kind === 'unavailable' ? (
             <div className="mb-[7px] ml-[31px] mr-[7px] rounded-[9px] border border-border-200 bg-bg-000 px-[13px] py-[11px] text-[12px] text-text-300">
-              Plan details unavailable
+              {t('Plan details unavailable')}
             </div>
           ) : projection.kind === 'failed' && failureDetails ? (
             <div className="mb-1.5 px-1.5">

@@ -43,6 +43,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'host-agents',
   'host-skills',
   'host-frames',
+  'host-sessions',
   'host-llm',
   'host-message'
 ] as const
@@ -54,6 +55,9 @@ const NOTEBOOK_CONTROL_RPC_METHODS = [
   'agentsCall',
   'skillsCall',
   'framesCall',
+  'sessionsCall',
+  'currentModelCall',
+  'listModelsCall',
   'llmCall',
   'viewImageCall'
 ] as const
@@ -112,7 +116,7 @@ type SessionCapabilityRoutingIds = Readonly<{
 
 export type SessionCapabilityArtifactOptions = {
   dataRoot: string
-  projectName: string
+  projectId: string
   mcpEntryPath: string
   mcpCommand?: string
   getRpcConnection?: () => Promise<NotebookRpcConnection>
@@ -122,7 +126,7 @@ export type SessionCapabilityArtifactOptions = {
 }
 
 export type SessionCapabilityNotebookOptions = {
-  projectName: string
+  projectId: string
   mcpEntryPath: string
   mcpCommand?: string
   getRpcConnection?: (binding: {
@@ -161,7 +165,7 @@ type BuildSessionCapabilitiesRequest = {
   routingOwner: object
   provisionGeneration: number
   sessionCwd: string
-  projectName: string
+  projectId: string
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
   onPlanConnection?: (connection: NotebookRpcConnection) => void
@@ -297,7 +301,7 @@ export class AcpSessionCapabilityOwner {
         routingOwner,
         provisionGeneration,
         sessionCwd: request.sessionCwd,
-        projectName: request.projectName,
+        projectId: request.projectId,
         onNotebookConnection: (connection) => {
           notebookRelease = connection.release
         },
@@ -523,6 +527,12 @@ export class AcpSessionCapabilityOwner {
     }
     if (
       capabilities.includes('notebook') &&
+      policyAllowsSessionCapability(request.policy, 'host-sessions')
+    ) {
+      capabilities.push('host-sessions')
+    }
+    if (
+      capabilities.includes('notebook') &&
       policyAllowsSessionCapability(request.policy, 'host-llm')
     ) {
       capabilities.push('host-llm')
@@ -539,6 +549,7 @@ export class AcpSessionCapabilityOwner {
         capabilities.includes('host-agents') ||
         capabilities.includes('host-skills') ||
         capabilities.includes('host-frames') ||
+        capabilities.includes('host-sessions') ||
         capabilities.includes('host-llm')
           ? [...NOTEBOOK_CONTROL_RPC_METHODS]
           : []
@@ -779,17 +790,17 @@ export class AcpSessionCapabilityOwner {
   private async buildArtifactEnvironment(
     routingId: string,
     sessionCwd: string,
-    projectName: string
+    projectId: string
   ): Promise<ArtifactMcpEnvironment | undefined> {
     if (!this.options.artifacts || !routingId) return undefined
     const connection = await this.options.artifacts.getRpcConnection?.()
     return {
       storageRoot: this.options.artifacts.dataRoot,
-      projectId: projectName,
+      projectId: projectId,
       sessionId: routingId,
       currentRunFile:
         this.options.artifacts.currentRunFile ??
-        getArtifactCurrentRunFilePath(this.options.artifacts.dataRoot, projectName, routingId),
+        getArtifactCurrentRunFilePath(this.options.artifacts.dataRoot, projectId, routingId),
       allowedImportRoots: [sessionCwd],
       rpcEndpoint: connection?.endpoint,
       rpcSocketPath: connection?.socketPath
@@ -799,7 +810,7 @@ export class AcpSessionCapabilityOwner {
   private async buildNotebookEnvironment(
     routingId: string,
     sessionCwd: string,
-    projectName: string,
+    projectId: string,
     onConnection?: (connection: NotebookRpcConnection) => void
   ): Promise<NotebookMcpEnvironment | undefined> {
     if (!this.options.notebook || !routingId) return undefined
@@ -808,14 +819,14 @@ export class AcpSessionCapabilityOwner {
     }
     const connection = await this.options.notebook.getRpcConnection({
       sessionId: routingId,
-      projectId: projectName
+      projectId: projectId
     })
     onConnection?.(connection)
     return {
       endpoint: connection.endpoint,
       socketPath: connection.socketPath,
       token: connection.token,
-      projectId: projectName,
+      projectId: projectId,
       sessionId: routingId,
       workspaceCwd: sessionCwd
     }
@@ -859,7 +870,7 @@ export class AcpSessionCapabilityOwner {
       const environment = await this.buildArtifactEnvironment(
         request.routingIds.artifact,
         request.sessionCwd,
-        request.projectName
+        request.projectId
       )
       if (environment && this.options.artifacts) {
         servers.push(
@@ -875,7 +886,7 @@ export class AcpSessionCapabilityOwner {
       const environment = await this.buildNotebookEnvironment(
         request.routingIds.notebook,
         request.sessionCwd,
-        request.projectName,
+        request.projectId,
         request.onNotebookConnection
       )
       if (environment && this.options.notebook) {
@@ -906,7 +917,7 @@ export class AcpSessionCapabilityOwner {
     if (enabled.plan) {
       const environment = await this.buildPlanEnvironment(
         request.routingIds.plan,
-        request.projectName,
+        request.projectId,
         request.onPlanConnection
       )
       if (environment && this.options.plan) {
@@ -942,7 +953,7 @@ export class AcpSessionCapabilityOwner {
       const environment = await this.buildArtifactEnvironment(
         request.routingIds.artifact,
         request.sessionCwd,
-        request.projectName
+        request.projectId
       )
       if (environment && this.canPublishHttpRoute(request)) {
         host.registerArtifact(request.routingIds.artifact, environment)
@@ -958,7 +969,7 @@ export class AcpSessionCapabilityOwner {
       const environment = await this.buildNotebookEnvironment(
         request.routingIds.notebook,
         request.sessionCwd,
-        request.projectName,
+        request.projectId,
         request.onNotebookConnection
       )
       if (environment && this.canPublishHttpRoute(request)) {
@@ -989,7 +1000,7 @@ export class AcpSessionCapabilityOwner {
     if (enabled.plan) {
       const environment = await this.buildPlanEnvironment(
         request.routingIds.plan,
-        request.projectName,
+        request.projectId,
         request.onPlanConnection
       )
       if (environment && this.canPublishHttpRoute(request)) {

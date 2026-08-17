@@ -34,6 +34,7 @@ const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest =
   sessionId: request.sessionId,
   text: request.text,
   provenanceContext: { promptMessageId: request.promptMessageId },
+  ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
   ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
   ...(request.historyPreamble ? { historyPreamble: request.historyPreamble } : {}),
   ...(request.contextReset ? { contextReset: true } : {}),
@@ -55,20 +56,22 @@ const createAcpTaskAgentPort = (
   listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
   createSession: (request) =>
     createSessionWorkflow.create({
-      projectName: request.projectId,
+      projectId: request.projectId,
       permissionProfile: request.permissionProfile,
-      ...(request.cwd ? { cwd: request.cwd } : {})
+      ...(request.cwd ? { cwd: request.cwd } : {}),
+      ...(request.specialistId ? { specialistId: request.specialistId } : {})
     }),
   resumeSession: (request) =>
     runtime.resumeSession({
       sessionId: request.sessionId,
       cwd: request.cwd,
-      projectName: request.projectId,
+      projectId: request.projectId,
       permissionProfile: request.permissionProfile,
       previousFrameworkId: request.previousFrameworkId,
       previousBackendId: request.previousBackendId,
       providerSessionId: request.providerSessionId,
-      providerContinuityToken: request.providerContinuityToken
+      providerContinuityToken: request.providerContinuityToken,
+      ...(request.specialistId ? { specialistId: request.specialistId } : {})
     }),
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),

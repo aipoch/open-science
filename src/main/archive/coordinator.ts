@@ -34,6 +34,7 @@ type SessionRuntimeActivity = {
 class ArchiveCoordinator {
   private queue: Promise<void> = Promise.resolve()
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
+  private readonly deletingProjectIds = new Set<string>()
 
   constructor(
     private readonly projects: ProjectArchiveRepository,
@@ -51,7 +52,9 @@ class ArchiveCoordinator {
   }
 
   private async activeProject(projectId: string): Promise<Project> {
+    this.assertProjectDeletionAvailable(projectId)
     const project = await this.projects.get(projectId)
+    this.assertProjectDeletionAvailable(projectId)
     if (!project) throw new Error('Project not found.')
     if (project.archivedAt !== undefined) {
       throw new Error('Restore this archived Project before continuing.')
@@ -61,6 +64,7 @@ class ArchiveCoordinator {
 
   updateProjectArchive(request: UpdateProjectArchiveRequest): Promise<Project> {
     return this.enqueue(async () => {
+      this.assertProjectDeletionAvailable(request.id)
       const project = await this.projects.get(request.id)
       if (!project) throw new Error('Project not found.')
       const currentArchivedAt = project.archivedAt ?? null
@@ -109,6 +113,49 @@ class ArchiveCoordinator {
     })
   }
 
+  withProjectAvailable<Result>(
+    projectId: string | undefined,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    if (!projectId) return operation()
+    return this.enqueue(async () => {
+      await this.activeProject(projectId)
+      return operation()
+    })
+  }
+
+  withProjectDeletion<Result>(
+    projectId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    return this.enqueue(async () => {
+      // ProjectDeletionIntent is durable before this boundary. Re-entry is a recovery retry, and a
+      // failed teardown must retain the fence until the coordinator completes or explicitly aborts.
+      this.deletingProjectIds.add(projectId)
+      return operation()
+    })
+  }
+
+  withProjectDeletionAdmission<Result>(
+    projectId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    // Parent-message delivery holds this short lifecycle through validation, optional resume, and
+    // provider acceptance so Project deletion cannot snapshot ACP ownership in the middle.
+    return this.enqueue(async () => {
+      this.assertProjectDeletionAvailable(projectId)
+      return operation()
+    })
+  }
+
+  restoreProjectDeletion(projectId: string): void {
+    this.deletingProjectIds.add(projectId)
+  }
+
+  releaseProjectDeletion(projectId: string): void {
+    this.deletingProjectIds.delete(projectId)
+  }
+
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void> {
     return this.enqueue(() => this.assertSessionAvailableNow(projectId, sessionId))
   }
@@ -138,6 +185,20 @@ class ArchiveCoordinator {
       await this.assertSessionAvailableByIdNow(sessionId)
       return operation()
     })
+  }
+
+  withSessionDeletionAdmissionById<Result>(
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    const admitted = this.enqueue(async () => {
+      const projectId =
+        (await this.sessions.sessionProjectId(sessionId)) ??
+        this.runtime.liveSessionProjectId(sessionId)
+      if (projectId) this.assertProjectDeletionAvailable(projectId)
+      return { result: operation() }
+    })
+    return admitted.then(({ result }) => result)
   }
 
   isSessionAvailableById(sessionId: string): Promise<boolean> {
@@ -170,6 +231,12 @@ class ArchiveCoordinator {
     }
     await this.activeProject(projectId)
     await this.sessions.assertSessionAvailable(projectId, sessionId)
+  }
+
+  private assertProjectDeletionAvailable(projectId: string): void {
+    if (this.deletingProjectIds.has(projectId)) {
+      throw new Error('Project is being deleted.')
+    }
   }
 }
 

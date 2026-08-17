@@ -62,7 +62,9 @@ describe('permission grants store', () => {
 
     expect(usePermissionGrantsStore.getState().undo).toMatchObject({
       token: 'undo-1',
-      message: 'Revoked Local compute · Shell'
+      messageKey: 'Revoked {{family}} · {{capability}}',
+      messageParams: { family: 'Local compute', capability: 'Shell' },
+      translatedMessageParams: ['family', 'capability']
     })
   })
 
@@ -78,9 +80,11 @@ describe('permission grants store', () => {
 
     await usePermissionGrantsStore.getState().revoke([snapshot.grants[0], second])
 
-    expect(usePermissionGrantsStore.getState().undo?.message).toBe(
-      'Revoked Local compute · Shell; 1 changed before it could be revoked'
-    )
+    expect(usePermissionGrantsStore.getState().undo).toMatchObject({
+      messageKey:
+        'Revoked {{family}} · {{capability}}; {{conflictCount}} changed before it could be revoked',
+      messageParams: { family: 'Local compute', capability: 'Shell', conflictCount: 1 }
+    })
   })
 
   it('rolls the optimistic removal back when persistence fails', async () => {
@@ -240,7 +244,7 @@ describe('permission grants store', () => {
     })
     setPermissionApi({ extendUndo })
     usePermissionGrantsStore.setState({
-      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, message: 'Revoked Shell' }
+      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, messageKey: 'Revoked Shell' }
     })
 
     await expect(usePermissionGrantsStore.getState().extendUndo('undo-1')).resolves.toBe(expiresAt)
@@ -252,7 +256,7 @@ describe('permission grants store', () => {
   it('dismisses an Undo item when its receipt can no longer be extended', async () => {
     setPermissionApi({ extendUndo: vi.fn().mockResolvedValue(undefined) })
     usePermissionGrantsStore.setState({
-      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, message: 'Revoked Shell' }
+      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, messageKey: 'Revoked Shell' }
     })
 
     await expect(usePermissionGrantsStore.getState().extendUndo('undo-1')).resolves.toBeUndefined()
@@ -266,7 +270,7 @@ describe('permission grants store', () => {
     usePermissionGrantsStore.setState({
       grants: [],
       counts: { all: 0, global: 0, project: 0, session: 0 },
-      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, message: 'Revoked Shell' }
+      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, messageKey: 'Revoked Shell' }
     })
 
     await usePermissionGrantsStore.getState().restore()
@@ -319,7 +323,7 @@ describe('permission grants store', () => {
   it('keeps a failed restore actionable as Retry', async () => {
     setPermissionApi({ restore: vi.fn().mockRejectedValue(new Error('database locked')) })
     usePermissionGrantsStore.setState({
-      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, message: 'Revoked Shell' }
+      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, messageKey: 'Revoked Shell' }
     })
 
     await usePermissionGrantsStore.getState().restore()
@@ -327,7 +331,7 @@ describe('permission grants store', () => {
     expect(usePermissionGrantsStore.getState().undo).toMatchObject({
       token: 'undo-1',
       retry: true,
-      message: "Couldn't restore permission. Retry."
+      messageKey: "Couldn't restore permission. Retry."
     })
   })
 
@@ -341,14 +345,14 @@ describe('permission grants store', () => {
       })
     })
     usePermissionGrantsStore.setState({
-      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, message: 'Revoked Shell' }
+      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, messageKey: 'Revoked Shell' }
     })
 
     await usePermissionGrantsStore.getState().restore()
 
     expect(usePermissionGrantsStore.getState().undo).toMatchObject({
       canRestore: false,
-      message: "Couldn't restore permission: owner no longer exists"
+      messageKey: "Couldn't restore permission: owner no longer exists"
     })
   })
 

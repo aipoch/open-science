@@ -1,5 +1,6 @@
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -41,6 +42,7 @@ export const CloseConfirmModal = ({
   active?: boolean
   onOpenChange?: (open: boolean) => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [request, setRequest] = useState<ActiveRequest | undefined>(undefined)
   const [remember, setRemember] = useState(true)
 
@@ -97,12 +99,12 @@ export const CloseConfirmModal = ({
           className={dialogPanelClassName('z-[60] w-[min(420px,calc(100vw-2rem))] p-0')}
         >
           <div className={dialogHeaderClassName}>
-            <AlertDialog.Title className={dialogTitleClassName}>{title}</AlertDialog.Title>
+            <AlertDialog.Title className={dialogTitleClassName}>{t(title)}</AlertDialog.Title>
           </div>
 
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              {description}
+              {t(description)}
             </AlertDialog.Description>
             {hasSessions ? (
               <ul className="mt-3 space-y-1 text-xs">
@@ -122,7 +124,10 @@ export const CloseConfirmModal = ({
                     // events, so a button-level tooltip would be dead exactly on truncated unresolved rows.
                     <li
                       key={`${session.kind}:${session.sessionId}`}
-                      title={`${row.project} — ${row.title}`}
+                      title={t('{{project}} — {{title}}', {
+                        project: row.project,
+                        title: row.title
+                      })}
                     >
                       <button
                         type="button"
@@ -130,7 +135,10 @@ export const CloseConfirmModal = ({
                         disabled={!row.projectId}
                         className="block w-full truncate rounded-lg border border-border bg-muted/40 p-2 text-left text-foreground enabled:cursor-pointer enabled:hover:bg-muted disabled:cursor-default"
                       >
-                        {truncateLabel(row.project)} — {truncateLabel(row.title)}
+                        {t('{{project}} — {{title}}', {
+                          project: truncateLabel(row.project),
+                          title: truncateLabel(row.title)
+                        })}
                       </button>
                     </li>
                   )
@@ -145,7 +153,7 @@ export const CloseConfirmModal = ({
                   onChange={(event) => setRemember(event.target.checked)}
                   className="size-4 shrink-0 accent-primary"
                 />
-                <span>Don&apos;t ask again</span>
+                <span>{t("Don't ask again")}</span>
               </label>
             ) : null}
           </div>
@@ -153,22 +161,22 @@ export const CloseConfirmModal = ({
           <div className={dialogFooterClassName}>
             {hasDelegatedWork && isQuitVariant ? (
               <AlertDialog.Cancel asChild>
-                <Button type="button">Return to tasks</Button>
+                <Button type="button">{t('Return to tasks')}</Button>
               </AlertDialog.Cancel>
             ) : isQuitVariant ? (
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
-                  Cancel
+                  {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
             ) : (
               <Button type="button" variant="ghost" onClick={() => reply('minimize')}>
-                Minimize to tray
+                {t('Minimize to tray')}
               </Button>
             )}
             {!hasDelegatedWork ? (
               <Button type="button" onClick={() => reply('quit')}>
-                Quit
+                {t('Quit')}
               </Button>
             ) : null}
           </div>

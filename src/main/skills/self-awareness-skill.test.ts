@@ -23,13 +23,13 @@ describe('self-awareness bundled Skill', () => {
     expect(skill?.description).toMatch(/JavaScript control REPL/i)
   })
 
-  it('documents the shipped nine-key JavaScript contract and read limits', async () => {
+  it('documents the shipped 20-key JavaScript contract and read limits', async () => {
     const body = await new SkillRegistry(skillsRoot).body('self-awareness')
 
     for (const phrase of [
       'repl_execute',
       'await host.capabilities()',
-      'exactly nine boolean keys',
+      '20 known boolean keys',
       '`mcp`',
       '`compute`',
       '`agents`',
@@ -37,16 +37,42 @@ describe('self-awareness bundled Skill', () => {
       '`artifacts`',
       '`lineage`',
       '`frames`',
+      '`sessions`',
       '`llm`',
+      '`currentModel`',
+      '`listModels`',
       '`viewImage`',
+      '`delegate`',
+      '`children`',
+      '`collect`',
+      '`stopChild`',
+      '`sendFrameMessage`',
+      '`messageReceipt`',
+      '`resolveMessage`',
+      '`submitOutput`',
+      '`host.mcp(server, method, args?)`',
+      '`host.artifacts(options?)`',
+      '`host.artifactPath(versionId)`',
+      '`host.sessions.list(options?)`',
+      '`host.sessions.inspect(sessionId)`',
+      '`host.llm(request, options?)`',
+      '`host.currentModel()`',
+      '`host.listModels()`',
+      '`host.viewImage(source, options?)`',
       'caps.compute === true',
       'caps.artifacts === true',
       'caps.frames === true',
+      'caps.sessions === true',
       'await host.artifacts(options)',
       'await host.artifactPath',
       'await host.frames.list(options)',
       'await host.frames.get(frameId, options)',
+      'await host.sessions.list(options)',
+      'await host.sessions.inspect(sessionId)',
       'current Project',
+      'producer Frame',
+      'Uploads without trusted Frame',
+      'provenance are excluded',
       'exact full Frame ID',
       'active Branch',
       'private reasoning',
@@ -56,18 +82,29 @@ describe('self-awareness bundled Skill', () => {
       'fresh frozen projection',
       'caps.lineage === true',
       'caps.llm === true',
+      'caps.currentModel === true',
+      'caps.listModels === true',
       'caps.viewImage === true',
       'await host.viewImage',
       'await host.llm',
+      'await host.currentModel()',
+      'await host.listModels()',
       'await host.lineage.graph(versionId)',
       'await host.lineage.get(versionId)',
       '`versionId`',
+      '`frameId`',
       '`sessionId`',
       '`contentType`',
+      'latestVersionId',
+      'agentFrameId',
+      'latestVersionCreatedAt',
+      '`count` is the total number of matches',
+      '`not_found` does not override `host.capabilities()`',
       '`maxDepth`',
       '`maxNodes`',
       '`rootsOnly`',
       '`branchId`',
+      '`activeConversation`',
       'graph discovery',
       'session-bound control token',
       'another Session',
@@ -79,8 +116,9 @@ describe('self-awareness bundled Skill', () => {
       expect(body).toContain(phrase)
     }
     expect(body).not.toMatch(
-      /host\.artifact_path|`(?:version_id|session_id|content_type|max_depth|max_nodes|roots_only|branch_id)`/
+      /host\.artifact_path|`(?:version_id|session_id|content_type|latest_version_id|root_frame_id|agent_frame_id|latest_version_created_at|max_depth|max_nodes|roots_only|branch_id)`/
     )
+    expect(body).not.toMatch(/Optional camelCase fields are[^.]*`sessionId`/)
     expect(body).not.toMatch(/host\.(query|artifact_read)/)
   })
 })

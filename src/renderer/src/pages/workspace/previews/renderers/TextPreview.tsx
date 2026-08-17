@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -22,6 +24,7 @@ export const PreviewTextContent = ({
   managedFileId?: string
   selectedVersionId?: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent({
     path,
     source,
@@ -38,7 +41,7 @@ export const PreviewTextContent = ({
       <PreviewErrorCard
         name={name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="File couldn't be read for preview"
+        fallbackMessage={t("File couldn't be read for preview")}
       />
     )
   }

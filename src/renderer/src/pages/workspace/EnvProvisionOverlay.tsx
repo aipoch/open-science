@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
@@ -10,6 +11,8 @@ const EnvProvisionOverlay = ({
   ui: ProvisionUiState
   onRetry?: () => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   if (ui.kind === 'ready') return null
 
   const title =
@@ -26,7 +29,7 @@ const EnvProvisionOverlay = ({
       data-testid="notebook-env-gate"
       className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-bg-000/80 p-6 text-center backdrop-blur-sm"
     >
-      <p className="text-sm font-medium text-text-000">{title}</p>
+      <p className="text-sm font-medium text-text-000">{t(title)}</p>
       {ui.kind === 'preparing' ? (
         <>
           {ui.message ? <p className="text-xs text-text-300">{ui.message}</p> : null}
@@ -59,7 +62,7 @@ const EnvProvisionOverlay = ({
               onClick={onRetry}
               className="rounded border border-border-100 px-3 py-1 text-xs text-text-100 hover:bg-bg-300"
             >
-              Retry
+              {t('Retry')}
             </button>
           ) : null}
         </>

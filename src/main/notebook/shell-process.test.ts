@@ -11,6 +11,7 @@ import {
   runShellCommand,
   terminateShellOnTimeout
 } from './shell-process'
+import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -206,14 +207,19 @@ describe('notebook shell process behavior', () => {
   })
 
   describe.runIf(process.platform !== 'win32')('process results', () => {
-    const execute = (command: string, timeoutMs = 5_000): ReturnType<typeof runShellCommand> =>
+    const execute = (
+      command: string,
+      timeoutMs = 5_000,
+      signal?: AbortSignal
+    ): ReturnType<typeof runShellCommand> =>
       runShellCommand({
         command,
         cwd: process.cwd(),
         handoffDir: process.cwd(),
         runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
         platform: 'linux',
-        timeoutMs
+        timeoutMs,
+        signal
       })
 
     it('preserves stdout, stderr, and a non-zero exit code as one ordinary result', async () => {
@@ -224,11 +230,37 @@ describe('notebook shell process behavior', () => {
       })
     })
 
+    it('reserves stderr capacity after stdout reaches its capture limit', async () => {
+      const script = `process.stdout.write('x'.repeat(${NOTEBOOK_TEXT_LIMIT_BYTES + 1024})); process.stderr.write('diagnostic survives'); process.exitCode = 7`
+      const result = await execute(
+        `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`
+      )
+
+      expect(result.exitCode).toBe(7)
+      expect(result.stderr).toContain('diagnostic survives')
+      expect(
+        Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+      ).toBeLessThanOrEqual(NOTEBOOK_TEXT_LIMIT_BYTES)
+      expect(result.truncated).toBe(true)
+    })
+
     it('classifies a timeout with a null exit code and appends its diagnostic after stderr', async () => {
       await expect(execute("printf 'before timeout' >&2; sleep 5", 50)).resolves.toEqual({
         stdout: '',
         stderr: 'before timeout\nShell command timed out after 50ms and was killed.',
         exitCode: null
+      })
+    })
+
+    it('does not spawn work for an already-aborted shell request', async () => {
+      const controller = new AbortController()
+      controller.abort()
+
+      await expect(execute('echo should-not-run', 5_000, controller.signal)).resolves.toEqual({
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null,
+        cancelled: true
       })
     })
   })

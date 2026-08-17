@@ -2,7 +2,7 @@ import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
-import { DEFAULT_UPLOAD_PROJECT_NAME } from '../../shared/uploads'
+import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import { codexFramework, opencodeFramework } from '../agent-framework'
 import { AcpBackendGenerationOwner } from './backend-generation-owner'
 import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
@@ -19,14 +19,14 @@ const permissionProfile = (): SessionPermissionProfileState => ({
 const publishSession = (
   registry: AcpSessionRegistry,
   appSessionId: string,
-  projectName: string
+  projectId: string
 ): void => {
   const reservation = registry.reserve({ sessionIds: [appSessionId] })
   if (reservation.collision) throw reservation.collision
   registry.publish(reservation.reservation, appSessionId, {
     session: { sessionId: appSessionId } as unknown as ActiveSession,
     cwd: '/workspace',
-    projectName,
+    projectId,
     frameworkId: 'codex',
     permissionProfile: permissionProfile()
   })
@@ -43,7 +43,7 @@ type SessionEnvironmentFixture = Readonly<{
 }>
 
 const createPolicy = (
-  defaultProjectName: string | undefined = 'default-project'
+  defaultProjectId: string | undefined = 'default-project'
 ): SessionEnvironmentFixture => {
   const backendGeneration = new AcpBackendGenerationOwner(codexFramework)
   const refreshDynamicAvailability = vi.fn(async () => undefined)
@@ -64,7 +64,7 @@ const createPolicy = (
     capabilities: { refreshDynamicAvailability, toolingAvailability },
     presentation: { applicationSystemPromptAppends },
     registry,
-    ...(defaultProjectName ? { defaultProjectName } : {}),
+    ...(defaultProjectId ? { defaultProjectId } : {}),
     planSystemPromptAppend: 'Plan guidance.'
   })
 
@@ -133,11 +133,11 @@ describe('ACP Session environment policy', () => {
   it('resolves live Session projects before the configured and runtime fallbacks', () => {
     const fixture = createPolicy()
 
-    expect(fixture.policy.projectName('missing')).toBe('default-project')
+    expect(fixture.policy.projectId('missing')).toBe('default-project')
     publishSession(fixture.registry, 'session-1', 'session-project')
-    expect(fixture.policy.projectName('session-1')).toBe('session-project')
+    expect(fixture.policy.projectId('session-1')).toBe('session-project')
 
     const runtimeFallback = createPolicy(undefined).policy
-    expect(runtimeFallback.projectName('missing')).toBe(DEFAULT_UPLOAD_PROJECT_NAME)
+    expect(runtimeFallback.projectId('missing')).toBe(DEFAULT_UPLOAD_PROJECT_ID)
   })
 })

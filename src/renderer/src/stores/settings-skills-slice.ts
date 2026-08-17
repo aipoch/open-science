@@ -12,6 +12,8 @@ import type {
   UpdateSkillRequest
 } from '../../../shared/settings'
 
+import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolean'
+
 export type SettingsSkillsState = { skills: SkillView[] }
 
 export type SettingsSkillsActions = {
@@ -73,19 +75,34 @@ export const createSettingsSkillsSlice = ({
   setState,
   getCommands
 }: SettingsSkillsSliceOptions): SettingsSkillsActions => {
+  const skillEnabledWrites = createOptimisticBooleanCoordinator()
+  const projectOptimisticEnablement = (skills: SkillView[], generation: number): SkillView[] =>
+    skills.map((skill) => ({
+      ...skill,
+      enabled: skillEnabledWrites.project(skill.id, skill.enabled, generation)
+    }))
   let reconcileGeneration = 0
-  const reconcileCatalog = async (command: () => Promise<SkillView[]>): Promise<void> => {
+  const reconcileCatalog = async (command: () => Promise<SkillView[]>): Promise<SkillView[]> => {
     const generation = ++reconcileGeneration
+    const projectionGeneration = skillEnabledWrites.beginProjection()
     const skills = await command()
-    if (generation === reconcileGeneration) setState({ skills })
+    if (generation === reconcileGeneration)
+      setState({ skills: projectOptimisticEnablement(skills, projectionGeneration) })
+    return skills
+  }
+
+  const reconcileCatalogMutation = async (command: () => Promise<SkillView[]>): Promise<void> => {
+    await reconcileCatalog(command)
   }
 
   const reconcileImport = async <Result extends { skills: SkillView[] }>(
     command: () => Promise<Result>
   ): Promise<Result> => {
     const generation = ++reconcileGeneration
+    const projectionGeneration = skillEnabledWrites.beginProjection()
     const result = await command()
-    if (generation === reconcileGeneration) setState({ skills: result.skills })
+    if (generation === reconcileGeneration)
+      setState({ skills: projectOptimisticEnablement(result.skills, projectionGeneration) })
     return result
   }
 
@@ -100,21 +117,45 @@ export const createSettingsSkillsSlice = ({
   }
 
   return {
-    loadSkills: () => {
+    loadSkills: async () => {
       subscribeToCatalogChanges()
-      return reconcileCatalog(() => getCommands().listSkills())
+      await reconcileCatalog(() => getCommands().listSkills())
     },
     setSkillEnabled: async (id, enabled) => {
+      const current = getState().skills.find((skill) => skill.id === id)
+      if (!current) {
+        await reconcileCatalog(() => getCommands().setSkillEnabled({ id, enabled }))
+        return
+      }
+
+      const token = skillEnabledWrites.begin(id, current.enabled, enabled)
       setState({
         skills: getState().skills.map((skill) => (skill.id === id ? { ...skill, enabled } : skill))
       })
-      await reconcileCatalog(() => getCommands().setSkillEnabled({ id, enabled }))
+      try {
+        const skills = await reconcileCatalog(() => getCommands().setSkillEnabled({ id, enabled }))
+        const confirmed = skills.find((skill) => skill.id === id)?.enabled ?? current.enabled
+        const projected = skillEnabledWrites.succeed(token, confirmed)
+        setState({
+          skills: getState().skills.map((skill) =>
+            skill.id === id ? { ...skill, enabled: projected } : skill
+          )
+        })
+      } catch (error) {
+        const projected = skillEnabledWrites.fail(token)
+        setState({
+          skills: getState().skills.map((skill) =>
+            skill.id === id ? { ...skill, enabled: projected } : skill
+          )
+        })
+        throw error
+      }
     },
     setSkillsEnabled: (ids, enabled) =>
-      reconcileCatalog(() => getCommands().setSkillsEnabled({ ids, enabled })),
-    createSkill: (request) => reconcileCatalog(() => getCommands().createSkill(request)),
-    updateSkill: (request) => reconcileCatalog(() => getCommands().updateSkill(request)),
-    deleteSkill: (id) => reconcileCatalog(() => getCommands().deleteSkill({ id })),
+      reconcileCatalogMutation(() => getCommands().setSkillsEnabled({ ids, enabled })),
+    createSkill: (request) => reconcileCatalogMutation(() => getCommands().createSkill(request)),
+    updateSkill: (request) => reconcileCatalogMutation(() => getCommands().updateSkill(request)),
+    deleteSkill: (id) => reconcileCatalogMutation(() => getCommands().deleteSkill({ id })),
     importSkill: (url) => reconcileImport(() => getCommands().importSkill({ url })),
     importSkillZip: (dataBase64, opts) =>
       reconcileImport(() =>

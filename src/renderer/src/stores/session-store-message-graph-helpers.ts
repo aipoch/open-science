@@ -47,7 +47,8 @@ export type AppendPendingUserMessageInput = Omit<AppendUserMessageInput, 'sessio
 
 export type BranchInNewSessionInput = {
   sourceSessionId: string
-  content: string
+  sourceMessageId?: string
+  content?: string
   attachments?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
   turnIntent?: PersistedChatMessage['turnIntent']
@@ -73,11 +74,17 @@ export type AppendMessageResult = {
   messageId: string
 }
 
+export type BranchInNewSessionResult = {
+  sessionId: string
+  messageId?: string
+}
+
 export type AppendRoutedUserMessageInput = {
   sessionId: string
   messageId: string
   eventId: string
   content: string
+  attribution?: PersistedChatMessage['attribution']
   createdAt: number
   responseToMessageId?: string
   relayedFrom?: PersistedChatMessage['relayedFrom']
@@ -89,8 +96,8 @@ export type SessionMessageGraphActions = {
   appendPendingUserMessage: (
     input: AppendPendingUserMessageInput
   ) => AppendMessageResult | undefined
-  branchInNewSession: (input: BranchInNewSessionInput) => AppendMessageResult | undefined
-  bindPendingSession: (input: BindPendingSessionInput) => AppendMessageResult | undefined
+  branchInNewSession: (input: BranchInNewSessionInput) => BranchInNewSessionResult | undefined
+  bindPendingSession: (input: BindPendingSessionInput) => BranchInNewSessionResult | undefined
   clearPendingContextReplay: (sessionId: string, messageId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
   truncateSessionFromMessage: (sessionId: string, messageId: string) => void
@@ -376,11 +383,58 @@ export const copySnapshotActivityGroup = (
   activityIds: group.activityIds.map((id) => createSnapshotActivityId(sessionId, id))
 })
 
+export const projectSessionBranchSnapshot = (
+  source: ChatSession,
+  sourceMessageId?: string
+):
+  | {
+      sourceMessage: ChatMessage | undefined
+      messages: Array<{ message: PersistedChatMessage; sortIndex: number }>
+      activities: PersistedToolActivity[]
+      activityGroups: PersistedActivityGroup[]
+    }
+  | undefined => {
+  const sourceMessageIndex = sourceMessageId
+    ? source.messages.findIndex((message) => message.id === sourceMessageId)
+    : -1
+  const sourceMessage = source.messages[sourceMessageIndex]
+  if (
+    sourceMessageId &&
+    (!sourceMessage || sourceMessage.role !== 'agent' || sourceMessage.status !== 'complete')
+  ) {
+    return undefined
+  }
+
+  const messages = (
+    sourceMessage ? source.messages.slice(0, sourceMessageIndex + 1) : source.messages
+  ).map((message, index) => ({
+    message: stripTransientMessageState(message),
+    sortIndex: message.sortIndex ?? index
+  }))
+  const activities = (source.activities ?? [])
+    .map(sanitizeToolActivity)
+    .filter((activity): activity is PersistedToolActivity => Boolean(activity))
+    .filter((activity) => !sourceMessage || isBeforeTimelineItem(activity, sourceMessage))
+  const activityIds = new Set(activities.map((activity) => activity.id))
+  const activityGroups = (source.activityGroups ?? [])
+    .map(sanitizeActivityGroup)
+    .filter((group): group is PersistedActivityGroup => Boolean(group))
+    .map((group) => ({
+      ...group,
+      activityIds: group.activityIds.filter((id) => activityIds.has(id))
+    }))
+    .filter((group) => group.activityIds.length > 0)
+
+  return { sourceMessage, messages, activities, activityGroups }
+}
+
 export const canBranchInNewSession = (session: ChatSession): boolean =>
+  !session.isPending &&
   !session.activeRun &&
   session.status !== 'running' &&
   session.status !== 'waiting-for-user' &&
   session.status !== 'waiting-permission' &&
+  session.status !== 'waiting-plan-approval' &&
   !session.fixLoopActive &&
   !session.compacting &&
   !session.branchSwitchBlocked &&

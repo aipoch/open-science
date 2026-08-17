@@ -23,7 +23,7 @@ describe('NotebookRuntimeService main-process logging', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: {
         prepareRun: vi.fn(),

@@ -13,7 +13,9 @@ vi.mock('./micromamba', async (importActual) => ({
 }))
 
 import {
+  CONDA_JSON_CAPTURE_LIMIT_BYTES,
   defaultSpawn,
+  INSTALLER_STREAM_LOG_LIMIT_BYTES,
   installPackages,
   type InstallSpawn,
   type SpawnResult
@@ -139,9 +141,100 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
     expect(killedPid).toBeGreaterThan(0)
     await vi.waitFor(() => expect(() => process.kill(killedPid as number, 0)).toThrow())
   })
+
+  it('retains bounded stdout/stderr tails and reports the exact discarded byte counts', async () => {
+    const stdoutPrefix = 'stdout-old\n'
+    const stdoutTail = '\nstdout-tail'
+    const stderrPrefix = 'stderr-old\n'
+    const stderrTail = '\nstderr-tail'
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `process.stdout.write(${JSON.stringify(stdoutPrefix)} + 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}) + ${JSON.stringify(stdoutTail)});`,
+        `process.stderr.write(${JSON.stringify(stderrPrefix)} + 'y'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}) + ${JSON.stringify(stderrTail)});`
+      ].join('')
+    ])
+
+    expect(result.code).toBe(0)
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(Buffer.byteLength(result.stderr, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(result.stdout).not.toContain(stdoutPrefix)
+    expect(result.stderr).not.toContain(stderrPrefix)
+    expect(result.stdout.endsWith(stdoutTail)).toBe(true)
+    expect(result.stderr.endsWith(stderrTail)).toBe(true)
+    expect(result.stdoutDroppedBytes).toBe(Buffer.byteLength(stdoutPrefix + stdoutTail, 'utf8'))
+    expect(result.stderrDroppedBytes).toBe(Buffer.byteLength(stderrPrefix + stderrTail, 'utf8'))
+  })
+
+  it('reduces oversized micromamba JSON without retaining the complete document in memory', async () => {
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `const value = {`,
+        `error: ['Invalid package cache; file is missing; Package cache error', String.fromCharCode(39) + 'C:/cache/' + 'p'.repeat(280) + String.fromCharCode(39), 'for ' + String.fromCharCode(39) + 'broken-package-1.0-0.conda' + String.fromCharCode(39)],`,
+        `padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}),`,
+        `solver_problems: ['unsatisfiable dependency constraints'],`,
+        `actions: { LINK: [{ name: 'r-base', version: '4.5.0' }], UNLINK: [] }`,
+        `};`,
+        `process.stdout.write(JSON.stringify(value));`
+      ].join(''),
+      '--',
+      '--json'
+    ])
+
+    expect(result.code).toBe(0)
+    expect(result.stdoutDroppedBytes).toBeGreaterThan(0)
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(result.structuredCondaResult).toEqual({
+      transaction: true,
+      actions: {
+        LINK: [{ name: 'r-base', version: '4.5.0' }],
+        UNLINK: []
+      },
+      diagnostics: ['solver failed']
+    })
+    expect(result.maxPathRecoveryEvidence).toMatch(/Invalid package cache/)
+    expect(result.maxPathRecoveryEvidence).toContain('broken-package-1.0-0.conda')
+  })
+
+  it('fails closed when micromamba JSON exceeds the bounded temporary capture', async () => {
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `const value = { padding: 'x'.repeat(${CONDA_JSON_CAPTURE_LIMIT_BYTES}), actions: { LINK: [{ name: 'r-base', version: '4.5.0' }], UNLINK: [] } };`,
+        `process.stdout.write(JSON.stringify(value));`
+      ].join(''),
+      '--',
+      '--json'
+    ])
+
+    expect(result.code).toBe(0)
+    expect(result.stdoutDroppedBytes).toBeGreaterThan(0)
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(result.structuredCondaResult).toBeUndefined()
+    expect(result.maxPathRecoveryEvidence).toBeUndefined()
+  })
 })
 
 describe('installPackages', () => {
+  it('aggregates discarded stream bytes into structured install-log truncation metadata', async () => {
+    const truncated: SpawnResult = {
+      code: 0,
+      stdout: 'latest output',
+      stderr: 'latest warning',
+      stdoutDroppedBytes: 23,
+      stderrDroppedBytes: 19
+    }
+    const { spawn } = scriptedSpawn([truncated])
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], usePip: true },
+      { spawn, ...base }
+    )
+
+    expect(result.log).toContain('latest output')
+    expect(result.logTruncation).toEqual({ droppedBytes: 42 })
+  })
+
   it('forwards the installer child PID through onChild (for crash-recovery journaling)', async () => {
     // A spawn that reports a pid via its 4th (onChild) argument, as the real defaultSpawn does.
     const spawn: InstallSpawn = async (_command, _args, _env, onChild) => {
@@ -598,6 +691,39 @@ describe('installPackages', () => {
     ])
   })
 
+  it('falls back using the reduced summary when bounded logs truncate structured output', async () => {
+    const solverFailure: SpawnResult = {
+      code: 1,
+      stdout: 'truncated-json-tail',
+      stderr: 'solver failed',
+      stdoutDroppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES,
+      structuredCondaResult: {
+        transaction: false,
+        actions: { LINK: [], UNLINK: [] },
+        diagnostics: ['solver failed']
+      }
+    }
+    const { spawn, calls } = scriptedSpawn([solverFailure, ok])
+
+    const result = await installPackages(
+      { language: 'python', packages: ['special-wheel'] },
+      { spawn, ...base, pypiIndex: 'https://pypi.example/simple' }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(result).toMatchObject({
+      ok: true,
+      method: 'pip',
+      fallbackUsed: true,
+      logTruncation: { droppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES }
+    })
+    expect(result.attempts?.[0]).toMatchObject({
+      installer: 'conda',
+      reason: 'solver-failed',
+      mutationRisk: 'none'
+    })
+  })
+
   it('refuses fallback when structured conda actions show possible mutation', async () => {
     const partialTransaction: SpawnResult = {
       code: 1,
@@ -729,7 +855,11 @@ describe('installPackages', () => {
       {
         code: 1,
         stdout: 'original install stdout',
-        stderr: `Invalid package cache, file '${missing}' is missing for '${leaf}.conda'; Package cache error`
+        stderr: 'truncated diagnostic tail',
+        stderrDroppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES,
+        maxPathRecoveryEvidence:
+          `Invalid package cache; file is missing; Package cache error.\n` +
+          `for '${leaf}.conda'\n'${missing}'`
       },
       { code: 1, stdout: 'retry install stdout', stderr: 'retry install failed' }
     ]
@@ -760,6 +890,7 @@ describe('installPackages', () => {
     expect(result.log).toContain('Retry failure after MAX_PATH recovery')
     expect(result.log).toContain('original install stdout')
     expect(result.log).toContain('retry install stdout')
+    expect(result.logTruncation).toEqual({ droppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES })
     expect(result.error).toMatch(/short Windows package cache[^]*shorter data location/i)
     expect(result.error).not.toMatch(/LongPathsEnabled|administrator/i)
   })

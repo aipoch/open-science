@@ -33,6 +33,7 @@
         "src/renderer/src/lib/acp/workspace-events.ts",
         "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",
@@ -87,6 +88,8 @@
         "src/renderer/src/pages/workspace/workspace-panel-layout.tsx",
         "src/renderer/src/pages/workspace/workspace-composer-controller.ts",
         "src/renderer/src/pages/workspace/workspace-conversation-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-message-queue-controller.ts",
+        "src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts",
         "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
         "src/renderer/src/pages/workspace/workspace-session-controller.ts",
         "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
@@ -105,9 +108,11 @@
           "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
+          "src/renderer/src/pages/workspace/ComposerMessageQueue.interaction.test.tsx",
           "src/renderer/src/pages/workspace/workspace-page.architecture.test.ts",
           "src/renderer/src/pages/workspace/workspace-composer-controller.test.ts",
           "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts",
+          "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
           "src/renderer/src/pages/workspace/use-side-chat-controller.test.ts",
           "src/renderer/src/pages/workspace/workspace-session-controller.test.ts",
           "src/renderer/src/pages/workspace/composer-attachment-intake.test.ts",
@@ -590,7 +595,8 @@
         "src/main/artifacts/provenance-staging-recovery.ts",
         "src/main/artifacts/provenance-storage.ts",
         "src/main/artifacts/provenance-unindexed-recovery.ts",
-        "src/main/artifacts/provenance-version-writer.ts"
+        "src/main/artifacts/provenance-version-writer.ts",
+        "src/main/artifacts/write-budget-owner.ts"
       ],
       "interfacePaths": [
         "src/main/artifacts/provenance-message-snapshot.ts",
@@ -604,7 +610,8 @@
           "src/main/artifacts/provenance-message-snapshot.test.ts",
           "src/main/artifacts/provenance-repository.architecture.test.ts",
           "src/main/artifacts/provenance-repository.test.ts",
-          "src/main/artifacts/provenance-write-contract.test.ts"
+          "src/main/artifacts/provenance-write-contract.test.ts",
+          "src/main/artifacts/write-budget-owner.test.ts"
         ],
         "contract": [
           "src/main/artifacts/ipc.test.ts",
@@ -651,7 +658,8 @@
       "testFiles": {
         "owner": [
           "src/main/session-persistence/coordinator.architecture.test.ts",
-          "src/main/session-persistence/coordinator.test.ts"
+          "src/main/session-persistence/coordinator.test.ts",
+          "src/main/session-persistence/delegated-work-records.test.ts"
         ],
         "contract": [
           "src/shared/session-persistence.test.ts",

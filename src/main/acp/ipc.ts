@@ -23,11 +23,30 @@ import type {
 } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
+import {
+  resolveElicitationResponseSessionId,
+  resolvePermissionResponseSessionId
+} from './response-session-admission'
 import { installAgentShutdownGuard } from './shutdown-guard'
+
+type AcpIpcSessionAdmission = {
+  withSessionAvailableById<Result>(
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result>
+}
+
+const withResponseAdmission = <Result>(
+  sessionAdmission: AcpIpcSessionAdmission,
+  sessionId: string | undefined,
+  operation: () => Promise<Result>
+): Promise<Result> =>
+  sessionId ? sessionAdmission.withSessionAvailableById(sessionId, operation) : operation()
 
 const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
+  sessionAdmission: AcpIpcSessionAdmission,
   respondDelegatedQuestion?: (
     input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
   ) => Promise<void>
@@ -47,17 +66,26 @@ const registerAcpIpcHandlerSet = (
       workflows.continueInterruptedTurn(request)
   )
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
-    runtime.resetSessionContext(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.resetSessionContext(request)
+    )
   )
   ipcMainHandle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>
-    runtime.compactSession(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.compactSession(request)
+    )
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMainHandle('acp:send-prompt', (_event, request: AcpPromptRequest) => {
     // Continuation controls are main-process-owned. Renderer input must never suppress a visible
     // user message or impersonate the handoff path.
+    const { attribution: _untrustedAttribution, ...untrustedRequest } =
+      request as AcpPromptRequest & {
+        attribution?: unknown
+      }
+    void _untrustedAttribution
     const rendererRequest: AcpPromptRequest = {
-      ...request,
+      ...untrustedRequest,
       turnIntent: request.turnIntent === 'plan-first' ? 'plan-first' : undefined,
       continuation: undefined,
       suppressUserMessage: undefined
@@ -76,7 +104,11 @@ const registerAcpIpcHandlerSet = (
     return runtime.deleteSession(request)
   })
   ipcMainHandle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
-    runtime.respondToPermission(response)
+    withResponseAdmission(
+      sessionAdmission,
+      resolvePermissionResponseSessionId(runtime.getSnapshot(), response),
+      () => runtime.respondToPermission(response)
+    )
   )
   ipcMainHandle('acp:get-plan-projection', (_event, projectId: string, sessionId: string) =>
     runtime.getSessionPlanProjection(projectId, sessionId)
@@ -84,25 +116,37 @@ const registerAcpIpcHandlerSet = (
   ipcMainHandle(
     'acp:respond-plan',
     (_event, request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]) =>
-      runtime.respondSessionPlan(request)
+      sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+        runtime.respondSessionPlan(request)
+      )
   )
   ipcMainHandle('acp:respond-elicitation', (_event, response: ElicitationResponse) => {
-    if (response.delegatedQuestion) {
-      if (!respondDelegatedQuestion) {
-        throw new Error('Delegated question response owner is unavailable.')
+    return withResponseAdmission(
+      sessionAdmission,
+      resolveElicitationResponseSessionId(runtime.getSnapshot(), response),
+      () => {
+        if (response.delegatedQuestion) {
+          if (!respondDelegatedQuestion) {
+            throw new Error('Delegated question response owner is unavailable.')
+          }
+          return respondDelegatedQuestion({
+            ...response.delegatedQuestion,
+            requestId: response.requestId
+          }).then(() => runtime.getSnapshot())
+        }
+        return runtime.respondToElicitation(response)
       }
-      return respondDelegatedQuestion({
-        ...response.delegatedQuestion,
-        requestId: response.requestId
-      }).then(() => runtime.getSnapshot())
-    }
-    return runtime.respondToElicitation(response)
+    )
   })
   ipcMainHandle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
-    runtime.setPermissionProfile(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.setPermissionProfile(request)
+    )
   )
   ipcMainHandle('acp:revoke-permission-grant', (_event, request: AcpRevokePermissionGrantRequest) =>
-    runtime.revokePermissionGrant(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.revokePermissionGrant(request)
+    )
   )
 }
 
@@ -110,13 +154,16 @@ const registerAcpIpcHandlerSet = (
 const installAcpIpcHandlers = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
-  respondDelegatedQuestion?: (
-    input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
-  ) => Promise<void>
+  respondDelegatedQuestion:
+    | ((
+        input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
+      ) => Promise<void>)
+    | undefined,
+  sessionAdmission: AcpIpcSessionAdmission
 ): IpcHandlerInstallation => {
   const scope = createIpcHandlerInstallationScope()
   try {
-    registerAcpIpcHandlerSet(runtime, workflows, respondDelegatedQuestion)
+    registerAcpIpcHandlerSet(runtime, workflows, sessionAdmission, respondDelegatedQuestion)
     // Kill the agent child on quit so it never outlives the app as an orphaned process.
     return scope.complete(installAgentShutdownGuard(app, runtime))
   } catch (error) {
@@ -126,3 +173,4 @@ const installAcpIpcHandlers = (
 }
 
 export { installAcpIpcHandlers }
+export type { AcpIpcSessionAdmission }

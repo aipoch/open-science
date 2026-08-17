@@ -1,3 +1,6 @@
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
+
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
@@ -18,8 +21,8 @@ import { isReportableRunFailure } from '../../../../shared/run-error-classificat
 import {
   AlertTriangle,
   ArrowUp,
-  BookOpen,
   BookMarked,
+  BookOpen,
   ChartNoAxesCombined,
   ChevronDown,
   CircleHelp,
@@ -54,7 +57,11 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import {
+  projectSessionActionability,
+  useSessionStore,
+  type ChatSession
+} from '@/stores/session-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -64,6 +71,7 @@ import { appendArtifactMention, docToSkillIds } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
+import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
 import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
@@ -123,42 +131,56 @@ const attachmentRemoveButtonClassName = cn(
   'flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
-const attachmentLimitsText = `Any file type · ${formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per file. Large files are linked, not embedded.`
+// Read from two places (pointer-fine tooltip and coarse-pointer hint), so it takes t rather than
+// holding a formatted English string that would reach the screen untranslated.
+const attachmentLimitsText = (t: TFunction): string =>
+  t('Any file type · {{size}} per file. Large files are linked, not embedded.', {
+    size: formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)
+  })
 
-const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-  <ResizableBottomPanel
-    ariaLabel="Resize question panel"
-    testId="elicitation-composer"
-    scrollTestId="elicitation-composer-scroll"
-    constrainGrowthToOverflow
-    minimumContentSelector='[data-elicitation-option-row="true"]'
-    minimumContentIndex={1}
-  >
-    {children}
-  </ResizableBottomPanel>
-)
+const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ResizableBottomPanel
+      ariaLabel={t('Resize question panel')}
+      testId="elicitation-composer"
+      scrollTestId="elicitation-composer-scroll"
+      constrainGrowthToOverflow
+      minimumContentSelector='[data-elicitation-option-row="true"]'
+      minimumContentIndex={1}
+    >
+      {children}
+    </ResizableBottomPanel>
+  )
+}
 
-const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-  <ResizableBottomPanel
-    ariaLabel="Resize permission panel"
-    testId="permission-composer"
-    scrollTestId="permission-composer-scroll"
-    constrainGrowthToOverflow
-  >
-    {children}
-  </ResizableBottomPanel>
-)
+const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ResizableBottomPanel
+      ariaLabel={t('Resize permission panel')}
+      testId="permission-composer"
+      scrollTestId="permission-composer-scroll"
+      constrainGrowthToOverflow
+    >
+      {children}
+    </ResizableBottomPanel>
+  )
+}
 
-const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-  <ResizableBottomPanel
-    ariaLabel="Resize Plan panel"
-    testId="plan-composer"
-    scrollTestId="plan-composer-scroll"
-    constrainGrowthToOverflow
-  >
-    {children}
-  </ResizableBottomPanel>
-)
+const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ResizableBottomPanel
+      ariaLabel={t('Resize Plan panel')}
+      testId="plan-composer"
+      scrollTestId="plan-composer-scroll"
+      constrainGrowthToOverflow
+    >
+      {children}
+    </ResizableBottomPanel>
+  )
+}
 
 // Formats the compact size label shown under each composer attachment chip.
 const formatAttachmentSize = (size: number): string => {
@@ -291,6 +313,7 @@ const ConversationPanel = ({
   sessionTools,
   subagents
 }: ConversationPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
   const {
@@ -311,18 +334,27 @@ const ConversationPanel = ({
     }
   } = composer
   const {
-    availability: { submit: canSendMessage, revise: canEditMessage, resume: canResumeSession },
+    availability: {
+      submit: canSendMessage,
+      submitMode,
+      revise: canEditMessage,
+      resume: canResumeSession,
+      branch: canBranchInNewSession
+    },
     actions: {
       submit: { draft: submitDraft, restoredPlan: onRespondToRestoredPlan },
       revise: onSendEditedMessage,
+      branch: onBranchFromAgentMessage,
       sideChat: { start: onStartSideChat },
       resume: onResumeSession,
       cancel: onCancelRun
-    }
+    },
+    queue: messageQueue
   } = conversation
   const {
     view: sideChat,
     send: onSendSideChat,
+    retryHydration: onRetrySideChatHydration,
     setDraft: onSideChatDraftChange,
     cancel: onCancelSideChat,
     close: onCloseSideChat
@@ -398,6 +430,7 @@ const ConversationPanel = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const stopSubmissionPendingRef = useRef(false)
   const [isStopping, setIsStopping] = useState(false)
+  const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const [stopError, setStopError] = useState<string>()
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -458,17 +491,9 @@ const ConversationPanel = ({
   const hasRunningSubagents = subagentSummary.runningCount > 0
   const isSaveAsSkillDisabled = isSaveAsSkillDisabledFromParent || hasRunningSubagents
   const saveAsSkillDisabledReason = hasRunningSubagents
-    ? 'Wait for all subagents to finish.'
+    ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
   const effectiveCanSend = canSendMessage && !isStopping
-  const rootTurnBusy =
-    activeSession?.status === 'running' ||
-    activeSession?.status === 'waiting-for-user' ||
-    (activeSession?.status === 'waiting-permission' &&
-      (pendingPermissions.length === 0 ||
-        pendingPermissions.some((permission) => !permission.delegated))) ||
-    activeSession?.compacting === true ||
-    activeSession?.fixLoopActive === true
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   const activePendingPlanKey = activePendingPlan
     ? `${activePendingPlan.artifactVersionId}:${activePendingPlan.revision}`
@@ -507,17 +532,25 @@ const ConversationPanel = ({
         : undefined
 
   const sessionActivities = activeSession?.activities ?? []
+  const sessionPendingElicitations = activeSession
+    ? pendingElicitations.filter((request) => request.sessionId === activeSession.id)
+    : []
   // Runtime requests and activity events can reach the renderer in either order. Whichever arrives
   // first must reserve the single bottom interaction lane so the ordinary composer never competes
-  // with a question that is waiting for an answer.
-  const livePendingElicitationRequest = pendingElicitations.find((request) => {
+  // with a question that is waiting for an answer. A projection without a live request is
+  // actionable only when its durable context can reconstruct that request.
+  const livePendingElicitationRequest = sessionPendingElicitations.find((request) => {
     const state = sessionActivities.find((activity) => activity.id === request.toolCallId)
       ?.elicitation?.state
     return state === undefined || state === 'pending'
   })
   const pendingElicitationActivity = livePendingElicitationRequest
     ? sessionActivities.find((activity) => activity.id === livePendingElicitationRequest.toolCallId)
-    : sessionActivities.find((activity) => activity.elicitation?.state === 'pending')
+    : sessionActivities.find(
+        (activity) =>
+          activity.elicitation?.state === 'pending' &&
+          activity.elicitation.durable?.kind === 'agent-user-choice'
+      )
   const restoredElicitation = pendingElicitationActivity?.elicitation
   const pendingElicitationRequest: PendingElicitationRequest | undefined =
     livePendingElicitationRequest ??
@@ -544,10 +577,38 @@ const ConversationPanel = ({
             state: 'pending'
           }
         : undefined
-  const hasPendingPermission = pendingPermissions.length > 0
+  const rootPermissionRequests = pendingPermissions.filter((request) => !request.delegated)
+  const rootPermissionPending =
+    rootPermissionRequests.length > 0 ? true : pendingPermissions.length > 0 ? false : undefined
+  const actionability = activeSession
+    ? projectSessionActionability(activeSession, {
+        rootPermissionPending,
+        elicitationPending: pendingElicitation ? true : undefined,
+        planPending:
+          pendingPlan !== undefined
+            ? true
+            : activePendingPlanKey && resolvedPlanKey === activePendingPlanKey
+              ? false
+              : undefined
+      })
+    : undefined
+  const blockingInteraction =
+    actionability?.blockingInteraction ??
+    (rootPermissionRequests.length > 0
+      ? 'permission'
+      : pendingElicitation
+        ? 'elicitation'
+        : pendingPlan
+          ? 'plan'
+          : undefined)
+  const hasPendingPermission = blockingInteraction === 'permission'
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
-  const ordinaryComposerBlocked = Boolean(
-    sideChat || hasPendingPermission || pendingElicitation || pendingPlan
+  const ordinaryComposerBlocked = Boolean(sideChat || blockingInteraction)
+  const rootTurnBusy = Boolean(
+    blockingInteraction ||
+    actionability?.activity === 'running' ||
+    activeSession?.compacting ||
+    activeSession?.fixLoopActive
   )
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
@@ -621,14 +682,13 @@ const ConversationPanel = ({
   const canStartSideChat =
     Boolean(activeSession) &&
     hasMainConversation(activeSession) &&
-    activeSession?.status !== 'waiting-for-user' &&
-    activeSession?.status !== 'waiting-permission' &&
-    activeSession?.status !== 'waiting-plan-approval' &&
+    actionability?.actions.startSideChat.allowed !== false &&
     canEditDraft &&
     hasTextDraft &&
     attachments.length === 0 &&
     attachmentTransfers.length === 0 &&
     !sideChatDisabledReason
+  const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst) return
@@ -637,6 +697,7 @@ const ConversationPanel = ({
 
   const handleSideChat = (): void => {
     if (canStartSideChat) onStartSideChat()
+    else onRetrySideChatHydration?.()
   }
 
   const handleCloseSideChat = (): void => {
@@ -682,13 +743,13 @@ const ConversationPanel = ({
           <button
             type="button"
             className="grid size-9 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-surface-control-hover hover:text-text-000 md:hidden"
-            aria-label="Open navigation"
+            aria-label={t('Open navigation')}
             onClick={onOpenSidebar}
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
-            {activeSession?.title ?? 'New conversation'}
+            {activeSession?.title ?? t('New conversation')}
           </h1>
           <NotificationBell className="md:hidden" />
           <button
@@ -696,7 +757,9 @@ const ConversationPanel = ({
             className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover md:hidden ${
               isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-primary'
             }`}
-            aria-label={isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}
+            aria-label={t(
+              isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'
+            )}
             aria-expanded={!isPreviewPanelCollapsed}
             aria-controls="right-panel"
             onClick={onTogglePreviewPanel}
@@ -711,7 +774,9 @@ const ConversationPanel = ({
             isResumingSession={isResuming}
             notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
-            pendingElicitations={sideChat ? [] : pendingElicitations}
+            canBranchInNewSession={canBranchInNewSession}
+            onBranchInNewSession={onBranchFromAgentMessage}
+            pendingElicitations={sideChat ? [] : sessionPendingElicitations}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
             onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
           />
@@ -735,7 +800,7 @@ const ConversationPanel = ({
                     red error box, so the user can re-attach and continue the interrupted turn. */}
                 {!sideChat && activeSession?.interrupted ? (
                   <SessionInterruptedBanner
-                    message={activeSession.error ?? 'This session was interrupted.'}
+                    message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
@@ -745,7 +810,7 @@ const ConversationPanel = ({
                   // while the agent context is reset and the conversation is replayed as text.
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
-                    Compacting conversation to fit the context limit…
+                    {t('Compacting conversation to fit the context limit…')}
                   </div>
                 ) : actionError || activeSession?.status === 'error' ? (
                   <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
@@ -766,10 +831,10 @@ const ConversationPanel = ({
                             type="button"
                             onClick={openReportDialog}
                             className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                            aria-label="Report this error"
+                            aria-label={t('Report this error')}
                           >
                             <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                            Report error
+                            {t('Report error')}
                           </button>
                         ) : null}
                       </div>
@@ -822,14 +887,21 @@ const ConversationPanel = ({
                 !pendingElicitation &&
                 !pendingPlan &&
                 (notebookReference ||
+                  messageQueue.items.length > 0 ||
                   hasAnyJobs ||
                   hasSubagents ||
                   (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false)) ? (
                   <div
-                    key={notebookReference ? `notebook-${notebookReference.sessionId}` : 'jobs'}
+                    key={
+                      notebookReference
+                        ? `notebook-${notebookReference.sessionId}`
+                        : messageQueue.items.length > 0
+                          ? 'message-queue'
+                          : 'jobs'
+                    }
                     className={cn(
                       'flex px-2',
-                      notebookReference
+                      notebookReference || messageQueue.items.length > 0
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card'
                     )}
@@ -857,12 +929,12 @@ const ConversationPanel = ({
                       <button
                         type="button"
                         className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[12px] font-normal text-text-100 transition-colors duration-200 ease-out hover:bg-bg-300 hover:text-text-000"
-                        aria-label="Open notebook"
+                        aria-label={t('Open notebook')}
                         aria-controls="right-panel"
                         onClick={() => onOpenNotebook(notebookReference)}
                       >
                         <BookOpen className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        Notebook
+                        {t('Notebook')}
                       </button>
                     ) : null}
                     <div className="flex-1" />
@@ -874,6 +946,11 @@ const ConversationPanel = ({
                         }
                       />
                     ) : null}
+                    <ComposerMessageQueueTrigger
+                      items={messageQueue.items}
+                      expanded={messageQueueExpanded}
+                      onExpandedChange={setMessageQueueExpanded}
+                    />
                   </div>
                 ) : null}
 
@@ -902,11 +979,14 @@ const ConversationPanel = ({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="text-[12px] font-medium leading-5 text-red-300">
-                          {`Could not switch to ${reconfigureError.specialistName}`}
+                          {t('Could not switch to {{name}}', {
+                            name: reconfigureError.specialistName
+                          })}
                         </div>
                         <div className="text-[11px] leading-4 text-red-400/80">
-                          The agent session could not be reconfigured. Your draft has been
-                          preserved.
+                          {t(
+                            'The agent session could not be reconfigured. Your draft has been preserved.'
+                          )}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <button
@@ -914,21 +994,21 @@ const ConversationPanel = ({
                             onClick={onReconfigureRetry}
                             className="flex h-6 items-center rounded px-2 text-[11px] font-medium text-red-300 hover:bg-red-500/15 border border-red-500/30"
                           >
-                            Retry
+                            {t('Retry')}
                           </button>
                           <button
                             type="button"
                             onClick={onReconfigureChooseOther}
                             className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
                           >
-                            Choose another specialist
+                            {t('Choose another specialist')}
                           </button>
                           <button
                             type="button"
                             onClick={onReconfigureUseNone}
                             className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
                           >
-                            Use None (Main Agent)
+                            {t('Use None (Main Agent)')}
                           </button>
                         </div>
                       </div>
@@ -967,9 +1047,9 @@ const ConversationPanel = ({
                       }
                     />
                   ) : hasPendingPermission ? (
-                    <ResizablePermissionComposer key={pendingPermissions[0]?.requestId}>
+                    <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
                       <PermissionApprovalControls
-                        requests={pendingPermissions}
+                        requests={rootPermissionRequests}
                         onRespond={onRespondToPermission}
                         embedded
                         notebookLookup={
@@ -1028,8 +1108,12 @@ const ConversationPanel = ({
                   >
                     {/* File-drag overlay is scoped to the composer input card only. */}
                     {isDragging ? (
-                      <FileDropOverlay label="Drop files to attach" className="rounded-2xl" />
+                      <FileDropOverlay label={t('Drop files to attach')} className="rounded-2xl" />
                     ) : null}
+                    <ComposerMessageQueueContent
+                      {...messageQueue}
+                      expanded={messageQueueExpanded}
+                    />
                     <div className="flex flex-col gap-2">
                       {attachments.length > 0 || attachmentTransfers.length > 0 ? (
                         <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
@@ -1060,7 +1144,9 @@ const ConversationPanel = ({
                                   type="button"
                                   className={attachmentRemoveButtonClassName}
                                   disabled={!canEditDraft}
-                                  aria-label={`Remove attachment ${attachmentName}`}
+                                  aria-label={t('Remove attachment {{name}}', {
+                                    name: attachmentName
+                                  })}
                                   onClick={() => onRemoveAttachment(attachment)}
                                 >
                                   <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
@@ -1081,11 +1167,11 @@ const ConversationPanel = ({
                                   )
                             const statusLabel =
                               transfer.status === 'queued'
-                                ? 'Queued'
+                                ? t('Queued')
                                 : transfer.status === 'cancelling'
-                                  ? 'Cancelling…'
+                                  ? t('Cancelling…')
                                   : transfer.status === 'error'
-                                    ? transfer.error || 'Upload failed'
+                                    ? transfer.error || t('Upload failed')
                                     : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
 
                             return (
@@ -1115,7 +1201,9 @@ const ConversationPanel = ({
                                     <div
                                       className="mt-1 h-0.5 overflow-hidden rounded-full bg-bg-300"
                                       role="progressbar"
-                                      aria-label={`Uploading ${transfer.name}`}
+                                      aria-label={t('Uploading {{name}}', {
+                                        name: transfer.name
+                                      })}
                                       aria-valuemin={0}
                                       aria-valuemax={100}
                                       aria-valuenow={percent}
@@ -1131,9 +1219,12 @@ const ConversationPanel = ({
                                   type="button"
                                   className={attachmentRemoveButtonClassName}
                                   disabled={!canEditDraft || transfer.status === 'cancelling'}
-                                  aria-label={`${
-                                    transfer.status === 'error' ? 'Remove failed' : 'Cancel'
-                                  } attachment ${transfer.name}`}
+                                  aria-label={t(
+                                    transfer.status === 'error'
+                                      ? 'Remove failed attachment {{name}}'
+                                      : 'Cancel attachment {{name}}',
+                                    { name: transfer.name }
+                                  )}
                                   onClick={() => onCancelAttachmentTransfer(transfer)}
                                 >
                                   <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
@@ -1152,8 +1243,13 @@ const ConversationPanel = ({
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
-                          placeholder={`Ask anything — / skills · @ files · ${globalSearchShortcut} search · ↑↓ history`}
-                          ariaLabel="Ask anything"
+                          placeholder={t(
+                            'Ask anything — / skills · @ files · {{shortcut}} search · ↑↓ history',
+                            {
+                              shortcut: globalSearchShortcut
+                            }
+                          )}
+                          ariaLabel={t('Ask anything')}
                           allowedSkillIds={allowedSkillIds}
                           isHistoryBrowsing={isHistoryBrowsing}
                           historyStatus={historyStatus}
@@ -1195,8 +1291,12 @@ const ConversationPanel = ({
                                     className={composerIconButtonClassName}
                                     aria-label={
                                       activeBranchPlan
-                                        ? 'Add attachment, save as skill, view context window, view plan, or request review'
-                                        : 'Add attachment, save as skill, view context window, or request review'
+                                        ? t(
+                                            'Add attachment, save as skill, view context window, view plan, or request review'
+                                          )
+                                        : t(
+                                            'Add attachment, save as skill, view context window, or request review'
+                                          )
                                     }
                                     data-testid="composer-plus-trigger"
                                   >
@@ -1206,8 +1306,12 @@ const ConversationPanel = ({
                               </TooltipTrigger>
                               <TooltipContent side="top">
                                 {activeBranchPlan
-                                  ? 'Add attachment, save as skill, view context window, view plan, or request review'
-                                  : 'Add attachment, save as skill, view context window, or request review'}
+                                  ? t(
+                                      'Add attachment, save as skill, view context window, view plan, or request review'
+                                    )
+                                  : t(
+                                      'Add attachment, save as skill, view context window, or request review'
+                                    )}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -1224,7 +1328,7 @@ const ConversationPanel = ({
                                       className="mr-2 size-4 text-text-300"
                                       aria-hidden="true"
                                     />
-                                    <span className="flex-1">Attach files</span>
+                                    <span className="flex-1">{t('Attach files')}</span>
                                     <CircleHelp
                                       className="size-3.5 text-text-300"
                                       aria-hidden="true"
@@ -1236,7 +1340,7 @@ const ConversationPanel = ({
                                   className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
                                   data-testid="attachment-limits"
                                 >
-                                  {attachmentLimitsText}
+                                  {attachmentLimitsText(t)}
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
@@ -1249,7 +1353,7 @@ const ConversationPanel = ({
                               )}
                               data-testid="attachment-limits-touch"
                             >
-                              {attachmentLimitsText}
+                              {attachmentLimitsText(t)}
                             </div>
                             <ComposerYourFilesMenu
                               onInsertFileReference={handleInsertFileReference}
@@ -1275,7 +1379,7 @@ const ConversationPanel = ({
                                     className="mr-2 size-4 text-text-300"
                                     aria-hidden="true"
                                   />
-                                  <span className="flex-1">View plan</span>
+                                  <span className="flex-1">{t('View plan')}</span>
                                   <span className="text-[11px] text-text-300">
                                     {activeBranchPlan.counts.completed}/
                                     {activeBranchPlan.counts.steps}
@@ -1309,7 +1413,7 @@ const ConversationPanel = ({
                                 />
                               )}
                               <span className="text-[13px] font-medium leading-5">
-                                {isReviewing ? 'Reviewing\u2026' : 'Request review'}
+                                {isReviewing ? t('Reviewing…') : t('Request review')}
                               </span>
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
@@ -1346,7 +1450,7 @@ const ConversationPanel = ({
                                       />
                                     )}
                                     <span className="text-[13px] font-medium leading-5">
-                                      {isSavingAsSkill ? 'Saving as skill…' : 'Save as skill'}
+                                      {isSavingAsSkill ? t('Saving as skill…') : t('Save as skill')}
                                     </span>
                                   </DropdownMenuItem>
                                 </TooltipTrigger>
@@ -1372,7 +1476,7 @@ const ConversationPanel = ({
                                 className="mr-2 size-4 text-text-300"
                                 aria-hidden="true"
                               />
-                              Context window
+                              {t('Context window')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1419,9 +1523,9 @@ const ConversationPanel = ({
                           <span
                             className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
                             data-testid="specialist-pending-switch-chip"
-                            aria-label="Specialist switch pending"
+                            aria-label={t('Specialist switch pending')}
                           >
-                            Switching in this turn
+                            {t('Switching in this turn')}
                           </span>
                         ) : null}
 
@@ -1450,14 +1554,26 @@ const ConversationPanel = ({
                           // reachable across the whole loop, not just the agent-fix running turn.
                           <div
                             data-testid="composer-running-control-slot"
-                            className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                            className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                           >
+                            <button
+                              type="button"
+                              onClick={handleSubmit}
+                              disabled={!effectiveCanSend || submitMode !== 'queue'}
+                              className={composerIconButtonClassName}
+                              aria-label={t('Add message to queue')}
+                              data-testid="composer-queue-submit"
+                            >
+                              <ArrowUp className="size-4" strokeWidth={2.2} aria-hidden="true" />
+                            </button>
                             <button
                               type="button"
                               onClick={handleStop}
                               disabled={isStopping}
                               className={composerCancelButtonClassName}
-                              aria-label={isStopping ? 'Stopping run and subagents' : 'Cancel run'}
+                              aria-label={
+                                isStopping ? t('Stopping run and subagents') : t('Cancel run')
+                              }
                             >
                               {isStopping ? (
                                 <Loader2
@@ -1483,8 +1599,8 @@ const ConversationPanel = ({
                                         <button
                                           type="button"
                                           className={composerIconButtonClassName}
-                                          disabled={!canStartSideChat}
-                                          aria-label="More send options"
+                                          disabled={!canStartSideChat && !canRetrySideChatHydration}
+                                          aria-label={t('More send options')}
                                           data-testid="running-side-chat-menu-trigger"
                                         >
                                           <ChevronDown className="size-3.5" aria-hidden="true" />
@@ -1493,14 +1609,14 @@ const ConversationPanel = ({
                                     </span>
                                   </TooltipTrigger>
                                   <TooltipContent side="top">
-                                    {sideChatDisabledReason ?? 'More send options'}
+                                    {sideChatDisabledReason ?? t('More send options')}
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
                               <DropdownMenuContent side="top" align="end" className="w-64">
                                 <DropdownMenuItem
                                   data-testid="menu-side-chat"
-                                  disabled={!canStartSideChat}
+                                  disabled={!canStartSideChat && !canRetrySideChatHydration}
                                   onSelect={handleSideChat}
                                   title={sideChatDisabledReason}
                                 >
@@ -1509,7 +1625,9 @@ const ConversationPanel = ({
                                     aria-hidden="true"
                                   />
                                   <span>
-                                    Side chat
+                                    {canRetrySideChatHydration
+                                      ? t('Retry Side chat restore')
+                                      : t('Side chat')}
                                     {sideChatDisabledReason ? (
                                       <span className="block text-[11px] text-text-300">
                                         {sideChatDisabledReason}
@@ -1524,7 +1642,7 @@ const ConversationPanel = ({
                           <TooltipProvider delayDuration={200}>
                             <div
                               role="group"
-                              aria-label="Send message options"
+                              aria-label={t('Send message options')}
                               className={cn(
                                 'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
                                 !effectiveCanSend && 'opacity-50'
@@ -1539,7 +1657,7 @@ const ConversationPanel = ({
                                     onClick={handleSubmit}
                                     disabled={!effectiveCanSend}
                                     className={composerSplitSendPrimaryButtonClassName}
-                                    aria-label="Send message"
+                                    aria-label={t('Send message')}
                                   >
                                     <ArrowUp
                                       className="size-4"
@@ -1548,7 +1666,7 @@ const ConversationPanel = ({
                                     />
                                   </Button>
                                 </TooltipTrigger>
-                                <TooltipContent side="top">Send message</TooltipContent>
+                                <TooltipContent side="top">{t('Send message')}</TooltipContent>
                               </Tooltip>
                               <DropdownMenu>
                                 <Tooltip>
@@ -1570,10 +1688,11 @@ const ConversationPanel = ({
                                         disabled={
                                           !canPlanFirst &&
                                           !canStartSideChat &&
+                                          !canRetrySideChatHydration &&
                                           (!effectiveCanSend || !onBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
-                                        aria-label="More send options"
+                                        aria-label={t('More send options')}
                                         aria-haspopup="menu"
                                         data-testid="branch-send-menu-trigger"
                                       >
@@ -1585,7 +1704,9 @@ const ConversationPanel = ({
                                       </Button>
                                     </DropdownMenuTrigger>
                                   </TooltipTrigger>
-                                  <TooltipContent side="top">More send options</TooltipContent>
+                                  <TooltipContent side="top">
+                                    {t('More send options')}
+                                  </TooltipContent>
                                 </Tooltip>
                                 <DropdownMenuContent side="top" align="end" className="w-56">
                                   <DropdownMenuItem
@@ -1598,11 +1719,11 @@ const ConversationPanel = ({
                                       className="mr-2 size-4 text-text-300"
                                       aria-hidden="true"
                                     />
-                                    Plan first
+                                    {t('Plan first')}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-side-chat"
-                                    disabled={!canStartSideChat}
+                                    disabled={!canStartSideChat && !canRetrySideChatHydration}
                                     onSelect={handleSideChat}
                                     title={sideChatDisabledReason}
                                     className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
@@ -1612,7 +1733,9 @@ const ConversationPanel = ({
                                       aria-hidden="true"
                                     />
                                     <span>
-                                      Side chat
+                                      {canRetrySideChatHydration
+                                        ? t('Retry Side chat restore')
+                                        : t('Side chat')}
                                       {sideChatDisabledReason ? (
                                         <span className="block text-[11px] text-text-300">
                                           {sideChatDisabledReason}
@@ -1630,7 +1753,7 @@ const ConversationPanel = ({
                                       className="mr-2 size-4 text-text-300"
                                       aria-hidden="true"
                                     />
-                                    Branch in new session
+                                    {t('Branch in new session')}
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -1646,7 +1769,9 @@ const ConversationPanel = ({
                                   onClick={handleStopSubagents}
                                   disabled={isStopping}
                                   className={composerCancelButtonClassName}
-                                  aria-label={isStopping ? 'Stopping subagents' : 'Stop subagents'}
+                                  aria-label={
+                                    isStopping ? t('Stopping subagents') : t('Stop subagents')
+                                  }
                                 >
                                   {isStopping ? (
                                     <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
@@ -1660,7 +1785,7 @@ const ConversationPanel = ({
                                 </button>
                               </TooltipTrigger>
                               <TooltipContent>
-                                {isStopping ? 'Stopping subagents' : 'Stop subagents'}
+                                {isStopping ? t('Stopping subagents') : t('Stop subagents')}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>

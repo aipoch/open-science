@@ -9,6 +9,7 @@ export type SettingsPanelId =
   | 'compute'
   | 'permissions'
   | 'archived'
+  | 'usage'
   | 'general'
   | 'storage'
   | 'network'

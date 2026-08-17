@@ -67,6 +67,7 @@ type Harness = {
   preflightPlan: Mock<AcpPromptTurnWorkflowOptions['plan']['preflight']>
   prepared: ReadyPreparedPromptHandle
   pushUserMessage: Mock<AcpPromptTurnWorkflowOptions['environment']['pushUserMessage']>
+  routeNotification: Mock<AcpPromptTurnWorkflowOptions['environment']['routeNotification']>
   resumeAfterReload: Mock<AcpPromptTurnWorkflowOptions['resumeAfterReload']>
   setSession: (replacement: ActiveSession) => void
   skill: TurnSkillHandle
@@ -146,7 +147,7 @@ const createHarness = (
   aggregate.attach({
     session,
     cwd: '/session',
-    projectName: 'project-1',
+    projectId: 'project-1',
     frameworkId: 'opencode',
     permissionProfile: {
       selectedProfile: 'ask',
@@ -277,6 +278,7 @@ const createHarness = (
   const pushUserMessage: Harness['pushUserMessage'] = vi.fn(() => {
     journal.push('event:message')
   })
+  const routeNotification: Harness['routeNotification'] = vi.fn()
   const emitSkillActivities: Harness['emitSkillActivities'] = vi.fn(
     (_sessionId, _turn, _skills, status) => {
       journal.push(`skills:${status}`)
@@ -306,7 +308,7 @@ const createHarness = (
       emitSkillActivities,
       onProviderPromptAccepted,
       ...(input.sideChatClaim ? { sideChatRelays: { claim: input.sideChatClaim } } : {}),
-      routeNotification: vi.fn(),
+      routeNotification,
       diagnosticContext: () => ({}),
       pushUserMessage
     },
@@ -316,7 +318,7 @@ const createHarness = (
     permission,
     finalization,
     currentCwd: () => '/default',
-    resolveProjectName: () => 'project-1',
+    resolveProjectId: () => 'project-1',
     disconnectForReload: vi.fn(async () => journal.push('disconnect')),
     resumeAfterReload,
     recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),
@@ -347,6 +349,7 @@ const createHarness = (
     preflightPlan,
     prepared,
     pushUserMessage,
+    routeNotification,
     resumeAfterReload,
     setSession: (replacement: ActiveSession) => (session = replacement),
     skill,
@@ -548,6 +551,48 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.onProviderPromptAccepted).toHaveBeenCalledWith('s1', 'attempt-2')
   })
 
+  it('publishes an attributed application turn without claiming side chat or routing user notifications', async () => {
+    const claim = vi.fn(() => ({
+      historyPreamble: 'Queued human side chat.',
+      commit: vi.fn(),
+      restore: vi.fn()
+    }))
+    const harness = createHarness({
+      sideChatClaim: claim,
+      execute: async (input) => {
+        input.onAccepted()
+        input.routeNotification({
+          sessionId: 'provider-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Internal reviewer turn' }
+          }
+        })
+        const response: PromptResponse = { stopReason: 'end_turn' }
+        input.captureStop()
+        return { kind: 'stopped', response, facts: {} }
+      }
+    })
+    const attribution = {
+      kind: 'application',
+      feature: 'reviewer',
+      purpose: 'correction',
+      causeReviewId: 'review-1'
+    } as const
+
+    await harness.workflow.run(request(), { kind: 'application', attribution })
+    harness.finalizer.mock.calls[0][0].emitUserMessage()
+
+    expect(harness.pushUserMessage).toHaveBeenCalledWith({
+      sessionId: 's1',
+      promptMessageId: 'message-1',
+      text: 'analyze',
+      attribution
+    })
+    expect(claim).not.toHaveBeenCalled()
+    expect(harness.routeNotification).not.toHaveBeenCalled()
+  })
+
   it('cannot let delayed admission clear a newer active interaction', async () => {
     const authorization = deferred<TurnSkillHandle>()
     const staleSkill = skillHandle()
@@ -586,7 +631,7 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.resumeAfterReload).toHaveBeenCalledWith({
       sessionId: 's1',
       cwd: '/session',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask'
     })
     expect(turn).toMatchObject({ contextReset: true, historyPreamble: 'restored transcript' })

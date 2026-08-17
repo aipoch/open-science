@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next'
+
 import type { PackageMirror } from '../../../../shared/mirror'
 
 export { MIRROR_HELP_URL } from '../../../../shared/mirror'
@@ -9,10 +11,12 @@ export const isMirrorConfigured = (mirror: PackageMirror | undefined): boolean =
   Boolean(mirror && (mirror.condaChannel || mirror.pypiIndex || mirror.caBundle))
 
 // Default state copy matches the mockup exactly; configured state summarizes the active hosts.
-export const mirrorStatusText = (mirror: PackageMirror | undefined): string => {
+// Host names and the user's own mirror URLs are config values, so only the sentence around them
+// is translated.
+export const mirrorStatusText = (mirror: PackageMirror | undefined, t: TFunction): string => {
   if (!isMirrorConfigured(mirror)) {
-    return 'Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)'
+    return t('Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)')
   }
   const parts = [mirror!.condaChannel, mirror!.pypiIndex].filter(Boolean)
-  return `Fetching packages from ${parts.join(' , ')}`
+  return t('Fetching packages from {{hosts}}', { hosts: parts.join(' , ') })
 }

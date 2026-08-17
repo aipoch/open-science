@@ -26,15 +26,4 @@ const getVisiblePermissionRequests = (
   })
 }
 
-const hasBlockingRootPermissionRequest = (
-  pendingPermissions: readonly AcpPermissionRequest[],
-  activeSessionId: string | undefined
-): boolean =>
-  Boolean(
-    activeSessionId &&
-    pendingPermissions.some(
-      (request) => request.sessionId === activeSessionId && request.delegated === undefined
-    )
-  )
-
-export { getVisiblePermissionRequests, hasBlockingRootPermissionRequest }
+export { getVisiblePermissionRequests }

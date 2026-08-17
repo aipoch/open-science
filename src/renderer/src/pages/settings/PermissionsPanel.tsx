@@ -1,6 +1,7 @@
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
+import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type {
@@ -79,6 +80,9 @@ const INCOMPLETE_STORE_LABELS: Record<PermissionGrantSnapshot['incompleteStores'
     connector_policy: 'Connector policy'
   }
 
+// English source text for the permission modes. The strings stay here as literals so they read in
+// the diff and the orphan guard can see them, but they travel to the Select as *data* rather than as
+// JSX, so every read site below calls t() on them.
 const PERMISSION_PROFILES: ReadonlyArray<{
   id: PermissionProfileId
   label: string
@@ -120,6 +124,7 @@ const PermissionRow = ({
   onOpenConnector?: (serverId: string) => void
   onOpenSession?: (sessionId: string) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const sessionId = grant.scopeKind === 'session' ? grant.sessionId : undefined
   const scopeClassName =
     'col-start-1 row-start-2 max-w-full justify-self-start truncate rounded-md bg-muted px-2 py-1 text-sm text-muted-foreground sm:col-start-2 sm:row-start-1 sm:max-w-80'
@@ -131,14 +136,16 @@ const PermissionRow = ({
     >
       <div className="min-w-0">
         <div>
-          <span className="text-sm text-foreground">{grant.capabilityLabel}</span>
+          <span className="text-sm text-foreground">{t(grant.capabilityLabel)}</span>
           {grant.qualifierLabel ? (
             <span className="ml-2 text-sm text-muted-foreground">{grant.qualifierLabel}</span>
           ) : null}
         </div>
         {grant.coveredBy ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Also allowed {grant.coveredBy === 'global' ? 'globally' : 'for this project'}
+            {t('Also allowed {{scope}}', {
+              scope: grant.coveredBy === 'global' ? t('globally') : t('for this project')
+            })}
           </p>
         ) : null}
         {grant.policyHint ? (
@@ -157,7 +164,7 @@ const PermissionRow = ({
         <button
           type="button"
           title={grant.scopeLabel}
-          aria-label={`Open ${grant.scopeLabel}`}
+          aria-label={t('Open {{scope}}', { scope: grant.scopeLabel })}
           className={`${scopeClassName} cursor-pointer transition-colors duration-150 motion-reduce:transition-none outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50`}
           onClick={() => onOpenSession(sessionId)}
         >
@@ -169,7 +176,7 @@ const PermissionRow = ({
         </span>
       )}
       <SettingsIconAction
-        label={`Revoke ${grant.capabilityLabel}`}
+        label={t('Revoke {{name}}', { name: t(grant.capabilityLabel) })}
         icon={X}
         danger
         className="relative col-start-2 row-span-2 row-start-1 size-8 shrink-0 opacity-100 transition-opacity duration-150 motion-reduce:transition-none before:absolute before:-inset-1.5 before:content-[''] sm:col-start-3 sm:row-span-1 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
@@ -186,6 +193,8 @@ const PermissionsPanel = ({
   onOpenConnector?: (serverId: string) => void
   onOpenSession?: (sessionId: string) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const grants = usePermissionGrantsStore((state) => state.grants)
   const counts = usePermissionGrantsStore((state) => state.counts)
   const incompleteStores = usePermissionGrantsStore((state) => state.incompleteStores)
@@ -219,22 +228,26 @@ const PermissionsPanel = ({
   return (
     <div className="px-5 pb-5">
       <SettingsSection
-        title="New conversations"
-        description="Choose how much the agent can do without asking when a conversation starts."
-        aria-label="New conversation permissions"
+        title={t('New conversations')}
+        description={t(
+          'Choose how much the agent can do without asking when a conversation starts.'
+        )}
+        aria-label={t('New conversation permissions')}
         className="pt-5"
       >
         <SettingsRow
-          label="Default permission mode"
-          description="Applied only to new conversations. You can change it in Agent controls before sending the first message."
+          label={t('Default permission mode')}
+          description={t(
+            'Applied only to new conversations. You can change it in Agent controls before sending the first message.'
+          )}
           className="pt-0"
         >
           <Select
             value={defaultPermissionProfile}
             onValueChange={(value) => selectDefaultProfile(value as PermissionProfileId)}
           >
-            <SelectTrigger aria-label="Default permission mode">
-              <span>{permissionProfileLabel(defaultPermissionProfile)}</span>
+            <SelectTrigger aria-label={t('Default permission mode')}>
+              <span>{t(permissionProfileLabel(defaultPermissionProfile))}</span>
             </SelectTrigger>
             <SelectContent className="w-[min(24rem,calc(100vw-2rem))]">
               {PERMISSION_PROFILES.map((profile) => {
@@ -260,7 +273,7 @@ const PermissionsPanel = ({
                           isFull && 'text-amber-600 dark:text-amber-400'
                         )}
                       >
-                        {profile.label}
+                        {t(profile.label)}
                       </span>
                       <span
                         className={cn(
@@ -268,7 +281,7 @@ const PermissionsPanel = ({
                           isFull && 'text-amber-600/75 dark:text-amber-400/75'
                         )}
                       >
-                        {profile.description}
+                        {t(profile.description)}
                       </span>
                     </span>
                   </SelectItem>
@@ -284,30 +297,31 @@ const PermissionsPanel = ({
             className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            New conversations can run commands, change files, and access the network without asking
-            first. Existing conversations keep their current permission mode.
+            {t(
+              'New conversations can run commands, change files, and access the network without asking first. Existing conversations keep their current permission mode.'
+            )}
           </div>
         ) : null}
       </SettingsSection>
 
       <div className="sticky top-0 z-10 -mx-5 mt-5 mb-2 border-t border-border bg-card px-5 py-5">
         <div className="mb-3">
-          <h3 className="text-base font-semibold text-foreground">Remembered permissions</h3>
+          <h3 className="text-base font-semibold text-foreground">{t('Remembered permissions')}</h3>
           <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
-            Review or revoke approvals saved for tools, projects, and conversations.
+            {t('Review or revoke approvals saved for tools, projects, and conversations.')}
           </p>
         </div>
         <Select value={filter} onValueChange={(value) => setFilter(value as ScopeFilter)}>
           <SelectTrigger
-            aria-label="Filter permissions by scope"
+            aria-label={t('Filter permissions by scope')}
             className="w-full max-w-72 whitespace-nowrap [font-variant-numeric:tabular-nums]"
           >
-            {FILTER_LABELS[filter]} ({counts[filter]})
+            {t(FILTER_LABELS[filter])} ({counts[filter]})
           </SelectTrigger>
           <SelectContent>
             {(Object.keys(FILTER_LABELS) as ScopeFilter[]).map((scope) => (
               <SelectItem key={scope} value={scope}>
-                {FILTER_LABELS[scope]} ({counts[scope]})
+                {t(FILTER_LABELS[scope])} ({counts[scope]})
               </SelectItem>
             ))}
           </SelectContent>
@@ -316,11 +330,14 @@ const PermissionsPanel = ({
 
       {incompleteStores.length > 0 ? (
         <div role="status" className="mb-4 rounded-lg border border-border bg-muted/35 px-3 py-2">
-          <p className="text-sm text-foreground">Some permission details are unavailable</p>
+          <p className="text-sm text-foreground">{t('Some permission details are unavailable')}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {incompleteStores.map((store) => INCOMPLETE_STORE_LABELS[store]).join(', ')} could not
-            be loaded. Individual grants remain revocable; Revoke all is disabled until the complete
-            set is known.
+            {t('The following permission details could not be loaded: {{stores}}', {
+              stores: incompleteStores.map((store) => t(INCOMPLETE_STORE_LABELS[store])).join(', ')
+            })}{' '}
+            {t(
+              'Individual grants remain revocable; Revoke all is disabled until the complete set is known.'
+            )}
           </p>
         </div>
       ) : null}
@@ -332,7 +349,7 @@ const PermissionsPanel = ({
         >
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <p>{error}</p>
+            <p>{t(error)}</p>
           </div>
           <Button
             type="button"
@@ -341,14 +358,14 @@ const PermissionsPanel = ({
             className="mt-3"
             onClick={() => void load()}
           >
-            Try again
+            {t('Try again')}
           </Button>
         </div>
       ) : null}
 
       <div className="scroll-pb-24">
         {status === 'loading' && grants.length === 0 ? (
-          <div className="space-y-3" aria-label="Loading permissions">
+          <div className="space-y-3" aria-label={t('Loading permissions')}>
             {[0, 1, 2].map((row) => (
               <div
                 key={row}
@@ -358,7 +375,7 @@ const PermissionsPanel = ({
           </div>
         ) : visible.length === 0 ? (
           <p className="sr-only" role="status">
-            No remembered permissions for this scope.
+            {t('No remembered permissions for this scope.')}
           </p>
         ) : (
           <div className="space-y-5">
@@ -366,23 +383,29 @@ const PermissionsPanel = ({
               const familyGrants = visible.filter((grant) => grant.family === id)
               if (familyGrants.length === 0) return null
 
+              const familyLabel = t(title)
+              const scopeLabel = filter === 'all' ? '' : `${t(FILTER_LABELS[filter])} `
+
               return (
                 <SettingsSection
                   key={id}
-                  title={title}
+                  title={familyLabel}
                   titleId={`permission-family-${id}`}
-                  description={description}
+                  description={t(description)}
                   action={
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      aria-label={`Revoke all ${filter === 'all' ? '' : `${FILTER_LABELS[filter]} `}${title} permissions`}
+                      aria-label={t('Revoke all {{scope}}{{family}} permissions', {
+                        scope: scopeLabel,
+                        family: familyLabel
+                      })}
                       disabled={incompleteStores.length > 0}
                       className="whitespace-nowrap"
                       onClick={() => void revoke(familyGrants)}
                     >
-                      Revoke all
+                      {t('Revoke all')}
                     </Button>
                   }
                   aria-labelledby={`permission-family-${id}`}
@@ -424,11 +447,12 @@ const PermissionsPanel = ({
                 </span>
                 <div className="min-w-0">
                   <AlertDialog.Title className={dialogTitleClassName}>
-                    Use Full access by default?
+                    {t('Use Full access by default?')}
                   </AlertDialog.Title>
                   <AlertDialog.Description className={dialogDescriptionClassName}>
-                    New conversations can run commands, change files, execute notebook code, and
-                    access the network without asking first. Existing conversations are unchanged.
+                    {t(
+                      'New conversations can run commands, change files, execute notebook code, and access the network without asking first. Existing conversations are unchanged.'
+                    )}
                   </AlertDialog.Description>
                 </div>
               </div>
@@ -437,7 +461,7 @@ const PermissionsPanel = ({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Close"
+                  aria-label={t('Close')}
                   className={dialogCloseButtonClassName}
                 >
                   <X className="size-4" aria-hidden="true" />
@@ -447,7 +471,7 @@ const PermissionsPanel = ({
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
-                  Cancel
+                  {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
@@ -456,7 +480,7 @@ const PermissionsPanel = ({
                   className="bg-amber-600 text-white hover:bg-amber-700"
                   onClick={() => void setDefaultPermissionProfile('full')}
                 >
-                  Use Full access
+                  {t('Use Full access')}
                 </Button>
               </AlertDialog.Action>
             </div>

@@ -28,9 +28,7 @@ type WorkspaceMessageRuntime = Pick<
 > &
   Partial<Pick<ReturnType<typeof useAcpRuntime>, 'compactSession' | 'continueInterruptedTurn'>>
 
-type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
 type WorkspaceCancellationRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'cancel'>
-type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 const workspaceSession = (sessionId: string): ChatSession | undefined =>
@@ -486,6 +484,7 @@ const cancelWorkspaceRun = async (
   if (!snapshot) {
     cancelledSessionIds?.delete(sessionId)
     useSessionStore.getState().failRun(sessionId, 'Agent cancellation failed')
+    throw new Error('Agent cancellation failed')
   }
 }
 const processContextOverflowRecovery = (
@@ -536,35 +535,6 @@ const processContextOverflowRecovery = (
   for (const id of handledEventIds) {
     if (!visibleIds.has(id)) handledEventIds.delete(id)
   }
-}
-
-// Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
-// state. A failure in either authoritative layer leaves the session visible with an actionable error.
-const deleteWorkspaceSession = async (
-  runtime: WorkspaceDeletionRuntime,
-  sessionId: string,
-  persistDeletion: PersistSessionDeletion = window.api.sessions.deleteSession
-): Promise<boolean> => {
-  const session = workspaceSession(sessionId)
-  if (!session?.projectId) return false
-
-  const snapshot = await runtime.deleteSession(sessionId)
-  if (!snapshot || snapshot.sessionIds.includes(sessionId)) {
-    useSessionStore.getState().failRun(sessionId, 'Agent session deletion failed')
-    return false
-  }
-
-  try {
-    await persistDeletion({ projectId: session.projectId, sessionId })
-  } catch (error) {
-    useSessionStore
-      .getState()
-      .failRun(sessionId, `Session deletion failed: ${getErrorMessage(error)}`)
-    throw error
-  }
-
-  useSessionStore.getState().deleteSession(sessionId)
-  return true
 }
 
 // Own retry dedup, cooldown, cancellation and human-authorized Plan provenance across React renders.
@@ -639,9 +609,6 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
           ? cancelledOverflowRecoverySessionIds
           : undefined
       )
-    },
-    delete(runtime: WorkspaceDeletionRuntime, sessionId: string): Promise<boolean> {
-      return deleteWorkspaceSession(runtime, sessionId).catch(() => false)
     }
   }
 }
@@ -650,7 +617,6 @@ export {
   cancelWorkspaceRun,
   compactWorkspaceSession,
   createWorkspaceRuntimeSessionLifecycleOwner,
-  deleteWorkspaceSession,
   ensureWorkspaceSessionReady,
   processContextOverflowRecovery,
   recoverContextOverflowWorkspaceSession,

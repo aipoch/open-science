@@ -5,7 +5,7 @@ import {
   type ApplicationCommandRouter,
   type ApplicationInvocation
 } from './application-command-router'
-import { createCallerContext, type CallerContext } from './caller-context'
+import { createCallerContext, createTaskCallerContext, type CallerContext } from './caller-context'
 import { ArtifactOwnershipPersistenceRaceError } from './artifacts/provenance-repository'
 import {
   dataContentApplicationCommandGroups,
@@ -13,6 +13,7 @@ import {
   registerDataContentApplicationCommands,
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
+import type { SessionDeletionResult } from '../shared/session-persistence'
 
 const callerContext = createCallerContext({
   clientId: 'renderer-1',
@@ -138,7 +139,11 @@ const createDependencies = () => {
     loadAll: vi.fn(),
     loadOne: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
-    deleteSession: vi.fn(),
+    setDelegationPolicy: vi.fn(async () => session),
+    deleteSession: vi.fn(async (): Promise<SessionDeletionResult> => ({
+      status: 'deleted',
+      runtimeDetached: true
+    })),
     saveManifest: vi.fn(),
     updateArchive: vi.fn(async () => session)
   }
@@ -211,6 +216,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionLoadOne',
   'sessionSaveManifest',
   'sessionSave',
+  'sessionSetDelegationPolicy',
   'uploadStageLocalFile',
   'uploadStageLocalPath'
 ] as const satisfies readonly DataContentCommandKey[]
@@ -237,7 +243,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 49 current data and content invoke channels', () => {
+  it('owns exactly the 50 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -278,6 +284,7 @@ describe('Data and content application commands', () => {
         'sessions:save-manifest',
         'sessions:update-archive',
         'sessions:save-session',
+        'sessions:set-delegation-policy',
         'uploads:abort-transfer',
         'uploads:append-transfer',
         'uploads:begin-transfer',
@@ -641,6 +648,41 @@ describe('Data and content application commands', () => {
     })
   })
 
+  it('allows only current Task automation to update main-owned delegation policy', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const args = ['project-1', 'session-1', 'deny'] as const
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSetDelegationPolicy,
+        invocation(args, createTaskCallerContext())
+      )
+    ).resolves.toBe(deps.session)
+    expect(deps.sessions.setDelegationPolicy).toHaveBeenCalledWith(...args)
+    expect(deps.events.publish).toHaveBeenCalledWith('session:updated', {
+      session: deps.session,
+      originClientId: 'web:headless-task-api'
+    })
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSetDelegationPolicy,
+        invocation(args)
+      )
+    ).rejects.toThrow(
+      'Channel only available from current Task automation: sessions:set-delegation-policy'
+    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSetDelegationPolicy,
+        invocation(args, createTaskCallerContext({ isAuthorizationCurrent: () => false }))
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+    expect(deps.sessions.setDelegationPolicy).toHaveBeenCalledOnce()
+  })
+
   it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -649,7 +691,7 @@ describe('Data and content application commands', () => {
     deps.sessions.loadAll.mockResolvedValueOnce(loadResult)
     deps.sessions.loadOne.mockResolvedValueOnce(loadedSession)
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
-    const updateRequest = { id: 'project-1', name: 'Updated project' }
+    const updateRequest = { id: 'project-1', name: 'Updated project', expectedUpdatedAt: 1 }
     const deleteProjectRequest = { id: 'project-1' }
     const manifestRequest = { lastProjectId: 'project-1', lastSessionId: 'session-1' }
     const deleteSessionRequest = { projectId: 'project-1', sessionId: 'session-1' }
@@ -677,10 +719,12 @@ describe('Data and content application commands', () => {
       dataContentApplicationCommands.sessionSaveManifest,
       invocation([manifestRequest] as const)
     )
-    await router.dispatcher.invoke(
-      dataContentApplicationCommands.sessionDelete,
-      invocation([deleteSessionRequest] as const)
-    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionDelete,
+        invocation([deleteSessionRequest] as const)
+      )
+    ).resolves.toEqual({ status: 'deleted', runtimeDetached: true })
 
     expect(deps.projects.update).toHaveBeenCalledWith(updateRequest)
     expect(deps.projects.delete).toHaveBeenCalledWith('project-1')
@@ -688,12 +732,36 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.loadOne).toHaveBeenCalledWith(deleteSessionRequest)
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(4)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(3)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).toHaveBeenCalledWith('project:deleted', {
       projectId: 'project-1'
     })
     expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)
+  })
+
+  it('returns a failed Session deletion without publishing a committed lifecycle event', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    const result = {
+      status: 'failed' as const,
+      reason: 'runtime' as const,
+      runtimeDetached: false as const
+    }
+    deps.sessions.deleteSession.mockResolvedValueOnce(result)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionDelete,
+        invocation([request] as const)
+      )
+    ).resolves.toEqual(result)
+
+    expect(deps.sessions.deleteSession).toHaveBeenCalledWith(request)
+    expect(deps.withDataRootWrite).not.toHaveBeenCalled()
+    expect(deps.events.publish).not.toHaveBeenCalledWith('session:deleted', request)
   })
 
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {

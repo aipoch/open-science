@@ -8,6 +8,7 @@ type TestHarness = {
   workflow: AcpConnectionCloseWorkflow
   actions: string[]
   generation: () => number
+  advanceGeneration: () => void
   state: Record<string, ReturnType<typeof vi.fn>>
   resources: Record<string, ReturnType<typeof vi.fn>>
   transitions: Record<string, ReturnType<typeof vi.fn>>
@@ -95,6 +96,9 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
     workflow,
     actions,
     generation: () => generation,
+    advanceGeneration: () => {
+      generation += 1
+    },
     state,
     resources,
     transitions,
@@ -112,6 +116,7 @@ describe('AcpConnectionCloseWorkflow', () => {
     expect(resources.supersede).toHaveBeenCalledOnce()
     expect(resources.teardown).toHaveBeenCalledOnce()
     expect(resources.closeMcp).toHaveBeenCalledOnce()
+    expect(state.clearPromptContent).toHaveBeenCalledWith(2)
     expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
     expect(actions).toEqual([
       'model-cancel',
@@ -127,10 +132,10 @@ describe('AcpConnectionCloseWorkflow', () => {
       'capabilities',
       'sessions',
       'detach',
-      'prompt-content',
       'projection-clear',
       'routes',
       'select',
+      'prompt-content',
       'closed',
       'backend:2',
       'publication-cancel'
@@ -157,6 +162,7 @@ describe('AcpConnectionCloseWorkflow', () => {
     workflow.handleUnexpectedClose()
 
     expect(resources.cleanupUnexpectedClose).toHaveBeenCalledOnce()
+    expect(state.clearPromptContent).toHaveBeenCalledWith(2)
     expect(state.settleActivePrompts).toHaveBeenCalledOnce()
     expect(state.publishInterruptedPromptFailures).toHaveBeenCalledWith(['prompt'])
     expect(transitions.resetReconnect).toHaveBeenCalledOnce()
@@ -207,7 +213,46 @@ describe('AcpConnectionCloseWorkflow', () => {
     workflow.shutdown()
 
     expect(state.clearPlanInteractions).toHaveBeenCalledOnce()
+    expect(state.clearPromptContent).toHaveBeenCalledOnce()
     expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
+  })
+
+  it('clears only the disconnected generation after recovering a failed deferred disconnect', async () => {
+    let finishTeardown: (() => void) | undefined
+    const { workflow, state, resources, advanceGeneration } = createWorkflow()
+    resources.teardown.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTeardown = resolve
+        })
+    )
+
+    workflow.recoverFailedDeferredDisconnect(2)
+    await vi.waitFor(() => expect(resources.teardown).toHaveBeenCalledOnce())
+    advanceGeneration()
+    finishTeardown?.()
+
+    await vi.waitFor(() => expect(state.clearPromptContent).toHaveBeenCalledOnce())
+    expect(state.clearPromptContent).toHaveBeenCalledWith(2)
+  })
+
+  it('keeps successor prompt snapshots outside an older disconnect cleanup scope', async () => {
+    let finishTeardown: (() => void) | undefined
+    const { workflow, state, resources, advanceGeneration } = createWorkflow()
+    resources.teardown.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTeardown = resolve
+        })
+    )
+
+    const disconnect = workflow.disconnect()
+    await vi.waitFor(() => expect(resources.teardown).toHaveBeenCalledOnce())
+    advanceGeneration()
+    finishTeardown?.()
+    await disconnect
+
+    expect(state.clearPromptContent).toHaveBeenCalledWith(2)
   })
 
   it('clears usage before deferring provider reconnect and delegates intent ownership', async () => {

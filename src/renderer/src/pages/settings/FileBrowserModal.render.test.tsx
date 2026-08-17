@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent } from '@testing-library/react'
+import i18next from 'i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '../../../../shared/compute'
@@ -74,7 +75,16 @@ const setComputeApi = (api: Partial<Window['api']['compute']>): void => {
   })
 }
 
+// These assertions read the English catalog, so pin the language before rendering: another suite
+// in the same worker may have left a different one active (changeLanguage settles on a promise).
+const switchTo = (language: string): void => {
+  act(() => {
+    void i18next.changeLanguage(language)
+  })
+}
+
 beforeEach(() => {
+  switchTo('en')
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -101,6 +111,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  document.body.innerHTML = ''
+  switchTo('en')
   vi.restoreAllMocks()
 })
 

@@ -16,11 +16,44 @@ import { PrismaClient } from '@prisma/client'
 
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
+    expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
+      '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
+    )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
       /expected application database migration ledger/
     )
   })
+
+  it('accepts only an explicitly selected immutable released migration prefix', () => {
+    const releasedLedger = MIGRATION_MANIFEST.slice(0, -1)
+    expect(() =>
+      assertApplicationMigrationLedger(releasedLedger, releasedLedger.length)
+    ).not.toThrow()
+    expect(() => assertApplicationMigrationLedger(releasedLedger)).toThrow(
+      /expected application database migration ledger/
+    )
+    expect(() =>
+      assertApplicationMigrationLedger(
+        releasedLedger.map((entry, index) =>
+          index === releasedLedger.length - 1 ? { ...entry, checksum: '0'.repeat(64) } : entry
+        ),
+        releasedLedger.length
+      )
+    ).toThrow(/expected application database migration ledger/)
+    expect(() =>
+      assertApplicationMigrationLedger(MIGRATION_MANIFEST, releasedLedger.length)
+    ).toThrow(/expected application database migration ledger/)
+  })
+
+  it.each([0, 1.5, Number.NaN, MIGRATION_MANIFEST.length + 1])(
+    'rejects unsupported expected migration count %s',
+    (expectedMigrationCount) => {
+      expect(() =>
+        assertApplicationMigrationLedger(MIGRATION_MANIFEST, expectedMigrationCount)
+      ).toThrow(/migration count is outside the supported application ledger/)
+    }
+  )
 
   it('records the packaged SQLite compatibility floor and certified matrix', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-smoke-evidence-'))

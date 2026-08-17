@@ -7,6 +7,8 @@ import { hasWebSearchContentEvidence } from './workspace-web-search-details'
 import { getToolExecutionPhase, isNotebookExecutionActivity } from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
+import i18next from 'i18next'
+import type { TFunction } from 'i18next'
 
 type ConversationActivityGroupItem = {
   id: string
@@ -209,32 +211,38 @@ const categorizeActivity = (
 }
 
 // Builds one natural-language clause (verb + count) for a category present in the group.
-const formatCategoryClause = (category: ActivityCategory, count: number): string => {
+const formatCategoryClause = (
+  category: ActivityCategory,
+  count: number,
+  t: TFunction = i18next.t.bind(i18next)
+): string => {
   switch (category) {
     case 'command':
-      return count === 1 ? 'ran a command' : `ran ${count} commands`
+      return count === 1 ? t('ran a command') : t('ran {{count}} commands', { count })
     case 'search':
-      return count === 1 ? 'ran a search' : `ran ${count} searches`
+      return count === 1 ? t('ran a search') : t('ran {{count}} searches', { count })
     case 'toolSearch':
-      return count === 1 ? 'ran a tool search' : `ran ${count} tool searches`
+      return count === 1 ? t('ran a tool search') : t('ran {{count}} tool searches', { count })
     case 'fetch':
-      return count === 1 ? 'fetched a page' : `fetched ${count} pages`
+      return count === 1 ? t('fetched a page') : t('fetched {{count}} pages', { count })
     case 'read':
-      return count === 1 ? 'read a file' : `read ${count} files`
+      return count === 1 ? t('read a file') : t('read {{count}} files', { count })
     case 'edit':
-      return count === 1 ? 'edited a file' : `edited ${count} files`
+      return count === 1 ? t('edited a file') : t('edited {{count}} files', { count })
     case 'skill':
-      return count === 1 ? 'loaded a skill' : `loaded ${count} skills`
+      return count === 1 ? t('loaded a skill') : t('loaded {{count}} skills', { count })
     case 'environment':
-      return count === 1 ? 'managed an environment' : 'managed environments'
+      return count === 1 ? t('managed an environment') : t('managed environments')
     case 'call':
-      return count === 1 ? 'made a call' : `made ${count} calls`
+      return count === 1 ? t('made a call') : t('made {{count}} calls', { count })
     case 'artifact':
-      return count === 1 ? 'saved a file' : `saved ${count} files`
+      return count === 1 ? t('saved a file') : t('saved {{count}} files', { count })
     case 'notebook':
-      return count === 1 ? 'completed a Notebook run' : `completed ${count} Notebook runs`
+      return count === 1
+        ? t('completed a Notebook run')
+        : t('completed {{count}} Notebook runs', { count })
     default:
-      return count === 1 ? 'ran a tool' : `ran ${count} tools`
+      return count === 1 ? t('ran a tool') : t('ran {{count}} tools', { count })
   }
 }
 
@@ -243,7 +251,11 @@ const capitalizeFirst = (value: string): string =>
   value.length > 0 ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value
 
 // Summarizes a group as "Ran 2 commands, loaded a skill, made a call" style category clauses.
-const formatActivityGroupTitle = (activities: ToolActivity[], declaredTitle?: string): string => {
+const formatActivityGroupTitle = (
+  activities: ToolActivity[],
+  declaredTitle?: string,
+  t: TFunction = i18next.t.bind(i18next)
+): string => {
   const groupTitle = declaredTitle?.trim()
   if (groupTitle) return groupTitle
 
@@ -261,9 +273,9 @@ const formatActivityGroupTitle = (activities: ToolActivity[], declaredTitle?: st
 
   const clauses = ACTIVITY_CATEGORY_ORDER.filter(
     (category) => (categoryCounts.get(category) ?? 0) > 0
-  ).map((category) => formatCategoryClause(category, categoryCounts.get(category) ?? 0))
+  ).map((category) => formatCategoryClause(category, categoryCounts.get(category) ?? 0, t))
 
-  if (clauses.length === 0) return 'Ran a tool'
+  if (clauses.length === 0) return t('Ran a tool')
 
   return capitalizeFirst(clauses.join(', '))
 }
@@ -272,7 +284,8 @@ const formatActivityGroupPresentationTitle = (
   activities: ToolActivity[],
   declaredTitle: string | undefined,
   permission: SessionPermissionRuntimeContext | undefined,
-  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
+  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>,
+  t: TFunction = i18next.t.bind(i18next)
 ): string => {
   const activityPhases = activities.map((activity) => ({
     isNotebook: isNotebookExecutionActivity(activity),
@@ -282,21 +295,22 @@ const formatActivityGroupPresentationTitle = (
   const notebookCount = phases.length
   if (notebookCount === 0) {
     if (activityPhases.length > 0 && activityPhases.every(({ phase }) => phase === 'closed')) {
-      return activityPhases.length === 1 ? 'Tool request ended' : 'Tool requests ended'
+      return activityPhases.length === 1 ? t('Tool request ended') : t('Tool requests ended')
     }
-    return formatActivityGroupTitle(activities, declaredTitle)
+    return formatActivityGroupTitle(activities, declaredTitle, t)
   }
-  const noun = notebookCount === 1 ? 'Notebook run' : `${notebookCount} Notebook runs`
+  const noun =
+    notebookCount === 1 ? t('Notebook run') : t('{{count}} Notebook runs', { count: notebookCount })
 
-  if (phases.includes('awaiting-approval')) return 'Waiting for your approval'
-  if (phases.includes('executing')) return `Running ${noun}`
-  if (phases.includes('prepared')) return 'Notebook code shown'
-  if (phases.includes('declined')) return `Declined ${noun}`
-  if (phases.includes('failed')) return `Failed ${noun}`
-  if (phases.includes('limit-reached')) return `Execution limit reached for ${noun}`
-  if (phases.includes('interrupted')) return `Interrupted ${noun}`
-  if (phases.includes('cancelled')) return `Cancelled ${noun}`
-  return formatActivityGroupTitle(activities, declaredTitle)
+  if (phases.includes('awaiting-approval')) return t('Waiting for your approval')
+  if (phases.includes('executing')) return t('Running {{noun}}', { noun })
+  if (phases.includes('prepared')) return t('Notebook code shown')
+  if (phases.includes('declined')) return t('Declined {{noun}}', { noun })
+  if (phases.includes('failed')) return t('Failed {{noun}}', { noun })
+  if (phases.includes('limit-reached')) return t('Execution limit reached for {{noun}}', { noun })
+  if (phases.includes('interrupted')) return t('Interrupted {{noun}}', { noun })
+  if (phases.includes('cancelled')) return t('Cancelled {{noun}}', { noun })
+  return formatActivityGroupTitle(activities, declaredTitle, t)
 }
 
 // Removes ToolSearch wrapper rows from rendering once concrete search rows are available.
@@ -312,15 +326,19 @@ const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableAct
 const formatStepCount = (
   activities: ToolActivity[],
   permission?: SessionPermissionRuntimeContext,
-  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
+  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>,
+  t: TFunction = i18next.t.bind(i18next)
 ): string => {
   const activityCount = activities.length
-  const stepLabel = activityCount === 1 ? '1 step' : `${activityCount} steps`
+  const stepLabel =
+    activityCount === 1 ? t('1 step') : t('{{count}} steps', { count: activityCount })
   const failedCount = activities.filter(
     (activity) => getToolExecutionPhase(activity, permission, notebookRunsById) === 'failed'
   ).length
 
-  return failedCount > 0 ? `${stepLabel} · ${failedCount} failed` : stepLabel
+  return failedCount > 0
+    ? `${stepLabel} · ${t('{{count}} failed', { count: failedCount })}`
+    : stepLabel
 }
 
 // Adds each tool's own runtime, excluding idle gaps between tools in the same group.

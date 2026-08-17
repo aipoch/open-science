@@ -19,6 +19,7 @@ import {
   X
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,12 +35,16 @@ import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
+import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import { NotificationBell } from '@/components/NotificationBell'
 
+import { projectPresentedSessionActionability } from './session-wait-reason'
+
 type WorkspaceSidebarProps = {
   projectName: string
+  starNudgeKey?: string
   sessions: ChatSession[]
   activeSessionId: string | undefined
   canCreateConversation: boolean
@@ -96,25 +101,30 @@ const sessionStatusDotClassName: Record<SessionStatus, string> = {
   error: 'bg-destructive'
 }
 
-const sessionStatusLabel: Record<SessionStatus, string> = {
+// Status label keys, resolved per component instance via useTranslation. `as const` keeps them as
+// literals so t() stays compile-time checked against the English catalog.
+const sessionStatusLabelKeys = {
   idle: 'Idle',
   running: 'Running',
-  'waiting-for-user': 'Waiting for your answer',
-  'waiting-permission': 'Waiting for permission',
-  'waiting-plan-approval': 'Waiting for plan approval',
+  ...sessionWaitReasonLabelKeys,
   error: 'Error'
-}
+} as const satisfies Record<SessionStatus, string>
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
-const isLiveSessionStatus = (status: SessionStatus): boolean =>
-  status === 'running' ||
-  status === 'waiting-for-user' ||
-  status === 'waiting-permission' ||
-  status === 'waiting-plan-approval'
+const getPresentedSessionStatus = (session: ChatSession): SessionStatus =>
+  projectPresentedSessionActionability(session).presentedStatus
 
+const isLiveSession = (session: ChatSession): boolean => {
+  const activity = projectPresentedSessionActionability(session).activity
+  return activity === 'running' || activity === 'waiting'
+}
+
+// The label is English source text that travels to the header as data, so it is translated where it
+// is read rather than here. Keeping the union closed means a section added upstream fails typecheck
+// until its text is added, instead of silently rendering untranslated.
 type SidebarSessionSection = {
   label: 'Pinned' | 'Active' | 'Today' | 'Yesterday' | 'This week' | 'Older'
   items: ChatSession[]
@@ -146,7 +156,7 @@ const getSessionSections = (sessions: ChatSession[], now: number): SidebarSessio
     if (session.pinned) {
       pinned.push(session)
     } else if (
-      isLiveSessionStatus(session.status) ||
+      isLiveSession(session) ||
       (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
     ) {
       active.push(session)
@@ -199,6 +209,7 @@ const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-cent
 // Left navigation owns session selection, creation entry, and workspace settings.
 const WorkspaceSidebarView = ({
   projectName,
+  starNudgeKey,
   sessions,
   activeSessionId,
   canCreateConversation,
@@ -231,6 +242,7 @@ const WorkspaceSidebarView = ({
   now,
   showSessionShortcuts = false
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const sections = getSessionSections(sessions, now)
   const shortcutNumberBySessionId = new Map(
     sections
@@ -239,10 +251,13 @@ const WorkspaceSidebarView = ({
       .map((session, index) => [session.id, index + 1])
   )
   const isMac = window.api?.platform === 'darwin'
+  const activeStarNudgeKey = (mobileMode ? isMobileOpen : sidebarToggle?.state !== 'collapsed')
+    ? starNudgeKey
+    : undefined
 
   return (
     <aside
-      aria-label="Workspace navigation"
+      aria-label={t('Workspace navigation')}
       aria-hidden={mobileMode && !isMobileOpen ? true : undefined}
       inert={mobileMode && !isMobileOpen ? true : undefined}
       data-mobile-open={isMobileOpen ? 'true' : 'false'}
@@ -259,8 +274,8 @@ const WorkspaceSidebarView = ({
             <button
               type="button"
               onClick={onGoHome}
-              aria-label="All projects"
-              title="All projects"
+              aria-label={t('All projects')}
+              title={t('All projects')}
               className={cn(
                 'grid h-7 w-5 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-bg-300 hover:text-text-000',
                 sidebarInteractiveTransitionClassName
@@ -288,7 +303,7 @@ const WorkspaceSidebarView = ({
               </DropdownMenuTrigger>
               {/* Project action menu: mirrors the session row menu chrome below. */}
               <DropdownMenuContent
-                aria-label="Project actions"
+                aria-label={t('Project actions')}
                 className={cn('min-w-[11rem]', mobileMode && 'z-[80]')}
                 side="bottom"
                 align="start"
@@ -298,7 +313,7 @@ const WorkspaceSidebarView = ({
                   <span className={sessionMenuIconClassName}>
                     <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
                   </span>
-                  Project settings
+                  {t('Project settings')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="gap-2"
@@ -308,14 +323,14 @@ const WorkspaceSidebarView = ({
                   <span className={sessionMenuIconClassName}>
                     <Download className="size-4" strokeWidth={2} aria-hidden="true" />
                   </span>
-                  Download artifacts…
+                  {t('Download artifacts…')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="gap-2" onSelect={() => onNewProject()}>
                   <span className={sessionMenuIconClassName}>
                     <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
                   </span>
-                  New project
+                  {t('New project')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -328,11 +343,11 @@ const WorkspaceSidebarView = ({
                   'grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-action-panel-toggle hover:bg-bg-300',
                   sidebarInteractiveTransitionClassName
                 )}
-                aria-label="Collapse sidebar panel"
+                aria-label={t('Collapse sidebar panel')}
                 aria-expanded={true}
                 aria-controls="left-panel"
                 aria-keyshortcuts={isMac ? 'Meta+B' : 'Control+B'}
-                title="Collapse sidebar panel"
+                title={t('Collapse sidebar panel')}
                 onClick={sidebarToggle.onToggle}
               >
                 <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
@@ -343,7 +358,7 @@ const WorkspaceSidebarView = ({
                 type="button"
                 onClick={onMobileClose}
                 className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
-                aria-label="Close navigation"
+                aria-label={t('Close navigation')}
               >
                 <X className="size-4" aria-hidden="true" />
               </button>
@@ -351,7 +366,7 @@ const WorkspaceSidebarView = ({
           </div>
         </div>
 
-        <nav aria-label="Sessions" className="flex min-h-0 flex-1 flex-col">
+        <nav aria-label={t('Sessions')} className="flex min-h-0 flex-1 flex-col">
           {/* New stays disabled until persistence hydration has reconciled restored sessions. */}
           <div className="flex h-9 items-center gap-1 px-2">
             <button
@@ -369,7 +384,7 @@ const WorkspaceSidebarView = ({
               >
                 <Plus className="size-3.5" strokeWidth={2} />
               </span>
-              <span>New</span>
+              <span>{t('New')}</span>
             </button>
           </div>
           <div className="flex h-9 items-center gap-1 px-2">
@@ -387,7 +402,7 @@ const WorkspaceSidebarView = ({
               >
                 <Toolbox className="size-3.5" strokeWidth={2} />
               </span>
-              <span>Customize</span>
+              <span>{t('Customize')}</span>
             </button>
           </div>
           <div className="flex h-9 items-center gap-1 px-2">
@@ -409,7 +424,7 @@ const WorkspaceSidebarView = ({
               >
                 <Files className="size-3.5" strokeWidth={2} />
               </span>
-              <span>Files</span>
+              <span>{t('Files')}</span>
             </button>
           </div>
 
@@ -419,16 +434,17 @@ const WorkspaceSidebarView = ({
             {sections.map((section) => (
               <div key={section.label}>
                 <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
-                  {section.label}
+                  {t(section.label)}
                 </div>
                 {section.items.map((session) => {
                   const isActive = session.id === activeSessionId
                   const shortcutNumber = shortcutNumberBySessionId.get(session.id)
+                  const presentedStatus = getPresentedSessionStatus(session)
                   const isExportDisabled =
                     session.messages.length === 0 ||
-                    session.status === 'running' ||
-                    session.status === 'waiting-for-user' ||
-                    session.status === 'waiting-permission'
+                    presentedStatus === 'running' ||
+                    presentedStatus === 'waiting-for-user' ||
+                    presentedStatus === 'waiting-permission'
 
                   return (
                     <div
@@ -455,18 +471,20 @@ const WorkspaceSidebarView = ({
                             <span
                               className={cn(
                                 'size-[7px] shrink-0 rounded-full',
-                                sessionStatusDotClassName[session.status]
+                                sessionStatusDotClassName[presentedStatus]
                               )}
                             />
                           </span>
                           <span className="sr-only">
-                            Session status: {sessionStatusLabel[session.status]}
+                            {t('Session status: {{status}}', {
+                              status: t(sessionStatusLabelKeys[presentedStatus])
+                            })}
                           </span>
                           <span
                             className={cn(
                               'min-w-0 flex-1 overflow-hidden whitespace-nowrap',
                               section.label === 'Active' &&
-                                session.status !== 'idle' &&
+                                presentedStatus !== 'idle' &&
                                 'font-semibold'
                             )}
                           >
@@ -495,7 +513,7 @@ const WorkspaceSidebarView = ({
                             <button
                               type="button"
                               className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
-                              aria-label={`Open actions for ${session.title}`}
+                              aria-label={t('Open actions for {{title}}', { title: session.title })}
                             >
                               <span
                                 className="flex size-3.5 items-center justify-center"
@@ -507,7 +525,7 @@ const WorkspaceSidebarView = ({
                           </DropdownMenuTrigger>
                           {/* Session action menu: uses shadcn default light-surface tokens. */}
                           <DropdownMenuContent
-                            aria-label="Session actions"
+                            aria-label={t('Session actions')}
                             className={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
                             side="right"
                             align="start"
@@ -526,7 +544,7 @@ const WorkspaceSidebarView = ({
                                   <Pin className="size-4" strokeWidth={2} aria-hidden="true" />
                                 )}
                               </span>
-                              {session.pinned ? 'Unpin' : 'Pin'}
+                              {session.pinned ? t('Unpin') : t('Pin')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2"
@@ -536,7 +554,7 @@ const WorkspaceSidebarView = ({
                               <span className={sessionMenuIconClassName}>
                                 <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              Rename…
+                              {t('Rename…')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {canDownloadArtifacts ? (
@@ -547,7 +565,7 @@ const WorkspaceSidebarView = ({
                                 <span className={sessionMenuIconClassName}>
                                   <Download className="size-4" strokeWidth={2} aria-hidden="true" />
                                 </span>
-                                Download all artifacts
+                                {t('Download all artifacts')}
                               </DropdownMenuItem>
                             ) : null}
                             <DropdownMenuItem
@@ -557,7 +575,7 @@ const WorkspaceSidebarView = ({
                               <span className={sessionMenuIconClassName}>
                                 <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              View notebook
+                              {t('View notebook')}
                             </DropdownMenuItem>
                             {onExportSession ? (
                               <DropdownMenuSub>
@@ -572,10 +590,10 @@ const WorkspaceSidebarView = ({
                                       aria-hidden="true"
                                     />
                                   </span>
-                                  <span className="flex-1">Export conversation</span>
+                                  <span className="flex-1">{t('Export conversation')}</span>
                                 </DropdownMenuSubTrigger>
                                 <DropdownMenuSubContent
-                                  aria-label="Export conversation formats"
+                                  aria-label={t('Export conversation formats')}
                                   className={mobileMode ? 'z-[80]' : undefined}
                                 >
                                   <DropdownMenuItem
@@ -589,7 +607,7 @@ const WorkspaceSidebarView = ({
                                         aria-hidden="true"
                                       />
                                     </span>
-                                    Markdown
+                                    {t('Markdown')}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     className="gap-2"
@@ -602,7 +620,7 @@ const WorkspaceSidebarView = ({
                                         aria-hidden="true"
                                       />
                                     </span>
-                                    PDF
+                                    {t('PDF')}
                                   </DropdownMenuItem>
                                 </DropdownMenuSubContent>
                               </DropdownMenuSub>
@@ -615,7 +633,8 @@ const WorkspaceSidebarView = ({
                               <span className={sessionMenuIconClassName}>
                                 <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              Archive
+                              {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
+                              {t('Archive', { context: 'verb' })}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {/* Delete uses the project's danger token pair for light surfaces. */}
@@ -627,7 +646,7 @@ const WorkspaceSidebarView = ({
                               <span className={sessionMenuIconClassName}>
                                 <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              Delete
+                              {t('Delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -646,12 +665,6 @@ const WorkspaceSidebarView = ({
             />
             <UpdateCapsule variant="session" className="mb-1.5" />
             <div className="flex items-center gap-1 pb-2">
-              <NotificationBell
-                side="top"
-                align="start"
-                className="size-8 rounded-md"
-                onOpen={mobileMode ? onMobileClose : undefined}
-              />
               <button
                 type="button"
                 onClick={onOpenSettings}
@@ -659,11 +672,21 @@ const WorkspaceSidebarView = ({
                   'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
                   sidebarInteractiveTransitionClassName
                 )}
-                aria-label="Settings"
+                aria-label={t('Settings')}
               >
                 <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
               </button>
-              <GitHubStarBadge />
+              <NotificationBell
+                side="top"
+                align="start"
+                className="size-8 rounded-md"
+                onOpen={mobileMode ? onMobileClose : undefined}
+              />
+              <GitHubStarBadge
+                key={activeStarNudgeKey}
+                variant="workspace"
+                nudgeKey={activeStarNudgeKey}
+              />
               <NetworkStatusIndicator variant="icon" />
             </div>
           </div>

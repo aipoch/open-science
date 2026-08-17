@@ -156,6 +156,26 @@ describe('DataRootMissingDialog', () => {
     expect(document.body.textContent).toContain('Still not found')
   })
 
+  it('Reconnect & retry re-enables every action when getInfo rejects', async () => {
+    installApi({ getInfo: vi.fn().mockRejectedValue(new Error('IPC unavailable')) })
+
+    await act(async () => {
+      root.render(
+        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      clickButton(/reconnect/i)
+      await Promise.resolve()
+    })
+
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+    expect(buttons).toHaveLength(3)
+    expect(buttons.every((button) => !button.disabled)).toBe(true)
+    expect(document.body.textContent).toContain('Could not check the data folder. Try again.')
+  })
+
   it('Choose another location adopts an existing data folder and relaunches', async () => {
     const api = installApi({
       pickDirectory: vi.fn().mockResolvedValue('/mnt/other'),
@@ -180,6 +200,9 @@ describe('DataRootMissingDialog', () => {
     expect(api.pickDirectory).toHaveBeenCalledTimes(1)
     expect(api.inspectDataRoot).toHaveBeenCalledWith('/mnt/other')
     expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/other', false)
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+    expect(buttons).toHaveLength(3)
+    expect(buttons.every((button) => button.disabled)).toBe(true)
   })
 
   it('Choose another location on an empty (move) target also applies via setDataRootAndRelaunch', async () => {
@@ -231,6 +254,79 @@ describe('DataRootMissingDialog', () => {
 
     expect(document.body.textContent).toContain('The selected folder is not writable.')
     expect(api.setDataRootAndRelaunch).not.toHaveBeenCalled()
+  })
+
+  it('Choose another location re-enables every action when folder inspection rejects', async () => {
+    installApi({
+      pickDirectory: vi.fn().mockResolvedValue('/mnt/other'),
+      inspectDataRoot: vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    })
+
+    await act(async () => {
+      root.render(
+        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      clickButton(/choose another location/i)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+    expect(buttons).toHaveLength(3)
+    expect(buttons.every((button) => !button.disabled)).toBe(true)
+    expect(document.body.textContent).toContain('Could not switch to this folder.')
+  })
+
+  it('Choose another location stays recoverable when the directory picker rejects', async () => {
+    installApi({ pickDirectory: vi.fn().mockRejectedValue(new Error('IPC unavailable')) })
+
+    await act(async () => {
+      root.render(
+        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      clickButton(/choose another location/i)
+      await Promise.resolve()
+    })
+
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+    expect(buttons).toHaveLength(3)
+    expect(buttons.every((button) => !button.disabled)).toBe(true)
+    expect(document.body.textContent).toContain('Could not switch to this folder.')
+  })
+
+  it('Choose another location re-enables every action when applying the folder rejects', async () => {
+    const api = installApi({
+      pickDirectory: vi.fn().mockResolvedValue('/mnt/other'),
+      inspectDataRoot: vi
+        .fn()
+        .mockResolvedValue({ kind: 'adopt', dataRoot: '/mnt/other/OpenScience' }),
+      setDataRootAndRelaunch: vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    })
+
+    await act(async () => {
+      root.render(
+        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      clickButton(/choose another location/i)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/other', false)
+    expect(buttons).toHaveLength(3)
+    expect(buttons.every((button) => !button.disabled)).toBe(true)
+    expect(document.body.textContent).toContain('Could not switch to this folder.')
   })
 
   it('Choose another location cancelled (null pick) does nothing', async () => {

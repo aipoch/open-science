@@ -20,6 +20,7 @@ import type {
 import type { AcpHandoffFailure } from '../../shared/acp'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { MessageAttribution } from '../../shared/session-persistence'
 import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { ConversationPermissionGrantStore } from './permission-broker'
@@ -111,6 +112,11 @@ type RootAdmissionLease = {
   release: () => void
 }
 
+type PromptAdmissionGuard = <Result>(
+  sessionId: string,
+  dispatch: () => Promise<Result>
+) => Promise<Result>
+
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
 class AcpRuntimeCoordinator {
@@ -142,6 +148,7 @@ class AcpRuntimeCoordinator {
   private readonly rootAdmissionTails = new Map<string, Promise<void>>()
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
+  private promptDispatchAdmissionGuard?: PromptAdmissionGuard
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
@@ -272,8 +279,18 @@ class AcpRuntimeCoordinator {
     }
   }
 
+  // Renderer aggregation intentionally hides idle sessions from retired generations. Destructive
+  // lifecycle operations need the coordinator's complete ownership set instead.
+  getOwnedSessionIds(): string[] {
+    return Array.from(this.sessionRuntimes.keys())
+  }
+
   captureSessionBackend(sessionId: string): ReturnType<AcpRuntime['captureBackend']> | undefined {
     return this.findRuntimeForSession(sessionId)?.captureBackend()
+  }
+
+  captureSessionModel(sessionId: string): ReturnType<AcpRuntime['captureSessionModel']> {
+    return this.findRuntimeForSession(sessionId)?.captureSessionModel(sessionId)
   }
 
   callSessionPlan(input: Parameters<AcpRuntime['callSessionPlan']>[0]): Promise<unknown> {
@@ -299,11 +316,11 @@ class AcpRuntimeCoordinator {
     return runtime.respondSessionPlan(input)
   }
 
-  getActivePromptSessions(): { projectName: string; sessionId: string }[] {
+  getActivePromptSessions(): { projectId: string; sessionId: string }[] {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getActivePromptSessions())
   }
 
-  getQuitBlockingPromptSessions(): { projectName: string; sessionId: string }[] {
+  getQuitBlockingPromptSessions(): { projectId: string; sessionId: string }[] {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getQuitBlockingPromptSessions())
   }
 
@@ -632,8 +649,28 @@ class AcpRuntimeCoordinator {
     this.promptAdmissionGuard = guard
   }
 
+  setPromptDispatchAdmissionGuard(guard: PromptAdmissionGuard): void {
+    this.promptDispatchAdmissionGuard = guard
+  }
+
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
     return this.sendObservedPrompt(request)
+  }
+
+  sendApplicationPrompt(
+    request: AcpPromptRequest,
+    attribution: MessageAttribution
+  ): ReturnType<AcpRuntime['sendApplicationPrompt']> {
+    return this.linearizeRootAdmission(request.sessionId, () =>
+      this.dispatchPrompt(
+        request,
+        undefined,
+        'sendApplicationPrompt',
+        undefined,
+        false,
+        attribution
+      )
+    )
   }
 
   sendPromptObserved(
@@ -719,6 +756,23 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     validate: () => Promise<void>
   ): Promise<DelegateMessageAcceptanceEvidence> {
+    return this.startContinuationWhenWithDispatchAdmission(request, validate, false)
+  }
+
+  startContinuationWhenDispatchAdmitted(
+    request: AcpPromptRequest,
+    validate: () => Promise<void>
+  ): Promise<DelegateMessageAcceptanceEvidence> {
+    // The caller owns final deletion admission for the whole validation/resume/acceptance lifecycle.
+    // Bypass only the nested dispatch guard; root-session admission remains linearized below.
+    return this.startContinuationWhenWithDispatchAdmission(request, validate, true)
+  }
+
+  private startContinuationWhenWithDispatchAdmission(
+    request: AcpPromptRequest,
+    validate: () => Promise<void>,
+    dispatchAdmitted: boolean
+  ): Promise<DelegateMessageAcceptanceEvidence> {
     let resolve!: (evidence: DelegateMessageAcceptanceEvidence) => void
     let reject!: (error: unknown) => void
     const accepted = new Promise<DelegateMessageAcceptanceEvidence>(
@@ -753,7 +807,9 @@ class AcpRuntimeCoordinator {
           error
         )
       }
-      await this.dispatchPrompt(request, acceptance, 'sendAppContinuation')
+      await (dispatchAdmitted
+        ? this.dispatchAdmittedPrompt(request, acceptance, 'sendAppContinuation')
+        : this.dispatchPrompt(request, acceptance, 'sendAppContinuation'))
       if (!acceptance.settled) {
         acceptance.settled = true
         resolve('provider_prompt_completed')
@@ -765,9 +821,32 @@ class AcpRuntimeCoordinator {
   private dispatchPrompt(
     request: AcpPromptRequest,
     acceptance: PromptAcceptance | undefined,
-    operation: 'sendPrompt' | 'sendAppContinuation',
+    operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
     pinnedRuntime?: AcpRuntime,
-    retainAsLatestUserPrompt = operation === 'sendPrompt'
+    retainAsLatestUserPrompt = operation === 'sendPrompt',
+    attribution?: MessageAttribution
+  ): ReturnType<AcpRuntime['sendPrompt']> {
+    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
+      this.dispatchAdmittedPrompt(
+        request,
+        acceptance,
+        operation,
+        pinnedRuntime,
+        retainAsLatestUserPrompt,
+        attribution
+      )
+    return this.promptDispatchAdmissionGuard
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      : dispatch()
+  }
+
+  private dispatchAdmittedPrompt(
+    request: AcpPromptRequest,
+    acceptance: PromptAcceptance | undefined,
+    operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
+    pinnedRuntime?: AcpRuntime,
+    retainAsLatestUserPrompt = operation === 'sendPrompt',
+    attribution?: MessageAttribution
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -803,7 +882,11 @@ class AcpRuntimeCoordinator {
     }
     this.activePromptRequests.set(request.sessionId, activePrompt)
     if (retainAsLatestUserPrompt) this.latestPromptRequests.set(request.sessionId, taskRequest)
-    return runtime[operation](taskRequest, attempt.id)
+    const prompt =
+      operation === 'sendApplicationPrompt'
+        ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
+        : runtime[operation](taskRequest, attempt.id)
+    return prompt
       .catch((error: unknown) => {
         if (
           operation === 'sendPrompt' &&
@@ -989,6 +1072,21 @@ class AcpRuntimeCoordinator {
     await retiring.requestRetirement()
   }
 
+  async requestSkillsReloadForFramework(frameworkId: AgentFrameworkId): Promise<void> {
+    const active = this.activeRuntime
+    if (!active) return
+
+    // A framework-scoped derived asset must not rotate an unrelated backend generation. An empty
+    // generation has no session holding stale assets; its first Session will provision from the
+    // current source of truth without an explicit reload.
+    const ownsFrameworkSession = active
+      .getSnapshot()
+      .sessionIds.some((sessionId) => active.isSessionUsingFramework(sessionId, frameworkId))
+    if (!ownsFrameworkSession) return
+
+    await this.requestSkillsReload()
+  }
+
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
     // The settings layer resolved this value against the currently selected model. Retiring
     // generations stay pinned to their own provider/model and therefore must not receive a value
@@ -1048,7 +1146,7 @@ class AcpRuntimeCoordinator {
         const resumeRequest: AcpResumeSessionRequest = {
           sessionId: session.sessionId,
           cwd: session.cwd,
-          ...(session.projectName ? { projectName: session.projectName } : {}),
+          ...(session.projectId ? { projectId: session.projectId } : {}),
           ...(session.permissionProfile ? { permissionProfile: session.permissionProfile } : {}),
           ...(session.previousFrameworkId
             ? { previousFrameworkId: session.previousFrameworkId }
@@ -1093,7 +1191,27 @@ class AcpRuntimeCoordinator {
           runtime,
           false
         )
-      }
+      },
+      sendApplicationPrompt: (request, attribution) =>
+        this.linearizeRootAdmission(request.sessionId, async () => {
+          this.assertPromptAdmissionOpen()
+          const contextReset = await ensureActivitySession(request.sessionId)
+          const historyPreamble = options.session?.historyPreamble
+          return this.dispatchPrompt(
+            contextReset
+              ? {
+                  ...request,
+                  contextReset: true,
+                  ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
+                }
+              : request,
+            undefined,
+            'sendApplicationPrompt',
+            runtime,
+            false,
+            attribution
+          )
+        })
     }
   }
 

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync } from 'node:fs'
-import { readFile, rm, unlink } from 'node:fs/promises'
+import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
@@ -34,6 +34,16 @@ import type {
 } from './runtime-service'
 import { TimeoutController } from './timeout-controller'
 import { startWorkingFileObservation, type WorkingFileObservation } from './working-file-observer'
+import {
+  NOTEBOOK_FIGURE_COUNT_LIMIT,
+  NOTEBOOK_FIGURE_COUNT_LIMIT_ENV,
+  NOTEBOOK_FIGURE_LIMIT_BYTES,
+  NOTEBOOK_FIGURE_LIMIT_ENV,
+  NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES,
+  NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV,
+  NOTEBOOK_TEXT_LIMIT_BYTES,
+  NOTEBOOK_TEXT_LIMIT_ENV
+} from './content-limits'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing
 // NotebookLanguage; 'repl' is the control-plane Node kernel reached only via the control path. The
@@ -59,6 +69,9 @@ type CancelIdleTimer = (handle: IdleTimerHandle) => void
 // alive until an explicit shutdown/restart or session teardown.
 const DEFAULT_IDLE_MS = 0
 const DEFAULT_CANCELLATION_GRACE_MS = 2_000
+// Queued behind an interrupted R request before its queue is released. The sleep gives a SIGINT that
+// raced with the original response an interruptible, side-effect-free request to land in.
+const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
 
 // Real scheduler: unref'd so a pending idle timer alone never keeps the process alive.
 const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
@@ -125,6 +138,9 @@ type PendingRequest = {
   signal?: AbortSignal
   abortListener?: () => void
   cancellationTimer?: IdleTimerHandle
+  interruptProbeReqId?: string
+  interruptAcknowledged?: boolean
+  response?: KernelLoopResponse
   timeout?: TimeoutController
   timeoutMs?: number
 }
@@ -309,14 +325,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const workingFiles = await workingFileObservation.finish()
       workingFileObservation = undefined
 
-      const figures = await this.readFigures(response.figures)
+      const figureResult = await this.readFigures(response.figures)
       const mapped = mapLoopOutputs({
         stdout: response.stdout,
         stderr: response.stderr,
         error: response.error,
         errorLine: response.errorLine,
         result: response.result,
-        figures
+        figures: figureResult.figures
       })
 
       // A soft-timeout interrupt was sent for this run; whatever answered is reported as a timeout,
@@ -338,6 +354,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         outputs: cancelled
           ? mapped.outputs.filter((output) => output.type !== 'error')
           : mapped.outputs,
+        truncated: response.outputTruncated || figureResult.truncated,
         workingFiles,
         environmentOverlay: response.environmentOverlay
       }
@@ -600,6 +617,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // App-owned directories the kernel must not read (e.g. materialized skill files).
       OPEN_SCIENCE_PROTECTED_DIRS: (request.protectedDirs ?? []).join(delimiter),
       [KERNEL_FIGURES_DIR_ENV]: figuresDir,
+      [NOTEBOOK_TEXT_LIMIT_ENV]: String(NOTEBOOK_TEXT_LIMIT_BYTES),
+      [NOTEBOOK_FIGURE_LIMIT_ENV]: String(NOTEBOOK_FIGURE_LIMIT_BYTES),
+      [NOTEBOOK_FIGURE_COUNT_LIMIT_ENV]: String(NOTEBOOK_FIGURE_COUNT_LIMIT),
+      [NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV]: String(NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES),
       // Connector RPC endpoint/token reach ONLY the control-plane repl kernel: the python/r data
       // kernels have no host.mcp and no outbound connector access. Gating on kind here is
       // defense-in-depth — even if a data request ever carried these, python/r would never see them.
@@ -619,11 +640,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         ? { OPEN_SCIENCE_NOTEBOOK_SESSION_ID: request.sessionId }
         : {}),
       ...(kind === 'repl' && request.projectId
-        ? {
-            OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: request.projectId,
-            // Compatibility for the existing REPL bridge until its next protocol revision.
-            OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: request.projectId
-          }
+        ? { OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: request.projectId }
         : {}),
       ...(kind === 'repl' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       ...(rEnvPrefix ? { OPEN_SCIENCE_R_ENV_PREFIX: rEnvPrefix } : {})
@@ -650,6 +667,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
         return
       }
       const timeoutMs = request.timeoutMs
+      const pending: PendingRequest = {
+        reqId,
+        resolve: (response) =>
+          resolve({
+            response,
+            timedOut: pending.timeout?.timedOut ?? false,
+            cancelled: pending.cancelled
+          }),
+        reject,
+        cancelled: false,
+        signal: request.signal,
+        timeoutMs
+      }
       const timeout =
         timeoutMs === undefined
           ? undefined
@@ -658,7 +688,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
               // SIGKILL is routed through terminateProcessTree, which reaps descendants too.
               kill: (signal) => {
                 if (signal === 'SIGKILL') this.killChildTracked(proc)
-                else proc.child.kill(signal)
+                else {
+                  proc.child.kill(signal)
+                  if (proc.kind === 'r') this.queueRInterruptProbe(proc, pending)
+                }
               },
               onHardTimeout: () => {
                 // Drop the wedged loop so the next execute respawns it, then fail this run.
@@ -674,21 +707,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
                 )
               }
             })
-
-      const pending: PendingRequest = {
-        reqId,
-        resolve: (response) =>
-          resolve({
-            response,
-            timedOut: timeout?.timedOut ?? false,
-            cancelled: pending.cancelled
-          }),
-        reject,
-        cancelled: false,
-        signal: request.signal,
-        timeout,
-        timeoutMs
-      }
+      pending.timeout = timeout
       proc.pending = pending
 
       if (request.signal) {
@@ -711,6 +730,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           }
 
           proc.child.kill('SIGINT')
+          if (proc.kind === 'r') this.queueRInterruptProbe(proc, pending)
           pending.cancellationTimer = this.scheduleIdleTimer(() => {
             pending.cancellationTimer = undefined
             if (proc.pending !== pending) return
@@ -741,7 +761,36 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (!response) return
 
     const pending = proc.pending
-    if (!pending || pending.reqId !== response.reqId) return
+    if (!pending) return
+
+    if (pending.reqId === response.reqId) {
+      pending.response = response
+      pending.interruptAcknowledged ||= response.interruptAck === true
+      if (pending.interruptProbeReqId !== undefined) return
+      this.settlePendingResponse(proc, pending, response)
+      return
+    }
+
+    if (pending.interruptProbeReqId !== response.reqId) return
+    pending.interruptProbeReqId = undefined
+    // An interrupted probe explicitly acknowledges a late SIGINT. A successful probe also
+    // acknowledges it: the unmaskable base sleep held an interrupt checkpoint open after the
+    // original request, so returning normally proves the original request already consumed SIGINT
+    // (including when user code caught the interrupt itself).
+    pending.interruptAcknowledged ||= response.interruptAck === true || response.error === null
+    if (!pending.interruptAcknowledged) {
+      this.queueRInterruptProbe(proc, pending)
+      return
+    }
+    if (pending.response) this.settlePendingResponse(proc, pending, pending.response)
+  }
+
+  private settlePendingResponse(
+    proc: ProcState,
+    pending: PendingRequest,
+    response: KernelLoopResponse
+  ): void {
+    if (proc.pending !== pending) return
 
     this.clearPendingResources(pending)
     proc.pending = undefined
@@ -749,20 +798,47 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.rearmIdleTimerIfLive(proc)
   }
 
+  // R may emit the cancelled request's ordinary response before the OS-delivered SIGINT reaches an
+  // interrupt checkpoint. Pre-queue a private probe while the original request is still pending, and
+  // retain queue ownership until either request explicitly acknowledges the interrupt or the trusted
+  // probe completes its interruptible delay. If neither happens, the existing cancellation/hard-
+  // timeout grace drops the process tree.
+  private queueRInterruptProbe(proc: ProcState, pending: PendingRequest): void {
+    if (proc.pending !== pending || pending.interruptProbeReqId !== undefined) return
+    const reqId = randomUUID()
+    pending.interruptProbeReqId = reqId
+    proc.child.stdin.write(frameRRequest(reqId, R_INTERRUPT_PROBE_CODE))
+  }
+
   // Reads each captured figure file, base64-encodes it, and unlinks it. A missing/unreadable file is
   // skipped rather than failing the whole cell.
-  private async readFigures(figures: KernelLoopFigure[]): Promise<MappedFigure[]> {
+  private async readFigures(
+    figures: KernelLoopFigure[]
+  ): Promise<{ figures: MappedFigure[]; truncated: boolean }> {
     const mapped: MappedFigure[] = []
+    let totalBytes = 0
+    let truncated = false
     for (const figure of figures) {
       try {
+        const info = await stat(figure.path)
+        if (
+          mapped.length >= NOTEBOOK_FIGURE_COUNT_LIMIT ||
+          info.size > NOTEBOOK_FIGURE_LIMIT_BYTES ||
+          totalBytes + info.size > NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES
+        ) {
+          truncated = true
+          await unlink(figure.path).catch(() => {})
+          continue
+        }
         const data = await readFile(figure.path)
         mapped.push({ mime: figure.mime, base64: data.toString('base64') })
+        totalBytes += data.byteLength
         await unlink(figure.path).catch(() => {})
       } catch {
         // Skip a figure that vanished or could not be read.
       }
     }
-    return mapped
+    return { figures: mapped, truncated }
   }
 
   // Removes a wedged loop from the routing map after a hard kill so the next execute() respawns it.

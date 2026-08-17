@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ExternalLink, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
@@ -28,6 +29,7 @@ function SessionJobsList({
   onSelectJob,
   onClose
 }: SessionJobsListProps): React.JSX.Element {
+  const { t } = useTranslation()
   const jobsById = useSessionJobStore((s) => s.jobsById)
   const jobs = Array.from(jobsById.values())
     .filter((j) => j.session_id === sessionId)
@@ -45,7 +47,7 @@ function SessionJobsList({
       <div className="flex min-h-0 flex-1 flex-col overflow-auto" data-testid="session-jobs-list">
         {jobs.length === 0 ? (
           <div className="flex flex-1 items-center justify-center py-10 text-sm text-muted-foreground">
-            No remote jobs in this session.
+            {t('No remote jobs in this session.')}
           </div>
         ) : (
           jobs.map((job) => {
@@ -84,7 +86,7 @@ function SessionJobsList({
       {/* Footer */}
       <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">
         <Button type="button" variant="outline" size="sm" onClick={onClose}>
-          Close
+          {t('Close')}
         </Button>
       </div>
     </>
@@ -102,6 +104,7 @@ type JobDetailViewProps = {
 }
 
 function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): React.JSX.Element {
+  const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<ActiveTab>('stdout')
 
   // Pull latest data from the store on every render (store subscribes to compute:job-updated).
@@ -163,7 +166,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
           onClick={onBack}
         >
           <ArrowLeft size={13} aria-hidden="true" />
-          Back
+          {t('Back')}
         </button>
         <span className="flex-1 min-w-0 truncate text-[13px] font-medium">{latestJob.intent}</span>
         <JobStatusBadge status={latestJob.status} />
@@ -174,11 +177,11 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         className="grid shrink-0 grid-cols-2 bg-muted/40 border-b border-border"
         data-testid="job-meta"
       >
-        <MetaRow label="Provider" value={latestJob.display_name} />
-        <MetaRow label="Status" value={latestJob.status} />
-        <MetaRow label="Runtime" value={runtimeDisplay()} />
+        <MetaRow label={t('Provider')} value={latestJob.display_name} />
+        <MetaRow label={t('Status')} value={latestJob.status} />
+        <MetaRow label={t('Runtime', { context: 'duration' })} value={runtimeDisplay()} />
         <MetaRow
-          label="Remote workdir"
+          label={t('Remote workdir')}
           value={latestJob.remote_workdir ?? '—'}
           isLink={!!latestJob.remote_workdir}
           onLinkClick={
@@ -189,7 +192,9 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         />
         {/* Job ID spans full width (design.md: mono, break-all) */}
         <div className="col-span-2 flex items-baseline gap-2 border-b border-border px-4 py-1.5">
-          <span className="min-w-[54px] shrink-0 text-[11px] text-muted-foreground">Job ID</span>
+          <span className="min-w-[54px] shrink-0 text-[11px] text-muted-foreground">
+            {t('Job ID')}
+          </span>
           <span className="break-all font-mono text-[10.5px] text-muted-foreground">
             {latestJob.job_id}
           </span>
@@ -202,12 +207,12 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
       {/* stdout / stderr tabs */}
       <div className="flex shrink-0 border-b border-border bg-background px-4">
         <TabButton
-          label="stdout"
+          label={t('stdout')}
           active={activeTab === 'stdout'}
           onClick={() => setActiveTab('stdout')}
         />
         <TabButton
-          label="stderr"
+          label={t('stderr')}
           active={activeTab === 'stderr'}
           onClick={() => setActiveTab('stderr')}
         />
@@ -293,6 +298,7 @@ export function JobDetailModal({
   initialJob,
   onClose
 }: JobDetailModalProps): React.JSX.Element {
+  const { t } = useTranslation()
   const [view, setView] = useState<ModalView>(() =>
     initialJob ? { kind: 'detail', job: initialJob } : { kind: 'list' }
   )
@@ -346,14 +352,14 @@ export function JobDetailModal({
             className={dialogPanelClassName(
               'z-[70] flex w-[640px] max-w-[calc(100vw-2rem)] max-h-[82vh] flex-col overflow-hidden p-0'
             )}
-            aria-label="Remote job details"
+            aria-label={t('Remote job details')}
             data-testid="job-detail-modal"
           >
             {/* Header */}
             <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-              <span className="text-[14px] font-semibold">Running jobs in this session</span>
+              <span className="text-[14px] font-semibold">{t('Running jobs in this session')}</span>
               <Dialog.Close asChild>
-                <Button type="button" variant="ghost" size="icon-sm" aria-label="Close">
+                <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Close')}>
                   <X className="size-4" />
                 </Button>
               </Dialog.Close>

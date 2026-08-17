@@ -42,7 +42,7 @@ against a crystal structure: pocket geometry inherits the fold's pLDDT.
 
 ## Reading confidence across a library
 
-Confidence logits are calibrated *within* a complex, not across ligands. To
+Confidence logits are calibrated _within_ a complex, not across ligands. To
 compare ligands, rescore each `rank1.sdf` with an external scorer; using the
 raw DiffDock confidence as a virtual-screening ranker conflates "well-placed
 pose" with "tight binder" and the upstream FAQ explicitly warns against it.

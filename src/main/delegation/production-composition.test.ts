@@ -201,6 +201,7 @@ const createCompositionHarness = async (
       status: 'found',
       session: structuredClone(durable)
     }),
+    assertSessionIdentityOwnership: async () => undefined,
     saveSession: async (next) => {
       durable = structuredClone(next)
     },
@@ -283,7 +284,7 @@ const createFrameworkCompositionHarness = async (
   const service = new NotebookRuntimeService({
     configRoot: dataRoot,
     dataRoot,
-    projectName: 'project-1',
+    projectId: 'project-1',
     repository: new NotebookRunRepository(dataRoot),
     executorFactory: () => ({
       execute: async (request) => ({
@@ -557,6 +558,117 @@ afterEach(async () => {
 })
 
 describe('production delegated-work composition', () => {
+  it('lets a legacy Session without delegated history establish its durable framework identity', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-legacy-identity-'))
+    const harness = await createCompositionHarness(root, 'claude-code')
+    const legacy = structuredClone(harness.session)
+    delete legacy.agentFrameworkId
+    harness.replaceDurable(legacy)
+
+    await expect(harness.composition.root.wakeMessages?.(legacy.id)).resolves.toBeUndefined()
+    expect(harness.selected).toEqual([])
+
+    harness.replaceDurable({ ...harness.durable(), agentFrameworkId: 'claude-code' })
+    await expect(harness.composition.root.wakeMessages?.(legacy.id)).resolves.toBeUndefined()
+    expect(harness.selected).toEqual(['claude-code'])
+  })
+
+  it('rejects a missing framework identity when delegated history already exists', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-invalid-identity-'))
+    const harness = await createCompositionHarness(root, 'opencode')
+    const invalid = structuredClone(harness.session)
+    delete invalid.agentFrameworkId
+    invalid.runtimeContext = {
+      version: 1,
+      revision: 1,
+      delegatedWork: { records: [] }
+    }
+    harness.replaceDurable(invalid)
+
+    await expect(harness.composition.root.wakeMessages?.(invalid.id)).rejects.toThrow(
+      'Delegated Work requires a durable Session framework identity.'
+    )
+  })
+
+  it('blocks only new child admission when the Session delegation policy is deny', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
+
+    await expect(
+      harness.composition.host.delegate(
+        harness.caller,
+        { task: 'blocked child', name: 'blocked child' },
+        { wait: false }
+      )
+    ).rejects.toMatchObject({
+      code: 'admission_rejection',
+      message: expect.stringMatching(/delegation is disabled/i)
+    })
+    expect(harness.execution.reservationCounts()).toEqual([])
+
+    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'allow' })
+    const admitted = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'existing child', name: 'existing child' },
+      { wait: false }
+    )
+    expect(admitted).toMatchObject({
+      kind: 'receipts',
+      children: [{ name: 'existing child' }]
+    })
+
+    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
+    await expect(harness.composition.host.children(harness.caller)).resolves.toEqual([
+      expect.objectContaining({ name: 'existing child' })
+    ])
+  })
+
+  it('rechecks authoritative delegation policy inside durable child admission', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-race-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    let firstRead = true
+    const racingComposition = createProductionDelegatedWorkComposition({
+      dataRoot: root,
+      sessions: {
+        commands: harness.commands,
+        readSession: async () => {
+          const snapshot = structuredClone(harness.durable())
+          if (firstRead) {
+            firstRead = false
+            harness.replaceDurable({ ...snapshot, delegationPolicy: 'deny' })
+          }
+          return snapshot
+        }
+      },
+      resolveInput: async () => {
+        throw new Error('no inputs')
+      },
+      frameworks: {
+        async forSession(current) {
+          return {
+            frameworkId: current.agentFrameworkId!,
+            execution: harness.execution,
+            assertAvailable: async () => undefined
+          }
+        }
+      },
+      resolveExecutionModel: async () => testExecutionModel('codex')
+    })
+
+    await expect(
+      racingComposition.host.delegate(
+        harness.caller,
+        { task: 'racing child', name: 'racing child' },
+        { wait: false }
+      )
+    ).rejects.toMatchObject({
+      code: 'admission_rejection',
+      message: expect.stringMatching(/delegation is disabled/i)
+    })
+    expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
+  })
+
   it('rejects a removed own context field before reservation, workspace, or durable mutation', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-removed-context-'))
     const harness = await createCompositionHarness(root, 'codex')
@@ -625,6 +737,8 @@ describe('production delegated-work composition', () => {
   it('records the admitted cross-provider model on every child Runtime Segment', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-model-snapshot-'))
     const execution = createDeterministicDelegateExecution()
+    execution.plan({ status: 'completed', response: 'first complete' })
+    execution.plan({ status: 'completed', response: 'second complete' })
     const resolveExecutionModel = vi.fn(async () => ({
       snapshot: {
         frameworkId: 'opencode' as const,
@@ -645,16 +759,10 @@ describe('production delegated-work composition', () => {
       resolveExecutionModel
     )
 
-    await harness.composition.host.delegate(
-      harness.caller,
-      [
-        { task: 'first', name: 'first' },
-        { task: 'second', name: 'second' }
-      ],
-      { wait: false }
-    )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
-    await expect.poll(() => harness.durable().conversationGraph?.runtimeSegments.length).toBe(3)
+    await harness.composition.host.delegate(harness.caller, [
+      { task: 'first', name: 'first' },
+      { task: 'second', name: 'second' }
+    ])
 
     expect(resolveExecutionModel).toHaveBeenCalledOnce()
     expect(harness.durable().conversationGraph?.runtimeSegments.slice(-2)).toEqual([
@@ -1287,6 +1395,7 @@ describe('production delegated-work composition', () => {
         status: 'found',
         session: structuredClone(durable)
       }),
+      assertSessionIdentityOwnership: async () => undefined,
       saveSession: async (next) => {
         durable = structuredClone(next)
       },
@@ -1739,7 +1848,7 @@ describe('production delegated-work composition', () => {
       id: 'version-atomic',
       artifactId: 'artifact-atomic',
       versionId: 'version-atomic',
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: durable.id,
       runId: 'run-atomic',
       name: 'atomic.md',
@@ -1807,8 +1916,12 @@ describe('production delegated-work composition', () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       artifactProvenance: {
-        createVersion: (request) => provenance.createVersion(request),
-        replayVersion: (request) => provenance.replayVersion(request)
+        createVersion: (request, signal) => provenance.createVersion(request, signal),
+        replayVersion: (request) => provenance.replayVersion(request),
+        reserveWrite: (request) => provenance.reserveWrite(request),
+        releaseWriteReservation: (request) => provenance.releaseWriteReservation(request),
+        releaseRunWriteReservations: (request) => provenance.releaseRunWriteReservations(request),
+        releaseAllWriteReservations: () => provenance.releaseAllWriteReservations()
       }
     })
     const connection = await server.ensureStarted()
@@ -1839,7 +1952,7 @@ describe('production delegated-work composition', () => {
         project: (scope) =>
           scope.terminalMessageId
             ? artifactRepository.listMessageFiles({
-                projectName: scope.session.projectId,
+                projectId: scope.session.projectId,
                 sessionId: scope.session.sessionId,
                 messageId: scope.terminalMessageId
               })
@@ -1866,7 +1979,7 @@ describe('production delegated-work composition', () => {
     const notebookDataDir = join(notebookSessionRoot, 'data')
     const lane = createFrameNotebookLane('project-1', 'session-codex', control.input.frameId)
     await notebookRepository.loadOrCreate({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-codex',
       workspaceCwd: control.input.workspaceCwd!,
       lane
@@ -1877,7 +1990,7 @@ describe('production delegated-work composition', () => {
     const sourceStat = await stat(sourcePath)
     const rootFrameId = harness.durable().conversationGraph!.rootFrameId
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-codex',
       lane,
       run: {
@@ -1911,7 +2024,7 @@ describe('production delegated-work composition', () => {
     })
     const environment = {
       storageRoot: root,
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-codex',
       currentRunFile: control.input.artifactCurrentRunFile!,
       allowedImportRoots: [control.input.workspaceCwd!],
@@ -2018,7 +2131,7 @@ describe('production delegated-work composition', () => {
         listRunVersions: async ({ artifactRunId }) => versionsByRun.get(artifactRunId) ?? [],
         writeAppGeneratedVersion: async (request) => {
           const pendingFile = await artifactRepository.writePendingFile({
-            projectName: request.projectId,
+            projectId: request.projectId,
             sessionId: request.artifactStorageSessionId,
             runId: request.artifactRunId,
             filename: request.filename,
@@ -2428,7 +2541,7 @@ describe('production delegated-work composition', () => {
       .toBe('accepted')
   })
 
-  it('deletes stable child workspaces after restart without relying on the in-memory work cache', async () => {
+  it('deletes dormant Project workspaces after restart without relying on the in-memory work cache', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-restart-delete-'))
     const harness = await createCompositionHarness(root, 'codex')
     const receipt = await harness.composition.host.delegate(
@@ -2455,9 +2568,7 @@ describe('production delegated-work composition', () => {
       dataRoot: root,
       sessions: {
         commands: harness.commands,
-        readSession: async () => harness.durable(),
-        findSessions: async (sessionId) =>
-          sessionId === harness.session.id ? [harness.durable()] : []
+        readSession: async () => harness.durable()
       },
       resolveInput: async () => {
         throw new Error('no inputs')
@@ -2475,9 +2586,114 @@ describe('production delegated-work composition', () => {
     } as ProductionDelegatedWorkOptions)
 
     expect(receipt.children[0]).toBeDefined()
-    await restarted.root.deleteSession(harness.session.id)
+    await restarted.root.deleteProject(harness.session.projectId)
 
     await expect(access(stableSessionWorkspace)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('retains failed Project work ownership and permission routing for cleanup retry', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-project-delete-retry-'))
+    const handles = new Map<string, { executionId: string }>()
+    let failDispose = true
+    const harness = await createCompositionHarness(root, 'codex', undefined, undefined, {
+      artifactEvidence: {
+        turns: {
+          async openExecution({ executionId }: { executionId: string }) {
+            const handle = { executionId }
+            handles.set(executionId, handle)
+            return handle
+          },
+          async finalize() {
+            return undefined
+          },
+          async dispose() {
+            if (failDispose) {
+              failDispose = false
+              throw new Error('injected Project cleanup failure')
+            }
+          },
+          handleForExecution(executionId: string) {
+            const handle = handles.get(executionId)
+            if (!handle) throw new Error(`No active Artifact turn for ${executionId}`)
+            return handle
+          },
+          handoffFile: () => '/tmp/current-run.json',
+          async publishHandoff() {
+            return undefined
+          }
+        } as never,
+        artifactStorageSessionId: ({ sessionId }) => sessionId,
+        async finalizePublication() {
+          return undefined
+        },
+        async project() {
+          return []
+        }
+      }
+    })
+    await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Retain cleanup owner', name: 'Retain cleanup owner' },
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    const control = harness.execution.controls()[0]
+    control.accept()
+    control.emit({
+      kind: 'permission',
+      awaiting: true,
+      requestId: 'provider-project-delete-retry',
+      title: 'Write evidence',
+      options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+    })
+    await expect.poll(() => harness.composition.root.pendingPermissions()).toHaveLength(1)
+
+    await expect(harness.composition.root.deleteProject(harness.session.projectId)).rejects.toThrow(
+      'Delegated Project cleanup failed'
+    )
+
+    expect(harness.durable().runtimeContext?.delegatedWork?.records[0].attempts[0].status).toBe(
+      'running'
+    )
+    expect(harness.composition.root.pendingPermissions()).toHaveLength(1)
+
+    await expect(
+      harness.composition.root.deleteProject(harness.session.projectId)
+    ).resolves.toBeUndefined()
+    expect(harness.durable().runtimeContext?.delegatedWork?.records[0].attempts[0]).toMatchObject({
+      status: 'cancelled',
+      cancellationReason: 'session_stop'
+    })
+    expect(harness.composition.root.pendingPermissions()).toEqual([])
+  })
+
+  it('does not await pending work initialization owned by another Project', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-project-isolation-'))
+    const forSession = vi.fn(async () => new Promise<never>(() => undefined))
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      undefined,
+      undefined,
+      {},
+      [],
+      undefined,
+      { forSession } as never
+    )
+    const unrelatedSession = {
+      ...structuredClone(harness.durable()),
+      id: 'session-other-project',
+      projectId: 'project-2'
+    }
+    harness.replaceDurable(unrelatedSession)
+
+    void harness.composition.host.readAgentFrame(
+      { projectId: unrelatedSession.projectId, sessionId: unrelatedSession.id },
+      unrelatedSession.conversationGraph!.rootFrameId
+    )
+    await vi.waitFor(() => expect(forSession).toHaveBeenCalledOnce())
+
+    await expect(harness.composition.root.deleteProject('project-1')).resolves.toBeUndefined()
   })
 
   it('keeps a Turn fence when cancellation precedes scoped-work creation', async () => {

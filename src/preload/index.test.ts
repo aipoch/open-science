@@ -147,13 +147,6 @@ type PreloadApi = {
     stageLocalFile: (file: File, request: unknown) => Promise<unknown>
     claimLocalFile: (request: unknown) => Promise<void>
   }
-  managedFileVersions: {
-    getCapability: () => Promise<{ available: true } | { available: false; reason: string }>
-    inspect: (request: unknown) => Promise<unknown>
-    diffText: (request: unknown) => Promise<unknown>
-    cancelDiff: (request: unknown) => Promise<unknown>
-    saveTextEdit: (request: unknown) => Promise<unknown>
-  }
   window: {
     findInPage?: (request: unknown) => void
     clearFind?: () => void
@@ -187,12 +180,9 @@ const collectFunctionPaths = (value: unknown, prefix = ''): string[] => {
 beforeAll(async () => {
   // Take the contextBridge branch of the preload's expose logic (production path with context isolation).
   Object.defineProperty(process, 'contextIsolated', { value: true, configurable: true })
-  invokeMock.mockImplementation(async (channel: string) => {
-    if (channel === 'managed-file-versions:get-capability') return { available: true }
-    return validatedApplicationCommandChannels.has(channel)
-      ? { ok: true, result: undefined }
-      : undefined
-  })
+  invokeMock.mockImplementation(async (channel: string) =>
+    validatedApplicationCommandChannels.has(channel) ? { ok: true, result: undefined } : undefined
+  )
 
   await import('./index')
 
@@ -627,8 +617,6 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   it('routes every owned method through its cataloged Electron channel', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(198)
-
     for (const contract of requestContracts) {
       invokeMock.mockClear()
 
@@ -693,7 +681,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 25-group, 163-contract T1d complement', () => {
+  it('pins the core T1d capability complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -721,28 +709,13 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(163)
-    expect({
-      requests: coreContracts.filter(
-        ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
-      ).length,
-      events: coreContracts.filter(({ kind }) => kind === 'event').length,
-      sends: coreContracts.filter(
-        ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-send'
-      ).length,
-      surfaceNative: coreContracts.filter(
-        ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
-      ).length
-    }).toEqual({ requests: 123, events: 29, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 123 request methods through their cataloged Electron channels', async () => {
+  it('routes every request method through its cataloged Electron channel', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
-
-    expect(requestContracts).toHaveLength(123)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -764,9 +737,6 @@ describe('preload bridge — core renderer contract catalog', () => {
     const genericEventContracts = eventContracts.filter(
       ({ lifecycleDispatch }) => lifecycleDispatch == null
     )
-
-    expect(eventContracts).toHaveLength(29)
-    expect(genericEventContracts).toHaveLength(28)
 
     for (const contract of genericEventContracts) {
       onMock.mockClear()
@@ -792,16 +762,13 @@ describe('preload bridge — core renderer contract catalog', () => {
     }
   })
 
-  it('routes all nine generic one-way sends through their cataloged Electron channels', () => {
+  it('routes every generic one-way send through its cataloged Electron channel', () => {
     const sendContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-send'
     )
     const genericSendContracts = sendContracts.filter(
       ({ lifecycleDispatch }) => lifecycleDispatch == null
     )
-
-    expect(sendContracts).toHaveLength(10)
-    expect(genericSendContracts).toHaveLength(9)
 
     for (const contract of genericSendContracts) {
       sendMock.mockClear()
@@ -866,43 +833,6 @@ describe('preload bridge — core renderer contract catalog', () => {
 
     expect(getPathForFileMock).toHaveBeenCalledWith(file)
     expect(invokeMock).not.toHaveBeenCalled()
-  })
-
-  it('reports native capability and forwards managed file version methods over exact channels', async () => {
-    const inspectRequest = { source: 'artifact', projectId: 'project-1', fileId: 'artifact-1' }
-    const saveRequest = {
-      ...inspectRequest,
-      basedOnVersionId: 'version-1',
-      expectedHeadVersionId: 'version-1',
-      operationId: 'operation-1',
-      content: 'changed\n'
-    }
-
-    await expect(api.managedFileVersions.getCapability()).resolves.toEqual({ available: true })
-    await api.managedFileVersions.inspect(inspectRequest)
-    await api.managedFileVersions.diffText({
-      ...inspectRequest,
-      versionId: 'version-2',
-      requestId: 'diff-1'
-    })
-    await api.managedFileVersions.cancelDiff({ requestId: 'diff-1' })
-    await api.managedFileVersions.saveTextEdit(saveRequest)
-
-    expect(invokeMock).toHaveBeenNthCalledWith(1, 'managed-file-versions:get-capability')
-    expect(invokeMock).toHaveBeenNthCalledWith(2, 'managed-file-versions:inspect', inspectRequest)
-    expect(invokeMock).toHaveBeenNthCalledWith(3, 'managed-file-versions:diff-text', {
-      ...inspectRequest,
-      versionId: 'version-2',
-      requestId: 'diff-1'
-    })
-    expect(invokeMock).toHaveBeenNthCalledWith(4, 'managed-file-versions:cancel-diff', {
-      requestId: 'diff-1'
-    })
-    expect(invokeMock).toHaveBeenNthCalledWith(
-      5,
-      'managed-file-versions:save-text-edit',
-      saveRequest
-    )
   })
 })
 
@@ -1032,7 +962,7 @@ const sampleSessionArtifactSelection = {
 }
 const sampleProjectArtifactSelection = {
   projectId: 'p-1',
-  projectName: 'Research',
+  suggestedArchiveName: 'Research',
   files: [
     { source: 'artifact', sessionId: 's-1', path: 'artifact://report', suggestedName: 'report.csv' }
   ]

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,11 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, stat: vi.fn(actual.stat) }
+})
 
 let root: string | undefined
 let disconnect: (() => Promise<void>) | undefined
@@ -342,7 +347,10 @@ describe('managed file reference resolver', () => {
     await mkdir(join(root, 'data'))
     await writeFile(join(root, 'data', 'study.csv'), 'id,value\n1,2\n')
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async (rootId) => (rootId === 'root-1' ? root : undefined) }
+      grantedRoots: {
+        resolveRoot: async (rootId) =>
+          rootId === 'root-1' ? { path: root!, access: 'rw' } : undefined
+      }
     })
 
     const resolved = await resolver.resolve(
@@ -366,10 +374,148 @@ describe('managed file reference resolver', () => {
     expect(resolved.uri).toMatch(/^file:/u)
   })
 
+  it('does not expose a read-only linked-folder source path to the Agent', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    const sourcePath = join(root, 'study.csv')
+    await writeFile(sourcePath, 'id,value\n1,2\n')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) }
+    })
+
+    const resolved = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1' },
+      {
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'study.csv',
+        mimeType: 'text/csv'
+      }
+    )
+
+    expect(resolved.absolutePath).not.toBe(await realpath(sourcePath))
+    expect(await readFile(resolved.absolutePath, 'utf8')).toBe('id,value\n1,2\n')
+    resolver.resetSession('session-1')
+    await vi.waitFor(async () => {
+      await expect(stat(resolved.absolutePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+  })
+
+  it('removes every read-only snapshot synchronously during terminal cleanup', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    await writeFile(join(root, 'study.csv'), 'data\n')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) }
+    })
+    const resolved = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1' },
+      {
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'study.csv'
+      }
+    )
+
+    resolver.clear()
+
+    await expect(stat(resolved.absolutePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('clears only snapshots owned by the disconnected connection generation', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    await writeFile(join(root, 'study.csv'), 'data\n')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) }
+    })
+    const reference = {
+      id: 'linked-1',
+      name: 'study.csv',
+      source: 'linked-folder' as const,
+      rootId: 'root-1',
+      relativePath: 'study.csv'
+    }
+    const oldSnapshot = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1', connectionGeneration: 1 },
+      reference
+    )
+    const successorSnapshot = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1', connectionGeneration: 2 },
+      reference
+    )
+
+    resolver.clearGeneration(1)
+
+    await expect(stat(oldSnapshot.absolutePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(successorSnapshot.absolutePath)).resolves.toMatchObject({ size: 5 })
+    resolver.clear()
+  })
+
+  it('bounds cumulative read-only snapshot storage for a Session', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    await writeFile(join(root, 'first.txt'), '123')
+    await writeFile(join(root, 'second.txt'), '456')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
+      readOnlyProjectionMaxSessionBytes: 5
+    })
+    const context = { projectId: 'default-project', sessionId: 'session-1' }
+    await resolver.resolve(context, {
+      id: 'linked-1',
+      name: 'first.txt',
+      source: 'linked-folder',
+      rootId: 'root-1',
+      relativePath: 'first.txt'
+    })
+
+    await expect(
+      resolver.resolve(context, {
+        id: 'linked-2',
+        name: 'second.txt',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'second.txt'
+      })
+    ).rejects.toThrow(/Session storage limit/i)
+    resolver.clear()
+  })
+
+  it('bounds the bytes actually copied into a read-only snapshot', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    const sourcePath = join(root, 'growing.txt')
+    await writeFile(sourcePath, '1234')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
+      readOnlyProjectionMaxSessionBytes: 5
+    })
+    const context = { projectId: 'default-project', sessionId: 'session-1' }
+    const reference = {
+      id: 'linked-1',
+      name: 'growing.txt',
+      source: 'linked-folder' as const,
+      rootId: 'root-1',
+      relativePath: 'growing.txt'
+    }
+    const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    vi.mocked(stat).mockImplementationOnce(async (path) => {
+      const beforeGrowth = await actualFs.stat(path)
+      await writeFile(sourcePath, '123456')
+      return beforeGrowth
+    })
+
+    await expect(resolver.resolve(context, reference)).rejects.toThrow(/Session storage limit/i)
+
+    await writeFile(sourcePath, '12345')
+    await expect(resolver.resolve(context, reference)).resolves.toMatchObject({ size: 5 })
+    resolver.clear()
+  })
+
   it('rejects a linked-folder reference with an unknown root id', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async () => undefined }
+      grantedRoots: { resolveRoot: async () => undefined }
     })
 
     await expect(
@@ -392,7 +538,7 @@ describe('managed file reference resolver', () => {
     await mkdir(granted)
     await writeFile(join(root, 'secret.txt'), 'outside\n')
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async () => granted }
+      grantedRoots: { resolveRoot: async () => ({ path: granted, access: 'ro' }) }
     })
 
     await expect(
@@ -416,7 +562,7 @@ describe('managed file reference resolver', () => {
     await writeFile(join(root, 'secret.txt'), 'outside\n')
     await symlink(join(root, 'secret.txt'), join(granted, 'leak.txt'))
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async () => granted }
+      grantedRoots: { resolveRoot: async () => ({ path: granted, access: 'ro' }) }
     })
 
     await expect(

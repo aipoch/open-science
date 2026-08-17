@@ -45,13 +45,13 @@ version: 1
 sequences:
   - protein:
       id: A
-      sequence: MVTPEGNVSLVDESLLVGVTDEDRAVRS...   # target
+      sequence: MVTPEGNVSLVDESLLVGVTDEDRAVRS... # target
   - protein:
       id: B
-      sequence: AIQRTPKIQVYSRHPAENG...            # binder
+      sequence: AIQRTPKIQVYSRHPAENG... # binder
   - ligand:
       id: L
-      smiles: 'N[C@@H](Cc1ccc(O)cc1)C(=O)O'      # or  ccd: SAH
+      smiles: 'N[C@@H](Cc1ccc(O)cc1)C(=O)O' # or  ccd: SAH
 ```
 
 ```bash
@@ -81,7 +81,7 @@ predicts protein–small-molecule binding affinity alongside the structure:
 ```yaml
 properties:
   - affinity:
-      binder: L            # the ligand chain id, not the protein
+      binder: L # the ligand chain id, not the protein
 ```
 
 Output gains `affinity_complex.json` next to the confidence file:
@@ -109,12 +109,12 @@ campaign.
 
 ## Errors worth recognizing
 
-| You see | It means / do this |
-|---|---|
-| `Missing MSA's in input and --use_msa_server flag not set` | A protein chain has no MSA — add `--use_msa_server` or set `msa:` to an `.a3m` path in the YAML. |
+| You see                                                       | It means / do this                                                                                       |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `Missing MSA's in input and --use_msa_server flag not set`    | A protein chain has no MSA — add `--use_msa_server` or set `msa:` to an `.a3m` path in the YAML.         |
 | `ImportError: ... cuequivariance_ops_torch` / `libcue_ops.so` | Fast-kernel wheel not visible — add `--no_kernels` (slower, correct) or fix the env's `LD_LIBRARY_PATH`. |
-| `KeyError: 'iptm'` reading the confidence JSON | Single-chain input — ipTM is interface-only; read `ptm` instead. |
-| No `affinity_*.json` in output | Used FASTA input, or the YAML is missing the `properties:` block — see *Affinity head* above. |
+| `KeyError: 'iptm'` reading the confidence JSON                | Single-chain input — ipTM is interface-only; read `ptm` instead.                                         |
+| No `affinity_*.json` in output                                | Used FASTA input, or the YAML is missing the `properties:` block — see _Affinity head_ above.            |
 
 ---
 

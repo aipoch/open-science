@@ -107,6 +107,9 @@ describe('ComputeHostDetail', () => {
     expect(container.textContent).toContain('Details')
     expect(container.textContent).toContain('Scratch root')
     expect(container.textContent).toContain('Concurrent job limit')
+    expect(container.textContent).toContain(
+      'New jobs wait when this host reaches the limit (1–500). Lowering the limit does not stop running jobs.'
+    )
   })
 
   it('shows PINNED badge when scratchPinned is true', () => {

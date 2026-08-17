@@ -1,0 +1,82 @@
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { SessionCatalogRecoveryAlert } from './SessionCatalogRecoveryAlert'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+describe('SessionCatalogRecoveryAlert', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(() => {
+    act(() => root.unmount())
+    container.remove()
+  })
+
+  it('presents a partial Session scan as index repair before a Project action', () => {
+    const onRetry = vi.fn()
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{ kind: 'repairable', reason: 'session-scan' }}
+          onRetry={onRetry}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Project index needs repair')
+    expect(container.textContent).toContain('Repair the index before archiving projects')
+    const repair = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    expect(repair?.textContent).toBe('Repair index')
+    act(() => repair?.click())
+    expect(onRetry).toHaveBeenCalledOnce()
+  })
+
+  it('does not promise automatic repair for quarantined Session authority', () => {
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{
+            kind: 'damaged-authority',
+            affectedFileCount: 1
+          }}
+          onRetry={vi.fn()}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Project archive needs attention')
+    expect(container.textContent).toContain('A damaged saved conversation was moved aside')
+    expect(container.textContent).toContain('You can still permanently delete the project')
+    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+  })
+
+  it('keeps unfinished Project deletion recovery distinct from index repair', () => {
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{ kind: 'project-deletion-recovery' }}
+          onRetry={vi.fn()}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Project recovery needs attention')
+    expect(container.textContent).toContain('previous project deletion')
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')
+        ?.textContent
+    ).toBe('Retry recovery')
+  })
+})

@@ -3,6 +3,7 @@ import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type {
   NotificationActionState,
+  NotificationAttentionReason,
   NotificationKind,
   NotificationSource,
   OpenSessionFromNotificationRequest
@@ -129,9 +130,15 @@ const AUTHORIZATION_INBOX_SUMMARY = {
   compute: 'A compute request needs your approval.',
   'skill-import': 'A Skill import needs your approval.',
   'session-plan': 'A plan needs your approval.'
-} as const satisfies Record<Exclude<NotificationSource, 'agent-question'>, string>
+} as const satisfies Record<Exclude<NotificationSource, 'agent-question' | 'agent-runtime'>, string>
 
 const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
+
+const TASK_ATTENTION_REASON_BY_STOP: Readonly<Record<string, NotificationAttentionReason>> = {
+  max_tokens: 'task-max-tokens',
+  max_turn_requests: 'task-max-turn-requests',
+  refusal: 'task-refusal'
+}
 
 // Strips control characters, folds whitespace, and turns underscores into spaces so an arbitrary
 // stop-reason text (or one from a future ACP extension) reads naturally and can't smuggle newlines
@@ -428,6 +435,12 @@ export class TaskNotificationService {
     const inboxUpdate = this.recordInbox({
       dedupeKey: `task:${event.id}`,
       kind,
+      source: 'agent-runtime',
+      ...(kind === 'task.needs-attention'
+        ? {
+            attentionReason: TASK_ATTENTION_REASON_BY_STOP[event.text ?? ''] ?? 'task-unclean-stop'
+          }
+        : {}),
       sessionId,
       originId: event.id,
       title: notification.title,
@@ -475,6 +488,7 @@ export class TaskNotificationService {
       dedupeKey,
       kind: 'task.needs-attention',
       source: 'agent-question',
+      attentionReason: 'waiting-for-user',
       sessionId,
       originId,
       title: notification.title,
@@ -498,6 +512,7 @@ export class TaskNotificationService {
       dedupeKey: `authorization:agent-tool:${request.requestId}`,
       kind: 'authorization.required',
       source: 'agent-tool',
+      attentionReason: 'waiting-permission',
       sessionId: request.sessionId,
       originId: request.requestId,
       title: notification.title,
@@ -529,6 +544,7 @@ export class TaskNotificationService {
           dedupeKey: `authorization:connector:${request.id}`,
           kind: 'authorization.required',
           source: 'connector',
+          attentionReason: 'waiting-permission',
           ...(sessionId ? { sessionId } : {}),
           originId: request.id,
           title: notification.title,
@@ -558,6 +574,7 @@ export class TaskNotificationService {
       dedupeKey: `authorization:compute:${request.id}`,
       kind: 'authorization.required',
       source: 'compute',
+      attentionReason: 'waiting-permission',
       ...(sessionId ? { sessionId } : {}),
       originId: request.id,
       title: notification.title,
@@ -585,6 +602,7 @@ export class TaskNotificationService {
       dedupeKey: `authorization:skill-import:${request.id}`,
       kind: 'authorization.required',
       source: 'skill-import',
+      attentionReason: 'waiting-permission',
       sessionId: request.sessionId,
       originId: request.id,
       title: notification.title,
@@ -617,6 +635,7 @@ export class TaskNotificationService {
       dedupeKey: `authorization:session-plan:${request.artifactVersionId}`,
       kind: 'authorization.required',
       source: 'session-plan',
+      attentionReason: 'waiting-plan-approval',
       projectId: request.projectId,
       sessionId: request.sessionId,
       originId: request.artifactVersionId,

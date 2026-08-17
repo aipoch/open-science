@@ -1,4 +1,5 @@
 import { WifiOff } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -12,8 +13,8 @@ type NetworkStatusIndicatorProps = {
 }
 
 // Offline / unreachable warning entry point. Renders nothing while the internet is genuinely
-// reachable; a missing link shows red ("Offline"), a live link with a broken path out shows
-// amber ("Unreachable"). Clicking opens the settings Network panel for troubleshooting.
+// reachable; a missing link shows red ("Offline"), while unreachable and failed checks show amber.
+// Clicking opens the settings Network panel for troubleshooting or retry.
 
 // Tone maps keep the Update-capsule design spec identical across states — only the palette
 // changes (danger for a missing link, session-waiting amber for unreachable).
@@ -32,16 +33,28 @@ const iconToneClasses = {
 const NetworkStatusIndicator = ({
   variant
 }: NetworkStatusIndicatorProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const isOnline = useNetworkStore((state) => state.isOnline)
   const connectivity = useNetworkStore((state) => state.connectivity)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
 
-  if (isOnline && connectivity !== 'unreachable') return null
+  if (isOnline && (connectivity === 'reachable' || connectivity === 'unknown')) return null
 
-  const unreachable = isOnline // online but unreachable: amber instead of red
-  const tone = unreachable ? 'warning' : 'danger'
-  const label = unreachable ? 'Internet unreachable' : 'No internet connection'
-  const text = unreachable ? 'Unreachable' : 'Offline'
+  const onlineProblem = isOnline // online but unreachable / unverified: amber instead of red
+  const tone = onlineProblem ? 'warning' : 'danger'
+  // Both of these reach the screen as data rather than as JSX text — one through aria-label and the
+  // tooltip body, one through a <span>. Translated here because the scan for bare copy only sees
+  // literals at the call site, so a bare English variable would slip past it.
+  const label = !onlineProblem
+    ? t('No internet connection')
+    : connectivity === 'unreachable'
+      ? t('Internet unreachable')
+      : t('Internet check failed')
+  const text = !onlineProblem
+    ? t('Offline')
+    : connectivity === 'unreachable'
+      ? t('Unreachable')
+      : t('Check failed')
 
   return (
     <TooltipProvider delayDuration={300}>

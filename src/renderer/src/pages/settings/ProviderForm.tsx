@@ -1,3 +1,6 @@
+import type { TFunction } from 'i18next'
+import { Trans, useTranslation } from 'react-i18next'
+
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { FieldHelp } from '@/components/FieldHelp'
 import { Input } from '@/components/ui/input'
@@ -21,7 +24,7 @@ import {
   type CustomReasoningEffortTransport,
   type ReasoningEffortPresetId
 } from '../../../../shared/reasoning-effort'
-import { getApiKeySecurityCopy } from './provider-key-security'
+import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
   PROVIDER_KIND_GROUPS,
@@ -29,7 +32,8 @@ import {
   providerKindPatch,
   selectedKindKey,
   type ProviderFormErrors,
-  type ProviderFormValue
+  type ProviderFormValue,
+  type ProviderKind
 } from './provider-form-value'
 
 type ProviderFormProps = {
@@ -64,28 +68,14 @@ type ProviderFormProps = {
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const fieldErrorClassName = 'text-xs text-destructive'
 
-// Static field guidance stays close to the form while FieldHelp remains content-agnostic.
-const BASE_URL_HELP_CONTENT = (
-  <>
-    The gateway root; a trailing <code>/v1</code> is added automatically. Choose the API format
-    below to match the endpoint.
-  </>
-)
-
-// Human labels for the provider API format (which chat endpoint the gateway speaks).
+// API format labels name the wire protocol and its literal path, so they read the same in every
+// locale and stay out of the catalog — translating `Messages API (/v1/messages)` would make it harder
+// to match against a gateway's own documentation.
 const API_FORMAT_LABELS: Record<ProviderFormValue['apiEndpoint'], string> = {
   openai: 'Chat Completions API (/v1/chat/completions)',
   anthropic: 'Messages API (/v1/messages)',
   responses: 'Responses API (/v1/responses)'
 }
-
-const API_FORMAT_HELP_CONTENT = (
-  <>
-    Which chat API this gateway speaks. Claude Code uses <code>/v1/messages</code>, OpenCode accepts
-    Messages or Chat Completions, and Codex uses <code>/v1/responses</code>. A provider is only
-    selectable under an agent framework that supports its format.
-  </>
-)
 
 // Custom gateways declare exactly one protocol. Official vendors may serve several endpoints; that
 // multi-endpoint set lives in the registry and is not a selectable custom option.
@@ -95,12 +85,11 @@ const selectableApiFormats = (): ProviderFormValue['apiEndpoint'][] => [
   'responses'
 ]
 
-const SUPPORTED_MODELS_HELP_CONTENT = (
-  <>
-    Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active
-    model selector after adding.
-  </>
-)
+// A kind's dropdown label: a registry proper noun passes through untranslated, the custom gateway
+// resolves from the catalog. Exhaustive over the ProviderKind union, so adding a third shape is a
+// typecheck failure rather than a blank label.
+const kindLabel = (kind: ProviderKind, t: TFunction): string =>
+  kind.labelKey === undefined ? kind.label : t(kind.labelKey)
 
 // Marks a required field next to its label. Purely visual; the actual guard lives in the form errors.
 const RequiredMark = (): React.JSX.Element => (
@@ -128,6 +117,7 @@ const ProviderForm = ({
   showClaudeIsolated = false,
   defaultCustomApiEndpoint = 'anthropic'
 }: ProviderFormProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
@@ -139,47 +129,53 @@ const ProviderForm = ({
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
   const apiKeyUrl =
     isOfficial && value.vendorId ? resolveVendorApiKeyUrl(value.vendorId, value.region) : undefined
-  const securityCopy = getApiKeySecurityCopy(encryptionAvailable)
+  const securityCopyKeys = getApiKeySecurityCopyKeys(encryptionAvailable)
 
   const keyField = (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
           <label className={fieldLabelClassName} htmlFor="provider-key">
-            API key
+            {t('API key')}
             <RequiredMark />
           </label>
           <FieldHelp
             content={
               <>
-                <span className="block font-medium">{securityCopy.title}</span>
-                <span className="block text-bg-000/80">{securityCopy.description}</span>
+                <span className="block font-medium">{t(securityCopyKeys.title)}</span>
+                <span className="block text-bg-000/80">{t(securityCopyKeys.description)}</span>
               </>
             }
           />
         </div>
         {apiKeyUrl ? (
           <ExternalTextLink href={apiKeyUrl} className="text-xs">
-            Get an API key
+            {t('Get an API key')}
           </ExternalTextLink>
         ) : null}
       </div>
       <Input
         id="provider-key"
-        aria-label="API key"
+        aria-label={t('API key')}
         type="password"
         value={value.key}
         disabled={disabled}
-        placeholder={hasStoredKey ? `${maskedKey ?? 'stored key'} — leave blank to keep` : 'sk-...'}
+        placeholder={
+          hasStoredKey
+            ? t('{{masked}} — leave blank to keep', {
+                masked: maskedKey ?? t('stored key')
+              })
+            : 'sk-...'
+        }
         onChange={(event) => onChange({ key: event.target.value })}
       />
       {needsKey ? (
         <p className={fieldErrorClassName} role="alert">
-          The stored key could not be decrypted. Enter it again to continue.
+          {t('The stored key could not be decrypted. Enter it again to continue.')}
         </p>
       ) : errors.key ? (
         <p className={fieldErrorClassName} role="alert">
-          {errors.key}
+          {t(errors.key)}
         </p>
       ) : null}
     </div>
@@ -189,17 +185,17 @@ const ProviderForm = ({
     <div className="space-y-4">
       <div className="space-y-1.5">
         <div className="flex items-center gap-1">
-          <span className={fieldLabelClassName}>Provider type</span>
-          {selectedKind ? <FieldHelp content={selectedKind.description} /> : null}
+          <span className={fieldLabelClassName}>{t('Provider type')}</span>
+          {selectedKind ? <FieldHelp content={t(selectedKind.descriptionKey)} /> : null}
         </div>
         <Select
           value={selectedKey}
           onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
         >
-          <SelectTrigger aria-label="Provider type">
+          <SelectTrigger aria-label={t('Provider type')}>
             <span className="flex items-center gap-2">
               <ProviderKindIcon kindKey={selectedKey} />
-              <span>{selectedKind?.label}</span>
+              <span>{selectedKind ? kindLabel(selectedKind, t) : null}</span>
             </span>
           </SelectTrigger>
           <SelectContent scrollToTopOnOpen>
@@ -220,14 +216,14 @@ const ProviderForm = ({
 
               return (
                 <SelectGroup key={group.id}>
-                  <SelectLabel>{group.label}</SelectLabel>
+                  <SelectLabel>{t(group.labelKey)}</SelectLabel>
                   {kinds.map((kind) => (
                     <SelectItem
                       key={kind.key}
                       value={kind.key}
                       icon={<ProviderKindIcon kindKey={kind.key} />}
                     >
-                      {kind.label}
+                      {kindLabel(kind, t)}
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -240,14 +236,14 @@ const ProviderForm = ({
       {!isCodexSubscription && !isClaudeSubscription ? (
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="provider-name">
-            Name
+            {t('Name')}
           </label>
           <Input
             id="provider-name"
-            aria-label="Provider name"
+            aria-label={t('Provider name')}
             value={value.name}
             disabled={disabled}
-            placeholder={vendor ? vendor.label : 'e.g. My gateway'}
+            placeholder={vendor ? vendor.label : t('e.g. My gateway')}
             onChange={(event) => onChange({ name: event.target.value })}
           />
         </div>
@@ -256,7 +252,7 @@ const ProviderForm = ({
       {isCodexSubscription ? (
         <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
           <div className="space-y-1.5">
-            <span className={fieldLabelClassName}>Codex authentication</span>
+            <span className={fieldLabelClassName}>{t('Codex authentication')}</span>
             <Select
               value={value.type}
               disabled={disabled}
@@ -264,30 +260,34 @@ const ProviderForm = ({
                 onChange({ type: type as 'codex-shared' | 'codex-isolated' })
               }
             >
-              <SelectTrigger aria-label="Codex authentication" disabled={disabled}>
+              <SelectTrigger aria-label={t('Codex authentication')} disabled={disabled}>
                 <span>
                   {value.type === 'codex-shared'
-                    ? 'Import existing Codex sign-in'
-                    : 'Sign in with Open Science'}
+                    ? t('Import existing Codex sign-in')
+                    : t('Sign in with Open Science')}
                 </span>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="codex-shared">Import existing Codex sign-in</SelectItem>
-                <SelectItem value="codex-isolated">Sign in with Open Science</SelectItem>
+                <SelectItem value="codex-shared">{t('Import existing Codex sign-in')}</SelectItem>
+                <SelectItem value="codex-isolated">{t('Sign in with Open Science')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <p className="text-xs text-muted-foreground">
             {value.type === 'codex-shared'
-              ? "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported."
-              : 'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'}
+              ? t(
+                  "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported."
+                )
+              : t(
+                  'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'
+                )}
           </p>
         </div>
       ) : isClaudeSubscription ? (
         <>
           <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
             <div className="space-y-1.5">
-              <span className={fieldLabelClassName}>Claude authentication</span>
+              <span className={fieldLabelClassName}>{t('Claude authentication')}</span>
               <Select
                 value={value.type}
                 disabled={disabled}
@@ -295,61 +295,65 @@ const ProviderForm = ({
                   onChange({ type: type as 'claude-shared' | 'claude-isolated' })
                 }
               >
-                <SelectTrigger aria-label="Claude authentication" disabled={disabled}>
+                <SelectTrigger aria-label={t('Claude authentication')} disabled={disabled}>
                   <span>
                     {value.type === 'claude-shared'
-                      ? 'Use existing Claude profile (Recommended)'
-                      : 'Sign in separately (isolated)'}
+                      ? t('Use existing Claude profile (Recommended)')
+                      : t('Sign in separately (isolated)')}
                   </span>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="claude-shared">
-                    Use existing Claude profile (Recommended)
+                    {t('Use existing Claude profile (Recommended)')}
                   </SelectItem>
-                  <SelectItem value="claude-isolated">Sign in separately (isolated)</SelectItem>
+                  <SelectItem value="claude-isolated">
+                    {t('Sign in separately (isolated)')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <p className="text-xs text-muted-foreground">
               {value.type === 'claude-shared'
-                ? 'Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.'
-                : 'Advanced. Signs in through the browser and stores a separate Claude login in Open Science, completely isolated from your personal Claude profile.'}
+                ? t(
+                    'Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.'
+                  )
+                : t(
+                    'Advanced. Signs in through the browser and stores a separate Claude login in Open Science, completely isolated from your personal Claude profile.'
+                  )}
             </p>
             <div className="space-y-1.5 border-t border-border-200 pt-3">
               <p className="text-xs text-muted-foreground">
-                {value.type === 'claude-shared' ? (
-                  <>
-                    Sign in via browser OAuth. The Settings card will open your browser to sign in
-                    with your Claude account. Your credentials are stored in{' '}
-                    <code className="font-mono">~/.claude</code>.
-                  </>
-                ) : (
-                  <>
-                    Run <code className="font-mono">claude setup-token</code> in a terminal and
-                    paste the token below. It is stored encrypted under your app-owned Claude config
-                    dir; nothing is read from or written to{' '}
-                    <code className="font-mono">~/.claude</code>.
-                  </>
-                )}
+                {/* Paths and the CLI command sit mid-sentence, so the catalog carries a <code> tag and
+                    the translator places it — Chinese word order puts them elsewhere in the clause. */}
+                <Trans
+                  t={t}
+                  i18nKey={
+                    value.type === 'claude-shared'
+                      ? 'Sign in via browser OAuth. The Settings card will open your browser to sign in with your Claude account. Your credentials are stored in <code>~/.claude</code>.'
+                      : 'Run <code>claude setup-token</code> in a terminal and paste the token below. It is stored encrypted under your app-owned Claude config dir; nothing is read from or written to <code>~/.claude</code>.'
+                  }
+                  components={{ code: <code className="font-mono" /> }}
+                />
               </p>
             </div>
             {value.type === 'claude-isolated' && (
               <p className="text-xs text-muted-foreground">
-                Paste the token in the Settings card after saving — the wizard&apos;s Test &amp;
-                continue flow signs you in.
+                {t(
+                  "Paste the token in the Settings card after saving — the wizard's Test & continue flow signs you in."
+                )}
               </p>
             )}
           </div>
           <div className="space-y-1.5">
             <label className={fieldLabelClassName} htmlFor="provider-model">
-              Model <span className="text-muted-foreground">(optional override)</span>
+              {t('Model')} <span className="text-muted-foreground">{t('(optional override)')}</span>
             </label>
             <Input
               id="provider-model"
-              aria-label="Model"
+              aria-label={t('Model')}
               value={value.model}
               disabled={disabled}
-              placeholder="Leave blank to use Claude's default"
+              placeholder={t("Leave blank to use Claude's default")}
               onChange={(event) => onChange({ model: event.target.value })}
             />
           </div>
@@ -359,30 +363,46 @@ const ProviderForm = ({
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
               <label className={fieldLabelClassName} htmlFor="provider-base-url">
-                Base URL
+                {t('Base URL')}
                 <RequiredMark />
               </label>
-              <FieldHelp content={BASE_URL_HELP_CONTENT} />
+              <FieldHelp
+                content={
+                  <Trans
+                    t={t}
+                    i18nKey="The gateway root; a trailing <code>/v1</code> is added automatically. Choose the API format below to match the endpoint."
+                    components={{ code: <code /> }}
+                  />
+                }
+              />
             </div>
             <Input
               id="provider-base-url"
-              aria-label="Base URL"
+              aria-label={t('Base URL')}
               value={value.baseUrl}
               disabled={disabled}
-              placeholder="https://gateway.example"
+              placeholder={t('https://gateway.example')}
               onChange={(event) => onChange({ baseUrl: event.target.value })}
             />
             {errors.baseUrl ? (
               <p className={fieldErrorClassName} role="alert">
-                {errors.baseUrl}
+                {t(errors.baseUrl)}
               </p>
             ) : null}
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
-              <span className={fieldLabelClassName}>API format</span>
-              <FieldHelp content={API_FORMAT_HELP_CONTENT} />
+              <span className={fieldLabelClassName}>{t('API format')}</span>
+              <FieldHelp
+                content={
+                  <Trans
+                    t={t}
+                    i18nKey="Which chat API this gateway speaks. Claude Code uses <code>/v1/messages</code>, OpenCode accepts Messages or Chat Completions, and Codex uses <code>/v1/responses</code>. A provider is only selectable under an agent framework that supports its format."
+                    components={{ code: <code /> }}
+                  />
+                }
+              />
             </div>
             <Select
               value={value.apiEndpoint}
@@ -391,7 +411,7 @@ const ProviderForm = ({
                 onChange({ apiEndpoint: apiEndpoint as ProviderFormValue['apiEndpoint'] })
               }
             >
-              <SelectTrigger aria-label="API format" disabled={disabled}>
+              <SelectTrigger aria-label={t('API format')} disabled={disabled}>
                 <span>{API_FORMAT_LABELS[value.apiEndpoint]}</span>
               </SelectTrigger>
               <SelectContent>
@@ -406,14 +426,14 @@ const ProviderForm = ({
 
           <div className="flex items-center justify-between gap-4 border-t border-border-200 pt-3">
             <label className="space-y-0.5" htmlFor="provider-image-input">
-              <span className="block text-xs font-medium">Image input</span>
+              <span className="block text-xs font-medium">{t('Image input')}</span>
               <span className="block text-xs text-muted-foreground">
-                Enable only when this gateway and model accept image content.
+                {t('Enable only when this gateway and model accept image content.')}
               </span>
             </label>
             <Switch
               id="provider-image-input"
-              aria-label="Supports image input"
+              aria-label={t('Supports image input')}
               checked={value.supportsImageInput}
               disabled={disabled}
               onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
@@ -423,16 +443,16 @@ const ProviderForm = ({
           <div className="space-y-3 border-t border-border-200 pt-3">
             <div className="flex items-center justify-between gap-4">
               <label className="space-y-0.5" htmlFor="provider-reasoning-effort">
-                <span className="block text-xs font-medium">Reasoning effort</span>
+                <span className="block text-xs font-medium">{t('Reasoning effort')}</span>
                 <span className="block text-xs text-muted-foreground">
-                  Choose the exact effort levels accepted by this model. Open Science maps five
-                  relative strengths onto them, then sends the selected level using the request
-                  format below. Disable when the model does not accept an effort parameter.
+                  {t(
+                    'Choose the exact effort levels accepted by this model. Open Science maps five relative strengths onto them, then sends the selected level using the request format below. Disable when the model does not accept an effort parameter.'
+                  )}
                 </span>
               </label>
               <Switch
                 id="provider-reasoning-effort"
-                aria-label="Supports reasoning effort"
+                aria-label={t('Supports reasoning effort')}
                 checked={value.reasoningEffortPreset !== 'unsupported'}
                 disabled={disabled}
                 onCheckedChange={(supported) =>
@@ -454,7 +474,7 @@ const ProviderForm = ({
                     })
                   }
                 >
-                  <SelectTrigger aria-label="Reasoning effort levels" disabled={disabled}>
+                  <SelectTrigger aria-label={t('Reasoning effort levels')} disabled={disabled}>
                     <span>
                       {
                         CUSTOM_REASONING_EFFORT_PRESETS.find(
@@ -473,7 +493,7 @@ const ProviderForm = ({
                 </Select>
 
                 <div className="space-y-1.5">
-                  <span className="block text-xs font-medium">Request format</span>
+                  <span className="block text-xs font-medium">{t('Request format')}</span>
                   <Select
                     value={value.reasoningEffortTransport}
                     disabled={disabled}
@@ -484,7 +504,10 @@ const ProviderForm = ({
                       })
                     }
                   >
-                    <SelectTrigger aria-label="Reasoning effort request format" disabled={disabled}>
+                    <SelectTrigger
+                      aria-label={t('Reasoning effort request format')}
+                      disabled={disabled}
+                    >
                       <span>
                         {
                           CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
@@ -510,12 +533,12 @@ const ProviderForm = ({
 
           <div className="space-y-1.5">
             <label className={fieldLabelClassName} htmlFor="provider-model">
-              Model
+              {t('Model')}
               <RequiredMark />
             </label>
             <Input
               id="provider-model"
-              aria-label="Model"
+              aria-label={t('Model')}
               value={value.model}
               disabled={disabled}
               placeholder="claude-sonnet-4-5"
@@ -523,18 +546,18 @@ const ProviderForm = ({
             />
             {errors.model ? (
               <p className={fieldErrorClassName} role="alert">
-                {errors.model}
+                {t(errors.model)}
               </p>
             ) : null}
           </div>
 
           <div className="space-y-1.5">
             <label className={fieldLabelClassName} htmlFor="provider-context-window">
-              Context window
+              {t('Context window')}
             </label>
             <Input
               id="provider-context-window"
-              aria-label="Context window"
+              aria-label={t('Context window')}
               type="number"
               inputMode="numeric"
               min={1}
@@ -546,7 +569,7 @@ const ProviderForm = ({
             />
             {errors.contextWindow ? (
               <p className={fieldErrorClassName} role="alert">
-                {errors.contextWindow}
+                {t(errors.contextWindow)}
               </p>
             ) : null}
           </div>
@@ -555,12 +578,12 @@ const ProviderForm = ({
         <>
           {vendor?.regions ? (
             <div className="space-y-1.5">
-              <span className={fieldLabelClassName}>Endpoint</span>
+              <span className={fieldLabelClassName}>{t('Endpoint')}</span>
               <Select
                 value={value.region ?? vendor.regions[0]?.id}
                 onValueChange={(region) => onChange({ region })}
               >
-                <SelectTrigger aria-label="Endpoint">
+                <SelectTrigger aria-label={t('Endpoint')}>
                   <span>
                     {vendor.regions.find((region) => region.id === value.region)?.label ??
                       vendor.regions[0]?.label}
@@ -589,8 +612,12 @@ const ProviderForm = ({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
-                    <span className={fieldLabelClassName}>Supported models</span>
-                    <FieldHelp content={SUPPORTED_MODELS_HELP_CONTENT} />
+                    <span className={fieldLabelClassName}>{t('Supported models')}</span>
+                    <FieldHelp
+                      content={t(
+                        'Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.'
+                      )}
+                    />
                   </div>
                   {onRefreshModels ? (
                     <button
@@ -599,7 +626,7 @@ const ProviderForm = ({
                       disabled={disabled || isRefreshingModels}
                       className="text-xs font-medium text-primary underline underline-offset-2 hover:text-primary/80 disabled:opacity-50"
                     >
-                      {isRefreshingModels ? 'Refreshing…' : 'Refresh from vendor'}
+                      {isRefreshingModels ? t('Refreshing…') : t('Refresh from vendor')}
                     </button>
                   ) : null}
                 </div>
@@ -620,14 +647,14 @@ const ProviderForm = ({
       ) : (
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="provider-model">
-            Model <span className="text-muted-foreground">(optional override)</span>
+            {t('Model')} <span className="text-muted-foreground">{t('(optional override)')}</span>
           </label>
           <Input
             id="provider-model"
-            aria-label="Model"
+            aria-label={t('Model')}
             value={value.model}
             disabled={disabled}
-            placeholder="Leave blank to use Claude's default"
+            placeholder={t("Leave blank to use Claude's default")}
             onChange={(event) => onChange({ model: event.target.value })}
           />
         </div>

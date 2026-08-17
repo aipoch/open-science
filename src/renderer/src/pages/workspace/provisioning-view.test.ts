@@ -97,6 +97,38 @@ describe('notebookGated', () => {
     expect(notebookGated(s, deriveProvisionUi(s, undefined, undefined, undefined))).toBe(true)
   })
 
+  it('keeps the gate closed when an active upgrade status refresh fails', () => {
+    const s = status({ pythonReady: true, provisioning: true })
+    expect(notebookGated(s, { kind: 'error', message: 'status unavailable' })).toBe(true)
+  })
+
+  it('gates an upgrade-scoped status error before the cached status observes provisioning', () => {
+    const s = status({ pythonReady: true, provisioning: false })
+    expect(
+      notebookGated(s, { kind: 'error', message: 'status unavailable', scope: 'upgrade' })
+    ).toBe(true)
+  })
+
+  it('does not gate Python while an R-only status refresh error is shown', () => {
+    const s = status({ pythonReady: true, provisioning: true })
+    expect(notebookGated(s, { kind: 'error', message: 'status unavailable', scope: 'r' })).toBe(
+      false
+    )
+  })
+
+  it('limits a session-scoped status refresh error to its owning notebook', () => {
+    const s = status({ pythonReady: true, provisioning: true })
+    const ui = {
+      kind: 'error' as const,
+      message: 'status unavailable',
+      scope: 'python' as const,
+      sessionId: 'session-a'
+    }
+
+    expect(notebookGated(s, ui, 'session-a')).toBe(true)
+    expect(notebookGated(s, ui, 'session-b')).toBe(false)
+  })
+
   it('does NOT gate while only R is preparing (Python stays usable)', () => {
     const s = status({ pythonReady: true, provisioning: true })
     expect(notebookGated(s, deriveProvisionUi(s, 'r', undefined, undefined))).toBe(false)

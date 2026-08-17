@@ -11,6 +11,15 @@ import {
   isActivityActive
 } from './workspace-conversation-items'
 
+// Mock t function for tests
+const t = (key: string, options?: Record<string, unknown>): string => {
+  // Simple implementation that just handles interpolation
+  if (options && 'name' in options) {
+    return key.replace('{{name}}', String(options.name))
+  }
+  return key
+}
+
 const baseSession: ChatSession = {
   id: 'session-1',
   projectId: 'default',
@@ -417,14 +426,20 @@ describe('workspace conversation items', () => {
   it('shows an OpenCode Skill name without exposing its content', () => {
     expect(
       formatActivityTitle(
-        createActivity({ title: 'Loaded skill: mcp-pubmed', status: 'completed' })
+        createActivity({ title: 'Loaded skill: mcp-pubmed', status: 'completed' }),
+        undefined,
+        t
       )
     ).toBe('Loaded skill: mcp-pubmed')
   })
 
   it('keeps the projected Codex Skill name when a load fails', () => {
     expect(
-      formatActivityTitle(createActivity({ title: 'Loading skill: mcp-pubmed', status: 'failed' }))
+      formatActivityTitle(
+        createActivity({ title: 'Loading skill: mcp-pubmed', status: 'failed' }),
+        undefined,
+        t
+      )
     ).toBe('Skill failed: mcp-pubmed')
   })
 
@@ -437,7 +452,7 @@ describe('workspace conversation items', () => {
     })
     const session: ChatSession = { ...baseSession, activities: [activity] }
 
-    expect(formatActivityTitle(activity)).toBe('Compacting context')
+    expect(formatActivityTitle(activity, undefined, t)).toBe('Compacting context')
     expect(createConversationItems(session)).toEqual([
       expect.objectContaining({
         id: 'compaction-activity-context-compaction:1',
@@ -651,7 +666,9 @@ describe('workspace conversation items', () => {
           title: '"top news July 6 2026"',
           status: 'completed',
           toolKind: 'search'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolSearch')
 
@@ -661,7 +678,9 @@ describe('workspace conversation items', () => {
           id: 'tool-search-2',
           status: 'pending',
           toolKind: 'search'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Using tool: ToolSearch')
   })
@@ -674,7 +693,9 @@ describe('workspace conversation items', () => {
           title: 'Fetch https://example.com',
           status: 'completed',
           toolKind: 'fetch'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolFetch')
   })
@@ -688,7 +709,9 @@ describe('workspace conversation items', () => {
           status: 'completed',
           providerToolName: 'Grep',
           toolKind: 'search'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: Grep')
   })
@@ -701,7 +724,9 @@ describe('workspace conversation items', () => {
           status: 'completed',
           providerToolName: 'mcp__open-science-notebook__notebook_execute',
           toolKind: 'other'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: Notebook run')
 
@@ -712,7 +737,9 @@ describe('workspace conversation items', () => {
           status: 'in_progress',
           providerToolName: 'mcp__open-science-notebook__notebook_restart',
           toolKind: 'other'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Using tool: Notebook restart')
   })
@@ -730,7 +757,8 @@ describe('workspace conversation items', () => {
           status: 'completed',
           providerToolName: 'mcp__open-science-notebook__notebook_execute'
         }),
-        phase
+        phase,
+        t
       )
     ).toBe(expected)
   })
@@ -739,7 +767,8 @@ describe('workspace conversation items', () => {
     expect(
       formatActivityTitle(
         createActivity({ status: 'in_progress', providerToolName: 'Bash' }),
-        'closed'
+        'closed',
+        t
       )
     ).toBe('Request ended: Bash')
   })
@@ -753,7 +782,9 @@ describe('workspace conversation items', () => {
           status: 'completed',
           providerToolName: 'mcp__open_science_notebook__notebook_execute',
           toolKind: 'other'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: Notebook run')
   })
@@ -766,7 +797,9 @@ describe('workspace conversation items', () => {
           title: 'mcp.open-science-notebook.notebook_execute',
           status: 'completed',
           toolKind: 'execute'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: Notebook run')
   })
@@ -778,7 +811,9 @@ describe('workspace conversation items', () => {
           id: 'tool-search-1',
           status: 'completed',
           toolKind: 'search'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolSearch')
 
@@ -788,7 +823,9 @@ describe('workspace conversation items', () => {
           id: 'tool-fetch-1',
           status: 'completed',
           toolKind: 'fetch'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolFetch')
 
@@ -798,7 +835,9 @@ describe('workspace conversation items', () => {
           id: 'tool-execute-1',
           status: 'in_progress',
           toolKind: 'execute'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Using tool: ToolExecute')
 
@@ -808,7 +847,9 @@ describe('workspace conversation items', () => {
           id: 'tool-read-1',
           status: 'completed',
           toolKind: 'read'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolRead')
 
@@ -818,7 +859,9 @@ describe('workspace conversation items', () => {
           id: 'tool-unknown-1',
           status: 'completed',
           toolKind: undefined
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: tool')
   })
@@ -831,7 +874,9 @@ describe('workspace conversation items', () => {
           title: 'ToolSearch',
           status: 'completed',
           toolKind: undefined
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolSearch')
   })
@@ -843,7 +888,9 @@ describe('workspace conversation items', () => {
           id: 'tool-search-1',
           status: 'failed',
           toolKind: 'search'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Tool failed: ToolSearch')
 

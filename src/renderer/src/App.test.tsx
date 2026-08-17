@@ -70,6 +70,14 @@ const mocks = vi.hoisted(() => {
       isLoading: false,
       isReady: true,
       hasCompleteSessionCatalog: true,
+      catalogRecovery: { kind: 'ready' } as
+        | { kind: 'ready' }
+        | { kind: 'repairable'; reason: 'session-scan' | 'startup-reconciliation' }
+        | {
+            kind: 'damaged-authority'
+            affectedFileCount: number
+          }
+        | { kind: 'project-deletion-recovery' },
       canDeleteSessionsAndProjects: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
@@ -228,7 +236,13 @@ vi.mock('@/components/PermissionUndoSnackbar', () => ({
   PermissionUndoSnackbar: (): React.JSX.Element => <div data-testid="permission-undo" />
 }))
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
-  WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children
+  WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children,
+  useWorkspaceAgentRuntime: () => ({
+    pendingPermissions: [],
+    promptInFlightSessionIds: [],
+    sendPreparationInFlightSessionIds: [],
+    saveAsSkillInFlightSessionIds: []
+  })
 }))
 vi.mock('@/pages/home/HomePage', () => ({
   HomePage: ({
@@ -295,7 +309,9 @@ vi.mock('@/pages/settings/SettingsPage', () => ({
   )
 }))
 vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
-  EnvStatusBanner: (): React.JSX.Element => <div data-testid="env-banner" />
+  EnvStatusBanner: ({ onRetry }: { onRetry?: () => void }): React.JSX.Element => (
+    <button type="button" data-testid="env-banner" onClick={onRetry} />
+  )
 }))
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
@@ -352,6 +368,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isLoading = false
     mocks.sessionPersistence.hasCompleteSessionCatalog = true
+    mocks.sessionPersistence.catalogRecovery = { kind: 'ready' }
     mocks.sessionPersistence.canDeleteSessionsAndProjects = true
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
@@ -371,6 +388,8 @@ describe('App startup routing', () => {
     mocks.preview.panelState = 'collapsed'
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
+    mocks.environment.init.mockClear()
+    mocks.environment.retry.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
     mocks.syncUnreadTaskView.mockClear()
     mocks.getInfo.mockReset().mockResolvedValue({
@@ -810,6 +829,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
+    mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
     mocks.sessionPersistence.canDeleteSessionsAndProjects = true
 
     await render()
@@ -835,12 +855,18 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
     mocks.sessionPersistence.canDeleteSessionsAndProjects = false
+    mocks.sessionPersistence.catalogRecovery = { kind: 'project-deletion-recovery' }
 
     await render()
 
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('false')
+    expect(container.textContent).toContain('Project recovery needs attention')
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')
+        ?.textContent
+    ).toBe('Retry recovery')
   })
 
   it('renders the partial session recovery alert on an opaque semantic surface', async () => {
@@ -848,6 +874,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
     mocks.sessionPersistence.loadError = 'one saved conversation could not be read'
+    mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
 
     await render()
 
@@ -951,6 +978,10 @@ describe('App startup routing', () => {
     await render()
 
     expect(container.querySelector('[data-testid="onboarding-page"]')).not.toBeNull()
+    const envBanner = container.querySelector<HTMLButtonElement>('[data-testid="env-banner"]')
+    expect(envBanner).not.toBeNull()
+    await act(async () => envBanner?.click())
+    expect(mocks.environment.retry).toHaveBeenCalledOnce()
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
@@ -1103,22 +1134,51 @@ describe('App startup routing', () => {
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
   })
 
+  it('keeps failed writes retryable while catalog recovery is visible', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.hasCompleteSessionCatalog = false
+    mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
+    mocks.sessionPersistence.writeError =
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+
+    await render()
+
+    const alerts = Array.from(
+      container.querySelectorAll('[data-testid="session-persistence-alert"]')
+    )
+    expect(alerts).toHaveLength(2)
+    expect(alerts[0]?.textContent).toContain('Project index needs repair')
+    expect(alerts[1]?.textContent).toContain('Conversation storage needs attention')
+
+    const retries = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="session-persistence-retry"]')
+    )
+    const repairIndex = retries.find((button) => button.textContent === 'Repair index')
+    const retryWrites = retries.find((button) => button.textContent === 'Retry')
+    repairIndex?.click()
+    retryWrites?.click()
+    expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
+    expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
+  })
+
   it('reports quarantined corrupt conversation files without blocking healthy sessions', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
+    mocks.sessionPersistence.catalogRecovery = {
+      kind: 'damaged-authority',
+      affectedFileCount: 1
+    }
     mocks.sessionPersistence.loadWarning =
       '1 saved conversation file was damaged and moved aside. The remaining conversations were loaded.'
 
     await render()
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
-    expect(alert?.textContent).toContain('Saved conversation data was damaged')
-    expect(alert?.textContent).toContain('damaged and moved aside')
+    expect(alert?.textContent).toContain('Project archive needs attention')
+    expect(alert?.textContent).toContain('A damaged saved conversation was moved aside')
+    expect(alert?.textContent).toContain('You can still permanently delete the project')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
-    container
-      .querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')
-      ?.click()
-    expect(mocks.sessionPersistence.dismissLoadWarning).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset

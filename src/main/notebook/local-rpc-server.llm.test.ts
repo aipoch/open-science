@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { HostLlmCallInput, HostLlmResult } from './host-llm-service'
+import type { HostLlmCallInput, HostLlmResult } from './host-model-service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
 let server: NotebookLocalRpcServer | undefined
@@ -27,14 +27,18 @@ describe('llmCall RPC', () => {
   it('routes only through a control capability and strips trusted identity fields', async () => {
     const hostLlmCall = vi.fn<
       (input: HostLlmCallInput, signal?: AbortSignal) => Promise<HostLlmResult>
-    >(async () => ({ text: 'PONG', model: 'model-a', stop_reason: 'end_turn' }))
+    >(async () => ({ text: 'PONG', model: 'model-a', stopReason: 'end_turn' }))
     const hostLlm = {
-      isAvailable: vi.fn(async () => true),
+      isLlmAvailable: vi.fn(async () => true),
+      isCurrentModelAvailable: vi.fn(async () => true),
+      isListModelsAvailable: vi.fn(async () => true),
+      currentModel: vi.fn(async () => 'model-a'),
+      listModels: vi.fn(async () => ['model-a']),
       call: hostLlmCall
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      hostLlm
+      hostModel: hostLlm
     })
     const control = await server.issueControlConnection(
       'trusted-session',
@@ -50,7 +54,7 @@ describe('llmCall RPC', () => {
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
-      result: { text: 'PONG', model: 'model-a', stop_reason: 'end_turn' }
+      result: { text: 'PONG', model: 'model-a', stopReason: 'end_turn' }
     })
     expect(hostLlmCall).toHaveBeenCalledOnce()
     expect(hostLlmCall.mock.calls[0]?.[0]).toEqual({ request: 'PING' })
@@ -78,7 +82,11 @@ describe('llmCall RPC', () => {
   it('aborts host inference when the RPC client disconnects', async () => {
     let observedSignal: AbortSignal | undefined
     const hostLlm = {
-      isAvailable: vi.fn(async () => true),
+      isLlmAvailable: vi.fn(async () => true),
+      isCurrentModelAvailable: vi.fn(async () => true),
+      isListModelsAvailable: vi.fn(async () => true),
+      currentModel: vi.fn(async () => 'model-a'),
+      listModels: vi.fn(async () => ['model-a']),
       call: vi.fn(
         async (_input: unknown, signal?: AbortSignal) =>
           new Promise<never>((_resolve, reject) => {
@@ -91,7 +99,7 @@ describe('llmCall RPC', () => {
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      hostLlm
+      hostModel: hostLlm
     })
     const control = await server.issueControlConnection(
       'trusted-session',

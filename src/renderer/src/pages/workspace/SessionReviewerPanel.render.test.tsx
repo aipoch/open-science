@@ -5,7 +5,7 @@
 // The panel shows a single Checks list with pass/warn/fail badges, claim, evidence,
 // and locator for warn/fail checks. No Summary section. No "Full reasoning" section.
 
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -80,6 +80,7 @@ afterEach(() => {
 
 // Lazy-import the component under test so vi.mock calls apply first.
 const { SessionReviewerPanel } = await import('./SessionReviewerPanel')
+const { ReviewerCard } = await import('../../components/ReviewerCard')
 
 describe('SessionReviewerPanel — unified checks list', () => {
   it('renders the unified checks list with pass and fail badges', () => {
@@ -268,6 +269,69 @@ describe('SessionReviewerPanel — GoToTranscript positioning', () => {
     const activeTraces = container.querySelectorAll('[data-active="true"]')
     expect(activeTraces.length).toBe(0)
   })
+
+  it('opens the public transcript view with tracked fail and new pass checks from this submission', () => {
+    const sourceCheck = makeCheck({
+      id: 'tracked-fail',
+      reviewId: 'source-review',
+      claim: 'Original mismatch',
+      evidence: 'Original evidence'
+    })
+    const passCheck = makeCheck({
+      id: 'new-pass',
+      status: 'pass',
+      claim: 'New pass remains visible',
+      evidence: 'New pass evidence',
+      locator: undefined,
+      sortIndex: 1
+    })
+    const review = makeReview({
+      checks: [passCheck],
+      submittedChecks: [
+        {
+          kind: 'tracked',
+          submissionIndex: 0,
+          sourceFindingId: sourceCheck.id,
+          dispositionOutcome: 'still_open',
+          assessment: {
+            status: 'fail',
+            claim: 'Tracked fail from this review run',
+            evidence: 'This review still observed the mismatch',
+            locator: sourceCheck.locator,
+            sortIndex: 0
+          },
+          sourceCheck
+        },
+        { kind: 'new', submissionIndex: 1, check: passCheck }
+      ]
+    })
+
+    const PublicTranscriptHarness = (): React.JSX.Element => {
+      const [activeFindingId, setActiveFindingId] = useState<string>()
+      return activeFindingId ? (
+        <SessionReviewerPanel review={review} activeFindingId={activeFindingId} />
+      ) : (
+        <ReviewerCard
+          review={review}
+          defaultExpanded
+          onGoToTranscript={(intent) => setActiveFindingId(intent.findingId)}
+        />
+      )
+    }
+    act(() => root.render(<PublicTranscriptHarness />))
+    const trackedCard = container.querySelector('[data-testid="reviewer-tracked-check-card"]')
+    const goToTranscript = Array.from(trackedCard?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Go to transcript'
+    )
+    act(() => goToTranscript?.click())
+
+    expect(container.textContent).toContain('Tracked fail from this review run')
+    expect(container.textContent).toContain('This review still observed the mismatch')
+    expect(container.textContent).toContain('New pass remains visible')
+    expect(
+      container.querySelector('[data-finding-id="tracked-fail"]')?.getAttribute('data-active')
+    ).toBe('true')
+  })
 })
 
 describe('SessionReviewerPanel — createSessionReviewerPreviewItem factory', () => {
@@ -322,5 +386,6 @@ describe('WorkspaceMessageScroller — onGoToTranscript wiring (source check)', 
 
     expect(scrollerSource).toContain('onGoToTranscript')
     expect(scrollerSource).toContain('createSessionReviewerPreviewItem')
+    expect(scrollerSource).toContain('findingId: intent.checkId ?? intent.findingId')
   })
 })

@@ -356,12 +356,10 @@ describe('storage IPC handlers', () => {
 
   it('detect-active maps runtime and notebook session sources into ActiveSessionInfo', async () => {
     const deps = fakeDeps({
-      getActivePromptSessions: vi
-        .fn()
-        .mockReturnValue([{ projectName: 'p', sessionId: 'agent-1' }]),
+      getActivePromptSessions: vi.fn().mockReturnValue([{ projectId: 'p', sessionId: 'agent-1' }]),
       getActiveDelegatedSessions: vi
         .fn()
-        .mockReturnValue([{ projectName: 'p', sessionId: 'delegated-1' }]),
+        .mockReturnValue([{ projectId: 'p', sessionId: 'delegated-1' }]),
       notebook: {
         shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
         dispose: vi.fn().mockResolvedValue({ reaped: true }),
@@ -480,7 +478,7 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({
       getActiveDelegatedSessions: vi
         .fn()
-        .mockReturnValue([{ projectName: 'p', sessionId: 'delegated-1' }])
+        .mockReturnValue([{ projectId: 'p', sessionId: 'delegated-1' }])
     })
     registerStorageIpcHandlers(deps)
 
@@ -784,6 +782,62 @@ describe('storage IPC handlers', () => {
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
 
     expect(isMigrationPending()).toBe(false)
+  })
+
+  it('resolves a staged-copy deletion failure without leaving the write-gate pending', async () => {
+    initDataRoot(dataRoot)
+    const discardStagedCopy = vi.fn().mockRejectedValue(new Error('copy locked'))
+    const runDataRootMigration: NonNullable<FakeDeps['runDataRootMigration']> = async (
+      _deps,
+      _parent,
+      options
+    ) => {
+      await mkdir(target)
+      options.onVerified?.({ token: 'tok-ipc', target })
+      return { ok: true }
+    }
+    const deps = fakeDeps({ discardStagedCopy, runDataRootMigration })
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:migrate', { parent: targetParent })
+    expect(isMigrationPending()).toBe(true)
+
+    const outcome = await invoke('storage:discard-migrated-copy', { parent: targetParent })
+
+    expect(outcome).toEqual({
+      ok: true,
+      cleanupWarning: 'The unused data copy could not be removed.'
+    })
+    expect(isMigrationPending()).toBe(false)
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('resolves a staged-copy validation refusal without leaving the write-gate pending', async () => {
+    initDataRoot(dataRoot)
+    const discardStagedCopy = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Refused: not a completed, matching staged copy.'
+    })
+    const runDataRootMigration: NonNullable<FakeDeps['runDataRootMigration']> = async (
+      _deps,
+      _parent,
+      options
+    ) => {
+      await mkdir(target)
+      options.onVerified?.({ token: 'tok-ipc', target })
+      return { ok: true }
+    }
+    registerStorageIpcHandlers(fakeDeps({ discardStagedCopy, runDataRootMigration }))
+
+    await invoke('storage:migrate', { parent: targetParent })
+    const outcome = await invoke('storage:discard-migrated-copy', { parent: targetParent })
+
+    expect(outcome).toEqual({
+      ok: true,
+      cleanupWarning: 'Refused: not a completed, matching staged copy.'
+    })
+    expect(isMigrationPending()).toBe(false)
+    expect(existsSync(target)).toBe(true)
   })
 
   it('commit discards the orphan staged copy and lifts the write-gate when the switchover fails', async () => {

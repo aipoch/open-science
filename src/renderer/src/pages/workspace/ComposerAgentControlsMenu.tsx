@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { SpecialistSubmenu } from './SpecialistSubmenu'
 
@@ -99,37 +100,38 @@ type ComposerAgentControlsMenuProps = {
   onSpecialistChange?: (specialistId: string | undefined) => void
 }
 
-const permissionProfiles: Array<{
-  id: PermissionProfileId
-  label: string
-  // Short label for the first-level capsule, where the full label would wrap.
-  shortLabel: string
-  description: string
-  icon: typeof Shield
-}> = [
+// `as const` (rather than a widened annotation) keeps the catalog keys as literals so t() stays
+// compile-time checked against the English catalog.
+const permissionProfiles = [
   {
     id: 'ask',
-    label: 'Ask for approval',
-    shortLabel: 'Ask',
-    description: 'Ask before file edits, commands, network, and MCP tools.',
+    labelKey: 'Ask for approval',
+    shortLabelKey: 'Ask',
+    descriptionKey: 'Ask before file edits, commands, network, and MCP tools.',
     icon: Shield
   },
   {
     id: 'auto',
-    label: 'Auto-approve edits',
-    shortLabel: 'Auto',
-    description:
+    labelKey: 'Auto-approve edits',
+    shortLabelKey: 'Auto',
+    descriptionKey:
       'Auto-approve edits to files in the workspace. Still ask before commands, network, and MCP.',
     icon: ShieldCheck
   },
   {
     id: 'full',
-    label: 'Full access',
-    shortLabel: 'Full access',
-    description: 'Run everything without prompts, including commands and network.',
+    labelKey: 'Full access',
+    shortLabelKey: 'Full access',
+    descriptionKey: 'Run everything without prompts, including commands and network.',
     icon: ShieldAlert
   }
-]
+] as const satisfies ReadonlyArray<{
+  id: PermissionProfileId
+  labelKey: string
+  shortLabelKey: string
+  descriptionKey: string
+  icon: typeof Shield
+}>
 
 // Borderless capsule colors per level: ask stays neutral, auto is blue, full warns in amber.
 const profileCapsuleClassName: Record<PermissionProfileId, string> = {
@@ -159,6 +161,7 @@ const ComposerAgentControlsMenu = ({
   specialistReadOnly = false,
   onSpecialistChange
 }: ComposerAgentControlsMenuProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const [mobilePermissionOpen, setMobilePermissionOpen] = useState(false)
   const isMobile = useMediaQuery('(max-width: 767px)')
@@ -233,7 +236,7 @@ const ComposerAgentControlsMenu = ({
                   isFull && 'text-amber-600 dark:text-amber-400'
                 )}
               >
-                {candidate.label}
+                {t(candidate.labelKey)}
               </span>
               <span
                 className={cn(
@@ -242,8 +245,8 @@ const ComposerAgentControlsMenu = ({
                 )}
               >
                 {isDisabled
-                  ? 'The current agent does not support native bypass mode.'
-                  : candidate.description}
+                  ? t('The current agent does not support native bypass mode.')
+                  : t(candidate.descriptionKey)}
               </span>
             </span>
             {isSelected ? (
@@ -254,8 +257,9 @@ const ComposerAgentControlsMenu = ({
       })}
       {profile === 'auto' && profileState?.autoReviewStrategy === 'conservative' ? (
         <div className="mx-1 mt-1 rounded-md bg-bg-200 px-2 py-1.5 text-[11px] leading-4 text-text-200">
-          This agent has no native auto mode. Open Science auto-approves only edits to files inside
-          the workspace — commands, network, and MCP tools still ask.
+          {t(
+            'This agent has no native auto mode. Open Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.'
+          )}
         </div>
       ) : null}
     </>
@@ -265,9 +269,9 @@ const ComposerAgentControlsMenu = ({
     <>
       <Shield className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-medium leading-5">Permission mode</span>
+        <span className="block text-[13px] font-medium leading-5">{t('Permission mode')}</span>
         <span className="block text-[11px] leading-4 text-text-300">
-          Applies to future actions; completed actions are unchanged.
+          {t('Applies to future actions; completed actions are unchanged.')}
         </span>
       </span>
       <span
@@ -278,7 +282,7 @@ const ComposerAgentControlsMenu = ({
         )}
       >
         <SelectedIcon className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
-        {selectedProfile.shortLabel}
+        {t(selectedProfile.shortLabelKey)}
         <ChevronRight className="size-3 shrink-0 opacity-60" strokeWidth={2} aria-hidden="true" />
       </span>
     </>
@@ -293,7 +297,10 @@ const ComposerAgentControlsMenu = ({
           <button
             type="button"
             className={triggerButtonClassName}
-            aria-label={`Agent controls: ${selectedProfile.label}, auto-review ${autoReviewEnabled ? 'on' : 'off'}`}
+            aria-label={t('Agent controls: {{profile}}, auto-review {{autoReview}}', {
+              profile: t(selectedProfile.labelKey),
+              autoReview: autoReviewEnabled ? 'on' : 'off'
+            })}
             data-testid="composer-controls-trigger"
           >
             <SlidersHorizontal className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -308,7 +315,7 @@ const ComposerAgentControlsMenu = ({
             {hasGrants ? (
               <span
                 className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-bg-300 px-1 text-[10px] font-medium leading-none text-text-100"
-                aria-label={`${grants!.length} allowed this session`}
+                aria-label={t('{{count}} allowed this session', { count: grants!.length })}
               >
                 {grants!.length}
               </span>
@@ -334,7 +341,7 @@ const ComposerAgentControlsMenu = ({
                 }}
               >
                 <ChevronLeft className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                <span className="text-[13px] font-medium leading-5">Permission mode</span>
+                <span className="text-[13px] font-medium leading-5">{t('Permission mode')}</span>
               </DropdownMenuItem>
               <div className="mx-1 mb-1 border-t border-border-200" />
               {permissionOptions}
@@ -371,12 +378,12 @@ const ComposerAgentControlsMenu = ({
                 <div className="mt-1 border-t border-border-200 pt-1">
                   <div className="flex items-center justify-between px-2 pb-0.5">
                     <span className="text-[11px] font-medium uppercase tracking-wide text-text-300">
-                      Allowed this session
+                      {t('Allowed this session')}
                     </span>
                     <button
                       type="button"
                       className="shrink-0 text-[11px] text-text-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-300"
-                      aria-label="Clear all session grants"
+                      aria-label={t('Clear all session grants')}
                       disabled={grantActionsReadOnly}
                       onClick={(event) => {
                         event.preventDefault()
@@ -384,7 +391,7 @@ const ComposerAgentControlsMenu = ({
                         onClearGrants?.()
                       }}
                     >
-                      Clear all
+                      {t('Clear all')}
                     </button>
                   </div>
                   <div className="max-h-40 overflow-y-auto">
@@ -402,7 +409,9 @@ const ComposerAgentControlsMenu = ({
                         <button
                           type="button"
                           className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
-                          aria-label={`Revoke session grant for ${grant.label}`}
+                          aria-label={t('Revoke session grant for {{label}}', {
+                            label: grant.label
+                          })}
                           disabled={grantActionsReadOnly}
                           onClick={(event) => {
                             event.preventDefault()
@@ -435,9 +444,11 @@ const ComposerAgentControlsMenu = ({
                   aria-hidden="true"
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-5">Auto-review</span>
+                  <span className="block text-[13px] font-medium leading-5">
+                    {t('Auto-review')}
+                  </span>
                   <span className="block text-[11px] leading-4 text-text-300">
-                    A reviewer agent checks every change before it lands.
+                    {t('A reviewer agent checks every change before it lands.')}
                   </span>
                 </span>
                 <Switch
@@ -474,9 +485,9 @@ const ComposerAgentControlsMenu = ({
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-medium leading-5">Compute</span>
+                    <span className="block text-[13px] font-medium leading-5">{t('Compute')}</span>
                     <span className="block text-[11px] leading-4 text-text-300">
-                      Run jobs on a remote SSH host, or manage hosts.
+                      {t('Run jobs on a remote SSH host, or manage hosts.')}
                     </span>
                   </span>
                   {/* Align the chevron with the capsule chevrons on the Permission/Specialist
@@ -498,7 +509,7 @@ const ComposerAgentControlsMenu = ({
                   {sshHosts.length > 0 ? (
                     <>
                       <DropdownMenuLabel className="text-[10.5px] font-normal uppercase tracking-wide text-text-300">
-                        SSH
+                        {t('SSH')}
                       </DropdownMenuLabel>
                       <DropdownMenuGroup>
                         {sshHosts.map((host) => {
@@ -539,7 +550,7 @@ const ComposerAgentControlsMenu = ({
                     </>
                   ) : (
                     <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
-                      {isLoaded ? 'No SSH hosts registered' : 'Loading…'}
+                      {isLoaded ? t('No SSH hosts registered') : t('Loading…')}
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuSeparator />
@@ -548,7 +559,7 @@ const ComposerAgentControlsMenu = ({
                     className="items-center gap-2 px-2 py-1.5 text-[13px] text-text-200"
                   >
                     <Settings className="size-4 shrink-0" aria-hidden="true" />
-                    Manage compute...
+                    {t('Manage compute...')}
                   </DropdownMenuItem>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
@@ -571,7 +582,7 @@ const ComposerAgentControlsMenu = ({
                   <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
                 </span>
                 <AlertDialog.Title className={dialogTitleClassName}>
-                  Enable Full access?
+                  {t('Enable Full access?')}
                 </AlertDialog.Title>
               </div>
               <AlertDialog.Cancel asChild>
@@ -579,7 +590,7 @@ const ComposerAgentControlsMenu = ({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Close"
+                  aria-label={t('Close')}
                   className={dialogCloseButtonClassName}
                 >
                   <X className="size-4" aria-hidden="true" />
@@ -588,15 +599,15 @@ const ComposerAgentControlsMenu = ({
             </div>
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                The agent can run commands, change files, execute notebook code, and make network
-                requests without asking first. Authentication failures and execution errors can
-                still stop the run.
+                {t(
+                  'The agent can run commands, change files, execute notebook code, and make network requests without asking first. Authentication failures and execution errors can still stop the run.'
+                )}
               </AlertDialog.Description>
             </div>
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
-                  Cancel
+                  {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
@@ -606,7 +617,7 @@ const ComposerAgentControlsMenu = ({
                   className="bg-amber-600 text-white hover:bg-amber-700"
                   onClick={() => onProfileChange('full')}
                 >
-                  Enable
+                  {t('Enable')}
                 </Button>
               </AlertDialog.Action>
             </div>

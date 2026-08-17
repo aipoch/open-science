@@ -215,7 +215,12 @@ describe('emitJobNotification', () => {
     const hostRepo: Pick<ComputeHostRepository, 'get'> = { get: vi.fn() }
     const broadcast = vi.fn()
 
-    await emitJobNotification(job, { jobRepository: jobRepo, hostRepository: hostRepo, storageRoot, broadcast })
+    await emitJobNotification(job, {
+      jobRepository: jobRepo,
+      hostRepository: hostRepo,
+      storageRoot,
+      broadcast
+    })
 
     // Neither update nor broadcast should be called
     expect(mockUpdate).not.toHaveBeenCalled()

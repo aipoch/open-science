@@ -17,6 +17,7 @@ import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../sh
 import {
   INTERRUPTED_TURN_ERROR,
   isHiddenControlMessage,
+  sanitizeMessageAttribution,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
@@ -565,6 +566,9 @@ const applyWorkspaceRuntimeEvent = async (
       eventId: event.id,
       content: getAcpRuntimeEventText(event) ?? '',
       createdAt: event.timestamp,
+      ...(sanitizeMessageAttribution(event.attribution)
+        ? { attribution: sanitizeMessageAttribution(event.attribution) }
+        : {}),
       ...(event.promptMessageId ? { responseToMessageId: event.promptMessageId } : {})
     })
     return true

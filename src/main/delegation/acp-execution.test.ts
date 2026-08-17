@@ -573,7 +573,7 @@ describe('ACP delegate execution production adapter', () => {
     expect(controls.get('full-access')?.createdSessions).toEqual([
       {
         cwd: '/workspace/frame-full-access',
-        projectName: 'project-1',
+        projectId: 'project-1',
         permissionProfile: 'full'
       }
     ])

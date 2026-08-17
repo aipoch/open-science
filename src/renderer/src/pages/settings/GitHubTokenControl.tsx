@@ -1,6 +1,7 @@
 /* Hallmark · component: credential disclosure · genre: modern-minimal · theme: existing Settings system */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, KeyRound, LoaderCircle } from 'lucide-react'
 
 import type { GitHubTokenStatus } from '../../../../shared/settings'
@@ -8,13 +9,14 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-type Feedback = { kind: 'error' | 'success'; text: string }
+type Feedback = { kind: 'error' | 'success'; text: string; suffix?: string }
 type Availability = 'checking' | 'available' | 'unavailable'
 
 const isLocalOnlyActionError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes('only available in the local desktop app')
 
 const GitHubTokenControl = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const [token, setToken] = useState('')
   const [status, setStatus] = useState<GitHubTokenStatus | null>(null)
@@ -66,7 +68,8 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
       const detail = error instanceof Error ? error.message : 'Token verification failed.'
       setFeedback({
         kind: 'error',
-        text: `${detail} Your saved token was not changed.`
+        text: detail,
+        suffix: 'Your saved token was not changed.'
       })
     } finally {
       setBusy(null)
@@ -111,25 +114,29 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
         ) : (
           <KeyRound className="size-4" aria-hidden="true" />
         )}
-        {status?.configured && status.mask ? `GitHub token · ${status.mask}` : 'GitHub token'}
+        {status?.configured && status.mask
+          ? t('GitHub token · {{mask}}', { mask: status.mask })
+          : t('GitHub token')}
       </Button>
 
       {expanded ? (
         <section
           id="github-token-settings"
-          aria-label="GitHub token settings"
+          aria-label={t('GitHub token settings')}
           aria-busy={busy === 'saving' || busy === 'removing'}
           className="col-span-full mt-1 border-y border-border bg-muted/20 px-1 py-3"
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="min-w-0 flex-1">
               <label htmlFor="github-token" className="block text-xs font-medium text-foreground">
-                Personal access token
+                {t('Personal access token')}
               </label>
               <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                Used only for GitHub Skill requests and encrypted with system credential storage.{' '}
+                {t(
+                  'Used only for GitHub Skill requests and encrypted with system credential storage.'
+                )}{' '}
                 <ExternalTextLink href="https://github.com/settings/tokens">
-                  Manage tokens on GitHub
+                  {t('Manage tokens on GitHub')}
                 </ExternalTextLink>
               </p>
               <Input
@@ -137,7 +144,7 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
                 type="password"
                 autoComplete="off"
                 placeholder={
-                  status?.configured ? 'Paste a replacement token' : 'Paste a GitHub token'
+                  status?.configured ? t('Paste a replacement token') : t('Paste a GitHub token')
                 }
                 value={token}
                 disabled={busy !== null}
@@ -167,10 +174,10 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
                       className="size-4 animate-spin motion-reduce:animate-none"
                       aria-hidden="true"
                     />
-                    Verifying…
+                    {t('Verifying…')}
                   </>
                 ) : (
-                  'Verify and save'
+                  t('Verify and save')
                 )}
               </Button>
               {status?.configured ? (
@@ -181,7 +188,7 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
                   onClick={() => void remove()}
                   className="text-muted-foreground [@media(pointer:coarse)]:min-h-11"
                 >
-                  {busy === 'removing' ? 'Removing…' : 'Remove token'}
+                  {busy === 'removing' ? t('Removing…') : t('Remove token')}
                 </Button>
               ) : null}
             </div>
@@ -200,10 +207,15 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
                 ) : (
                   <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 )}
-                <p>{feedback.text}</p>
+                <p>
+                  {t(feedback.text)}
+                  {feedback.suffix ? ` ${t(feedback.suffix)}` : null}
+                </p>
               </div>
             ) : status?.configured ? (
-              <p className="text-xs text-muted-foreground">Saved token: {status.mask}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('Saved token:')} {status.mask}
+              </p>
             ) : null}
           </div>
         </section>

@@ -140,7 +140,10 @@ const formatToolKindName = (toolKind: ToolActivity['toolKind']): string => {
 }
 
 // Uses only trusted tool identity fields for generic rows, preserving known wrapper titles.
-const formatActivityToolName = (activity: ToolActivity): string => {
+const formatActivityToolName = (
+  activity: ToolActivity,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string => {
   const providerToolName = trimDetail(activity.providerToolName)
   const title = trimDetail(activity.title)
 
@@ -148,7 +151,7 @@ const formatActivityToolName = (activity: ToolActivity): string => {
     (providerToolName && formatNotebookToolName(providerToolName)) ??
     (title && formatNotebookToolName(title))
 
-  if (notebookToolName) return notebookToolName
+  if (notebookToolName) return t(notebookToolName)
   if (providerToolName) return providerToolName
   if (title && KNOWN_TITLE_TOOL_NAMES.has(title)) return title
 
@@ -156,43 +159,52 @@ const formatActivityToolName = (activity: ToolActivity): string => {
 }
 
 // Builds the status-sensitive text for non-search activity chips.
-const formatActivityTitle = (activity: ToolActivity, phase?: ToolExecutionPhase): string => {
-  if (phase === 'closed') return `Request ended: ${formatActivityToolName(activity)}`
+const formatActivityTitle = (
+  activity: ToolActivity,
+  phase: ToolExecutionPhase | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string => {
+  if (phase === 'closed')
+    return t('Request ended: {{name}}', { name: formatActivityToolName(activity, t) })
 
   if (isContextCompactionActivity(activity)) {
     const title = trimDetail(activity.title)
 
+    if (title === 'Compacting context') return t('Compacting context')
+    if (title === 'Context compacted') return t('Context compacted')
+    if (title === 'Context compaction failed') return t('Context compaction failed')
     if (title) return title
-    if (activity.status === 'failed') return 'Context compaction failed'
-    if (activity.status === 'completed') return 'Context compacted'
-    return 'Compacting context'
+    if (activity.status === 'failed') return t('Context compaction failed')
+    if (activity.status === 'completed') return t('Context compacted')
+    return t('Compacting context')
   }
 
   if (isSkillActivity(activity)) {
     const skillName = getLoadedSkillName(activity)
 
     if (activity.status === 'failed')
-      return skillName ? `Skill failed: ${skillName}` : 'Skill failed'
+      return skillName ? t('Skill failed: {{name}}', { name: skillName }) : t('Skill failed')
     if (activity.status === 'completed')
-      return skillName ? `Loaded skill: ${skillName}` : 'Loaded skill'
-    return skillName ? `Loading skill: ${skillName}` : 'Loading skill'
+      return skillName ? t('Loaded skill: {{name}}', { name: skillName }) : t('Loaded skill')
+    return skillName ? t('Loading skill: {{name}}', { name: skillName }) : t('Loading skill')
   }
 
-  const toolName = formatActivityToolName(activity)
+  const toolName = formatActivityToolName(activity, t)
 
-  if (phase === 'declined') return `Declined by you: ${toolName}`
-  if (phase === 'awaiting-approval') return `Waiting for your approval: ${toolName}`
-  if (phase === 'prepared') return `Code shown: ${toolName}`
-  if (phase === 'limit-reached') return `Execution limit reached: ${toolName}`
-  if (phase === 'cancelled') return `Cancelled: ${toolName}`
-  if (phase === 'interrupted') return `Interrupted: ${toolName}`
-  if (phase === 'failed') return `Tool failed: ${toolName}`
-  if (phase === 'completed') return `Used tool: ${toolName}`
-  if (phase === 'executing') return `Using tool: ${toolName}`
-  if (activity.status === 'failed') return `Tool failed: ${toolName}`
-  if (activity.status === 'completed') return `Used tool: ${toolName}`
+  if (phase === 'declined') return t('Declined by you: {{name}}', { name: toolName })
+  if (phase === 'awaiting-approval')
+    return t('Waiting for your approval: {{name}}', { name: toolName })
+  if (phase === 'prepared') return t('Code shown: {{name}}', { name: toolName })
+  if (phase === 'limit-reached') return t('Execution limit reached: {{name}}', { name: toolName })
+  if (phase === 'cancelled') return t('Cancelled: {{name}}', { name: toolName })
+  if (phase === 'interrupted') return t('Interrupted: {{name}}', { name: toolName })
+  if (phase === 'failed') return t('Tool failed: {{name}}', { name: toolName })
+  if (phase === 'completed') return t('Used tool: {{name}}', { name: toolName })
+  if (phase === 'executing') return t('Using tool: {{name}}', { name: toolName })
+  if (activity.status === 'failed') return t('Tool failed: {{name}}', { name: toolName })
+  if (activity.status === 'completed') return t('Used tool: {{name}}', { name: toolName })
 
-  return `Using tool: ${toolName}`
+  return t('Using tool: {{name}}', { name: toolName })
 }
 
 // Projects persisted chat messages and transient tool activities into one sortable transcript list.

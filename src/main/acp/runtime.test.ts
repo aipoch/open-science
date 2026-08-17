@@ -1790,7 +1790,7 @@ describe('ACP Notebook permission presentation contract', () => {
         appVersion: '0.1.0',
         defaultCwd: '/workspace',
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
           authorizeExecution
@@ -1883,7 +1883,7 @@ describe('ACP Notebook permission presentation contract', () => {
         framework,
         spawnAgent: () => asAgentProcess(process),
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
           authorizeExecution
@@ -1960,7 +1960,7 @@ describe('ACP Notebook permission presentation contract', () => {
         appVersion: '0.1.0',
         defaultCwd: '/workspace',
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
         },
@@ -2070,7 +2070,7 @@ describe('ACP Notebook permission presentation contract', () => {
         spawnAgent: () => asAgentProcess(process),
         framework,
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
           authorizeExecution: (authorization) => {
@@ -2144,7 +2144,7 @@ describe('ACP Notebook permission presentation contract', () => {
         appVersion: '0.1.0',
         defaultCwd: '/workspace',
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
         },
@@ -2432,7 +2432,7 @@ describe('ACP runtime restored permission continuation', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       notebook: {
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
         authorizeExecution
@@ -2460,7 +2460,7 @@ describe('ACP runtime restored permission continuation', () => {
         env: {}
       })
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     await runtime.respondToPermission({
       requestId: originalRequest.requestId,
@@ -2655,7 +2655,7 @@ describe('ACP runtime restored permission continuation', () => {
         artifacts: {
           configRoot: root,
           dataRoot: root,
-          projectName: 'project-1',
+          projectId: 'project-1',
           mcpEntryPath: '/app/out/main/index.js'
         },
         permissionWait: {
@@ -2675,7 +2675,7 @@ describe('ACP runtime restored permission continuation', () => {
           ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
         })
       })
-      await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+      await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
       await runtime.respondToPermission({
         requestId: 'permission-restored',
@@ -2842,7 +2842,7 @@ describe('ACP runtime restored permission continuation', () => {
         env: {}
       })
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     await runtime.respondToPermission({
       requestId: 'permission-restored',
@@ -2997,7 +2997,7 @@ describe('ACP runtime restored permission continuation', () => {
         runtime.resumeSession({
           sessionId: 'restored-session',
           cwd: '/workspace',
-          projectName: 'project-1'
+          projectId: 'project-1'
         })
       ).resolves.toMatchObject({ sessionId: 'restored-session', contextReset: true })
       await runtime.respondToPermission({
@@ -3093,7 +3093,7 @@ describe('ACP runtime restored permission continuation', () => {
         env: {}
       })
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     await runtime.respondToPermission({
       requestId: 'permission-restored',
@@ -3172,7 +3172,7 @@ describe('ACP runtime restored permission continuation', () => {
         env: {}
       })
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     const response = {
       requestId: 'permission-restored',
       optionId: 'allow-once',
@@ -3272,7 +3272,7 @@ describe('ACP runtime restored permission continuation', () => {
         env: {}
       })
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     await runtime.respondToPermission({
       requestId: 'permission-restored',
@@ -3353,7 +3353,7 @@ describe('ACP runtime restored permission continuation', () => {
         env: {}
       })
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.respondToPermission({
       requestId: 'permission-restored',
       optionId: 'allow-once',
@@ -3553,11 +3553,11 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -3865,7 +3865,7 @@ describe('ACP runtime session management', () => {
       authorizeContinuation: vi.fn(async () => restoredPlanProjection('approved', 6))
     })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.respondSessionPlan({
       projectId: 'project-1',
       sessionId: 's1',
@@ -4043,7 +4043,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4060,7 +4060,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4082,7 +4082,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4103,7 +4103,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4120,7 +4120,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4141,7 +4141,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4160,7 +4160,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4177,7 +4177,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4199,7 +4199,7 @@ describe('ACP runtime session management', () => {
       sessionId: 'restored-plan-session',
       providerSessionId: 'restored-plan-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
 
@@ -4230,7 +4230,7 @@ describe('ACP runtime session management', () => {
       getProjection: vi.fn(async () => pending)
     })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.sendPrompt({
       sessionId: 's1',
       text: 'approve and continue',
@@ -4276,7 +4276,7 @@ describe('ACP runtime session management', () => {
     const respond = vi.fn()
     installPromptPlanTestWorkflow(runtime, { getProjection, respond })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.sendPrompt({
       sessionId: 's1',
       text: 'Split the analysis by cohort.',
@@ -4335,7 +4335,7 @@ describe('ACP runtime session management', () => {
       getProjection: vi.fn(async () => pending)
     })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.sendPrompt({
       sessionId: 's1',
       text: 'Dismiss the current Plan.',
@@ -4373,11 +4373,11 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -4850,7 +4850,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -5250,7 +5250,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       uploads: { repository: uploadRepository },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1/notebook', token: 'nb' }),
         registerTurnInputs
@@ -5464,7 +5464,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -5542,7 +5542,7 @@ describe('ACP runtime session management', () => {
         spawnAgent: () => asAgentProcess(process),
         framework: codexFramework,
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
         },
@@ -5633,7 +5633,7 @@ describe('ACP runtime session management', () => {
         spawnAgent: () => asAgentProcess(process),
         framework: codexFramework,
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
         },
@@ -5695,7 +5695,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -5748,7 +5748,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -5854,7 +5854,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(storageRoot)
       }
@@ -5893,7 +5893,7 @@ describe('ACP runtime session management', () => {
       }
     })
 
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     currentRunFile = getEnvValue(
       fakeAgent.newSessions[0].mcpServers[0],
       'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'
@@ -6234,7 +6234,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js'
       },
       permissionWait: {
@@ -6254,7 +6254,7 @@ describe('ACP runtime session management', () => {
         }
       }
     })
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     const request = {
       requestId: 'choice-restored-1',
       sessionId: session.sessionId,
@@ -6375,7 +6375,7 @@ describe('ACP runtime session management', () => {
         }
       }
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     await runtime.respondToElicitation({
       requestId: 'choice-restored-1',
@@ -6521,7 +6521,7 @@ describe('ACP runtime session management', () => {
         runtime.resumeSession({
           sessionId: 'restored-choice-session',
           cwd: '/workspace',
-          projectName: 'project-1'
+          projectId: 'project-1'
         })
       ).resolves.toMatchObject({ sessionId: 'restored-choice-session', contextReset: true })
       await runtime.respondToElicitation({
@@ -6624,7 +6624,7 @@ describe('ACP runtime session management', () => {
         }
       }
     })
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     await expect(
       runtime.respondToElicitation({
@@ -7237,12 +7237,12 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1/notebook', token: 'nb' }),
         registerTurnInputs
@@ -7416,7 +7416,7 @@ describe('ACP runtime session management', () => {
     const notebookService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
@@ -7438,7 +7438,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: ({ sessionId, projectId }) =>
           notebookRpcServer.issueSessionConnection(sessionId, projectId, `root-frame-${sessionId}`),
@@ -7503,7 +7503,7 @@ describe('ACP runtime session management', () => {
         defaultCwd: '/workspace',
         spawnAgent: () => asAgentProcess(process),
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => {
             const release =
@@ -7817,7 +7817,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository
       },
@@ -7963,7 +7963,7 @@ describe('ACP runtime session management', () => {
     installPromptPlanTestWorkflow(runtime, {
       getProjection: vi.fn(async () => projection)
     })
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.compactSession({ sessionId: session.sessionId })
 
     expect(agent.prompts.at(-1)?.text).toBe('/compact')
@@ -7995,7 +7995,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       }
@@ -8029,7 +8029,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       }
@@ -8150,7 +8150,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -8330,7 +8330,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: artifactRepository
       }
@@ -8452,7 +8452,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/unused',
         repository: artifactRepository
       }
@@ -8508,7 +8508,7 @@ describe('ACP runtime session management', () => {
       versionNumber: 1,
       checksum: 'a'.repeat(64),
       createdAt: '2026-07-28T00:00:00.000Z',
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'remote-session-1',
       runId: 'artifact-run-1',
       name: 'aspirin.mol',
@@ -8533,14 +8533,14 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/unused',
         repository: artifactRepository,
         provenance
       }
     })
 
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'preview aspirin' })
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
 
@@ -8580,7 +8580,7 @@ describe('ACP runtime session management', () => {
 
     // A referenced image output resolves through the artifact path validator and inlines its pixels.
     const imageArtifact = await artifactRepository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'remote-session-1',
       runId: 'run-1',
       filename: 'chart.png',
@@ -8590,7 +8590,7 @@ describe('ACP runtime session management', () => {
 
     // A referenced binary output has no rich representation, so it falls through to a resource link.
     const binaryArtifact = await artifactRepository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'remote-session-1',
       runId: 'run-1',
       filename: 'data.bin',
@@ -8605,7 +8605,7 @@ describe('ACP runtime session management', () => {
     // An artifact-backed Skill package is not owned by the upload-only import tool, so the prompt
     // must retain it as an ordinary resource instead of advertising an unusable import URI.
     const skillArtifact = await artifactRepository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'remote-session-1',
       runId: 'run-1',
       filename: 'generated.skill',
@@ -8632,7 +8632,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: artifactRepository
       }
@@ -8736,7 +8736,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/unused',
         repository: artifactRepository,
         provenance: {
@@ -8749,7 +8749,7 @@ describe('ACP runtime session management', () => {
 
     const session = await runtime.createSession({
       cwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     await runtime.sendPrompt({
       sessionId: session.sessionId,
@@ -8985,7 +8985,7 @@ describe('ACP runtime session management', () => {
     // Legacy uploads live under `default-project` even when the Session is now opened from a real
     // Project. The explicit `@` selection grants cross-Session access only after the persisted
     // Session-to-Project binding proves the source belongs to the same Project.
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.sendPrompt({
       sessionId: session.sessionId,
       text: 'import @Paper Finder',
@@ -9055,7 +9055,7 @@ describe('ACP runtime session management', () => {
             artifactRepository,
             {
               storageRoot: root,
-              projectName: 'default-project',
+              projectId: 'default-project',
               sessionId: artifactSessionId,
               currentRunFile,
               allowedImportRoots: [] // authorization must come from the handoff session root
@@ -9073,14 +9073,14 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: artifactRepository
       }
@@ -9126,7 +9126,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: artifactRepository,
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'global' }),
@@ -9169,7 +9169,12 @@ describe('ACP runtime session management', () => {
         appSessionId: session.sessionId,
         artifactRunId: capturedContext?.artifactRunId,
         rootFrameId: 'root-frame-1',
-        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+        allowedMethods: [
+          'artifactReserveWrite',
+          'artifactReleaseWrite',
+          'artifactCreateVersion',
+          'artifactReplayVersion'
+        ]
       })
     ])
     expect(revokedTokens).toEqual(['run-capability-1'])
@@ -9188,7 +9193,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       }
     })
@@ -9238,7 +9243,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       }
     })
@@ -9276,7 +9281,7 @@ describe('ACP runtime session management', () => {
       }),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       }
@@ -9307,7 +9312,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       }
@@ -9442,7 +9447,7 @@ describe('ACP runtime session management', () => {
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], { supportsResume: true })
     const sessionOptions = {
       settings: '/app/claude/settings.json',
-      plugins: [{ type: 'local', path: '/app/claude', skipMcpDiscovery: true }]
+      plugins: [{ type: 'local', path: '/app/claude' }]
     }
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -9521,7 +9526,7 @@ describe('ACP runtime session management', () => {
       framework: { ...opencodeFramework, acceptsStdioMcp: false },
       mcpHttpHost: httpHost,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => {
           capabilityRequested.resolve()
@@ -9572,11 +9577,11 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1/notebook', token: 'nb' })
       },
@@ -9677,11 +9682,11 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -9775,11 +9780,11 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => {
           throw startupFailure
@@ -9854,7 +9859,7 @@ describe('ACP runtime session management', () => {
           }
         },
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({
             endpoint: 'http://127.0.0.1:4567',
@@ -10434,7 +10439,7 @@ describe('ACP runtime session management', () => {
     })
     const session = await runtime.createSession({
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask'
     })
     const prompting = runtime.sendPrompt({
@@ -10446,7 +10451,7 @@ describe('ACP runtime session management', () => {
 
     expect(permission.durable).toBe(true)
     expect(runtime.getActivePromptSessions()).toEqual([
-      { projectName: 'project-1', sessionId: session.sessionId }
+      { projectId: 'project-1', sessionId: session.sessionId }
     ])
     expect(runtime.getQuitBlockingPromptSessions()).toEqual([])
 
@@ -10810,7 +10815,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
@@ -10958,7 +10963,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -11232,7 +11237,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
         authorizeExecution: (authorization) => {
@@ -11324,7 +11329,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -11433,7 +11438,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
@@ -11487,7 +11492,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
@@ -11546,7 +11551,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
@@ -11593,7 +11598,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
@@ -11678,7 +11683,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -11794,7 +11799,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -11875,7 +11880,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -12135,7 +12140,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       }
@@ -12194,7 +12199,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: codexFramework,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
@@ -12252,7 +12257,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
@@ -12291,7 +12296,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       },
@@ -12386,7 +12391,7 @@ describe('ACP runtime session management', () => {
       resolveSpecialistIdentity,
       resolveSpecialistSkills,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -13912,7 +13917,7 @@ describe('ACP runtime session management', () => {
       },
       mcpHttpHost: httpHost,
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -14093,7 +14098,7 @@ describe('ACP runtime session management', () => {
         }),
         mcpHttpHost,
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           releaseSessionCapabilities,
           getRpcConnection: async () => {
@@ -14186,7 +14191,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -15130,7 +15135,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       }
@@ -15153,7 +15158,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -15179,7 +15184,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -15209,7 +15214,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(root)
       }
@@ -15333,7 +15338,7 @@ describe('ACP runtime session management', () => {
 
     const session = await runtime.createSession({
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask'
     })
     // Live routing, Permission projection, and framework affinity are all present while attached.
@@ -15449,7 +15454,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: { ...claudeCodeFramework, mapPermissionProfile },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -15499,7 +15504,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: { ...claudeCodeFramework, mapPermissionProfile },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -15616,7 +15621,7 @@ describe('ACP runtime session management', () => {
           }
         },
         notebook: {
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           getRpcConnection: async () => ({
             endpoint: 'http://127.0.0.1:4567',
@@ -15668,7 +15673,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection,
         releaseSessionCapabilities
@@ -15785,7 +15790,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1/notebook',
@@ -15848,7 +15853,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1/notebook',
@@ -17097,7 +17102,7 @@ describe('ACP runtime session management', () => {
         contextUsageModel: 'deepseek-v4-flash'
       }),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       }
@@ -17193,7 +17198,7 @@ describe('ACP runtime session management', () => {
     const getProjection = vi.fn(async () => interruptedProjection)
     installPromptPlanTestWorkflow(runtime, { getProjection })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await expect(runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })).rejects.toThrow()
 
     expect(getProjection).toHaveBeenCalledWith('project-1', 's1', {
@@ -17264,7 +17269,7 @@ describe('ACP runtime session management', () => {
         getProjection: vi.fn(async () => active)
       })
 
-      await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+      await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
       await runtime.sendPrompt({
         sessionId: 's1',
         text: 'continue',
@@ -17308,7 +17313,7 @@ describe('ACP runtime session management', () => {
       durablePlanSessions(['branch-b-root', 'branch-b-message'])
     )
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await expect(
       runtime.sendPrompt({
         sessionId: 's1',
@@ -17384,7 +17389,7 @@ describe('ACP runtime session management', () => {
         getProjection
       })
 
-      await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+      await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
       await expect(
         runtime.sendPrompt({
           sessionId: 's1',
@@ -17416,7 +17421,7 @@ describe('ACP runtime session management', () => {
       getProjection: vi.fn(async () => null)
     })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await expect(
       runtime.sendPrompt({ sessionId: 's1', text: 'What is the weather?' })
     ).resolves.toMatchObject({ stopReason: 'end_turn' })
@@ -17446,7 +17451,7 @@ describe('ACP runtime session management', () => {
     )
     installPromptPlanTestWorkflow(runtime, { getProjection })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await expect(
       runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })
     ).resolves.toMatchObject({ stopReason: 'max_tokens' })
@@ -19238,7 +19243,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: '/Users/example/.open-science',
         dataRoot: '/Users/example/.open-science',
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
       }
@@ -19291,7 +19296,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('scopes the artifact MCP project to a caller-supplied projectName on create and resume', async () => {
+  it('scopes the artifact MCP project to a caller-supplied projectId on create and resume', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
     const runtime = new AcpRuntime({
@@ -19301,28 +19306,28 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: '/Users/example/.open-science',
         dataRoot: '/Users/example/.open-science',
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       }
     })
 
-    await runtime.createSession({ cwd: '/workspace', projectName: 'project-abc' })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-abc' })
     await runtime.resumeSession({
       sessionId: 'remote-session-2',
       cwd: '/workspace',
-      projectName: 'project-xyz'
+      projectId: 'project-xyz'
     })
 
-    // The per-session projectName (not the runtime default) reaches the artifact MCP server config.
+    // The per-session projectId (not the runtime default) reaches the artifact MCP server config.
     expect(
-      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME')
+      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID')
     ).toBe('project-abc')
     expect(
-      getEnvValue(fakeAgent.resumedSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME')
+      getEnvValue(fakeAgent.resumedSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID')
     ).toBe('project-xyz')
   })
 
-  it('falls back to the runtime default projectName when none is supplied', async () => {
+  it('falls back to the runtime default projectId when none is supplied', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
     const runtime = new AcpRuntime({
@@ -19332,7 +19337,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: '/Users/example/.open-science',
         dataRoot: '/Users/example/.open-science',
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       }
     })
@@ -19340,7 +19345,7 @@ describe('ACP runtime session management', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     expect(
-      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME')
+      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID')
     ).toBe('default-project')
   })
 
@@ -19357,7 +19362,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
         getRpcConnection,
@@ -19510,11 +19515,11 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: '/Users/example/.open-science',
         dataRoot: '/Users/example/.open-science',
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -19562,7 +19567,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: '/Users/example/.open-science',
         dataRoot: '/Users/example/.open-science',
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
       }
@@ -19590,7 +19595,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(storageRoot)
       }
@@ -19643,7 +19648,7 @@ describe('ACP runtime session management', () => {
       versionNumber: 1,
       checksum: 'a'.repeat(64),
       createdAt: '2026-08-02T00:00:00.000Z',
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       name: 'result.txt',
@@ -19669,7 +19674,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js',
         repository,
         provenance: {
@@ -19683,7 +19688,7 @@ describe('ACP runtime session management', () => {
         }
       }
     })
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     warnLogSpy.mockImplementation(() => {
       throw new Error('logger failed')
@@ -19733,7 +19738,7 @@ describe('ACP runtime session management', () => {
         artifacts: {
           configRoot: storageRoot,
           dataRoot: storageRoot,
-          projectName: 'default-project',
+          projectId: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
           repository: new ArtifactRepository(storageRoot)
         }
@@ -19785,7 +19790,7 @@ describe('ACP runtime session management', () => {
         expect(context.agentName).toBeTruthy()
 
         await repository.writePendingFile({
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: getEnvValue(
             fakeAgent.newSessions[0].mcpServers[0],
             'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
@@ -19804,7 +19809,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/usr/bin/electron',
         repository
@@ -19900,7 +19905,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js',
         repository,
         provenance: {
@@ -19922,7 +19927,7 @@ describe('ACP runtime session management', () => {
         }
       }
     })
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     const prompt = runtime.sendPrompt({
       sessionId: session.sessionId,
       text: 'save late.txt',
@@ -19977,17 +19982,22 @@ describe('ACP runtime session management', () => {
     const notebookService = new NotebookRuntimeService({
       configRoot: storageRoot,
       dataRoot: storageRoot,
-      projectName: 'project-1',
+      projectId: 'project-1',
       repository: new NotebookRunRepository(storageRoot)
     })
     const rpcServer = new NotebookLocalRpcServer(notebookService, {
       transport: 'tcp',
       artifactProvenance: {
-        createVersion: async (request) => {
+        createVersion: async (request, signal) => {
           rpcWriteStarted.resolve()
           await releaseRpcWrite.promise
-          return durableProvenance.createVersion(request)
-        }
+          return durableProvenance.createVersion(request, signal)
+        },
+        reserveWrite: (request) => durableProvenance.reserveWrite(request),
+        releaseWriteReservation: (request) => durableProvenance.releaseWriteReservation(request),
+        releaseRunWriteReservations: (request) =>
+          durableProvenance.releaseRunWriteReservations(request),
+        releaseAllWriteReservations: () => durableProvenance.releaseAllWriteReservations()
       }
     })
     const rpcConnection = await rpcServer.ensureStarted()
@@ -19995,6 +20005,10 @@ describe('ACP runtime session management', () => {
     let rpcWrite: Promise<Response> | undefined
     let artifactClaimId: string | undefined
     let currentRunFile = ''
+    const rpcFilename = 'rpc-late.txt'
+    const rpcContent = 'accepted RPC bytes'
+    const rpcSizeBytes = Buffer.byteLength(rpcContent)
+    const rpcChecksum = createHash('sha256').update(rpcContent).digest('hex')
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
       onPrompt: async ({ sessionId }) => {
@@ -20013,12 +20027,33 @@ describe('ACP runtime session management', () => {
           'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
         )
         await repository.writePendingFile({
-          projectName: 'project-1',
+          projectId: 'project-1',
           sessionId: artifactStorageSessionId,
           runId: context.artifactRunId,
-          filename: 'rpc-late.txt',
-          source: { kind: 'inline', content: 'accepted RPC bytes', encoding: 'utf8' }
+          filename: rpcFilename,
+          source: { kind: 'inline', content: rpcContent, encoding: 'utf8' }
         })
+        const reservationResponse = await fetch(rpcConnection.endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${context.rpcCapabilityToken}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'artifactReserveWrite',
+            params: {
+              projectId: 'project-1',
+              appSessionId: sessionId,
+              artifactStorageSessionId,
+              artifactRunId: context.artifactRunId,
+              writeOperationId: 'write-rpc-late',
+              filename: rpcFilename,
+              fileBytes: rpcSizeBytes
+            }
+          })
+        })
+        expect(reservationResponse.status).toBe(200)
+        const reservation = (await reservationResponse.json()) as { result: { id: string } }
         rpcWrite = fetch(rpcConnection.endpoint, {
           method: 'POST',
           headers: {
@@ -20034,12 +20069,15 @@ describe('ACP runtime session management', () => {
               artifactRunId: context.artifactRunId,
               writeOperationId: 'write-rpc-late',
               writeRequestChecksum: 'c'.repeat(64),
+              resourceReservationId: reservation.result.id,
+              resourceSizeBytes: rpcSizeBytes,
+              resourceChecksum: rpcChecksum,
               rootFrameId: context.rootFrameId,
               agentFrameId: context.agentFrameId,
               messageBranchId: context.messageBranchId,
               runtimeSegmentId: context.runtimeSegmentId,
               promptMessageId: context.promptMessageId,
-              filename: 'rpc-late.txt',
+              filename: rpcFilename,
               contentType: 'text/plain'
             }
           })
@@ -20054,7 +20092,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js',
         repository,
         provenance: {
@@ -20076,7 +20114,7 @@ describe('ACP runtime session management', () => {
     })
 
     try {
-      const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+      const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
       currentRunFile = getEnvValue(
         fakeAgent.newSessions[0].mcpServers[0],
         'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'
@@ -20152,7 +20190,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js',
         repository,
         provenance
@@ -20163,7 +20201,7 @@ describe('ACP runtime session management', () => {
         }
       }
     })
-    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
 
     await runtime.sendPrompt({
       sessionId: session.sessionId,
@@ -20303,7 +20341,7 @@ describe('ACP runtime session management', () => {
       updatedAt: createdAt + 2
     }
     const finalized = await provenance.finalizeRun({
-      projectId: claim.projectName,
+      projectId: claim.projectId,
       appSessionId: claim.sessionId,
       artifactRunId: claim.runId,
       artifactVersionIds: claim.artifactVersionIds!,
@@ -20344,7 +20382,7 @@ describe('ACP runtime session management', () => {
         }
 
         await repository.writePendingFile({
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: getEnvValue(
             fakeAgent.newSessions[0].mcpServers[0],
             'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
@@ -20365,7 +20403,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/usr/bin/electron',
         repository
@@ -20420,7 +20458,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: blockedStorageRoot,
         dataRoot: blockedStorageRoot,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/usr/bin/electron',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'global' }),
@@ -20656,7 +20694,7 @@ describe('ACP runtime session management', () => {
       artifacts: {
         configRoot: storageRoot,
         dataRoot: storageRoot,
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/usr/bin/electron',
         repository
@@ -22151,6 +22189,44 @@ describe('ACP runtime — model hot switch', () => {
     }
   }
 
+  it('reports model facts only while the Session has an active attachment', async () => {
+    const initialProcess = new FakeAgentProcess()
+    const resumedProcess = new FakeAgentProcess()
+    startFakeAgent(initialProcess, ['s-model'], { configOptions: [modelOption()] })
+    startFakeAgent(resumedProcess, [], { configOptions: [modelOption()] })
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => asAgentProcess(spawnCount++ === 0 ? initialProcess : resumedProcess)
+        },
+        backendId: 'claude-code:provider-a',
+        modelRoute: 'claude-anthropic',
+        executablePath: '/bin/claude',
+        env: {},
+        sessionModel: 'model-a',
+        supportsImageInput: true,
+        contextUsageModel: 'model-a'
+      })
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    expect(runtime.captureSessionModel(session.sessionId)).toMatchObject({
+      backend: { context: { model: 'model-a' } }
+    })
+
+    await runtime.disconnect()
+    expect(runtime.captureSessionModel(session.sessionId)).toBeUndefined()
+
+    await runtime.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+    expect(runtime.captureSessionModel(session.sessionId)).toMatchObject({
+      backend: { context: { model: 'model-a' } }
+    })
+  })
+
   it('switches every idle session and the generation default without replacing the process', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-model-1', 's-model-2', 's-model-3'], {
@@ -23347,7 +23423,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
 
     const session = await runtime.createSession({
       cwd: '/workspace',
-      projectName: 'my-project'
+      projectId: 'my-project'
     })
 
     // Helper: fetch a breadcrumb's payload by message.
@@ -23452,7 +23528,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
         }
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -23487,7 +23563,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
         }
       },
       notebook: {
-        projectName: 'default-project',
+        projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:4567',
@@ -23704,7 +23780,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     await expect(
       runtime.createSession({
         cwd: `/private/${requestSecret}`,
-        projectName: requestSecret
+        projectId: requestSecret
       })
     ).rejects.toThrow()
 
@@ -24269,7 +24345,7 @@ describe('Specialist Skill scoping', () => {
         onPromptStarted: (_sessionId, turnToken) => startedTurnTokens.push(turnToken)
       },
       notebook: {
-        projectName: 'Artifacts',
+        projectId: 'Artifacts',
         mcpEntryPath: '/bin/mcp',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
         registerSessionSpecialist: (_sessionId, specialistId) => {
@@ -24434,7 +24510,7 @@ describe('Specialist Skill scoping', () => {
         await writeFile(planPath, serializedPlan, 'utf8')
         return {
           id: 'version-1',
-          projectName: 'project-1',
+          projectId: 'project-1',
           sessionId: 'session-1',
           name: input.filename,
           path: planPath,
@@ -24464,7 +24540,7 @@ describe('Specialist Skill scoping', () => {
       artifacts: {
         configRoot: root,
         dataRoot: root,
-        projectName: 'project-1',
+        projectId: 'project-1',
         mcpEntryPath: '/unused',
         repository: new ArtifactRepository(root),
         runRegistry: new ArtifactRunRegistry(),

@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import {
   ArrowUpRight,
   Boxes,
@@ -11,6 +12,7 @@ import {
   Server
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -38,7 +40,7 @@ import type { MessageArtifact } from './preview-file-item'
 import { GrantedRootMenuRow } from './project-files-granted-root-menu-row'
 import { createProjectFilePreviewArtifact } from './project-files-preview-owner'
 import type { ProjectFilesFilterOption } from './project-files-query-model'
-import { FILE_MISSING_TAG } from './previews/preview-errors'
+import { FILE_MISSING_TAG_KEY } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 
@@ -84,21 +86,30 @@ const DAY_MS = 24 * HOUR_MS
 const MONTH_MS = 30 * DAY_MS
 const YEAR_MS = 365 * DAY_MS
 
-const formatRelativeFileTime = (timestamp: number | undefined): string | undefined => {
+// Each bucket names its own English text: a natural-language key has to be a literal, so the unit
+// cannot be interpolated into one shared string. The plural rule then lives in the catalog, where a
+// language that inflects differently from English can express it.
+const RELATIVE_FILE_TIME = [
+  { key: '{{count}} years ago', singular: '{{count}} year ago', ms: YEAR_MS },
+  { key: '{{count}} months ago', singular: '{{count}} month ago', ms: MONTH_MS },
+  { key: '{{count}} days ago', singular: '{{count}} day ago', ms: DAY_MS },
+  { key: '{{count}} hours ago', singular: '{{count}} hour ago', ms: HOUR_MS },
+  { key: '{{count}} minutes ago', singular: '{{count}} minute ago', ms: MINUTE_MS }
+] as const
+
+const formatRelativeFileTime = (
+  timestamp: number | undefined,
+  t: TFunction
+): string | undefined => {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return undefined
 
   const elapsedMs = Math.max(0, Date.now() - timestamp)
-  const units = [
-    { label: 'year', ms: YEAR_MS },
-    { label: 'month', ms: MONTH_MS },
-    { label: 'day', ms: DAY_MS },
-    { label: 'hour', ms: HOUR_MS },
-    { label: 'minute', ms: MINUTE_MS }
-  ]
-  const unit = units.find((item) => elapsedMs >= item.ms) ?? units[units.length - 1]
+  const unit =
+    RELATIVE_FILE_TIME.find((item) => elapsedMs >= item.ms) ??
+    RELATIVE_FILE_TIME[RELATIVE_FILE_TIME.length - 1]
   const value = Math.max(1, Math.floor(elapsedMs / unit.ms))
 
-  return `${value} ${unit.label}${value === 1 ? '' : 's'} ago`
+  return t(unit.key, { defaultValue_one: unit.singular, count: value })
 }
 
 // Hallmark · component: file-actions · genre: modern-minimal · theme: workspace tokens
@@ -121,43 +132,48 @@ const FileActionButtons = ({
   disabled: boolean
   className: string
   onOpenInPanel: () => void
-}): React.JSX.Element => (
-  <div
-    className={cn(
-      'absolute z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100',
-      className
-    )}
-  >
-    <ManagedFileDownloadButton
-      source={source}
-      path={path}
-      projectId={projectId}
-      fileId={fileId}
-      suggestedName={name}
-      disabled={disabled}
-      iconSize="icon-sm"
-      className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
-    />
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
-            aria-label={`Open ${name} in split view beside the session`}
-            disabled={disabled}
-            onClick={onOpenInPanel}
-          >
-            <ArrowUpRight aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{`Open ${name} in split view beside the session`}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  </div>
-)
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const openLabel = t('Open {{name}} in split view beside the session', { name })
+
+  return (
+    <div
+      className={cn(
+        'absolute z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100',
+        className
+      )}
+    >
+      <ManagedFileDownloadButton
+        source={source}
+        path={path}
+        projectId={projectId}
+        fileId={fileId}
+        suggestedName={name}
+        disabled={disabled}
+        iconSize="icon-sm"
+        className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
+      />
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
+              aria-label={openLabel}
+              disabled={disabled}
+              onClick={onOpenInPanel}
+            >
+              <ArrowUpRight aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{openLabel}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  )
+}
 
 const FileTile = ({
   name,
@@ -186,8 +202,9 @@ const FileTile = ({
   onPreview: () => void
   onOpenInPanel: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const sizeLabel = formatByteSize(size)
-  const relativeTimeLabel = formatRelativeFileTime(timestamp)
+  const relativeTimeLabel = formatRelativeFileTime(timestamp, t)
   const [setTileElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
     enabled: isNearViewport,
@@ -226,7 +243,7 @@ const FileTile = ({
           />
           {missing ? (
             <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
-              {FILE_MISSING_TAG}
+              {t(FILE_MISSING_TAG_KEY)}
             </span>
           ) : null}
         </span>
@@ -278,6 +295,7 @@ const FileListRow = ({
   onPreview: () => void
   onOpenInPanel: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
     enabled: isNearViewport,
@@ -288,7 +306,7 @@ const FileListRow = ({
     source: file.source
   })
   const sizeLabel = formatByteSize(file.size)
-  const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs)
+  const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs, t)
 
   return (
     <div className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-bg-200 has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-inset motion-reduce:transition-none">
@@ -309,7 +327,7 @@ const FileListRow = ({
         />
         {missing ? (
           <span className="shrink-0 text-[9px] font-semibold uppercase text-text-300">
-            {FILE_MISSING_TAG}
+            {t(FILE_MISSING_TAG_KEY)}
           </span>
         ) : null}
         {sizeLabel || relativeTimeLabel ? (
@@ -351,49 +369,56 @@ const ProjectFileItems = ({
   previewById: Map<string, ArtifactPreviewResult | undefined>
   onPreview: (file: ProjectFileItem) => void
   onOpenInPanel: (file: ProjectFileItem) => void
-}): React.JSX.Element => (
-  <div
-    data-view-mode={viewMode}
-    className={cn(
-      viewMode === 'grid'
-        ? 'grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-2 px-4 py-3'
-        : 'px-4 py-2'
-    )}
-  >
-    {files.map((file) => {
-      const previewLabel = `Preview ${file.source === 'upload' ? 'uploaded' : 'generated'} file ${file.name}`
-      if (viewMode === 'list') {
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <div
+      data-view-mode={viewMode}
+      className={cn(
+        viewMode === 'grid'
+          ? 'grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-2 px-4 py-3'
+          : 'px-4 py-2'
+      )}
+    >
+      {files.map((file) => {
+        const previewLabel =
+          file.source === 'upload'
+            ? t('Preview uploaded file {{name}}', { name: file.name })
+            : t('Preview generated file {{name}}', { name: file.name })
+        if (viewMode === 'list') {
+          return (
+            <FileListRow
+              key={file.id}
+              file={file}
+              previewLabel={previewLabel}
+              onPreview={() => onPreview(file)}
+              onOpenInPanel={() => onOpenInPanel(file)}
+            />
+          )
+        }
+
         return (
-          <FileListRow
+          <FileTile
             key={file.id}
-            file={file}
+            name={file.name}
+            previewArtifact={createProjectFilePreviewArtifact(file)}
+            preview={previewById.get(file.id)}
+            source={file.source}
+            projectId={file.projectId}
+            sessionId={file.sessionId}
+            fileId={file.sourceFileId}
+            size={file.size}
+            timestamp={file.mtimeMs ?? file.sortAtMs}
             previewLabel={previewLabel}
             onPreview={() => onPreview(file)}
             onOpenInPanel={() => onOpenInPanel(file)}
           />
         )
-      }
-
-      return (
-        <FileTile
-          key={file.id}
-          name={file.name}
-          previewArtifact={createProjectFilePreviewArtifact(file)}
-          preview={previewById.get(file.id)}
-          source={file.source}
-          projectId={file.projectId}
-          sessionId={file.sessionId}
-          fileId={file.sourceFileId}
-          size={file.size}
-          timestamp={file.mtimeMs ?? file.sortAtMs}
-          previewLabel={previewLabel}
-          onPreview={() => onPreview(file)}
-          onOpenInPanel={() => onOpenInPanel(file)}
-        />
-      )
-    })}
-  </div>
-)
+      })}
+    </div>
+  )
+}
 
 const FilterMenuItem = ({
   option,
@@ -460,6 +485,7 @@ const ProjectFilesFilterMenu = ({
   // Id of the granted folder the local browser is scoped to; undefined means the machine itself.
   selectedLocalRootId: string | undefined
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
   const grantedRoots = useGrantedFoldersStore((state) => state.roots)
@@ -491,7 +517,7 @@ const ProjectFilesFilterMenu = ({
           type="button"
           variant="outline"
           className="max-w-[220px] gap-1.5"
-          aria-label="Filter project files"
+          aria-label={t('Filter project files')}
         >
           {isLocalSelected ? (
             selectedLocalRoot ? (
@@ -526,7 +552,7 @@ const ProjectFilesFilterMenu = ({
         // The expanded files modal stacks at z-[56]; keep portaled popovers above it.
         className="z-[70] max-h-[360px] w-[320px] overflow-y-auto"
       >
-        <DropdownMenuLabel>Artifacts</DropdownMenuLabel>
+        <DropdownMenuLabel>{t('Artifacts')}</DropdownMenuLabel>
         <DropdownMenuGroup>
           {fixedOptions.map((option) => (
             <FilterMenuItem
@@ -553,7 +579,7 @@ const ProjectFilesFilterMenu = ({
                 onLoadMoreOptions()
               }}
             >
-              Retry loading sessions
+              {t('Retry loading sessions')}
             </DropdownMenuItem>
           ) : null}
           {showSessionOptionsToggle ? (
@@ -565,14 +591,19 @@ const ProjectFilesFilterMenu = ({
                 onShowAllSessionsChange(!showAllSessions)
               }}
             >
-              {showAllSessions ? 'Show fewer' : `Show all ${sessionOptionCount} sessions`}
+              {showAllSessions
+                ? t('Show fewer')
+                : t('Show all {{count}} sessions', {
+                    defaultValue_one: 'Show all {{count}} session',
+                    count: sessionOptionCount
+                  })}
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuGroup>
 
         {/* "This computer" section: browse files on the machine Kiro runs on */}
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>This computer</DropdownMenuLabel>
+        <DropdownMenuLabel>{t('This computer')}</DropdownMenuLabel>
         <DropdownMenuGroup>
           <DropdownMenuItem
             role="menuitemradio"
@@ -585,7 +616,9 @@ const ProjectFilesFilterMenu = ({
               strokeWidth={1.8}
               aria-hidden="true"
             />
-            <span className="min-w-0 flex-1 truncate">{localMachineName || 'This computer'}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {localMachineName || t('This computer')}
+            </span>
             {isMachineSelected ? (
               <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
             ) : null}
@@ -605,13 +638,13 @@ const ProjectFilesFilterMenu = ({
             onSelect={() => onAddFolder()}
           >
             <Plus className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-            <span>Add folder…</span>
+            <span>{t('Add folder…')}</span>
           </DropdownMenuItem>
         </DropdownMenuGroup>
 
         {/* Remote section: SSH compute hosts */}
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Remote</DropdownMenuLabel>
+        <DropdownMenuLabel>{t('Remote')}</DropdownMenuLabel>
         <DropdownMenuGroup>
           {hosts.map((host) => {
             const reachable = host.probeResult?.ok === true
@@ -638,7 +671,9 @@ const ProjectFilesFilterMenu = ({
                 />
                 <span className="min-w-0 flex-1 truncate">{host.displayName}</span>
                 {!reachable && (
-                  <span className="shrink-0 text-[11px] text-text-300">Host unreachable</span>
+                  <span className="shrink-0 text-[11px] text-text-300">
+                    {t('Host unreachable')}
+                  </span>
                 )}
               </DropdownMenuItem>
             )
@@ -648,7 +683,7 @@ const ProjectFilesFilterMenu = ({
             onSelect={() => openSettingsToCompute()}
           >
             <Plus className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-            <span>Add SSH host…</span>
+            <span>{t('Add SSH host…')}</span>
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

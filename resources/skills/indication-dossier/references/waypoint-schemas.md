@@ -15,6 +15,7 @@ phase reference files point here for output formats.
 ```
 
 When complete:
+
 ```json
 {
   "complete": true,
@@ -91,7 +92,12 @@ When complete:
 ```json
 {
   "sources": [
-    {"url": "...", "source_type": "...", "date_accessed": "...", "result": "success|failed|partial"}
+    {
+      "url": "...",
+      "source_type": "...",
+      "date_accessed": "...",
+      "result": "success|failed|partial"
+    }
   ]
 }
 ```

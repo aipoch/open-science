@@ -32,7 +32,7 @@ describe('ArtifactRepository pending-file rollback', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-rollback-'))
     const repository = new ArtifactRepository(storageRoot)
     const request = {
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'result.txt',

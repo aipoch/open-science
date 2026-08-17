@@ -265,6 +265,7 @@ class ProjectFilesQueryOwner {
             sortAtMs: artifactVersion.createdAt.getTime(),
             createdAt: artifactVersion.createdAt.toISOString(),
             sourceCreatedAt: artifactVersion.createdAt.toISOString(),
+            sourceFileCreatedAt: artifactVersion.artifact.createdAt.toISOString(),
             rootFrameId: artifactVersion.rootFrameId,
             agentFrameId: artifactVersion.agentFrameId
           }
@@ -290,6 +291,7 @@ class ProjectFilesQueryOwner {
               ...(uploadVersion.createdAt
                 ? { sourceCreatedAt: uploadVersion.createdAt.toISOString() }
                 : {}),
+              sourceFileCreatedAt: uploadVersion.uploadFile.createdAt.toISOString(),
               rootFrameId: null,
               agentFrameId: null
             }
@@ -301,37 +303,98 @@ class ProjectFilesQueryOwner {
     const artifactVersionIds = rows.flatMap((row) =>
       row.source === 'artifact' && row.sourceVersionId ? [row.sourceVersionId] : []
     )
-    const artifactVersions =
+    const uploadVersionIds = rows.flatMap((row) =>
+      row.source === 'upload' && row.sourceVersionId ? [row.sourceVersionId] : []
+    )
+    const [artifactVersions, uploadVersions] = await Promise.all([
       artifactVersionIds.length === 0
-        ? []
-        : await client.artifactVersion.findMany({
-            where: { id: { in: artifactVersionIds } },
-            select: { id: true, rootFrameId: true }
+        ? Promise.resolve([])
+        : client.artifactVersion.findMany({
+            where: {
+              id: { in: artifactVersionIds },
+              state: { in: ['pending', 'finalized'] },
+              artifact: { is: { projectId: request.projectId } }
+            },
+            select: {
+              id: true,
+              rootFrameId: true,
+              agentFrameId: true,
+              createdAt: true,
+              artifact: { select: { createdAt: true } }
+            }
+          }),
+      uploadVersionIds.length === 0
+        ? Promise.resolve([])
+        : client.uploadVersion.findMany({
+            where: {
+              id: { in: uploadVersionIds },
+              state: 'ready',
+              uploadFile: { is: { projectId: request.projectId } }
+            },
+            select: {
+              id: true,
+              createdAt: true,
+              registeredAt: true,
+              uploadFile: { select: { createdAt: true } }
+            }
           })
-    const rootFrameIds = new Map(
-      artifactVersions.map((version) => [version.id, version.rootFrameId])
+    ])
+    const artifactMetadata = new Map(
+      artifactVersions.map(
+        (version) =>
+          [
+            version.id,
+            {
+              rootFrameId: version.rootFrameId,
+              agentFrameId: version.agentFrameId,
+              createdAt: version.createdAt.toISOString(),
+              sourceCreatedAt: version.createdAt.toISOString(),
+              sourceFileCreatedAt: version.artifact.createdAt.toISOString()
+            }
+          ] as const
+      )
+    )
+    const uploadMetadata = new Map(
+      uploadVersions.map(
+        (version) =>
+          [
+            version.id,
+            {
+              createdAt: (version.createdAt ?? version.registeredAt).toISOString(),
+              ...(version.createdAt ? { sourceCreatedAt: version.createdAt.toISOString() } : {}),
+              sourceFileCreatedAt: version.uploadFile.createdAt.toISOString()
+            }
+          ] as const
+      )
     )
 
-    return rows.flatMap((row) =>
-      row.sourceVersionId
-        ? [
-            {
-              source: row.source as 'artifact' | 'upload',
-              sourceFileId: row.sourceFileId,
-              versionId: row.sourceVersionId,
-              checksum: row.checksum ?? undefined,
-              projectId: row.projectId,
-              sessionId: row.sessionId,
-              filename: row.displayName,
-              contentType: row.mimeType ?? undefined,
-              sizeBytes: toSafeCount(row.sizeBytes, 'host managed file size'),
-              sortAtMs: toSafeCount(row.sortAtMs, 'host managed file sort time'),
-              rootFrameId:
-                row.source === 'artifact' ? (rootFrameIds.get(row.sourceVersionId) ?? null) : null
-            }
-          ]
-        : []
-    )
+    return rows.flatMap((row) => {
+      if (!row.sourceVersionId) return []
+      const artifact =
+        row.source === 'artifact' ? artifactMetadata.get(row.sourceVersionId) : undefined
+      const upload = row.source === 'upload' ? uploadMetadata.get(row.sourceVersionId) : undefined
+      const metadata = artifact ?? upload
+      if (!metadata) return []
+      return [
+        {
+          source: row.source as 'artifact' | 'upload',
+          sourceFileId: row.sourceFileId,
+          versionId: row.sourceVersionId,
+          checksum: row.checksum ?? undefined,
+          projectId: row.projectId,
+          sessionId: row.sessionId,
+          filename: row.displayName,
+          contentType: row.mimeType ?? undefined,
+          sizeBytes: toSafeCount(row.sizeBytes, 'host managed file size'),
+          sortAtMs: toSafeCount(row.sortAtMs, 'host managed file sort time'),
+          createdAt: metadata.createdAt,
+          ...(metadata.sourceCreatedAt ? { sourceCreatedAt: metadata.sourceCreatedAt } : {}),
+          sourceFileCreatedAt: metadata.sourceFileCreatedAt,
+          rootFrameId: artifact?.rootFrameId ?? null,
+          agentFrameId: artifact?.agentFrameId ?? null
+        }
+      ]
+    })
   }
 
   async listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage> {

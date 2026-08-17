@@ -14,6 +14,7 @@ import {
   RotateCw
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -35,18 +36,22 @@ export const LocalFileFallbackAction = ({
 }: {
   path: string
   className?: string
-}): React.JSX.Element => (
-  <Button
-    type="button"
-    variant="default"
-    size="sm"
-    className={className}
-    onClick={() => void window.api.localFs.openPath(path)}
-  >
-    <ExternalLink className="size-4" aria-hidden="true" />
-    <span>Open</span>
-  </Button>
-)
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <Button
+      type="button"
+      variant="default"
+      size="sm"
+      className={className}
+      onClick={() => void window.api.localFs.openPath(path)}
+    >
+      <ExternalLink className="size-4" aria-hidden="true" />
+      <span>{t('Open')}</span>
+    </Button>
+  )
+}
 
 type SaveAsArtifactState = 'idle' | 'saving' | 'saved'
 
@@ -61,6 +66,8 @@ export const LocalFileHeaderActions = ({
   onReload?: () => void
   tooltipClassName?: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [copied, setCopied] = useState(false)
   // In-memory only by design: the staged upload joins the normal upload lifecycle, and the header
   // just reflects that this preview already handed the file over.
@@ -115,7 +122,7 @@ export const LocalFileHeaderActions = ({
           className="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-text-100"
         >
           <Check className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-          Saved
+          {t('Saved')}
         </span>
       ) : null}
       {onReload ? (
@@ -127,13 +134,13 @@ export const LocalFileHeaderActions = ({
                 variant="ghost"
                 size="icon-xs"
                 className="text-text-000 hover:text-text-000"
-                aria-label="Reload file"
+                aria-label={t('Reload file')}
                 onClick={onReload}
               >
                 <RotateCw aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className={tooltipClassName}>Reload from disk</TooltipContent>
+            <TooltipContent className={tooltipClassName}>{t('Reload from disk')}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       ) : null}
@@ -144,7 +151,7 @@ export const LocalFileHeaderActions = ({
             variant="ghost"
             size="icon-xs"
             className="text-text-000 hover:text-text-000"
-            aria-label="More actions"
+            aria-label={t('More actions')}
           >
             <MoreHorizontal aria-hidden="true" />
           </Button>
@@ -166,14 +173,14 @@ export const LocalFileHeaderActions = ({
             ) : (
               <ClipboardCopy className="size-4" aria-hidden="true" />
             )}
-            {copied ? 'Copied' : 'Copy path'}
+            {copied ? t('Copied') : t('Copy path')}
           </DropdownMenuItem>
           <DropdownMenuLabel className="px-1 text-[10px] font-medium uppercase tracking-wider">
-            On this machine
+            {t('On this machine')}
           </DropdownMenuLabel>
           <DropdownMenuItem onSelect={() => void download()} className="gap-2">
             <Download className="size-4" aria-hidden="true" />
-            Download
+            {t('Download')}
           </DropdownMenuItem>
           {canSaveAsArtifact ? (
             <DropdownMenuItem
@@ -182,7 +189,7 @@ export const LocalFileHeaderActions = ({
               className="gap-2"
             >
               <PackagePlus className="size-4" aria-hidden="true" />
-              {saveAsArtifactState === 'saving' ? 'Saving…' : 'Save as artifact'}
+              {saveAsArtifactState === 'saving' ? t('Saving…') : t('Save as artifact')}
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuContent>

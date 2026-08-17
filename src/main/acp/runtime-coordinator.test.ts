@@ -54,8 +54,8 @@ const createFakeRuntime = (options: {
   beforeResume?: () => Promise<void>
   afterResumeAttached?: () => Promise<void>
   eligibleAttachmentUri?: string
-  activePromptSessions?: { projectName: string; sessionId: string }[]
-  quitBlockingSessions?: { projectName: string; sessionId: string }[]
+  activePromptSessions?: { projectId: string; sessionId: string }[]
+  quitBlockingSessions?: { projectId: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
   runtime: AcpRuntime
@@ -75,6 +75,7 @@ const createFakeRuntime = (options: {
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   applyModelChange: ReturnType<typeof vi.fn>
   captureBackend: ReturnType<typeof vi.fn>
+  captureSessionModel: ReturnType<typeof vi.fn>
   setPermissionProfile: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   requestUserInput: ReturnType<typeof vi.fn>
@@ -89,18 +90,18 @@ const createFakeRuntime = (options: {
   let turnSequence = 0
   const sessionProjects = new Map<string, string>()
   const connect = vi.fn(async () => snapshot)
-  const createSession = vi.fn(async (request: { projectName?: string } = {}) => {
+  const createSession = vi.fn(async (request: { projectId?: string } = {}) => {
     const sessionId = options.sessionIds[sessionIndex]
     sessionIndex += 1
-    sessionProjects.set(sessionId, request.projectName ?? 'Artifacts')
+    sessionProjects.set(sessionId, request.projectId ?? 'Artifacts')
     snapshot = { ...snapshot, sessionId, sessionIds: [...snapshot.sessionIds, sessionId] }
     options.callbacks.onStateChanged?.(snapshot)
     return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId }
   })
   const resumeSession = vi.fn(
-    async ({ sessionId, projectName }: { sessionId: string; projectName?: string }) => {
+    async ({ sessionId, projectId }: { sessionId: string; projectId?: string }) => {
       await options.beforeResume?.()
-      sessionProjects.set(sessionId, projectName ?? 'Artifacts')
+      sessionProjects.set(sessionId, projectId ?? 'Artifacts')
       snapshot = {
         ...snapshot,
         sessionId,
@@ -138,6 +139,10 @@ const createFakeRuntime = (options: {
   const applyReasoningEffortChange = vi.fn(async () => true)
   const applyModelChange = vi.fn(async () => true)
   const captureBackend = vi.fn(() => ({ backendId: `${options.frameworkId}:owned` }) as never)
+  const captureSessionModel = vi.fn((sessionId: string) => ({
+    backend: { backendId: `${options.frameworkId}:owned` },
+    appliedModel: `${sessionId}:applied`
+  }))
   const setPermissionProfile = vi.fn(async () => snapshot)
   const respondToPermission = vi.fn((response: AcpPermissionResponse) => {
     options.callbacks.onPermissionSettled?.(
@@ -193,6 +198,14 @@ const createFakeRuntime = (options: {
     }
   }
   const sendPrompt = vi.fn(runPrompt)
+  const sendApplicationPrompt = vi.fn(
+    (
+      ...[request, _attribution, promptAttemptId]: Parameters<AcpRuntime['sendApplicationPrompt']>
+    ) => {
+      void _attribution
+      return runPrompt(request, promptAttemptId)
+    }
+  )
   const sendAppContinuation = vi.fn(runPrompt)
   const runtime = {
     getSnapshot: () => snapshot,
@@ -201,6 +214,8 @@ const createFakeRuntime = (options: {
     hasLiveSession: (projectId: string, sessionId: string) =>
       snapshot.sessionIds.includes(sessionId) && sessionProjects.get(sessionId) === projectId,
     liveSessionProjectId: (sessionId: string) => sessionProjects.get(sessionId),
+    isSessionUsingFramework: (sessionId: string, frameworkId: string) =>
+      snapshot.sessionIds.includes(sessionId) && options.frameworkId === frameworkId,
     getActiveArtifactRunIds: () => [],
     connect,
     createSession,
@@ -218,6 +233,7 @@ const createFakeRuntime = (options: {
       }
     ),
     sendPrompt,
+    sendApplicationPrompt,
     sendAppContinuation,
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
@@ -237,6 +253,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
+    captureSessionModel,
     setPermissionProfile,
     respondToPermission,
     requestUserInput,
@@ -263,6 +280,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
+    captureSessionModel,
     setPermissionProfile,
     respondToPermission,
     requestUserInput,
@@ -323,6 +341,28 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[0].captureBackend).toHaveBeenCalledOnce()
   })
 
+  it('captures Session model facts only from the runtime that owns the Session', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'opencode',
+        sessionIds: ['owned-session'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    expect(coordinator.captureSessionModel('missing-session')).toBeUndefined()
+    expect(created[0].captureSessionModel).not.toHaveBeenCalled()
+    await coordinator.createSession()
+    expect(coordinator.captureSessionModel('owned-session')).toEqual({
+      backend: { backendId: 'opencode:owned' },
+      appliedModel: 'owned-session:applied'
+    })
+    expect(created[0].captureSessionModel).toHaveBeenCalledWith('owned-session')
+  })
+
   it('projects delegated permissions and cascades root permission and Stop controls', async () => {
     const rootPermission: AcpPermissionRequest = {
       requestId: 'delegated:permission-1',
@@ -349,7 +389,8 @@ describe('AcpRuntimeCoordinator', () => {
       wakeMessages: vi.fn(async () => undefined),
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined)
+      deleteSession: vi.fn(async () => undefined),
+      deleteProject: vi.fn(async () => undefined)
     }
     const permissionEvents: unknown[] = []
     const stateChanges: AcpStateSnapshot[] = []
@@ -434,7 +475,8 @@ describe('AcpRuntimeCoordinator', () => {
       stopActiveBranch,
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined)
+      deleteSession: vi.fn(async () => undefined),
+      deleteProject: vi.fn(async () => undefined)
     }
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) => {
@@ -483,13 +525,13 @@ describe('AcpRuntimeCoordinator', () => {
           frameworkId: 'claude-code',
           sessionIds: ['session-1'],
           callbacks,
-          quitBlockingSessions: [{ projectName: 'project-1', sessionId: 'session-running' }]
+          quitBlockingSessions: [{ projectId: 'project-1', sessionId: 'session-running' }]
         }).runtime
     )
     await coordinator.connect()
 
     expect(coordinator.getQuitBlockingPromptSessions()).toEqual([
-      { projectName: 'project-1', sessionId: 'session-running' }
+      { projectId: 'project-1', sessionId: 'session-running' }
     ])
   })
 
@@ -597,7 +639,7 @@ describe('AcpRuntimeCoordinator', () => {
           callbacks
         }).runtime
     )
-    const session = await coordinator.createSession({ projectName: 'project-1' })
+    const session = await coordinator.createSession({ projectId: 'project-1' })
 
     expect(coordinator.hasLiveSession('project-1', session.sessionId)).toBe(true)
     expect(coordinator.hasLiveSession('project-2', session.sessionId)).toBe(false)
@@ -1002,14 +1044,14 @@ describe('AcpRuntimeCoordinator', () => {
         sessionIds: ['session-1'],
         callbacks,
         prompt: () => prompt.promise,
-        activePromptSessions: [{ projectName: 'project-1', sessionId: 'session-1' }],
+        activePromptSessions: [{ projectId: 'project-1', sessionId: 'session-1' }],
         quitBlockingSessions: []
       })
       return created.runtime
     })
     const session = await coordinator.createSession({
       cwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'wait for me' })
     await Promise.resolve()
@@ -1031,13 +1073,13 @@ describe('AcpRuntimeCoordinator', () => {
           sessionIds: ['session-1'],
           callbacks,
           prompt: () => prompt.promise,
-          activePromptSessions: [{ projectName: 'project-1', sessionId: 'session-1' }],
+          activePromptSessions: [{ projectId: 'project-1', sessionId: 'session-1' }],
           quitBlockingSessions: []
         }).runtime
     )
     const session = await coordinator.createSession({
       cwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'wait for me' })
     await Promise.resolve()
@@ -1161,6 +1203,68 @@ describe('AcpRuntimeCoordinator', () => {
     prompts[2].resolve({ stopReason: 'end_turn' })
     await laterUser
   })
+
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'linearizes a scoped Reviewer correction behind an active %s user prompt',
+    async (frameworkId) => {
+      const prompts = [createDeferred<unknown>(), createDeferred<unknown>()]
+      let promptIndex = 0
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => prompts[promptIndex++].promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession({
+        cwd: '/workspace',
+        projectId: 'project-1'
+      })
+
+      const userPrompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'active user turn'
+      })
+      await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+      const correction = coordinator.withActivity(
+        {
+          session: {
+            sessionId: session.sessionId,
+            cwd: '/workspace',
+            projectId: 'project-1',
+            previousFrameworkId: frameworkId
+          }
+        },
+        (runtime) =>
+          runtime.sendApplicationPrompt(
+            { sessionId: session.sessionId, text: '[Auditor] correct the reviewed turn' },
+            {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            }
+          )
+      )
+
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(vi.mocked(created.runtime.sendApplicationPrompt)).not.toHaveBeenCalled()
+
+      prompts[0].resolve({ stopReason: 'end_turn' })
+      await userPrompt
+      await vi.waitFor(() =>
+        expect(vi.mocked(created.runtime.sendApplicationPrompt)).toHaveBeenCalledOnce()
+      )
+
+      prompts[1].resolve({ stopReason: 'end_turn' })
+      await correction
+    }
+  )
 
   it('revalidates a parked upward branch inside the root lock before any provider call', async () => {
     let created!: ReturnType<typeof createFakeRuntime>
@@ -1319,6 +1423,67 @@ describe('AcpRuntimeCoordinator', () => {
     admission.resolve()
     await userPrompt
     expect(createdRuntime.sendPrompt).toHaveBeenCalledOnce()
+    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
+  })
+
+  it('applies the final dispatch admission wrapper to app-owned continuations', async () => {
+    const admission = createDeferred<void>()
+    let createdRuntime!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      createdRuntime = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return createdRuntime.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const admittedSessionIds: string[] = []
+    coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
+      admittedSessionIds.push(sessionId)
+      await admission.promise
+      return dispatch()
+    })
+
+    const continuation = coordinator.sendAppContinuation({
+      sessionId: session.sessionId,
+      text: 'approved recovery continuation'
+    })
+    await Promise.resolve()
+    expect(createdRuntime.sendAppContinuation).not.toHaveBeenCalled()
+
+    admission.resolve()
+    await continuation
+
+    expect(admittedSessionIds).toEqual([session.sessionId])
+    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
+  })
+
+  it('does not reacquire dispatch admission for an already admitted continuation', async () => {
+    let createdRuntime!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      createdRuntime = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return createdRuntime.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const admittedSessionIds: string[] = []
+    coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
+      admittedSessionIds.push(sessionId)
+      return dispatch()
+    })
+
+    await expect(
+      coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'already deletion-admitted' },
+        async () => undefined
+      )
+    ).resolves.toBe('provider_prompt_accepted')
+
+    expect(admittedSessionIds).toEqual([])
     expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
   })
 
@@ -1577,6 +1742,36 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[2].applyReasoningEffortChange).toHaveBeenCalledWith('high')
   })
 
+  it('reloads Skills only when the active generation owns the requested framework', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    await coordinator.requestSkillsReloadForFramework('claude-code')
+
+    expect(created).toHaveLength(1)
+    expect(created[0].requestRetirement).not.toHaveBeenCalled()
+
+    await coordinator.requestSkillsReloadForFramework('codex')
+
+    expect(created[0].requestRetirement).toHaveBeenCalledOnce()
+    expect(created).toHaveLength(1)
+
+    await coordinator.createSession()
+    await coordinator.requestSkillsReloadForFramework('claude-code')
+
+    expect(created).toHaveLength(2)
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+  })
+
   it('routes a model hot-switch only to the active runtime generation', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -1620,8 +1815,8 @@ describe('AcpRuntimeCoordinator', () => {
       return fake.runtime
     })
 
-    const activeSession = await coordinator.createSession()
-    const idleSession = await coordinator.createSession()
+    const activeSession = await coordinator.createSession({ projectId: 'other-project' })
+    const idleSession = await coordinator.createSession({ projectId: 'deleting-project' })
     created[0].emitState({
       promptInFlight: true,
       promptInFlightSessionIds: [activeSession.sessionId]
@@ -1630,6 +1825,11 @@ describe('AcpRuntimeCoordinator', () => {
     const reloadRequest = coordinator.requestSkillsReload()
 
     expect(coordinator.getSnapshot().sessionIds).toEqual([activeSession.sessionId])
+    expect(coordinator.getOwnedSessionIds()).toEqual([
+      activeSession.sessionId,
+      idleSession.sessionId
+    ])
+    expect(coordinator.liveSessionProjectId(idleSession.sessionId)).toBe('deleting-project')
     await expect(
       coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'stale turn' })
     ).rejects.toThrow('resume')
@@ -1789,7 +1989,7 @@ describe('AcpRuntimeCoordinator', () => {
       artifacts: [
         {
           id: 'artifact-version-1',
-          projectName: 'project-1',
+          projectId: 'project-1',
           sessionId: session.sessionId,
           name: 'result.csv',
           path: '/workspace/result.csv',
@@ -2811,7 +3011,7 @@ describe('AcpRuntimeCoordinator', () => {
         session: {
           sessionId: 'old-session',
           cwd: '/workspace',
-          projectName: 'project-1',
+          projectId: 'project-1',
           previousFrameworkId: 'claude-code',
           historyPreamble: 'prior transcript'
         }
@@ -2819,23 +3019,37 @@ describe('AcpRuntimeCoordinator', () => {
       async (runtime) => {
         await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
         expect(vi.mocked(created[1].runtime.resumeSession)).not.toHaveBeenCalled()
-        await runtime.sendPrompt({ sessionId: 'old-session', text: '[Auditor] fix this' })
+        await runtime.sendApplicationPrompt(
+          { sessionId: 'old-session', text: '[Auditor] fix this' },
+          {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review-1'
+          }
+        )
       }
     )
 
     expect(vi.mocked(created[1].runtime.resumeSession)).toHaveBeenCalledWith({
       sessionId: 'old-session',
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: 'claude-code'
     })
-    expect(vi.mocked(created[1].runtime.sendPrompt)).toHaveBeenCalledWith(
+    expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledWith(
       {
         sessionId: 'old-session',
         text: '[Auditor] fix this',
         historyPreamble: 'prior transcript',
         contextReset: true,
         provenanceContext: { promptMessageId: expect.stringMatching(/^prompt-/u) }
+      },
+      {
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1'
       },
       'prompt-attempt-1'
     )

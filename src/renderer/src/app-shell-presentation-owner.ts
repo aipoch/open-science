@@ -3,6 +3,7 @@ import type { NavigationView } from '@/stores/navigation-store'
 
 export type AppShellPresentationState = Readonly<{
   closeConfirmation: boolean
+  webEventRecovery: boolean
   dataRootRecovery: boolean
   legacyDataMove: boolean
   update: boolean
@@ -43,6 +44,7 @@ export type AppShellPresentationProjection = Readonly<{
 
 const PRESENTATION_PRIORITY: ReadonlyArray<keyof AppShellPresentationState> = [
   'closeConfirmation',
+  'webEventRecovery',
   'dataRootRecovery',
   'legacyDataMove',
   'update',

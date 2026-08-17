@@ -105,7 +105,12 @@ describe('project prisma client (integration)', () => {
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
         '0003_granted_local_roots',
-        '0004_managed_file_version_foundation'
+        '0004_review_assessment_snapshots',
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints',
+        '0009_managed_file_version_foundation'
       ]
     })
 
@@ -454,11 +459,11 @@ describe('project prisma client (integration)', () => {
         state: 'pending',
         contentStorageKey: 'artifacts/result.png',
         evidenceStorageKey: 'artifacts/evidence.json',
-        evidenceSchemaVersion: 1,
         sizeBytes: 3n,
         checksum: 'c'.repeat(64),
         evidenceJson: '{}',
-        evidenceChecksum: 'd'.repeat(64)
+        evidenceChecksum: 'd'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
     await client.artifactVersionInput.create({
@@ -629,11 +634,11 @@ describe('project prisma client (integration)', () => {
         state: 'pending',
         contentStorageKey: 'artifacts/result.png',
         evidenceStorageKey: 'artifacts/evidence.json',
-        evidenceSchemaVersion: 1,
         sizeBytes: 3n,
         checksum: 'a'.repeat(64),
         evidenceJson: '{}',
-        evidenceChecksum: 'b'.repeat(64)
+        evidenceChecksum: 'b'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
 
@@ -832,12 +837,12 @@ describe('project prisma client (integration)', () => {
           'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/content',
         evidenceStorageKey:
           'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/evidence.json',
-        evidenceSchemaVersion: 1,
         contentType: 'image/png',
         sizeBytes: 3n,
         checksum: 'b'.repeat(64),
         evidenceJson: '{"schema_version":1}',
-        evidenceChecksum: 'c'.repeat(64)
+        evidenceChecksum: 'c'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
 
@@ -910,10 +915,18 @@ describe('project prisma client (integration)', () => {
     const fetched = await repository.get(created.id)
     expect(fetched?.name).toBe('Reproduction')
 
-    const renamed = await repository.update({ id: created.id, name: 'Renamed' })
+    const renamed = await repository.update({
+      id: created.id,
+      name: 'Renamed',
+      expectedUpdatedAt: created.updatedAt
+    })
     expect(renamed.name).toBe('Renamed')
 
-    const pinned = await repository.update({ id: created.id, pinned: true })
+    const pinned = await repository.update({
+      id: created.id,
+      pinned: true,
+      expectedUpdatedAt: renamed.updatedAt
+    })
     expect(pinned.pinned).toBe(true)
     expect(pinned.updatedAt).toBe(renamed.updatedAt)
 
@@ -1010,7 +1023,12 @@ describe('project prisma client (integration)', () => {
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
         '0003_granted_local_roots',
-        '0004_managed_file_version_foundation'
+        '0004_review_assessment_snapshots',
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints',
+        '0009_managed_file_version_foundation'
       ]
     })
 

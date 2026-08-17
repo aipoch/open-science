@@ -1,6 +1,7 @@
 import { AlertDialog } from 'radix-ui'
 import { FolderInput, FolderOpen } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -39,6 +40,7 @@ const LegacyDataMoveDialog = ({
   defaultParent,
   onDismiss
 }: LegacyDataMoveDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   // When set, hand off to the shared migration modal targeting this parent; null returns to the prompt.
   const [migrationTarget, setMigrationTarget] = useState<string | null>(null)
   // The exact <home>/OpenScience path "Move to OpenScience" would create. Resolved server-side via
@@ -75,8 +77,10 @@ const LegacyDataMoveDialog = ({
       // would mean abandoning the legacy data, which isn't what "move it out" should do here.
       setPickError(
         inspection.kind === 'adopt'
-          ? 'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
-          : (inspection.error ?? 'That folder can’t be used. Pick another one.')
+          ? t(
+              'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
+            )
+          : (inspection.error ?? t('That folder can’t be used. Pick another one.'))
       )
     } finally {
       setIsPicking(false)
@@ -107,31 +111,32 @@ const LegacyDataMoveDialog = ({
         >
           <div className={dialogHeaderClassName}>
             <AlertDialog.Title className={dialogTitleClassName}>
-              Move your data to a visible folder?
+              {t('Move your data to a visible folder?')}
             </AlertDialog.Title>
           </div>
 
           <div className={cn(dialogBodyClassName, 'space-y-4')}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              Your research data is in a hidden folder. Moving it into a visible OpenScience folder
-              makes it easy to find and back up — your settings and history stay where they are.
+              {t(
+                'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.'
+              )}
             </AlertDialog.Description>
             <div>
-              <span className="text-xs font-medium text-text-100">Current (hidden)</span>
+              <span className="text-xs font-medium text-text-100">{t('Current (hidden)')}</span>
               <pre
                 className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border-200 bg-bg-10 px-2.5 py-1.5 font-mono text-xs text-text-000"
-                aria-label="Current data location"
+                aria-label={t('Current data location')}
               >
                 {currentDataRoot}
               </pre>
             </div>
             <div>
-              <span className="text-xs font-medium text-text-100">New location</span>
+              <span className="text-xs font-medium text-text-100">{t('New location')}</span>
               <pre
                 className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border-200 bg-bg-10 px-2.5 py-1.5 font-mono text-xs text-text-000"
-                aria-label="New data location"
+                aria-label={t('New data location')}
               >
-                {destination ?? 'Resolving…'}
+                {destination ?? t('Resolving…')}
               </pre>
             </div>
 
@@ -145,7 +150,7 @@ const LegacyDataMoveDialog = ({
           <div className={cn(dialogFooterClassName, 'flex-col items-stretch')}>
             <Button type="button" disabled={isPicking} onClick={handleMoveToDefault}>
               <FolderInput aria-hidden="true" />
-              Move to OpenScience
+              {t('Move to OpenScience')}
             </Button>
             <Button
               type="button"
@@ -154,15 +159,17 @@ const LegacyDataMoveDialog = ({
               onClick={() => void handleChooseFolder()}
             >
               <FolderOpen aria-hidden="true" />
-              {isPicking ? 'Checking…' : 'Choose another folder…'}
+              {isPicking ? t('Checking…') : t('Choose another folder…')}
             </Button>
             <AlertDialog.Cancel asChild>
               <Button type="button" variant="ghost" disabled={isPicking} onClick={handleKeepHere}>
-                Keep it in the current folder
+                {t('Keep it in the current folder')}
               </Button>
             </AlertDialog.Cancel>
             <p className="text-xs text-muted-foreground">
-              You can always change this later in Settings → Data location. We won&apos;t ask again.
+              {t(
+                "You can always change this later in Settings → Data location. We won't ask again."
+              )}
             </p>
           </div>
         </AlertDialog.Content>

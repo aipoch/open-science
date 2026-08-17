@@ -28,6 +28,7 @@ type DrivableSession = {
 type DriveOptions = {
   timeoutMs: number
   maxUpdates: number
+  signal?: AbortSignal
 }
 
 type DriveCallbacks = {
@@ -90,6 +91,7 @@ const flushAccumulator = (
 
 // Sentinel used to distinguish the timeout branch from a real reviewer update in Promise.race.
 const TIMEOUT = Symbol('reviewer-drive-timeout')
+const ABORTED = Symbol('reviewer-drive-aborted')
 
 // Consumes reviewer session updates until it stops, returning the stop reason. Throws if the
 // reviewer does not stop within timeoutMs, or if it emits more than maxUpdates discrete updates —
@@ -105,7 +107,7 @@ export const driveReviewerToStop = async (
   options: DriveOptions,
   callbacks?: DriveCallbacks
 ): Promise<string | undefined> => {
-  const { timeoutMs, maxUpdates } = options
+  const { timeoutMs, maxUpdates, signal } = options
   const { onUpdate } = callbacks ?? {}
   const deadline = Date.now() + timeoutMs
   let updates = 0
@@ -114,17 +116,29 @@ export const driveReviewerToStop = async (
   const acc: ChunkAccumulator = { thoughtText: null, messageText: null, pendingTools: new Map() }
 
   for (;;) {
+    if (signal?.aborted) throw new Error('reviewer session was aborted before stopping')
     const remaining = deadline - Date.now()
     if (remaining <= 0) throw new Error('reviewer session timed out before stopping')
 
     let timer: ReturnType<typeof setTimeout> | undefined
+    let abortListener: (() => void) | undefined
     const timeout = new Promise<typeof TIMEOUT>((resolve) => {
       timer = setTimeout(() => resolve(TIMEOUT), remaining)
     })
+    const aborted = new Promise<typeof ABORTED>((resolve) => {
+      if (!signal) return
+      if (signal.aborted) {
+        resolve(ABORTED)
+        return
+      }
+      abortListener = () => resolve(ABORTED)
+      signal.addEventListener('abort', abortListener, { once: true })
+    })
 
     try {
-      const result = await Promise.race([session.nextUpdate(), timeout])
+      const result = await Promise.race([session.nextUpdate(), timeout, aborted])
       if (result === TIMEOUT) throw new Error('reviewer session timed out before stopping')
+      if (result === ABORTED) throw new Error('reviewer session was aborted before stopping')
 
       if (result.kind === 'stop') {
         // Flush any in-flight streaming chunks before returning.
@@ -236,6 +250,7 @@ export const driveReviewerToStop = async (
       }
     } finally {
       if (timer) clearTimeout(timer)
+      if (signal && abortListener) signal.removeEventListener('abort', abortListener)
     }
   }
 }

@@ -148,6 +148,10 @@ export type SessionSetupContext = {
   // undefined is the Main Agent and must omit the native field; [] is an explicit Specialist
   // zero-skill whitelist and must be preserved verbatim by supporting frameworks.
   skillWhitelist?: string[]
+  // App-owned Skill loading is a primary-session capability, not a backend-wide default. Absent
+  // means disabled (for example Reviewer and restricted inference); `all` is an unrestricted
+  // primary Agent; an array is the exact Specialist allowlist enforced by the Skill loader itself.
+  skillRuntimeScope?: 'all' | string[]
 }
 
 // Framework-specific session configuration returned to the runtime. `meta` becomes the ACP `_meta`

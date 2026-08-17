@@ -6,7 +6,7 @@ import { Prisma, type ManagedFile, type PrismaClient } from '@prisma/client'
 import type { ProjectFileSource } from '../../shared/project-files'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
-  DEFAULT_UPLOAD_PROJECT_NAME,
+  DEFAULT_UPLOAD_PROJECT_ID,
   getUploadedAttachmentName,
   PENDING_UPLOAD_SESSION_ID
 } from '../../shared/uploads'
@@ -117,7 +117,7 @@ const describeError = (error: unknown): string =>
 const getLegacyUploadStorageSessionId = (storageKey: string): string | undefined => {
   const segments = storageKey.split('/')
   return segments[0] === UPLOADS_DIR &&
-    segments[1] === DEFAULT_UPLOAD_PROJECT_NAME &&
+    segments[1] === DEFAULT_UPLOAD_PROJECT_ID &&
     segments.length >= 4
     ? segments[2]
     : undefined

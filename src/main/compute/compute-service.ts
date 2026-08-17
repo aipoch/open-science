@@ -44,7 +44,7 @@ export class ComputeService {
     onJobUpdated?: (job: ComputeJob) => void,
     artifactResolver?: ArtifactResolver,
     storageRoot?: string,
-    concurrencyManager?: ConcurrencyManager
+    private readonly concurrencyManager?: ConcurrencyManager
   ) {
     const effectiveScpRunner = scpRunner ?? new SystemScpRunner()
     this.hostProfiles = new ComputeHostProfileOwner(runner, repository)
@@ -99,6 +99,9 @@ export class ComputeService {
   }
 
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {
+    if (this.concurrencyManager) {
+      return this.concurrencyManager.setProviderLimit(providerId, limit)
+    }
     return this.hostProfiles.setConcurrencyLimit(providerId, limit)
   }
 

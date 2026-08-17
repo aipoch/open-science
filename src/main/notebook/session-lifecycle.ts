@@ -1,4 +1,5 @@
 import type {
+  NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookRunSource,
   NotebookSessionReference,
@@ -43,6 +44,7 @@ type NotebookSessionLifecycleOptions = {
   repository: NotebookRunRepository
   sessions: NotebookSessionRegistry<RuntimeSession>
   runtimeBindings: NotebookRuntimeBindingOwner
+  waitForRevocationDrains: () => Promise<void>
   executorFactory?: (
     sessionId: string,
     lifecycle: NotebookExecutorLifecycleCallbacks
@@ -65,14 +67,22 @@ const processKeyFor = (kind: KernelProcessKind | undefined, env: string | undefi
   return `${resolvedKind}:${resolvedEnv}`
 }
 
-const persistsToRunJson = (processKey: string): boolean =>
-  processKey === 'repl' ||
-  processKey === `python:${DEFAULT_PY_ENV}` ||
-  processKey === `r:${DEFAULT_R_ENV}`
+const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstanceIdentity => {
+  if (processKey === 'repl') return { kind: 'repl' }
+  const separator = processKey.indexOf(':')
+  return {
+    kind: processKey.slice(0, separator) === 'r' ? 'r' : 'python',
+    environment: processKey.slice(separator + 1)
+  }
+}
 
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
   private readonly announcedAgentLaneKeys = new Set<string>()
+  private readonly deletingProjectIds = new Set<string>()
+  private readonly pendingEnsuresByProject = new Map<string, Set<Promise<RuntimeSession>>>()
+  private readonly pendingOperationsByProject = new Map<string, Set<Promise<unknown>>>()
+  private readonly operationAbortControllersByProject = new Map<string, Set<AbortController>>()
 
   constructor(private readonly options: NotebookSessionLifecycleOptions) {}
 
@@ -94,10 +104,16 @@ class NotebookSessionLifecycleOwner {
 
   ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    try {
+      this.assertProjectAvailable(projectId)
+    } catch (error) {
+      return Promise.reject(error)
+    }
     const lane = this.laneForRequest(request)
-    return this.options.sessions.getOrCreate(lane, async () => {
+    const ensuring = this.options.sessions.getOrCreate(lane, async () => {
+      this.assertProjectAvailable(projectId)
       let document = await this.options.repository.loadOrCreate({
-        projectName: projectId,
+        projectId: projectId,
         sessionId: request.sessionId,
         workspaceCwd: request.workspaceCwd,
         lane
@@ -125,6 +141,8 @@ class NotebookSessionLifecycleOwner {
           lane
         ),
         executionCount: document.runs.length,
+        initialKernelStatus: document.kernel.lastKnownStatus,
+        initialTerminatedKernelInstances: document.kernel.terminatedKernelInstances,
         executor: ownedExecutor.executor,
         executorGeneration: ownedExecutor.generation,
         lane
@@ -132,6 +150,7 @@ class NotebookSessionLifecycleOwner {
 
       try {
         await this.options.runtimeBindings.reload(session, document.runtimeBindings)
+        this.assertProjectAvailable(projectId)
         return session
       } catch (error) {
         await session.shutdownExecutor().catch(() => undefined)
@@ -143,6 +162,68 @@ class NotebookSessionLifecycleOwner {
         throw error
       }
     })
+    const pending =
+      this.pendingEnsuresByProject.get(projectId) ?? new Set<Promise<RuntimeSession>>()
+    pending.add(ensuring)
+    this.pendingEnsuresByProject.set(projectId, pending)
+    void ensuring
+      .finally(() => {
+        pending.delete(ensuring)
+        if (pending.size === 0 && this.pendingEnsuresByProject.get(projectId) === pending) {
+          this.pendingEnsuresByProject.delete(projectId)
+        }
+      })
+      .catch(() => undefined)
+    return ensuring
+  }
+
+  runProjectOperation<Result>(
+    request: NotebookSessionRequest,
+    operation: (deletionSignal: AbortSignal) => Promise<Result>
+  ): Promise<Result> {
+    const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    try {
+      this.assertProjectAvailable(projectId)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    const controller = new AbortController()
+    const controllers =
+      this.operationAbortControllersByProject.get(projectId) ?? new Set<AbortController>()
+    controllers.add(controller)
+    this.operationAbortControllersByProject.set(projectId, controllers)
+    let resolveRunning!: (value: Result | PromiseLike<Result>) => void
+    let rejectRunning!: (reason?: unknown) => void
+    const running = new Promise<Result>((resolve, reject) => {
+      resolveRunning = resolve
+      rejectRunning = reject
+    })
+    const pending = this.pendingOperationsByProject.get(projectId) ?? new Set<Promise<unknown>>()
+    pending.add(running)
+    this.pendingOperationsByProject.set(projectId, pending)
+    // Register before invoking the operation so a synchronous teardown can observe the lease, while
+    // preserving the existing guarantee that callers start work before the method returns.
+    try {
+      void operation(controller.signal).then(resolveRunning, rejectRunning)
+    } catch (error) {
+      rejectRunning(error)
+    }
+    void running
+      .finally(() => {
+        controllers.delete(controller)
+        if (
+          controllers.size === 0 &&
+          this.operationAbortControllersByProject.get(projectId) === controllers
+        ) {
+          this.operationAbortControllersByProject.delete(projectId)
+        }
+        pending.delete(running)
+        if (pending.size === 0 && this.pendingOperationsByProject.get(projectId) === pending) {
+          this.pendingOperationsByProject.delete(projectId)
+        }
+      })
+      .catch(() => undefined)
+    return running
   }
 
   createExecutor(lane: NotebookLaneIdentity): NotebookSessionOwnedExecutor {
@@ -176,6 +257,36 @@ class NotebookSessionLifecycleOwner {
     return this.shutdownLane(this.rootLane(sessionId))
   }
 
+  async shutdownProject(projectId: string): Promise<void> {
+    this.beginProjectDeletion(projectId)
+    await Promise.allSettled([
+      ...(this.pendingEnsuresByProject.get(projectId) ?? []),
+      ...(this.pendingOperationsByProject.get(projectId) ?? [])
+    ])
+    const lanes = Array.from(this.options.sessions.values())
+      .filter((session) => session.projectId === projectId)
+      .map((session) => session.lane)
+    const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Notebook Project cleanup failed: ' + projectId)
+    }
+  }
+
+  beginProjectDeletion(projectId: string): void {
+    this.deletingProjectIds.add(projectId)
+    const reason = new Error('Project is being deleted.')
+    for (const controller of this.operationAbortControllersByProject.get(projectId) ?? []) {
+      controller.abort(reason)
+    }
+  }
+
+  releaseProjectDeletion(projectId: string): void {
+    this.deletingProjectIds.delete(projectId)
+  }
+
   private async shutdownLane(
     lane: NotebookLaneIdentity
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
@@ -183,9 +294,19 @@ class NotebookSessionLifecycleOwner {
     const key = notebookLaneKey(lane)
     await this.options.runtimeBindings.withSessionTeardown(key, async () => {
       await this.options.runtimeBindings.waitForWrites(key)
+      // A non-forced runtime revoke releases its binding write after scheduling kernel termination.
+      // Holding the lane teardown gate while waiting closes both sides of the race: an earlier revoke
+      // must finish before removal, while a later revoke cannot enter until the lane is already gone.
+      await this.options.waitForRevocationDrains()
       await this.options.sessions.remove(lane)
     })
     return { sessionId, status: 'shutdown' }
+  }
+
+  private assertProjectAvailable(projectId: string): void {
+    if (this.deletingProjectIds.has(projectId)) {
+      throw new Error('Project is being deleted.')
+    }
   }
 
   shutdownAll(): Promise<{ reaped: boolean }> {
@@ -221,17 +342,53 @@ class NotebookSessionLifecycleOwner {
     processKey: string
   ): Promise<void> {
     session.setKernelStatus(processKey, status)
-    if (!persistsToRunJson(processKey)) return
+    const kernelInstance = kernelInstanceForProcessKey(processKey)
     try {
-      await this.options.repository.updateKernelStatus({
-        projectName: session.projectId,
-        sessionId: session.sessionId,
-        lane: session.lane,
-        status
-      })
+      if (status === 'terminated') {
+        // A legacy coarse terminated status has unknown ownership. Keep it conservative until an
+        // explicit restart instead of replacing the ambiguity with a partial known-instance set.
+        if (session.hasUnknownDurableKernelTermination()) return
+        await this.options.repository.markKernelTerminated({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          kernelInstance
+        })
+        session.markDurableKernelTermination(processKey)
+      } else if (status === 'idle') {
+        if (!session.hasDurableKernelTermination(processKey)) return
+        await this.options.repository.clearKernelTermination({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          kernelInstance
+        })
+        session.clearDurableKernelTermination(processKey)
+      } else {
+        await this.options.repository.updateKernelStatus({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          status
+        })
+      }
     } catch {
       return
     }
+  }
+
+  async clearPersistedKernelTermination(
+    session: RuntimeSession,
+    processKey: string
+  ): Promise<void> {
+    if (!session.hasDurableKernelTermination(processKey)) return
+    await this.options.repository.clearKernelTermination({
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      kernelInstance: kernelInstanceForProcessKey(processKey)
+    })
+    session.clearDurableKernelTermination(processKey)
   }
 
   async projectKernelIdleShutdown(

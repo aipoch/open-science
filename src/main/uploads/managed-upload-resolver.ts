@@ -7,7 +7,7 @@ import type { PrismaClient } from '@prisma/client'
 
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import {
-  DEFAULT_UPLOAD_PROJECT_NAME,
+  DEFAULT_UPLOAD_PROJECT_ID,
   PENDING_UPLOAD_SESSION_ID,
   parseUploadVersionReference,
   type DeleteUploadRequest
@@ -180,14 +180,14 @@ class ManagedUploadResolver {
       // associated with another Project. SQLite must prove the source Session binding.
       const legacyPathSegments = relativeUploadPath.split('/')
       const legacySourceSessionId =
-        legacyPathSegments[0] === DEFAULT_UPLOAD_PROJECT_NAME && legacyPathSegments.length > 2
+        legacyPathSegments[0] === DEFAULT_UPLOAD_PROJECT_ID && legacyPathSegments.length > 2
           ? legacyPathSegments[1]
           : undefined
       const requestedLegacySessionId = safeSessionId ?? legacySourceSessionId
       if (
         safeProjectId &&
         requestedLegacySessionId &&
-        safeProjectId !== DEFAULT_UPLOAD_PROJECT_NAME &&
+        safeProjectId !== DEFAULT_UPLOAD_PROJECT_ID &&
         this.options.getClient
       ) {
         const safeLegacySessionId = assertSafePathSegment(requestedLegacySessionId)
@@ -222,7 +222,7 @@ class ManagedUploadResolver {
       // project/session identity yet.
       if (safeProjectId && safeSessionId) {
         const pendingRoot = await realpath(
-          join(resolvedUploadRoot, DEFAULT_UPLOAD_PROJECT_NAME, PENDING_UPLOAD_SESSION_ID)
+          join(resolvedUploadRoot, DEFAULT_UPLOAD_PROJECT_ID, PENDING_UPLOAD_SESSION_ID)
         ).catch(() => undefined)
         if (pendingRoot) {
           try {

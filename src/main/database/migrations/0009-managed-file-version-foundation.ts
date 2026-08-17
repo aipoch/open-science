@@ -1,9 +1,9 @@
 const managedFileVersionFoundationStatements = [
-  `ALTER TABLE "ArtifactVersionInput" RENAME TO "_0004_old_ArtifactVersionInput";`,
-  `ALTER TABLE "ArtifactVersion" RENAME TO "_0004_old_ArtifactVersion";`,
-  `ALTER TABLE "UploadVersion" RENAME TO "_0004_old_UploadVersion";`,
-  `ALTER TABLE "ArtifactLineage" RENAME TO "_0004_old_ArtifactLineage";`,
-  `ALTER TABLE "UploadFile" RENAME TO "_0004_old_UploadFile";`,
+  `ALTER TABLE "ArtifactVersionInput" RENAME TO "_0009_old_ArtifactVersionInput";`,
+  `ALTER TABLE "ArtifactVersion" RENAME TO "_0009_old_ArtifactVersion";`,
+  `ALTER TABLE "UploadVersion" RENAME TO "_0009_old_UploadVersion";`,
+  `ALTER TABLE "ArtifactLineage" RENAME TO "_0009_old_ArtifactLineage";`,
+  `ALTER TABLE "UploadFile" RENAME TO "_0009_old_UploadFile";`,
   `CREATE TABLE "ArtifactLineage" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT NOT NULL,
@@ -20,7 +20,7 @@ const managedFileVersionFoundationStatements = [
      "id", "projectId", "sessionId", "normalizedFilename", "filename", "createdAt", "updatedAt"
    )
    SELECT "id", "projectId", "sessionId", "normalizedFilename", "filename", "createdAt", "updatedAt"
-   FROM "_0004_old_ArtifactLineage";`,
+   FROM "_0009_old_ArtifactLineage";`,
   `CREATE TABLE "UploadFile" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT NOT NULL,
@@ -37,7 +37,7 @@ const managedFileVersionFoundationStatements = [
      "id", "projectId", "sessionId", "filename", "originalFilename", "createdAt", "updatedAt"
    )
    SELECT "id", "projectId", "sessionId", "filename", "originalFilename", "createdAt", "updatedAt"
-   FROM "_0004_old_UploadFile";`,
+   FROM "_0009_old_UploadFile";`,
   `CREATE TABLE "UploadVersion" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "uploadFileId" TEXT NOT NULL,
@@ -71,7 +71,7 @@ const managedFileVersionFoundationStatements = [
    SELECT "id", "uploadFileId", "versionNumber", "state", 'user_upload', "contentStorageKey",
      "filename", "originalFilename", "contentType", "sizeBytes", "checksum", "createdAt",
      "registeredAt", "updatedAt"
-   FROM "_0004_old_UploadVersion";`,
+   FROM "_0009_old_UploadVersion";`,
   `UPDATE "UploadVersion" AS "current"
    SET "basedOnVersionId" = (
      SELECT "previous"."id"
@@ -126,7 +126,10 @@ const managedFileVersionFoundationStatements = [
     CONSTRAINT "ArtifactVersion_state_check" CHECK ("state" IN ('staging', 'pending', 'finalized')),
     CONSTRAINT "ArtifactVersion_filename_check" CHECK (length("filename") > 0),
     CONSTRAINT "ArtifactVersion_originKind_check" CHECK ("originKind" IN ('agent_generated', 'user_edit', 'legacy')),
-    CONSTRAINT "ArtifactVersion_provenance_check" CHECK ((("originKind" = 'agent_generated' AND "artifactRunId" IS NOT NULL AND "rootFrameId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL AND "runtimeSegmentId" IS NOT NULL AND "promptMessageId" IS NOT NULL AND "evidenceStorageKey" IS NOT NULL AND "evidenceJson" IS NOT NULL AND "evidenceChecksum" IS NOT NULL AND "evidenceSchemaVersion" IS NOT NULL) OR ("originKind" = 'user_edit' AND "state" = 'finalized' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL AND "artifactRunId" IS NULL AND "writeRequestChecksum" IS NULL AND "rootFrameId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND "runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "evidenceStorageKey" IS NULL AND "evidenceJson" IS NULL AND "evidenceChecksum" IS NULL AND "evidenceSchemaVersion" IS NULL AND "executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR "originKind" = 'legacy'))
+    CONSTRAINT "ArtifactVersion_provenance_check" CHECK ((("originKind" = 'agent_generated' AND "artifactRunId" IS NOT NULL AND "rootFrameId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL AND "runtimeSegmentId" IS NOT NULL AND "promptMessageId" IS NOT NULL AND "evidenceStorageKey" IS NOT NULL AND "evidenceJson" IS NOT NULL AND "evidenceChecksum" IS NOT NULL AND "evidenceSchemaVersion" IS NOT NULL) OR ("originKind" = 'user_edit' AND "state" = 'finalized' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL AND "artifactRunId" IS NULL AND "writeRequestChecksum" IS NULL AND "rootFrameId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND "runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "evidenceStorageKey" IS NULL AND "evidenceJson" IS NULL AND "evidenceChecksum" IS NULL AND "evidenceSchemaVersion" IS NULL AND "executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR "originKind" = 'legacy')),
+    CONSTRAINT "ArtifactVersion_evidenceJson_check" CHECK ("evidenceJson" IS NULL OR (json_valid("evidenceJson") AND json_type("evidenceJson") = 'object')),
+    CONSTRAINT "ArtifactVersion_executionSnapshotJson_check" CHECK ("executionSnapshotJson" IS NULL OR (json_valid("executionSnapshotJson") AND json_type("executionSnapshotJson") = 'object')),
+    CONSTRAINT "ArtifactVersion_executionSnapshotBundle_check" CHECK ((("executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR ("executionSnapshotJson" IS NOT NULL AND "executionSnapshotChecksum" IS NOT NULL AND "executionSnapshotStorageKey" IS NOT NULL AND "executionSnapshotSchemaVersion" IS NOT NULL)))
   );`,
   `INSERT INTO "ArtifactVersion" (
      "id", "artifactId", "versionNumber", "filename", "originKind", "artifactRunId",
@@ -148,7 +151,7 @@ const managedFileVersionFoundationStatements = [
      "evidenceChecksum", "evidenceSchemaVersion", "executionSnapshotJson",
      "executionSnapshotChecksum", "executionSnapshotStorageKey", "executionSnapshotSchemaVersion",
      "createdAt", "updatedAt"
-   FROM "_0004_old_ArtifactVersion"
+   FROM "_0009_old_ArtifactVersion"
    ORDER BY "artifactId", "versionNumber";`,
   `UPDATE "ArtifactVersion" AS "current"
    SET "basedOnVersionId" = (
@@ -184,14 +187,15 @@ const managedFileVersionFoundationStatements = [
     CONSTRAINT "ArtifactVersionInput_sourceUploadVersionId_fkey" FOREIGN KEY ("sourceUploadVersionId") REFERENCES "UploadVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceProjectId_sourceSessionId_fkey" FOREIGN KEY ("sourceProjectId", "sourceSessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version')),
-    CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK ((("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR ("sourceKind" = 'upload-version' AND "sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL AND "inputFileVersionId" = "sourceUploadVersionId")))
+    CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK ((("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR ("sourceKind" = 'upload-version' AND "sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL AND "inputFileVersionId" = "sourceUploadVersionId"))),
+    CONSTRAINT "ArtifactVersionInput_strongestAssociation_check" CHECK ("strongestAssociation" IN ('turn-attached', 'resolver-accessed', 'captured-version'))
   );`,
-  `INSERT INTO "ArtifactVersionInput" SELECT * FROM "_0004_old_ArtifactVersionInput";`,
-  `DROP TABLE "_0004_old_ArtifactVersionInput";`,
-  `DROP TABLE "_0004_old_ArtifactVersion";`,
-  `DROP TABLE "_0004_old_UploadVersion";`,
-  `DROP TABLE "_0004_old_ArtifactLineage";`,
-  `DROP TABLE "_0004_old_UploadFile";`,
+  `INSERT INTO "ArtifactVersionInput" SELECT * FROM "_0009_old_ArtifactVersionInput";`,
+  `DROP TABLE "_0009_old_ArtifactVersionInput";`,
+  `DROP TABLE "_0009_old_ArtifactVersion";`,
+  `DROP TABLE "_0009_old_UploadVersion";`,
+  `DROP TABLE "_0009_old_ArtifactLineage";`,
+  `DROP TABLE "_0009_old_UploadFile";`,
   `UPDATE "ArtifactLineage" AS "lineage"
    SET "currentVersionId" = (
      SELECT "version"."id"
@@ -467,7 +471,7 @@ const managedFileVersionFoundationStatements = [
 ] as const
 
 const managedFileVersionFoundationMigration = {
-  id: '0004_managed_file_version_foundation',
+  id: '0009_managed_file_version_foundation',
   statements: managedFileVersionFoundationStatements,
   verifiers: [
     {

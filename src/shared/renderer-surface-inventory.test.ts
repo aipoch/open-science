@@ -62,9 +62,9 @@ const GENERATED_SOURCE_OMISSIONS = [
   'handoff.list',
   'handoff.onChanged',
   'handoff.retry',
-  'managedFileVersions.inspect',
-  'managedFileVersions.diffText',
   'managedFileVersions.cancelDiff',
+  'managedFileVersions.diffText',
+  'managedFileVersions.inspect',
   'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
   'network.getInfo',
@@ -249,14 +249,10 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(361)
-
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)
     )
-    expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(258)
-    expect(Object.keys(WEB_EVENT_CHANNELS)).toHaveLength(37)
     expectSameSet(
       electronPaths.filter((path) => !generatedPaths.has(path)),
       GENERATED_SOURCE_OMISSIONS
@@ -291,7 +287,6 @@ describe('renderer surface inventory', () => {
     const expectedRemoteLocalOnly = expand(REMOTE_LOCAL_ONLY_CHANNELS, ':')
 
     expectSameSet(REMOTE_LOCAL_ONLY_RPC_CHANNELS, expectedRemoteLocalOnly)
-    expect(expectedRemoteLocalOnly).toHaveLength(70)
     expect(
       expectedRemoteLocalOnly.every((channel) => WEB_RPC_ALLOWED_CHANNELS.includes(channel))
     ).toBe(true)

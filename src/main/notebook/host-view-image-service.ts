@@ -28,7 +28,7 @@ export type HostViewImageBackend = Readonly<{
 export type HostViewImageContext = Readonly<{
   projectId: string
   sessionId: string
-  workspaceCwd: string
+  executionCwd: string
   controlInvocationId: string
   signal: AbortSignal
 }>
@@ -207,7 +207,7 @@ const isContainedPath = (root: string, candidate: string): boolean => {
   return child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child))
 }
 
-const resolveWorkspaceSource = async (workspaceCwd: string, path: string): Promise<string> => {
+const resolveWorkspaceSource = async (executionCwd: string, path: string): Promise<string> => {
   const crossPlatformPath = path.replaceAll('\\', '/')
   if (
     path.includes('\0') ||
@@ -218,20 +218,22 @@ const resolveWorkspaceSource = async (workspaceCwd: string, path: string): Promi
     crossPlatformPath.split('/').includes('..')
   ) {
     throw new HostViewImageError(
-      'source.path must be relative and stay inside the Session workspace.'
+      'source.path must be relative and stay inside the current execution workspace.'
     )
   }
   try {
-    const workspaceRoot = await realpath(workspaceCwd)
+    const workspaceRoot = await realpath(executionCwd)
     const lexicalTarget = resolve(workspaceRoot, path)
     if (!isContainedPath(workspaceRoot, lexicalTarget)) {
       throw new HostViewImageError(
-        'source.path must be relative and stay inside the Session workspace.'
+        'source.path must be relative and stay inside the current execution workspace.'
       )
     }
     const target = await realpath(lexicalTarget)
     if (!isContainedPath(workspaceRoot, target)) {
-      throw new HostViewImageError('source.path escapes the Session workspace through a symlink.')
+      throw new HostViewImageError(
+        'source.path escapes the current execution workspace through a symlink.'
+      )
     }
     if (!(await stat(target)).isFile()) {
       throw new HostViewImageError('source.path must name a regular file.')
@@ -354,7 +356,7 @@ export class HostViewImageService {
       let sourceKind: HostViewImageResult['sourceKind']
       let expectedCanonicalPath: string | undefined
       if ('path' in source) {
-        filePath = await resolveWorkspaceSource(context.workspaceCwd, source.path)
+        filePath = await resolveWorkspaceSource(context.executionCwd, source.path)
         expectedCanonicalPath = filePath
         sourceKind = 'workspacePath'
       } else {

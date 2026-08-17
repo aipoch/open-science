@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { PersistedPreviewState } from '../../shared/preview-state'
-import { PreviewStateRepository } from './preview-repository'
+import { PreviewStateRepository, type PreviewStateClient } from './preview-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from './prisma-client'
 
 // Matches the mocked app.getPath('home') + isPackaged resolution in storage-root.ts: with no
@@ -51,6 +51,90 @@ afterEach(async () => {
 })
 
 describe('preview state repository (integration)', () => {
+  it('treats a late save after Project deletion as a no-op without touching another Project', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+    const otherProjectUpdatedAt = new Date('2026-01-02T03:04:05Z')
+    await client.project.create({
+      data: { id: 'project-b', name: 'Project B', updatedAt: otherProjectUpdatedAt }
+    })
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    await repository.save('project-a', createState())
+    await repository.save(
+      'project-b',
+      createState({ panelState: 'collapsed', activeItemId: undefined, items: [] })
+    )
+    const otherProjectBefore = await client.project.findUniqueOrThrow({
+      where: { id: 'project-b' }
+    })
+    const otherPreviewBefore = await client.projectPreviewState.findUniqueOrThrow({
+      where: { projectId: 'project-b' }
+    })
+    await client.project.delete({ where: { id: 'project-a' } })
+
+    let directFailure: unknown
+    try {
+      await client.projectPreviewState.upsert({
+        where: { projectId: 'project-a' },
+        create: { projectId: 'project-a', panelState: 'open', items: '[]' },
+        update: { panelState: 'open', items: '[]' }
+      })
+    } catch (error) {
+      directFailure = error
+    }
+    expect(directFailure).toMatchObject({ code: 'P2003' })
+
+    await expect(repository.save('project-a', createState())).resolves.toBeUndefined()
+    await expect(repository.get('project-a')).resolves.toBeNull()
+    await expect(client.project.findUniqueOrThrow({ where: { id: 'project-b' } })).resolves.toEqual(
+      otherProjectBefore
+    )
+    await expect(
+      client.projectPreviewState.findUniqueOrThrow({ where: { projectId: 'project-b' } })
+    ).resolves.toEqual(otherPreviewBefore)
+  })
+
+  it('swallows a raw SQLite owner FK failure but propagates unrelated write errors', async () => {
+    const upsert = vi.fn()
+    const client = {
+      projectPreviewState: { upsert }
+    } as unknown as PreviewStateClient
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+
+    upsert.mockRejectedValueOnce(new Error('FOREIGN KEY constraint failed'))
+    await expect(repository.save('deleted-project', createState())).resolves.toBeUndefined()
+
+    const writeFailure = new Error('disk I/O error')
+    upsert.mockRejectedValueOnce(writeFailure)
+    await expect(repository.save('project-a', createState())).rejects.toBe(writeFailure)
+  })
+
+  it('does not update the owning Project timestamp when saving preview state', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    const updatedAt = new Date('2026-01-02T03:04:05Z')
+    await client.project.create({
+      data: { id: 'project-a', name: 'Project A', updatedAt }
+    })
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    await repository.save('project-a', createState())
+
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: 'project-a' } })
+    ).resolves.toMatchObject({ updatedAt })
+  })
+
   it('round-trips per-project preview state and deletes it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
 
@@ -58,6 +142,7 @@ describe('preview state repository (integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
 
@@ -93,6 +178,7 @@ describe('preview state repository (integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
     const absolutePath = join(DATA_ROOT, 'artifacts/p/s/m/plot.png')
@@ -132,6 +218,7 @@ describe('preview state repository (integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
 
     const state = createState()
     await client.projectPreviewState.create({

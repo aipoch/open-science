@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
@@ -35,6 +35,13 @@ const RPC_SMOKE_ROOT_PREFIX = 'open-science-rpc-smoke-'
 const UPGRADE_SENTINEL_PREFIX = 'installer-smoke-upgrade-sentinel-'
 const UPGRADE_SENTINEL_CONTENT = 'previous-version-profile-preserved\n'
 const RPC_SMOKE_CONTENT = 'windows-rpc-smoke\n'
+const RPC_SMOKE_RESERVATION_ID = 'installer-smoke-reservation'
+const RPC_SMOKE_ARTIFACT_SCOPE = {
+  projectId: 'installer-smoke-project',
+  appSessionId: 'installer-smoke-session',
+  artifactStorageSessionId: 'installer-smoke-session',
+  artifactRunId: 'installer-smoke-artifact-run'
+}
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -322,6 +329,12 @@ const observeChildExit = (child) =>
     child.once('exit', resolveExit)
   })
 
+const observeChildClose = (child) =>
+  new Promise((resolveClose, rejectClose) => {
+    child.once('error', rejectClose)
+    child.once('close', resolveClose)
+  })
+
 const waitForShutdownExit = (
   exit,
   child,
@@ -398,6 +411,88 @@ const sendJson = (response, statusCode, payload) => {
   response.end(JSON.stringify(payload))
 }
 
+const assertPackagedArtifactScope = (params, requireWriteOperationId) => {
+  if (
+    Object.entries(RPC_SMOKE_ARTIFACT_SCOPE).some(
+      ([key, expectedValue]) => params[key] !== expectedValue
+    ) ||
+    (requireWriteOperationId &&
+      !/^artifact-write-[0-9a-f]{64}$/.test(params.writeOperationId ?? ''))
+  ) {
+    throw new Error('Unexpected packaged Artifact write scope.')
+  }
+}
+
+const packagedArtifactSmokeRpcResult = (body, workspace, artifactRpcContract = 'reservation') => {
+  const params = body.params ?? {}
+  const fileBytes = Buffer.byteLength(RPC_SMOKE_CONTENT)
+  if (body.method === 'artifactReserveWrite') {
+    if (artifactRpcContract !== 'reservation') {
+      throw new Error('Legacy packaged Artifact RPC must not reserve a write.')
+    }
+    assertPackagedArtifactScope(params, true)
+    if (params.filename !== 'windows-rpc-smoke.txt' || params.fileBytes !== fileBytes) {
+      throw new Error('Unexpected packaged Artifact write reservation request.')
+    }
+    return {
+      id: RPC_SMOKE_RESERVATION_ID,
+      fileBytes,
+      expiresAt: Date.now() + PROCESS_TIMEOUT_MS
+    }
+  }
+  if (body.method === 'artifactCreateVersion') {
+    assertPackagedArtifactScope(params, true)
+    const checksum = createHash('sha256').update(RPC_SMOKE_CONTENT).digest('hex')
+    if (artifactRpcContract === 'legacy') {
+      if (
+        params.resourceReservationId !== undefined ||
+        params.resourceSizeBytes !== undefined ||
+        params.resourceChecksum !== undefined
+      ) {
+        throw new Error('Legacy packaged Artifact Version must omit reservation metadata.')
+      }
+    } else if (
+      params.resourceReservationId !== RPC_SMOKE_RESERVATION_ID ||
+      params.resourceSizeBytes !== fileBytes ||
+      params.resourceChecksum !== checksum
+    ) {
+      throw new Error('Unexpected packaged Artifact Version reservation metadata.')
+    }
+    return {
+      id: 'installer-smoke-version',
+      artifactId: 'installer-smoke-artifact',
+      versionId: 'installer-smoke-version',
+      versionNumber: 1,
+      checksum,
+      createdAt: new Date(0).toISOString(),
+      projectId: 'installer-smoke-project',
+      sessionId: 'installer-smoke-session',
+      runId: 'installer-smoke-artifact-run',
+      name: 'windows-rpc-smoke.txt',
+      path: join(workspace, 'windows-rpc-smoke.txt'),
+      fileUrl: 'file:///windows-rpc-smoke.txt',
+      mimeType: 'text/plain',
+      size: fileBytes,
+      mtimeMs: 0,
+      producerRunId: 'installer-smoke-shell-run'
+    }
+  }
+  if (body.method === 'artifactReleaseWrite') {
+    if (artifactRpcContract !== 'reservation') {
+      throw new Error('Legacy packaged Artifact RPC must not release a write reservation.')
+    }
+    assertPackagedArtifactScope(params, false)
+    if (params.reservationId !== RPC_SMOKE_RESERVATION_ID) {
+      throw new Error('Unexpected packaged Artifact reservation release request.')
+    }
+    return { released: true }
+  }
+  return undefined
+}
+
+const releasedMigrationCountForPhase = (phase, expectedMigrationCount) =>
+  phase === 'current' || phase === 'restart' ? expectedMigrationCount : undefined
+
 const toolResultText = (result) =>
   result.content
     .filter((item) => item.type === 'text')
@@ -443,7 +538,11 @@ const connectPackagedMcp = async ({ executable, entryPath, serverArg, env, cwd }
   return { client, stderr: () => stderr }
 }
 
-const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
+const runPackagedLocalRpcSmoke = async ({
+  installDirectory,
+  env,
+  artifactRpcContract = 'reservation'
+}) => {
   const root = await mkdtemp(join(env.TEMP, RPC_SMOKE_ROOT_PREFIX))
   const workspace = join(root, 'workspace')
   const artifactStorage = join(root, 'artifacts')
@@ -489,27 +588,9 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
         })
         return
       }
-      if (body.method === 'artifactCreateVersion') {
-        sendJson(response, 200, {
-          result: {
-            id: 'installer-smoke-version',
-            artifactId: 'installer-smoke-artifact',
-            versionId: 'installer-smoke-version',
-            versionNumber: 1,
-            checksum: 'a'.repeat(64),
-            createdAt: new Date(0).toISOString(),
-            projectName: 'installer-smoke-project',
-            sessionId: 'installer-smoke-session',
-            runId: 'installer-smoke-artifact-run',
-            name: 'windows-rpc-smoke.txt',
-            path: join(workspace, 'windows-rpc-smoke.txt'),
-            fileUrl: 'file:///windows-rpc-smoke.txt',
-            mimeType: 'text/plain',
-            size: Buffer.byteLength(RPC_SMOKE_CONTENT),
-            mtimeMs: 0,
-            producerRunId: 'installer-smoke-shell-run'
-          }
-        })
+      const artifactResult = packagedArtifactSmokeRpcResult(body, workspace, artifactRpcContract)
+      if (artifactResult !== undefined) {
+        sendJson(response, 200, { result: artifactResult })
         return
       }
       sendJson(response, 400, { error: `Unexpected installer smoke RPC method: ${body.method}` })
@@ -556,7 +637,7 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
         OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://localhost',
         OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH: socketPath,
         OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: token,
-        OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'installer-smoke-project',
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'installer-smoke-project',
         OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'installer-smoke-session',
         OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: workspace
       }
@@ -582,7 +663,7 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
       env: {
         ...sharedEnv,
         OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT: artifactStorage,
-        OPEN_SCIENCE_ARTIFACT_PROJECT_NAME: 'installer-smoke-project',
+        OPEN_SCIENCE_ARTIFACT_PROJECT_ID: 'installer-smoke-project',
         OPEN_SCIENCE_ARTIFACT_SESSION_ID: 'installer-smoke-session',
         OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE: currentRunFile,
         OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS: JSON.stringify([workspace]),
@@ -606,7 +687,10 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
     )
     assertToolResult('write_artifact_file', artifact, 'installer-smoke-version')
 
-    const expectedMethods = ['state', 'executeShell', 'artifactCreateVersion']
+    const expectedMethods =
+      artifactRpcContract === 'legacy'
+        ? ['state', 'executeShell', 'artifactCreateVersion']
+        : ['state', 'executeShell', 'artifactReserveWrite', 'artifactCreateVersion']
     if (JSON.stringify(methods) !== JSON.stringify(expectedMethods)) {
       throw new Error(`Unexpected packaged local RPC sequence: ${methods.join(' -> ')}`)
     }
@@ -730,6 +814,7 @@ const launchAndProbe = async ({
   env,
   legacyConfigRoots,
   verifyLedger = false,
+  expectedMigrationCount,
   onSqliteVersion
 }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
@@ -775,7 +860,7 @@ const launchAndProbe = async ({
     await requestPackagedAppShutdown(endpoint, auth)
     const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
-    if (verifyLedger) await verifyDatabaseMigrationLedger(configRoot)
+    if (verifyLedger) await verifyDatabaseMigrationLedger(configRoot, expectedMigrationCount)
     if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
     return configRoot
   } catch (error) {
@@ -785,6 +870,17 @@ const launchAndProbe = async ({
       error.message += `\n${processOutput}`
     }
     throw error
+  }
+}
+
+const assertDatabaseDowngradeBlocked = ({ becameHealthy, output }) => {
+  if (becameHealthy) {
+    throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output}`)
+  }
+  if (!/database_newer_than_app|newer version of Open Science/i.test(output)) {
+    throw new Error(
+      `Ledger-aware downgrade did not report the expected compatibility error.\n${output}`
+    )
   }
 }
 
@@ -801,24 +897,26 @@ const launchAndExpectDatabaseBlocked = async ({ installDirectory, env }) => {
   child.stdout?.on('data', (chunk) => (stdout += chunk))
   child.stderr?.on('data', (chunk) => (stderr += chunk))
   const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
-  const exit = observeChildExit(child)
-  let exitCode
-  void exit.then((code) => {
-    exitCode = code
-  })
+  const close = observeChildClose(child)
+  let closed = false
+  let closeError
+  void close.then(
+    () => {
+      closed = true
+    },
+    (error) => {
+      closeError = error
+      closed = true
+    }
+  )
 
   try {
-    await waitFor('the ledger-aware downgrade to block', async () =>
-      exitCode === undefined ? undefined : true
-    )
-    if (exitCode === 0) {
-      throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output()}`)
-    }
-    if (!/database_newer_than_app|newer version of Open Science/i.test(output())) {
-      throw new Error(
-        `Ledger-aware downgrade did not report the expected compatibility error.\n${output()}`
-      )
-    }
+    await waitFor('the ledger-aware downgrade to block', async () => (closed ? true : undefined))
+    if (closeError) throw closeError
+    assertDatabaseDowngradeBlocked({
+      becameHealthy: parsePackagedAppEndpoint(output()) !== undefined,
+      output: output()
+    })
   } catch (error) {
     await terminateProcessTree(child)
     throw error
@@ -878,19 +976,23 @@ const installAndProbe = async ({
   phase,
   env,
   legacyConfigRoots,
+  artifactRpcContract,
+  expectedMigrationCount,
   onSqliteVersion
 }) => {
   console.log(`Smoke testing ${phase} installer: ${basename(installer)}`)
   await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
-  if (phase === 'current') await runPackagedLocalRpcSmoke({ installDirectory, env })
+  if (phase === 'current')
+    await runPackagedLocalRpcSmoke({ installDirectory, env, artifactRpcContract })
   return launchAndProbe({
     installDirectory,
     expectedVersion: installerVersion(installer),
     env,
     legacyConfigRoots,
     verifyLedger: phase !== 'previous',
+    expectedMigrationCount,
     onSqliteVersion
   })
 }
@@ -902,7 +1004,9 @@ const installOverRunningApp = async ({
   phase,
   env,
   legacyConfigRoots,
+  artifactRpcContract,
   launchInstalledApp = true,
+  expectedMigrationCount,
   onSqliteVersion
 }) => {
   const running = await launchForProcessLock({
@@ -921,7 +1025,8 @@ const installOverRunningApp = async ({
 
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
-  if (phase === 'current') await runPackagedLocalRpcSmoke({ installDirectory, env })
+  if (phase === 'current')
+    await runPackagedLocalRpcSmoke({ installDirectory, env, artifactRpcContract })
   if (!launchInstalledApp) return undefined
   return launchAndProbe({
     installDirectory,
@@ -929,6 +1034,7 @@ const installOverRunningApp = async ({
     env,
     legacyConfigRoots,
     verifyLedger: true,
+    expectedMigrationCount,
     onSqliteVersion
   })
 }
@@ -967,12 +1073,36 @@ const parseArguments = (argv) => {
   }
   const installerDirectory = valueFor('--installer-dir')
   if (!installerDirectory)
-    throw new Error('Usage: --installer-dir <path> [--previous-installer-dir <path>]')
+    throw new Error(
+      'Usage: --installer-dir <path> [--previous-installer-dir <path>] [--artifact-rpc-contract <legacy|reservation>] [--expected-migration-count <count>]'
+    )
+  const artifactRpcContractIndex = argv.indexOf('--artifact-rpc-contract')
+  const artifactRpcContract =
+    artifactRpcContractIndex === -1 ? 'reservation' : argv[artifactRpcContractIndex + 1]
+  if (artifactRpcContract !== 'legacy' && artifactRpcContract !== 'reservation') {
+    throw new Error('Artifact RPC contract must be legacy or reservation.')
+  }
+  const expectedMigrationCountIndex = argv.indexOf('--expected-migration-count')
+  const expectedMigrationCountValue =
+    expectedMigrationCountIndex === -1 ? undefined : argv[expectedMigrationCountIndex + 1]
+  if (
+    expectedMigrationCountIndex !== -1 &&
+    (expectedMigrationCountValue === undefined || !/^[1-9]\d*$/.test(expectedMigrationCountValue))
+  ) {
+    throw new Error('Expected migration count must be a positive integer.')
+  }
+  const expectedMigrationCount =
+    expectedMigrationCountValue === undefined ? undefined : Number(expectedMigrationCountValue)
+  if (expectedMigrationCount !== undefined && !Number.isSafeInteger(expectedMigrationCount)) {
+    throw new Error('Expected migration count must be a positive safe integer.')
+  }
   return {
     installerDirectory: resolve(installerDirectory),
     previousInstallerDirectory: valueFor('--previous-installer-dir')
       ? resolve(valueFor('--previous-installer-dir'))
-      : undefined
+      : undefined,
+    artifactRpcContract,
+    expectedMigrationCount
   }
 }
 
@@ -1030,6 +1160,11 @@ const main = async () => {
               installDirectory,
               env,
               legacyConfigRoots,
+              artifactRpcContract: options.artifactRpcContract,
+              expectedMigrationCount: releasedMigrationCountForPhase(
+                cycle.phase,
+                options.expectedMigrationCount
+              ),
               onSqliteVersion: cycle.phase === 'rollback' ? undefined : onSqliteVersion
             })
           : await installAndProbe({
@@ -1037,6 +1172,11 @@ const main = async () => {
               installDirectory,
               env,
               legacyConfigRoots,
+              artifactRpcContract: options.artifactRpcContract,
+              expectedMigrationCount: releasedMigrationCountForPhase(
+                cycle.phase,
+                options.expectedMigrationCount
+              ),
               onSqliteVersion: cycle.phase === 'previous' ? undefined : onSqliteVersion
             })
         if (cycle.phase === 'rollback' && upgradeProfileGuard.shouldExpectDowngradeBlock()) {
@@ -1053,6 +1193,7 @@ const main = async () => {
           expectedVersion: installerVersion(currentInstaller),
           env: isolatedEnv,
           verifyLedger: true,
+          expectedMigrationCount: options.expectedMigrationCount,
           onSqliteVersion
         })
         if (resolve(configRoot).toLowerCase() !== resolve(storageRoot).toLowerCase()) {
@@ -1102,6 +1243,7 @@ if (invokedAsScript) {
 
 export {
   authenticatePackagedAppEndpoint,
+  assertDatabaseDowngradeBlocked,
   assertPackagedResources,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
@@ -1114,11 +1256,15 @@ export {
   launchAndExpectDatabaseBlocked,
   installAndProbe,
   launchAndProbe,
+  packagedArtifactSmokeRpcResult,
   packagedMainEntryPath,
+  observeChildClose,
+  parseArguments,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
   requestPackagedAppShutdown,
+  releasedMigrationCountForPhase,
   runProcess,
   terminateProcessTree,
   uninstallAndVerify,

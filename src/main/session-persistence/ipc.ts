@@ -4,6 +4,7 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   LoadSessionRequest,
+  DelegationPolicy,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
@@ -18,6 +19,7 @@ import { ReviewRepository } from '../reviewer/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { SessionMetadataSnapshot } from './coordinator'
+import { MainMessageAttributionAuthority } from './message-attribution-authority'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -26,6 +28,11 @@ type SessionPersistenceBackend = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
+  setDelegationPolicy?: (
+    projectId: string,
+    sessionId: string,
+    policy: DelegationPolicy
+  ) => Promise<PersistedChatSession>
   updateArchive?: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
@@ -38,6 +45,11 @@ type SessionPersistenceHandlers = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
+  setDelegationPolicy: (
+    projectId: string,
+    sessionId: string,
+    policy: DelegationPolicy
+  ) => Promise<PersistedChatSession>
   updateArchive: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
@@ -107,9 +119,10 @@ const loadSessionsAfterProjectRecovery = async (
 }
 
 // Adapts the coordinator into small handlers that are easy to unit test.
-const createSessionPersistenceHandlers = (
+const createSessionPersistenceHandlersWithAttributionAuthority = (
   repository: SessionPersistenceBackend,
-  reviewRepository: ReviewRepository
+  reviewRepository: ReviewRepository,
+  messageAttributionAuthority: MainMessageAttributionAuthority
 ): SessionPersistenceHandlers => {
   // Kept as an injected boundary for project-level cleanup compatibility; session deletion must not
   // call it because Reviews belong to retained provenance.
@@ -117,8 +130,22 @@ const createSessionPersistenceHandlers = (
   return {
     loadAll: () => repository.loadAll(),
     loadOne: (request) => repository.loadOne(request),
-    saveSession: (session, options) =>
-      options ? repository.saveSession(session, options) : repository.saveSession(session),
+    saveSession: async (session, options) => {
+      const durable = await repository.loadOne({
+        projectId: session.projectId,
+        sessionId: session.id
+      })
+      const authorized = messageAttributionAuthority.authorizeSessionProjection(session, durable)
+      return options
+        ? repository.saveSession(authorized, options)
+        : repository.saveSession(authorized)
+    },
+    setDelegationPolicy: (projectId, sessionId, policy) => {
+      if (!repository.setDelegationPolicy) {
+        throw new Error('Session delegation policy mutation is unavailable.')
+      }
+      return repository.setDelegationPolicy(projectId, sessionId, policy)
+    },
     updateArchive: (request) => {
       if (!repository.updateArchive) throw new Error('Session archive is unavailable.')
       return repository.updateArchive(request)
@@ -129,6 +156,16 @@ const createSessionPersistenceHandlers = (
     saveManifest: (request) => repository.saveManifest(request)
   }
 }
+
+const createSessionPersistenceHandlers = (
+  repository: SessionPersistenceBackend,
+  reviewRepository: ReviewRepository
+): SessionPersistenceHandlers =>
+  createSessionPersistenceHandlersWithAttributionAuthority(
+    repository,
+    reviewRepository,
+    new MainMessageAttributionAuthority()
+  )
 
 // Creates the production repository rooted at the (dev-aware) storage root.
 const createDefaultSessionRepository = (
@@ -182,12 +219,6 @@ const registerSessionPersistenceIpcHandlers = (
       return session
     })
   })
-  ipcMainHandle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
-    await withDataRootWrite(async () => {
-      await handlers.deleteSession(request)
-      broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionDeleted, request)
-    })
-  })
   ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )
@@ -197,6 +228,7 @@ export {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlers,
+  createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers

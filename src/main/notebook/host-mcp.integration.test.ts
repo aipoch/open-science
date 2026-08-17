@@ -24,7 +24,7 @@ const baseRequest = (
     mcpRpcSocketPath: string
     mcpRpcToken: string
     sessionId: string
-    projectName: string
+    projectId: string
   }>
 ): {
   code: string
@@ -37,7 +37,7 @@ const baseRequest = (
   mcpRpcSocketPath?: string
   mcpRpcToken?: string
   sessionId?: string
-  projectName?: string
+  projectId?: string
 } => ({
   code: '',
   cwd: process.cwd(),
@@ -72,7 +72,7 @@ gate('repl kernel host.mcp', () => {
         mcpRpcSocketPath: connection.socketPath,
         mcpRpcToken: connection.token,
         sessionId: 'session-42',
-        projectName: 'project-1'
+        projectId: 'project-1'
       })
       const first = await exec.execute(request)
 
@@ -149,7 +149,7 @@ gate('repl kernel host.mcp', () => {
         mcpRpcEndpoint: `http://127.0.0.1:${addr.port}`,
         mcpRpcToken: 'tok',
         sessionId: 'session-42',
-        projectName: 'project-1'
+        projectId: 'project-1'
       })
     )
     await exec.shutdown()

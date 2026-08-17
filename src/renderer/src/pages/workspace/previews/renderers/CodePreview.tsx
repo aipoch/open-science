@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import { getFileExtension, PREVIEW_CODE_LANGUAGES } from '../../preview-support'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
@@ -5,6 +7,7 @@ import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
 
 export const CodePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -14,7 +17,7 @@ export const CodePreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="Code couldn't be read for preview"
+        fallbackMessage={t("Code couldn't be read for preview")}
       />
     )
   }

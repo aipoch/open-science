@@ -59,7 +59,7 @@ const baseRequest = (
     mcpRpcEndpoint: string
     mcpRpcToken: string
     sessionId: string
-    projectName: string
+    projectId: string
   }>
 ): Parameters<NotebookKernelExecutor['execute']>[0] => ({
   code: '',
@@ -104,7 +104,7 @@ gate('repl kernel host.compute', () => {
         mcpRpcEndpoint: stub.endpoint,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
-        projectName: 'proj-x'
+        projectId: 'proj-x'
       })
     )
     await exec.shutdown()
@@ -131,7 +131,7 @@ gate('repl kernel host.compute', () => {
         mcpRpcEndpoint: stub.endpoint,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
-        projectName: 'proj-x'
+        projectId: 'proj-x'
       })
     )
     await exec.shutdown()

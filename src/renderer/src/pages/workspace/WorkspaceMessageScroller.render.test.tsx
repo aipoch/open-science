@@ -13,6 +13,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
 
+const reviewStoreMock = vi.hoisted(() => ({ loadError: undefined as string | undefined }))
+
+vi.mock('./WorkspaceRunMarks', () => ({
+  WorkspaceRunMarks: ({ items }: { items: readonly unknown[] }) => (
+    <div data-testid="workspace-run-marks" data-item-count={items.length} />
+  )
+}))
+
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
   PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
@@ -92,6 +100,8 @@ vi.mock('@/stores/preview-workbench-store', () => ({
 
 vi.mock('@/stores/review-store', () => ({
   selectProjectSessionReviews: () => [],
+  selectProjectSessionReviewLoadError: () => reviewStoreMock.loadError,
+  selectReviewRunsForMessage: () => [],
   useReviewStore: (
     selector: (state: {
       reviewsBySession: Record<string, never[]>
@@ -189,6 +199,108 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
     <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
   )
 }
+
+describe('WorkspaceMessageScroller Run Marks render', () => {
+  it('passes the presented conversation to Run Marks', async () => {
+    const oneRun = await renderScroller(
+      createSession({ messages: [createMessage({ id: 'prompt-1', content: 'First prompt' })] })
+    )
+    expect(oneRun).toContain('data-testid="workspace-run-marks"')
+    expect(oneRun).toContain('data-item-count="1"')
+
+    const twoRuns = await renderScroller(
+      createSession({
+        activeRun: { promptMessageId: 'prompt-2', startedAt: 1710000000200 },
+        messages: [
+          createMessage({ id: 'prompt-1', content: 'First prompt' }),
+          createMessage({
+            id: 'response-1',
+            role: 'agent',
+            content: 'First response',
+            responseToMessageId: 'prompt-1'
+          }),
+          createMessage({ id: 'prompt-2', content: 'Second prompt' })
+        ]
+      })
+    )
+    expect(twoRuns).toContain('data-item-count="3"')
+  })
+})
+
+describe('WorkspaceMessageScroller Reviewer load error', () => {
+  it('renders an alert with a retry action', async () => {
+    reviewStoreMock.loadError = 'db down'
+    let html: string
+    try {
+      html = await renderScroller(createSession({}))
+    } finally {
+      reviewStoreMock.loadError = undefined
+    }
+
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Could not load review history.')
+    expect(html).toContain('Retry')
+  })
+})
+
+describe('WorkspaceMessageScroller Reviewer Correction lifecycle', () => {
+  const correction = createMessage({
+    id: 'correction-1',
+    content: '[Auditor] Durable correction instructions',
+    attribution: {
+      kind: 'application',
+      feature: 'reviewer',
+      purpose: 'correction',
+      causeReviewId: 'review-1'
+    }
+  })
+
+  it('animates only the active correction before an Agent response exists', async () => {
+    const active = await renderScroller(
+      createSession({
+        activeRun: { promptMessageId: correction.id, startedAt: correction.createdAt },
+        messages: [correction]
+      })
+    )
+    expect(active).toContain('data-active="true"')
+    expect(active).toContain('Agent is addressing the feedback')
+    expect(active).toContain('motion-reduce:animate-none')
+    expect(active).not.toContain(correction.content)
+
+    const responded = await renderScroller(
+      createSession({
+        activeRun: { promptMessageId: correction.id, startedAt: correction.createdAt },
+        messages: [
+          correction,
+          createMessage({
+            id: 'correction-response',
+            role: 'agent',
+            content: 'Correction complete.',
+            status: 'streaming',
+            responseToMessageId: correction.id,
+            createdAt: correction.createdAt + 1,
+            updatedAt: correction.updatedAt + 1
+          })
+        ]
+      })
+    )
+    expect(responded).toContain('Corrections requested')
+    expect(responded).toContain('Handed off to the Agent · response started')
+    expect(responded).not.toContain('data-active="true"')
+    expect(responded).not.toContain('Agent is addressing the feedback')
+    expect(responded).not.toContain(correction.content)
+  })
+
+  it('keeps a reloaded historical correction settled', async () => {
+    const html = await renderScroller(
+      createSession({ status: 'idle', activeRun: undefined, messages: [correction] })
+    )
+    expect(html).toContain('Corrections requested')
+    expect(html).toContain('Handed off to the Agent · response started')
+    expect(html).not.toContain('animate-spin')
+    expect(html).not.toContain(correction.content)
+  })
+})
 
 const planDocument: ActivePlanProjection['document'] = {
   schema_version: 1,
@@ -904,6 +1016,47 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html.match(/data-slot="assistant-message-footer"/g)).toHaveLength(1)
     expect(html.indexOf('data-slot="assistant-message-footer"')).toBeGreaterThan(
       html.indexOf('Here is the final answer.')
+    )
+  })
+
+  it('hides only the current prompt footer while an ask-user continuation is running', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'running',
+        activeRun: undefined,
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true,
+        messages: [
+          createMessage({ id: 'prompt-1', content: 'First prompt', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'First answer',
+            responseToMessageId: 'prompt-1',
+            completedAt: 1710000001000,
+            sortIndex: 2
+          }),
+          createMessage({ id: 'prompt-2', content: 'Create a chart', sortIndex: 3 }),
+          createMessage({
+            id: 'reply-2',
+            role: 'agent',
+            content: 'Choose a chart type.',
+            responseToMessageId: 'prompt-2',
+            completedAt: 1710000003000,
+            turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 },
+            sortIndex: 4
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('>Thinking</span>')
+    expect(html.match(/data-slot="assistant-message-footer"/g)).toHaveLength(1)
+    expect(html.indexOf('data-slot="assistant-message-footer"')).toBeGreaterThan(
+      html.indexOf('First answer')
+    )
+    expect(html.indexOf('data-slot="assistant-message-footer"')).toBeLessThan(
+      html.indexOf('Choose a chart type.')
     )
   })
 

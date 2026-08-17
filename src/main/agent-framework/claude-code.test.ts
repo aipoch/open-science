@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
+import {
+  LOAD_SKILL_TOOL_CALLABLE_NAME,
+  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
+  SKILL_RUNTIME_ALLOWED_NAMES_ENV,
+  SKILL_RUNTIME_MCP_SERVER_NAME,
+  SKILL_RUNTIME_ROOT_ENV
+} from '../skills/runtime-mcp-server'
 import { claudeCodeFramework } from './claude-code'
 import { codexFramework } from './codex'
 import { opencodeFramework } from './opencode'
@@ -75,7 +82,7 @@ describe('claudeCodeFramework', () => {
   it('injects resolved settings and local plugins into Claude session options', () => {
     const sessionOptions = {
       settings: '/app/claude/settings.json',
-      plugins: [{ type: 'local', path: '/app/claude', skipMcpDiscovery: true }]
+      plugins: [{ type: 'local', path: '/app/claude' }]
     }
 
     const setup = claudeCodeFramework.buildSessionSetup({
@@ -93,6 +100,80 @@ describe('claudeCodeFramework', () => {
         }
       }
     })
+  })
+
+  it('routes canonical Skill calls through the isolated read-only runtime loader', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({
+      systemPromptAppends: [],
+      skillRuntimeScope: 'all',
+      sessionOptions: {
+        [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+          command: '/app/electron',
+          entryPath: '/app/main.js',
+          root: '/runtime/revision'
+        }
+      }
+    })
+    const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
+    const servers = options.mcpServers as Record<string, Record<string, unknown>>
+
+    expect(options).not.toHaveProperty(OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION)
+    expect(options.toolAliases).toEqual({ Skill: LOAD_SKILL_TOOL_CALLABLE_NAME })
+    expect(options.allowedTools).toEqual([LOAD_SKILL_TOOL_CALLABLE_NAME])
+    expect(servers[SKILL_RUNTIME_MCP_SERVER_NAME]).toMatchObject({
+      type: 'stdio',
+      command: '/app/electron',
+      args: ['/app/main.js', '--open-science-skill-runtime-mcp'],
+      env: {
+        ELECTRON_RUN_AS_NODE: '1',
+        [SKILL_RUNTIME_ROOT_ENV]: '/runtime/revision'
+      }
+    })
+  })
+
+  it('passes the Specialist Skill whitelist to the runtime loader', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({
+      systemPromptAppends: [],
+      skillWhitelist: ['literature-review'],
+      skillRuntimeScope: ['literature-review'],
+      sessionOptions: {
+        [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+          command: '/app/electron',
+          entryPath: '/app/main.js',
+          root: '/runtime/revision'
+        }
+      }
+    })
+    const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
+    const servers = options.mcpServers as Record<string, { env: Record<string, string> }>
+
+    expect(servers[SKILL_RUNTIME_MCP_SERVER_NAME].env[SKILL_RUNTIME_ALLOWED_NAMES_ENV]).toBe(
+      '["literature-review"]'
+    )
+  })
+
+  it('keeps the backend Skill runtime disabled without explicit primary-session authority', () => {
+    const sessionOptions = {
+      [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+        command: '/app/electron',
+        entryPath: '/app/main.js',
+        root: '/runtime/revision'
+      }
+    }
+
+    for (const skillRuntimeScope of [undefined, []] as const) {
+      const setup = claudeCodeFramework.buildSessionSetup({
+        systemPromptAppends: [],
+        sessionOptions,
+        ...(skillRuntimeScope !== undefined ? { skillRuntimeScope: [] } : {})
+      })
+      const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
+
+      expect(options).not.toHaveProperty(OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION)
+      expect(options).not.toHaveProperty('toolAliases')
+      expect(options).not.toHaveProperty('mcpServers')
+      expect(options).not.toHaveProperty('allowedTools')
+    }
   })
 
   it('keeps Claude web tools available through the complete built-in tool preset', () => {

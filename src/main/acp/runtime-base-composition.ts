@@ -100,8 +100,8 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     disconnect: (emitClosedStatus) => effects().connectionClose.disconnect(emitClosedStatus),
     onRetired: () => callbacks.onRetired?.(),
     publishIdle: () => effects().publishIdle(),
-    recoverFailedDeferredDisconnect: () =>
-      effects().connectionClose.recoverFailedDeferredDisconnect(),
+    recoverFailedDeferredDisconnect: (_error, disconnectedGeneration) =>
+      effects().connectionClose.recoverFailedDeferredDisconnect(disconnectedGeneration),
     reportFailure: safeLogError
   })
   const bindGenerationConnectionEffects = (next: AcpGenerationConnectionEffects): void => {

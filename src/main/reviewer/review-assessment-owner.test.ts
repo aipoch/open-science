@@ -18,8 +18,10 @@ const harness = vi.hoisted(() => ({
   events: [] as string[],
   inMutation: false,
   submission: undefined as NewCheck[] | undefined,
+  submissionAttempted: false,
   submit: undefined as ((checks: NewCheck[]) => Promise<void>) | undefined,
   promptError: undefined as Error | undefined,
+  nextUpdate: undefined as (() => Promise<{ kind: string; stopReason?: string }>) | undefined,
   disposeError: undefined as Error | undefined,
   stopError: undefined as Error | undefined,
   bridgeScoped: undefined as boolean | undefined
@@ -81,6 +83,10 @@ vi.mock('./mcp-server', () => ({
       if (harness.stopError) throw harness.stopError
     }
 
+    get submissionAttempted(): boolean {
+      return harness.submissionAttempted
+    }
+
     toAcpMcpServerConfig(): Record<string, never> {
       outsideMutation('mcp:config')
       return {}
@@ -132,6 +138,26 @@ const trackedCheck: ReviewCheck = {
   artifactBindingState: 'legacy_unverified'
 }
 
+const committedAssessmentReview = (): ReviewWithChecks => ({
+  ...review('assessment-review', 'complete'),
+  checks: [],
+  submittedChecks: [
+    {
+      kind: 'tracked',
+      submissionIndex: 0,
+      sourceFindingId: trackedCheck.id,
+      dispositionOutcome: 'resolved',
+      assessment: {
+        status: 'pass',
+        claim: 'Fixed',
+        evidence: 'Verified',
+        sortIndex: 0
+      },
+      sourceCheck: trackedCheck
+    }
+  ]
+})
+
 const makeRepository = (): ReviewRepository =>
   ({
     createReview: vi.fn(async () => {
@@ -144,11 +170,14 @@ const makeRepository = (): ReviewRepository =>
     }),
     commitScopedSubmission: vi.fn(async () => {
       insideMutation('write:commit')
-      return { ...review('assessment-review', 'complete'), checks: [] }
+      return committedAssessmentReview()
     }),
     getReviewsForProjectSession: vi.fn(async () => {
       outsideMutation('query:reviews')
-      return [{ ...review('source-review', 'complete'), checks: [trackedCheck] }]
+      return [
+        { ...review('source-review', 'complete'), checks: [trackedCheck], submittedChecks: [] },
+        committedAssessmentReview()
+      ]
     })
   }) as unknown as ReviewRepository
 
@@ -177,7 +206,7 @@ const runtime = (contextModel?: string, sessionModel?: string): AcpRuntime =>
             outsideMutation('acp:prompt')
             if (harness.promptError) throw harness.promptError
           },
-          nextUpdate: async () => ({ kind: 'stop', stopReason: 'end_turn' })
+          nextUpdate: harness.nextUpdate ?? (async () => ({ kind: 'stop', stopReason: 'end_turn' }))
         }
       }
     },
@@ -221,8 +250,10 @@ describe('review assessment owner', () => {
     harness.events = []
     harness.inMutation = false
     harness.submission = [{ status: 'pass', claim: 'Pass', evidence: 'Verified' }]
+    harness.submissionAttempted = false
     harness.submit = undefined
     harness.promptError = undefined
+    harness.nextUpdate = undefined
     harness.disposeError = undefined
     harness.stopError = undefined
     harness.bridgeScoped = undefined
@@ -279,6 +310,29 @@ describe('review assessment owner', () => {
     )
   })
 
+  it('aborts an active initial Reviewer session and persists its existing error lifecycle', async () => {
+    harness.submission = undefined
+    harness.nextUpdate = () => new Promise(() => {})
+    const reviewRepository = makeRepository()
+    const controller = new AbortController()
+
+    const assessment = runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      mode: 'initial',
+      abortSignal: controller.signal
+    })
+    await vi.waitFor(() => expect(harness.events).toContain('acp:prompt'))
+    controller.abort()
+
+    const result = await assessment
+    expect(result.review).toMatchObject({
+      lifecycle: 'error',
+      errorMessage: 'reviewer session was aborted before stopping'
+    })
+    expect(harness.events).toContain('acp:dispose')
+    expect(harness.events).toContain('mcp:stop')
+  })
+
   it('records the selected session model instead of the context tokenization model', async () => {
     const reviewRepository = makeRepository()
 
@@ -291,6 +345,30 @@ describe('review assessment owner', () => {
     expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
       model: 'selected-runtime-model'
     })
+  })
+
+  it('does not retry after submit_findings was attempted', async () => {
+    harness.submission = undefined
+    harness.submissionAttempted = true
+    const result = await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      mode: 'initial'
+    })
+
+    expect(result.review.lifecycle).toBe('error')
+    expect(harness.events.filter((event) => event === 'acp:prompt')).toHaveLength(1)
+  })
+
+  it('does not retry a cancelled reviewer turn', async () => {
+    harness.submission = undefined
+    harness.nextUpdate = async () => ({ kind: 'stop', stopReason: 'cancelled' })
+    const result = await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      mode: 'initial'
+    })
+
+    expect(result.review.lifecycle).toBe('error')
+    expect(harness.events.filter((event) => event === 'acp:prompt')).toHaveLength(1)
   })
 
   it('disposes a built session when the pinned model cannot be persisted', async () => {
@@ -356,11 +434,15 @@ describe('review assessment owner', () => {
       }
     ]
     const reviewRepository = makeRepository()
+    const published: ReviewWithChecks[] = []
     const result = await runReviewAssessment({
       ...commonOptions(reviewRepository),
       mode: 'tracked',
       trackedChecks: [trackedCheck],
-      onReviewUpdate: (value: ReviewWithChecks) => outsideMutation(`publish:${value.id}`)
+      onReviewUpdate: (value: ReviewWithChecks) => {
+        published.push(value)
+        outsideMutation(`publish:${value.id}`)
+      }
     })
 
     expect(result.submittedChecks).toEqual(harness.submission)
@@ -378,6 +460,10 @@ describe('review assessment owner', () => {
     )
     expect(harness.events.indexOf('publish:source-review')).toBeLessThan(
       harness.events.lastIndexOf('publish:assessment-review')
+    )
+    const commandRead = await reviewRepository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(published.findLast((candidate) => candidate.id === 'assessment-review')).toEqual(
+      commandRead.find((candidate) => candidate.id === 'assessment-review')
     )
   })
 })

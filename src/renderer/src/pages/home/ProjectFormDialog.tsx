@@ -1,16 +1,17 @@
 import { X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
   dialogCloseButtonClassName,
-  dialogFooterClassName,
   dialogFormHelpClassName,
   dialogFormInputClassName,
   dialogFormLabelClassName,
   dialogFormTextareaClassName,
+  dialogFooterClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
@@ -18,6 +19,10 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Input } from '@/components/ui/input'
+import {
+  PROJECT_DESCRIPTION_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH
+} from '../../../../shared/projects'
 
 type ProjectFormDialogProps = {
   open: boolean
@@ -54,6 +59,7 @@ const ProjectFormDialog = ({
   onCancel,
   onConfirm
 }: ProjectFormDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogTitle = useRetainedDialogValue(open ? title : undefined) ?? title
   const dialogDescription = useRetainedDialogValue(open ? description : undefined) ?? description
   const dialogSubmitLabel = useRetainedDialogValue(open ? submitLabel : undefined) ?? submitLabel
@@ -83,7 +89,7 @@ const ProjectFormDialog = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close"
+                aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
                 onClick={onCancel}
               >
@@ -93,49 +99,55 @@ const ProjectFormDialog = ({
             <div className={`${dialogBodyClassName} space-y-4`}>
               <div>
                 <label className={dialogFormLabelClassName} htmlFor="project-form-name">
-                  Name
+                  {t('Name')}
                 </label>
                 <Input
                   id="project-form-name"
                   value={nameDraft}
                   onChange={(event) => onNameChange(event.target.value)}
-                  placeholder="e.g. Reproduction of published research"
+                  placeholder={t('e.g. Reproduction of published research')}
                   autoFocus
+                  maxLength={PROJECT_NAME_MAX_LENGTH}
                   className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
                 />
               </div>
               <div>
                 <label className={dialogFormLabelClassName} htmlFor="project-form-description">
-                  Description
+                  {t('Description')}
                 </label>
                 <p id="project-form-description-help" className={dialogFormHelpClassName}>
-                  Shown in the project list for your reference — not included in the agent’s prompt.
+                  {t(
+                    "Shown in the project list for your reference — not included in the agent's prompt."
+                  )}
                 </p>
                 <textarea
                   id="project-form-description"
                   aria-describedby="project-form-description-help"
                   value={descriptionDraft}
                   onChange={(event) => onDescriptionChange(event.target.value)}
-                  placeholder="Describe what this project is about…"
+                  placeholder={t('Describe what this project is about…')}
                   rows={3}
+                  maxLength={PROJECT_DESCRIPTION_MAX_LENGTH}
                   className={dialogFormTextareaClassName}
                 />
               </div>
               <div>
                 <label className={dialogFormLabelClassName} htmlFor="project-form-agent-context">
-                  Agent Context
+                  {t('Agent Context')}
                 </label>
                 <p id="project-form-agent-context-help" className={dialogFormHelpClassName}>
-                  Injected into the system prompt of every agent session in this project, including
-                  resumed ones. Sent to the model provider with every session — do not include
-                  secrets.
+                  {t(
+                    'Injected into the system prompt of every agent session in this project, including resumed ones. Sent to the model provider with every session — do not include secrets.'
+                  )}
                 </p>
                 <textarea
                   id="project-form-agent-context"
                   aria-describedby="project-form-agent-context-help"
                   value={agentContextDraft}
                   onChange={(event) => onAgentContextChange(event.target.value)}
-                  placeholder="e.g. Always cite sources with DOIs. Prefer Python for analysis. Report p-values with effect sizes."
+                  placeholder={t(
+                    'e.g. Always cite sources with DOIs. Prefer Python for analysis. Report p-values with effect sizes.'
+                  )}
                   rows={4}
                   maxLength={16000}
                   className={dialogFormTextareaClassName}
@@ -154,7 +166,7 @@ const ProjectFormDialog = ({
                 className={dialogCancelButtonClassName}
                 onClick={onCancel}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
               <Button type="submit" disabled={nameDraft.trim().length === 0 || isSubmitting}>
                 {dialogSubmitLabel}

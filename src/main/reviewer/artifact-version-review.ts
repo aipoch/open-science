@@ -2,6 +2,7 @@ import type {
   ArtifactReviewHistoryEvent,
   ArtifactVersionReviewProjection,
   ReviewFindingDisposition,
+  SubmittedReviewCheck,
   ReviewWithProvenanceEvidence
 } from '../../shared/reviewer'
 
@@ -15,6 +16,23 @@ const compareReviews = (
 
 const directlyAssesses = (review: ReviewWithProvenanceEvidence, versionId: string): boolean =>
   review.scope.artifactVersionIds.includes(versionId)
+
+const submittedCheckAssessesArtifactVersion = (
+  item: SubmittedReviewCheck,
+  selectedVersionId: string
+): boolean => {
+  if (item.kind === 'new') {
+    return (
+      item.check.artifactVersionId === undefined ||
+      item.check.artifactVersionId === selectedVersionId
+    )
+  }
+  const assessedVersionId =
+    item.assessedArtifactVersionId ??
+    item.assessment?.artifactVersionId ??
+    item.sourceCheck.artifactVersionId
+  return assessedVersionId === undefined || assessedVersionId === selectedVersionId
+}
 
 export const selectReviewChainForArtifactVersion = (input: {
   selectedVersionId: string
@@ -68,15 +86,24 @@ export const selectReviewChainForArtifactVersion = (input: {
     directlyAssesses(review, input.selectedVersionId)
   )
   const currentDirectAssessment = directReviews.at(-1)
-  const assessment = currentDirectAssessment ?? chainReviews.at(-1)
-  const selectedVersionChecks = (assessment?.checks ?? []).filter(
+  const assessment = (currentDirectAssessment ?? chainReviews.at(-1))!
+  const selectedVersionChecks = assessment.checks.filter(
     (check) =>
       check.artifactVersionId === input.selectedVersionId &&
       (currentDirectAssessment ? check.artifactBindingState === 'scope_validated' : true)
   )
-  const turnLevelChecks = (assessment?.checks ?? []).filter(
-    (check) => check.artifactVersionId === undefined
-  )
+  const turnLevelChecks = assessment.checks.filter((check) => check.artifactVersionId === undefined)
+  const selectedVersionAssessment: ReviewWithProvenanceEvidence = {
+    ...assessment,
+    checks: [...selectedVersionChecks, ...turnLevelChecks],
+    ...(assessment.submittedChecks
+      ? {
+          submittedChecks: assessment.submittedChecks.filter((submittedCheck) =>
+            submittedCheckAssessesArtifactVersion(submittedCheck, input.selectedVersionId)
+          )
+        }
+      : {})
+  }
   const selectedFindingIds = new Set(selectedVersionChecks.map((check) => check.id))
   const selectedVersionDispositions = input.dispositions
     .filter((disposition) => selectedFindingIds.has(disposition.sourceFindingId))
@@ -110,6 +137,7 @@ export const selectReviewChainForArtifactVersion = (input: {
   return {
     binding: directSeeds.length > 0 ? 'version' : 'legacy-turn',
     selectedVersionId: input.selectedVersionId,
+    selectedVersionAssessment,
     ...(currentDirectAssessment ? { currentDirectAssessment } : {}),
     latestChainReview: chainReviews.at(-1)!,
     selectedVersionChecks,

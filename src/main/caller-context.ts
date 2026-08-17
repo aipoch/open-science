@@ -88,6 +88,13 @@ const canSatisfyHumanApproval = (context: CallerContext): boolean =>
   context.principalKind === 'human' &&
   context.actionOrigin === 'human'
 
+const canAccessSessionPlan = (context: CallerContext): boolean =>
+  context.isAuthorizationCurrent() &&
+  ((context.principalKind === 'human' && context.actionOrigin === 'human') ||
+    (context.surface === 'task' &&
+      context.principalKind === 'automation' &&
+      context.actionOrigin === 'automation'))
+
 export type ClientLease = Readonly<{
   clientId: string
   release: () => void
@@ -157,6 +164,7 @@ export class ClientLeaseRegistry {
 
 export {
   callerContextForEvent,
+  canAccessSessionPlan,
   canSatisfyHumanApproval,
   createCallerContext,
   createElectronCallerContext,

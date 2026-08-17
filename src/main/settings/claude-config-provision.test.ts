@@ -1,49 +1,21 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { SkillRegistry } from '../skills/registry'
-import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import {
-  APP_ASSET_SUBDIRS,
   DENIED_BUILTIN_TOOLS,
   MANAGED_BUILTIN_TOOLS,
   configDenyRules,
-  provisionAppClaudeConfigDir
+  provisionAppClaudePrivateProfile
 } from './claude-config-provision'
 
-// The default (no-registry) call path builds a SkillRegistry() that resolves the bundled-skills root via
-// electron's app; point it at a nonexistent dir so the registry lists nothing instead of touching a real
-// app path in the node test environment.
 vi.mock('electron', () => ({
   app: { getAppPath: () => join(tmpdir(), 'os-no-such-app-root') }
 }))
 
 let root: string | undefined
-
-// Seeds a bundled-skills root with one "demo" skill + manifest so provisioning has something to copy.
-const seedBundle = async (): Promise<string> => {
-  const bundle = await mkdtemp(join(tmpdir(), 'bundle-'))
-  await mkdir(join(bundle, 'demo'), { recursive: true })
-  await writeFile(
-    join(bundle, 'demo', 'SKILL.md'),
-    ['---', 'name: demo', 'description: d', '---', 'body'].join('\n'),
-    'utf8'
-  )
-  await writeFile(
-    join(bundle, 'manifest.json'),
-    JSON.stringify({
-      version: 1,
-      skills: [
-        { id: 'demo', name: 'Demo', source: 'featured', updatedAt: '2026-01-01T00:00:00.000Z' }
-      ]
-    }),
-    'utf8'
-  )
-  return bundle
-}
 
 afterEach(async () => {
   if (root) {
@@ -64,36 +36,32 @@ describe('built-in tool deny policy', () => {
   })
 })
 
-describe('provisionAppClaudeConfigDir', () => {
-  it('creates the config dir and its app-asset subdirs', async () => {
+describe('provisionAppClaudePrivateProfile', () => {
+  it('creates only the private profile and settings file', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
-    await provisionAppClaudeConfigDir(configDir)
+    await provisionAppClaudePrivateProfile(configDir)
 
     expect((await stat(configDir)).isDirectory()).toBe(true)
-    const entries = (await readdir(configDir)).sort()
-    for (const sub of APP_ASSET_SUBDIRS) {
-      expect(entries).toContain(sub)
-    }
-    await expect(
-      readFile(join(configDir, '.claude-plugin', 'plugin.json'), 'utf8').then(JSON.parse)
-    ).resolves.toMatchObject({ name: 'open-science' })
+    await expect(readFile(join(configDir, 'settings.json'), 'utf8')).resolves.toBeTruthy()
+    await expect(stat(join(configDir, 'skills'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(join(configDir, '.claude-plugin'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('is idempotent', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
-    await provisionAppClaudeConfigDir(configDir)
-    await expect(provisionAppClaudeConfigDir(configDir)).resolves.toBeUndefined()
+    const first = await provisionAppClaudePrivateProfile(configDir)
+    await expect(provisionAppClaudePrivateProfile(configDir)).resolves.toEqual(first)
   })
 
   it('writes permission deny rules fencing the file tools out of the config dir', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
-    await provisionAppClaudeConfigDir(configDir)
+    await provisionAppClaudePrivateProfile(configDir)
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     const deny: string[] = settings.permissions.deny
@@ -104,11 +72,21 @@ describe('provisionAppClaudeConfigDir', () => {
     }
   })
 
+  it('returns the exact private settings snapshot written for session-scoped use', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+
+    const settings = await provisionAppClaudePrivateProfile(configDir)
+
+    expect(settings).toEqual(JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8')))
+    expect(settings).toMatchObject({ disableBundledSkills: true })
+  })
+
   it('leaves the built-in web tools enabled in the app user scope', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
-    await provisionAppClaudeConfigDir(configDir)
+    await provisionAppClaudePrivateProfile(configDir)
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     expect(settings.permissions.deny).not.toContain('WebSearch')
@@ -127,7 +105,7 @@ describe('provisionAppClaudeConfigDir', () => {
       'utf8'
     )
 
-    await provisionAppClaudeConfigDir(configDir)
+    await provisionAppClaudePrivateProfile(configDir)
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     expect(settings.permissions.deny).not.toContain('WebSearch')
@@ -138,7 +116,7 @@ describe('provisionAppClaudeConfigDir', () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
-    await provisionAppClaudeConfigDir(configDir)
+    await provisionAppClaudePrivateProfile(configDir)
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     expect(settings.disableBundledSkills).toBe(true)
@@ -154,7 +132,7 @@ describe('provisionAppClaudeConfigDir', () => {
       'utf8'
     )
 
-    await provisionAppClaudeConfigDir(configDir)
+    await provisionAppClaudePrivateProfile(configDir)
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     expect(settings.model).toBe('keep-me')
@@ -169,13 +147,11 @@ describe('provisionAppClaudeConfigDir', () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
-    await provisionAppClaudeConfigDir(configDir, {
-      modelConfig: {
-        availableModels: ['sonnet', 'opus'],
-        modelOverrides: {
-          sonnet: 'deepseek-v4-flash',
-          opus: 'deepseek-v4-pro'
-        }
+    await provisionAppClaudePrivateProfile(configDir, {
+      availableModels: ['sonnet', 'opus'],
+      modelOverrides: {
+        sonnet: 'deepseek-v4-flash',
+        opus: 'deepseek-v4-pro'
       }
     })
 
@@ -187,37 +163,12 @@ describe('provisionAppClaudeConfigDir', () => {
       }
     })
 
-    await provisionAppClaudeConfigDir(configDir, { modelConfig: null })
+    await provisionAppClaudePrivateProfile(configDir, null)
 
     const cleared = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     expect(cleared.availableModels).toBeUndefined()
     expect(cleared.modelOverrides).toBeUndefined()
     expect(cleared.permissions.deny).toEqual(configDenyRules(configDir))
     expect(cleared.disableBundledSkills).toBe(true)
-  })
-
-  it('materializes enabled bundled skills, honoring disabledSkillIds', async () => {
-    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
-    const configDir = join(root, 'claude')
-    const registry = new SkillRegistry(await seedBundle())
-    const skills = await registry.list()
-
-    await provisionAppClaudeConfigDir(configDir, {
-      skills,
-      materializer: new ClaudeCodeSkillMaterializer(),
-      disabledSkillIds: []
-    })
-    expect(
-      (await readdir(join(configDir, 'skills'))).filter((name) => !name.startsWith('.'))
-    ).toEqual(['os-demo'])
-
-    await provisionAppClaudeConfigDir(configDir, {
-      skills,
-      materializer: new ClaudeCodeSkillMaterializer(),
-      disabledSkillIds: ['demo']
-    })
-    expect(
-      (await readdir(join(configDir, 'skills'))).filter((name) => !name.startsWith('.'))
-    ).toEqual([])
   })
 })

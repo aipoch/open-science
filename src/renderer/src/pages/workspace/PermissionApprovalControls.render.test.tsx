@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { describe, expect, it } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -532,6 +533,34 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[replRequest]} onRespond={() => undefined} />
     )
     expect(replHtml).toContain('>JS REPL</span>')
+  })
+
+  it('translates permission presentation copy while preserving dynamic service names', async () => {
+    await i18next.changeLanguage('zh-Hans')
+    try {
+      const notebookHtml = renderToStaticMarkup(
+        <PermissionApprovalControls requests={[rNotebookRequest]} onRespond={() => undefined} />
+      )
+      expect(notebookHtml).toContain('运行 R 代码？')
+      expect(notebookHtml).toContain('>R 执行</span>')
+
+      const serviceHtml = renderToStaticMarkup(
+        <PermissionApprovalControls
+          requests={[
+            {
+              ...permissionRequest,
+              isMcp: true,
+              mcpIdentity: 'custom-service/run_report',
+              providerToolName: 'custom-service/run_report'
+            }
+          ]}
+          onRespond={() => undefined}
+        />
+      )
+      expect(serviceHtml).toContain('使用 Custom Service / Run Report？')
+    } finally {
+      await i18next.changeLanguage('en')
+    }
   })
 
   it('renders no code block when rawInput is absent', () => {

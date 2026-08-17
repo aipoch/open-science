@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -24,7 +25,7 @@ type CachedTiffSession = {
   session: TiffDecodeSession
 }
 
-const getTiffPreviewErrorMessage = (error: Error): string => {
+const getTiffPreviewErrorMessage = (error: Error, t: (key: string) => string): string => {
   if (
     error.message === 'TIFF file is too large to preview safely' ||
     error.message === 'TIFF page dimensions are too large to preview safely' ||
@@ -38,14 +39,14 @@ const getTiffPreviewErrorMessage = (error: Error): string => {
     error.message.startsWith('TIFF preview read failed') ||
     error.message === 'TIFF file changed during the preview read'
   ) {
-    return "TIFF couldn't be loaded for preview"
+    return t("TIFF couldn't be loaded for preview")
   }
 
   if (error.message.startsWith('Unsupported ')) {
-    return "This TIFF encoding isn't supported for preview"
+    return t("This TIFF encoding isn't supported for preview")
   }
 
-  return "TIFF couldn't be decoded for preview"
+  return t("TIFF couldn't be decoded for preview")
 }
 
 const TiffPageControls = ({
@@ -57,6 +58,7 @@ const TiffPageControls = ({
   pageCount: number
   onPageChange: (pageIndex: number) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const actions = [
     {
       label: 'Previous TIFF page',
@@ -94,7 +96,7 @@ const TiffPageControls = ({
           </Tooltip>
         ))}
         <span className="px-1 text-[11px] tabular-nums text-text-100">
-          Page {pageIndex + 1} of {pageCount}
+          {t('Page {{current}} of {{total}}', { current: pageIndex + 1, total: pageCount })}
         </span>
       </div>
     </TooltipProvider>
@@ -128,6 +130,8 @@ const TiffPreviewContent = ({
   variant?: 'interactive' | 'thumbnail'
   align?: 'start' | 'center'
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const resourceKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -265,7 +269,7 @@ const TiffPreviewContent = ({
       <PreviewErrorCard
         name={name}
         error={resourceState.error}
-        fallbackMessage="TIFF couldn't be loaded for preview"
+        fallbackMessage={t("TIFF couldn't be loaded for preview")}
       />
     )
   }
@@ -279,7 +283,7 @@ const TiffPreviewContent = ({
       <PreviewErrorCard
         name={name}
         error={result.error}
-        fallbackMessage={getTiffPreviewErrorMessage(result.error)}
+        fallbackMessage={getTiffPreviewErrorMessage(result.error, t)}
       />
     )
   }
@@ -290,7 +294,7 @@ const TiffPreviewContent = ({
         <PreviewErrorCard
           name={name}
           error={result.error}
-          fallbackMessage={getTiffPreviewErrorMessage(result.error)}
+          fallbackMessage={getTiffPreviewErrorMessage(result.error, t)}
         />
         {result.pageCount > 1 ? (
           <TiffPageControls
@@ -308,7 +312,7 @@ const TiffPreviewContent = ({
     result?.status !== 'ready' ||
     result.requestKey !== requestKey
   ) {
-    return <PreviewLoadingContent title="Decoding TIFF image" />
+    return <PreviewLoadingContent title={t('Decoding TIFF image')} />
   }
 
   if (variant === 'thumbnail') {

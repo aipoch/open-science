@@ -68,6 +68,26 @@ describe('project store', () => {
     expect(useProjectStore.getState().projects.map((candidate) => candidate.id)).toEqual(['new'])
   })
 
+  it('reloads after a project is created while initial hydration is in flight', async () => {
+    const staleLoad = createDeferred<Project[]>()
+    const created = createProject({ id: 'created', name: 'New', updatedAt: 500 })
+    const list = vi.fn().mockReturnValueOnce(staleLoad.promise).mockResolvedValueOnce([created])
+    setProjectsApi({
+      list,
+      create: vi.fn().mockResolvedValue(created)
+    })
+
+    const pendingLoad = useProjectStore.getState().loadProjects()
+    await useProjectStore.getState().createProject({ name: 'New' })
+    staleLoad.resolve([])
+    await pendingLoad
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(useProjectStore.getState().projects).toEqual([created])
+    expect(useProjectStore.getState().isLoaded).toBe(true)
+    expect(useProjectStore.getState().loadError).toBeUndefined()
+  })
+
   it('merges a created project into the cache and returns it', async () => {
     const created = createProject({ id: 'created', name: 'New', updatedAt: 500 })
     setProjectsApi({ create: vi.fn().mockResolvedValue(created) })

@@ -1,5 +1,6 @@
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Dialog } from 'radix-ui'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
@@ -52,6 +53,7 @@ const FilePreviewDialog = ({
   onClose,
   onItemChange
 }: FilePreviewDialogProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const dialogItem = useRetainedDialogValue(item)
   const open = Boolean(item)
   const [hasNestedFullscreen, setHasNestedFullscreen] = useState(hasStreamdownFullscreen)
@@ -118,7 +120,7 @@ const FilePreviewDialog = ({
           )}
         >
           <Dialog.Title className="sr-only">
-            {dialogItem ? `Preview ${dialogItem.title}` : 'File preview'}
+            {dialogItem ? t('Preview {{title}}', { title: dialogItem.title }) : t('File preview')}
           </Dialog.Title>
           <FocusScope asChild loop trapped={!(open && hasNestedFullscreen)}>
             <div className="flex size-full min-h-0 min-w-0">
@@ -131,6 +133,9 @@ const FilePreviewDialog = ({
                     ? { onItemChange: (nextItem: PreviewFileItem) => onItemChange(nextItem, true) }
                     : {})}
                   provenanceEntry="trailing"
+                  // The modal overlays the conversation panel, so a View in context navigation must
+                  // also close the dialog for the switched session to become visible.
+                  onViewInContextNavigate={onClose}
                   tooltipClassName="z-[70]"
                   leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
                 />

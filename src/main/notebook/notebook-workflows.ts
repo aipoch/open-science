@@ -11,6 +11,7 @@ import type {
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
+  NotebookSessionStateRequest,
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../../shared/notebook'
@@ -40,7 +41,7 @@ type FinishNotebookCodeCellResult = {
 type NotebookShutdownResult = { sessionId: string; status: 'shutdown' }
 
 type NotebookCommandRuntime = {
-  state(request: NotebookSessionRequest): Promise<NotebookSessionState>
+  state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   getSessionReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>
@@ -54,7 +55,7 @@ type NotebookCommandRuntime = {
 }
 
 type NotebookCommandWorkflows = {
-  state(request: NotebookSessionRequest): Promise<NotebookSessionState>
+  state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   reference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>

@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { create, type StoreApi } from 'zustand'
 import type {
   SpecialistListItem,
   SpecialistProfileView,
@@ -17,6 +17,7 @@ import type {
 type SpecialistStoreData = {
   items: SpecialistListItem[]
   isLoaded: boolean
+  loadError: string | undefined
   packagePreview?: SpecialistPackageCandidatePreview
   exportPreview?: SpecialistExportPreview
 }
@@ -46,44 +47,66 @@ type SpecialistStoreActions = {
 
 type SpecialistStore = SpecialistStoreData & SpecialistStoreActions
 
+const SAFE_SPECIALIST_LOAD_ERROR = 'Open Science could not load Specialists. Retry to continue.'
+
+let latestCatalogRequest = 0
 let latestExportPreviewRequest = 0
+
+const refreshCatalog = async (set: StoreApi<SpecialistStore>['setState']): Promise<void> => {
+  const requestId = ++latestCatalogRequest
+  set({ loadError: undefined })
+  try {
+    const items = await window.api.specialist.list()
+    if (requestId === latestCatalogRequest) {
+      set({ items, isLoaded: true, loadError: undefined })
+    }
+  } catch (error) {
+    if (requestId === latestCatalogRequest) {
+      console.warn('Specialist catalog loading failed', error)
+      set({ loadError: SAFE_SPECIALIST_LOAD_ERROR })
+    }
+    throw error
+  }
+}
 
 const useSpecialistStore = create<SpecialistStore>((set) => ({
   items: [],
   isLoaded: false,
+  loadError: undefined,
   packagePreview: undefined,
   exportPreview: undefined,
 
-  load: async () => {
+  load: () => {
     // Guard: specialist.list is Electron-only and unavailable in the web gateway.
     if (typeof window.api?.specialist?.list !== 'function') {
-      set({ items: [], isLoaded: true })
-      return
+      latestCatalogRequest += 1
+      set({ items: [], isLoaded: true, loadError: undefined })
+      return Promise.resolve()
     }
-    const items = await window.api.specialist.list()
-    set({ items, isLoaded: true })
+    const request = refreshCatalog(set)
+    // Keep ignored startup/event refreshes handled while preserving rejection for
+    // callers that await load() before consuming the catalog.
+    void request.catch(() => undefined)
+    return request
   },
 
   create: async (input: CreateSpecialistInput) => {
     const view = await window.api.specialist.create(input)
     // Reload the full list so Reviewer and ordering stay consistent.
-    const items = await window.api.specialist.list()
-    set({ items })
+    await refreshCatalog(set)
     return view
   },
 
   update: async (input: UpdateSpecialistInput) => {
     const view = await window.api.specialist.update(input)
     // Reload the full list so Reviewer and ordering stay consistent.
-    const items = await window.api.specialist.list()
-    set({ items })
+    await refreshCatalog(set)
     return view
   },
 
   setEnabled: async (id: string, enabled: boolean) => {
     await window.api.specialist.setEnabled({ id, enabled })
-    const items = await window.api.specialist.list()
-    set({ items })
+    await refreshCatalog(set)
   },
 
   previewDelete: async (id: string) => window.api.specialist.previewDelete({ id }),
@@ -91,8 +114,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   delete: async (id: string, expectedRevision: number, deleteSkillIds: readonly string[]) => {
     const result = await window.api.specialist.delete({ id, expectedRevision, deleteSkillIds })
     if (result.status === 'deleted') {
-      const items = await window.api.specialist.list()
-      set({ items })
+      await refreshCatalog(set)
     }
     return result
   },
@@ -113,8 +135,8 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
       ...(confirmOverwrite ? { confirmOverwrite: true as const } : {})
     })
     if (result.status === 'installed') {
-      const items = await window.api.specialist.list()
-      set({ items, packagePreview: undefined })
+      await refreshCatalog(set)
+      set({ packagePreview: undefined })
     }
     return result
   },

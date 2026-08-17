@@ -80,6 +80,7 @@ const createRepository = (
         ? { status: 'found' as const, session: structuredClone(session) }
         : { status: 'missing' as const }
     }),
+    assertSessionIdentityOwnership: vi.fn(async () => undefined),
     saveSession: vi.fn(async (session) => {
       sessions.set(session.id, structuredClone(session))
     }),

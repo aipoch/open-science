@@ -9,7 +9,9 @@ import {
   type PersistedChatSession,
   type SaveSessionOptions,
   type SessionConflictRebaseField,
-  type SaveSessionManifestRequest
+  type SessionLoadDiagnostics,
+  type SaveSessionManifestRequest,
+  type SessionDeletionResult
 } from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
@@ -26,9 +28,12 @@ type SessionPersistenceApi = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<PersistedChatSession>
-  deleteSession: (request: DeleteSessionRequest) => Promise<void>
+  deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
+
+const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
+  window.api.sessions.deleteSession(request)
 
 type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
 
@@ -205,11 +210,63 @@ type SessionStoreSnapshot = {
   selectedSessionId: string | undefined
 }
 
+type SessionCatalogRecovery =
+  | { kind: 'ready' }
+  | {
+      kind: 'repairable'
+      reason: 'session-scan' | 'startup-reconciliation'
+    }
+  | {
+      kind: 'damaged-authority'
+      affectedFileCount: number
+    }
+  | { kind: 'project-deletion-recovery' }
+
+const READY_SESSION_CATALOG_RECOVERY: SessionCatalogRecovery = Object.freeze({ kind: 'ready' })
+
+const deriveSessionCatalogRecovery = (
+  diagnostics: SessionLoadDiagnostics | undefined
+): SessionCatalogRecovery => {
+  if (!diagnostics) return READY_SESSION_CATALOG_RECOVERY
+  if (diagnostics.isProjectDeletionRecoveryComplete === false) {
+    return { kind: 'project-deletion-recovery' }
+  }
+
+  const sessionWarnings = diagnostics.warnings.filter((warning) => 'projectId' in warning)
+  if (diagnostics.isComplete === false) {
+    return {
+      kind: 'repairable',
+      reason:
+        diagnostics.failure === 'startup-reconciliation-failed'
+          ? 'startup-reconciliation'
+          : 'session-scan'
+    }
+  }
+
+  const damagedWarnings = sessionWarnings.filter(
+    (warning) => warning.kind === 'corrupt' && warning.recovered
+  )
+  if (damagedWarnings.length > 0) {
+    return {
+      kind: 'damaged-authority',
+      affectedFileCount: damagedWarnings.length
+    }
+  }
+
+  // A warning outside a partial scan should remain recoverable rather than being collapsed into a
+  // healthy catalog if a future Main diagnostic can report a readable-but-unresolved Session.
+  if (sessionWarnings.length > 0) {
+    return { kind: 'repairable', reason: 'session-scan' }
+  }
+  return READY_SESSION_CATALOG_RECOVERY
+}
+
 type SessionPersistenceState = {
   isHydrated: boolean
   isLoading: boolean
   isReady: boolean
   hasCompleteSessionCatalog: boolean
+  catalogRecovery: SessionCatalogRecovery
   canDeleteSessionsAndProjects: boolean
   loadError: string | undefined
   loadWarning: string | undefined
@@ -508,6 +565,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [isLoading, setIsLoading] = useState(true)
   const [isReady, setIsReady] = useState(false)
   const [hasCompleteSessionCatalog, setHasCompleteSessionCatalog] = useState(false)
+  const [catalogRecovery, setCatalogRecovery] = useState<SessionCatalogRecovery>(
+    READY_SESSION_CATALOG_RECOVERY
+  )
   const [canDeleteSessionsAndProjects, setCanDeleteSessionsAndProjects] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
@@ -529,6 +589,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setIsLoading(true)
     setIsReady(false)
     setHasCompleteSessionCatalog(false)
+    setCatalogRecovery(READY_SESSION_CATALOG_RECOVERY)
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
@@ -580,6 +641,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
         const sessionWarningCount = loadWarnings.filter(
           (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
         ).length
+        setCatalogRecovery(deriveSessionCatalogRecovery(result.diagnostics))
         setHasCompleteSessionCatalog(
           result.diagnostics?.isComplete !== false && sessionWarningCount === 0
         )
@@ -628,6 +690,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
         reportPersistenceError(error, 'session-load')
         if (isMounted) {
           setHasCompleteSessionCatalog(false)
+          setCatalogRecovery(READY_SESSION_CATALOG_RECOVERY)
           setCanDeleteSessionsAndProjects(false)
           setLoadError(SAFE_SESSION_LOAD_ERROR)
           setIsLoading(false)
@@ -737,6 +800,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     isLoading,
     isReady,
     hasCompleteSessionCatalog,
+    catalogRecovery,
     canDeleteSessionsAndProjects,
     loadError,
     loadWarning,
@@ -753,12 +817,15 @@ export {
   flushSessionPersistence,
   loadPersistedSessions,
   reconcilePendingArtifacts,
+  deriveSessionCatalogRecovery,
+  deleteSession,
   saveSessionInOrder,
   useSessionPersistence
 }
 export type {
   ArtifactReconcileApi,
   OrderedSessionPersistence,
+  SessionCatalogRecovery,
   SessionPersistenceApi,
   SessionPersistenceState
 }

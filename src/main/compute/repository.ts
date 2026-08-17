@@ -205,8 +205,8 @@ class ComputeHostRepository {
     })
   }
 
-  // Persists the concurrent job limit (1..500). Phase 1 stores the value but does not enforce it
-  // (no job runner). Callers must validate the range before calling.
+  // Persists the concurrent job limit (1..500). ConcurrencyManager validates and enforces it in the
+  // production job path; repository-only callers must validate the range before calling.
   async updateConcurrencyLimit(providerId: string, concurrencyLimit: number): Promise<void> {
     const client = await this.getClient()
 

@@ -70,14 +70,6 @@ describe('database startup logging', () => {
       phase: 'migrating',
       migrationId: '0002_project_agent_context'
     })
-    expect(progress).toHaveBeenCalledWith({
-      phase: 'migrating',
-      migrationId: '0003_granted_local_roots'
-    })
-    expect(progress).toHaveBeenCalledWith({
-      phase: 'migrating',
-      migrationId: '0004_managed_file_version_foundation'
-    })
     expect(records).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ level: 'info', message: 'database migration checking' }),
@@ -109,7 +101,12 @@ describe('database startup logging', () => {
               '0001_runtime_schema_baseline',
               '0002_project_agent_context',
               '0003_granted_local_roots',
-              '0004_managed_file_version_foundation'
+              '0004_review_assessment_snapshots',
+              '0005_project_preview_state_owner_fk',
+              '0006_database_domain_constraints',
+              '0007_notification_attention_metadata',
+              '0008_database_json_constraints',
+              '0009_managed_file_version_foundation'
             ],
             adoptedLegacy: true
           })
@@ -125,8 +122,8 @@ describe('database startup logging', () => {
     options.onProgress?.({ phase: 'checking' })
     options.onCompatibilityVerified?.({ sqliteVersion: '3.49.1' })
     options.onCompleted?.({
-      from: '0003_granted_local_roots',
-      to: '0003_granted_local_roots',
+      from: '0004_review_assessment_snapshots',
+      to: '0004_review_assessment_snapshots',
       applied: [],
       adoptedLegacy: false
     })

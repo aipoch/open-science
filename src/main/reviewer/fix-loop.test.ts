@@ -98,6 +98,7 @@ type FixLoopAgentState = {
 // the main agent receives prompts. The test populates this after each correction.
 type SharedSessionData = {
   getSession: () => PersistedChatSession
+  correctionPromptMessageId?: string
 }
 
 const startFixLoopFakeAgent = (
@@ -225,6 +226,7 @@ const startFixLoopFakeAgent = (
               role: 'agent',
               content: 'I have corrected the issue.',
               status: 'complete',
+              responseToMessageId: sessionData.correctionPromptMessageId,
               eventIds: [],
               createdAt: Date.now() + 1,
               updatedAt: Date.now() + 1
@@ -306,6 +308,30 @@ const makeSharedSession = (
   return shared
 }
 
+const createFixLoopRuntime = (
+  process: FakeAgentProcess,
+  sessionData: SharedSessionData,
+  onApplicationPrompt?: () => void
+): AcpRuntime => {
+  const runtime = new AcpRuntime({
+    appVersion: '0.1.0',
+    defaultCwd: '/workspace',
+    spawnAgent: () => asAgentProcess(process)
+  })
+  const sendApplicationPrompt = runtime.sendApplicationPrompt.bind(runtime)
+  runtime.sendApplicationPrompt = async (
+    ...args: Parameters<AcpRuntime['sendApplicationPrompt']>
+  ) => {
+    const [request] = args
+    const promptMessageId = request.provenanceContext?.promptMessageId
+    if (!promptMessageId) throw new Error('Correction prompt message id was not provided')
+    sessionData.correctionPromptMessageId = promptMessageId
+    onApplicationPrompt?.()
+    return sendApplicationPrompt(...args)
+  }
+  return runtime
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -359,16 +385,12 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
-
     let activityActive = false
+    const runtime = createFixLoopRuntime(process, shared, () => {
+      expect(activityActive).toBe(true)
+    })
     const originalWithActivity = runtime.withActivity.bind(runtime)
     const originalBuildReviewerSession = runtime.buildReviewerSession.bind(runtime)
-    const originalSendPrompt = runtime.sendPrompt.bind(runtime)
     const activitySpy = vi.spyOn(runtime, 'withActivity').mockImplementation((options, work) =>
       originalWithActivity(options, async (scopedRuntime) => {
         activityActive = true
@@ -382,10 +404,6 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     vi.spyOn(runtime, 'buildReviewerSession').mockImplementation((request) => {
       expect(activityActive).toBe(true)
       return originalBuildReviewerSession(request)
-    })
-    vi.spyOn(runtime, 'sendPrompt').mockImplementation((request) => {
-      expect(activityActive).toBe(true)
-      return originalSendPrompt(request)
     })
 
     await runtime.createSession({ cwd: '/workspace' })
@@ -465,11 +483,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
+    const runtime = createFixLoopRuntime(process, shared)
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
@@ -543,11 +557,7 @@ describe('fix loop: cancellation', () => {
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
+    const runtime = createFixLoopRuntime(process, shared)
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
@@ -629,11 +639,7 @@ describe('fix loop: newly discovered issues remain in the automatic remediation 
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
+    const runtime = createFixLoopRuntime(process, shared)
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
@@ -722,11 +728,7 @@ describe('fix loop: cap at 3 rounds → unaddressed', () => {
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
+    const runtime = createFixLoopRuntime(process, shared)
 
     await runtime.createSession({ cwd: '/workspace' })
 
@@ -805,11 +807,7 @@ describe('fix loop: stable finding identity survives reviewer paraphrases', () =
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
+    const runtime = createFixLoopRuntime(process, shared)
 
     await runtime.createSession({ cwd: '/workspace' })
 
@@ -869,11 +867,7 @@ describe('fix loop: claim left unchanged stays open', () => {
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
+    const runtime = createFixLoopRuntime(process, shared)
 
     await runtime.createSession({ cwd: '/workspace' })
 
@@ -949,11 +943,7 @@ describe('fix loop: distinct Review rows per iteration', () => {
       shared
     )
 
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
-    })
+    const runtime = createFixLoopRuntime(process, shared)
 
     await runtime.createSession({ cwd: '/workspace' })
 

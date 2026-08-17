@@ -10,6 +10,7 @@ currently treated. This covers Sections 2 (Disease Biology) and 3 (Standard of C
 ## Actions
 
 **Step 1: Pathophysiology**
+
 - Search pubmed MCP for recent review articles on the disease mechanism
 - Identify key biological pathways involved
 - Note which pathways are validated drug targets vs. emerging hypotheses
@@ -17,6 +18,7 @@ currently treated. This covers Sections 2 (Disease Biology) and 3 (Standard of C
   to therapeutic intervention
 
 **Step 2: Biomarkers**
+
 - Diagnostic biomarkers: how is the condition confirmed?
 - Prognostic biomarkers: what predicts disease progression?
 - Pharmacodynamic biomarkers: what can measure drug effect?
@@ -24,6 +26,7 @@ currently treated. This covers Sections 2 (Disease Biology) and 3 (Standard of C
 - This directly informs Section 4 (endpoints)
 
 **Step 3: Approved therapies**
+
 - WebSearch site:fda.gov for approved drugs for this indication
 - For each approved therapy: mechanism, approval year, key limitations
 - Note if therapies are approved for this specific indication or used off-label
@@ -31,12 +34,14 @@ currently treated. This covers Sections 2 (Disease Biology) and 3 (Standard of C
 - For indications with no approved therapies: state this explicitly
 
 **Step 4: Treatment guidelines**
+
 - WebSearch for specialty society guidelines (NCCN, AASLD, ATS/ERS, AGS, etc.)
 - Current standard of care algorithm
 - How guidelines differ between regions (US vs EU) if relevant
 - Recent guideline changes and their implications
 
 **Step 5: Unmet need**
+
 - What does current therapy fail to address?
 - Patient populations underserved by existing treatments
 - Disease modification vs. symptom management gap

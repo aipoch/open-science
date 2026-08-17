@@ -1,6 +1,6 @@
 type ArtifactRunClaim = {
   claimId: string
-  projectName: string
+  projectId: string
   artifactSessionId: string
   sessionId: string
   runId: string
@@ -16,7 +16,7 @@ type ArtifactRunClaim = {
 }
 
 type RegisterArtifactRunClaimRequest = {
-  projectName: string
+  projectId: string
   artifactSessionId: string
   sessionId: string
   runId: string

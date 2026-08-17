@@ -178,7 +178,7 @@ describe('DownloadProjectArtifactsDialog', () => {
 
     expect(saveProjectArtifacts).toHaveBeenCalledWith({
       projectId: 'project-1',
-      projectName: 'Research project',
+      suggestedArchiveName: 'Research project',
       files: [
         {
           source: 'artifact',
@@ -211,7 +211,7 @@ describe('DownloadProjectArtifactsDialog', () => {
 
     expect(saveProjectArtifacts).toHaveBeenCalledWith({
       projectId: 'project-1',
-      projectName: 'Research project',
+      suggestedArchiveName: 'Research project',
       files: [
         {
           source: 'artifact',

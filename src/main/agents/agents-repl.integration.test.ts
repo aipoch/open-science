@@ -127,7 +127,7 @@ gate('host.agents repl integration', () => {
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(runtimeStorage),
       executorFactory: () => ({
         execute: async () => ({

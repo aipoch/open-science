@@ -37,6 +37,18 @@ export {
 
 export type { BranchInNewSessionInput } from './session-store-message-graph-helpers'
 
+export {
+  isSessionWaitReason,
+  projectSessionActionability,
+  resolveRootPermissionPending,
+  type SessionActionabilityFacts,
+  type SessionActionabilityProjection,
+  type SessionActionAvailability,
+  type SessionActionDisabledReason,
+  type SessionBlockingInteraction,
+  type SessionWaitReason
+} from './session-store-interaction-state'
+
 type SessionStore = SessionStoreData &
   SessionPersistenceActions &
   SessionMessageGraphActions &

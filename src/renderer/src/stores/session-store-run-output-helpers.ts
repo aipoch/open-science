@@ -1,4 +1,4 @@
-import type { ArtifactFile } from '../../../shared/artifacts'
+import { artifactCreatedAtMs, type ArtifactFile } from '../../../shared/artifacts'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
   normalizeClaudeCodeRefusalText,
@@ -73,7 +73,15 @@ type SessionProjectionResult = {
   shouldCommit?: boolean
 }
 
-const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => {
+const createPersistedArtifact = (
+  artifact: ArtifactFile,
+  fallbackCreatedAt?: number
+): PersistedArtifact => {
+  const createdAt =
+    artifactCreatedAtMs(artifact.createdAt) ??
+    (fallbackCreatedAt !== undefined && Number.isFinite(fallbackCreatedAt) && fallbackCreatedAt >= 0
+      ? fallbackCreatedAt
+      : undefined)
   const persisted: PersistedArtifact = {
     id: artifact.id,
     kind: 'managed-file',
@@ -82,6 +90,7 @@ const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => {
     name: artifact.name,
     mimeType: artifact.mimeType,
     size: artifact.size,
+    ...(createdAt === undefined ? {} : { createdAt }),
     mtimeMs: artifact.mtimeMs
   }
   if (artifact.artifactId) persisted.artifactId = artifact.artifactId
@@ -130,6 +139,7 @@ const arePersistedArtifactsEqual = (
         item.name === next.name &&
         item.mimeType === next.mimeType &&
         item.size === next.size &&
+        item.createdAt === next.createdAt &&
         item.mtimeMs === next.mtimeMs &&
         item.sha256 === next.sha256
       )
@@ -271,7 +281,9 @@ export const projectRunArtifacts = (
   input: AttachRunArtifactsInput
 ): SessionProjectionResult => {
   const now = Date.now()
-  const incomingArtifacts = input.artifacts.map(createPersistedArtifact)
+  const incomingArtifacts = input.artifacts.map((artifact) =>
+    createPersistedArtifact(artifact, now)
+  )
   const incomingArtifactIds = incomingArtifacts.map((artifact) => artifact.id)
   const ownsArtifactPrompt = (message: ChatMessage): boolean =>
     !input.promptMessageId || message.responseToMessageId === input.promptMessageId
@@ -407,12 +419,16 @@ export const projectMessageArtifacts = (
   session: ChatSession,
   input: ReplaceMessageArtifactsInput
 ): ChatSession => {
-  const incomingArtifacts = input.artifacts.map(createPersistedArtifact)
-  const incomingArtifactIds = incomingArtifacts.map((artifact) => artifact.id)
   const message = session.messages.find((item) => item.id === input.messageId)
   const graphMessage = session.conversationGraph?.messages.find(
     (item) => item.id === input.messageId
   )
+  const artifactOwner = message ?? graphMessage
+  const ownerTimestamp = artifactOwner?.completedAt ?? artifactOwner?.createdAt
+  const incomingArtifacts = input.artifacts.map((artifact) =>
+    createPersistedArtifact(artifact, ownerTimestamp)
+  )
+  const incomingArtifactIds = incomingArtifacts.map((artifact) => artifact.id)
 
   if (!message) {
     if (!graphMessage || !session.conversationGraph) return session

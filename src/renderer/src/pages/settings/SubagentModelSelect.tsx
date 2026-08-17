@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import {
   Select,
   SelectContent,
@@ -26,7 +28,8 @@ import type { SubagentModelConfiguration } from '../../../../shared/settings'
 const INHERIT_KEY = 'same-as-main-model'
 
 type ModelPolicySelectProps = Readonly<{
-  ariaLabel: string
+  modelAriaLabel: string
+  reasoningEffortAriaLabel: string
   inheritLabel: string
   configuration: SubagentModelConfiguration
   pending: boolean
@@ -34,12 +37,14 @@ type ModelPolicySelectProps = Readonly<{
 }>
 
 const ModelPolicySelect = ({
-  ariaLabel,
+  modelAriaLabel,
+  reasoningEffortAriaLabel,
   inheritLabel,
   configuration,
   pending,
   setConfiguration
 }: ModelPolicySelectProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
@@ -91,7 +96,7 @@ const ModelPolicySelect = ({
 
   return (
     <SettingsRow layout="model-effort">
-      <SettingsField label="Model">
+      <SettingsField label={t('Model')}>
         <Select
           value={selectedKey}
           disabled={pending}
@@ -117,7 +122,7 @@ const ModelPolicySelect = ({
             void setConfiguration({ mode: 'fixed', ...identity, reasoningEffort })
           }}
         >
-          <SelectTrigger aria-label={`${ariaLabel} Model`}>
+          <SelectTrigger aria-label={modelAriaLabel}>
             <span className="flex items-center gap-2 truncate">
               {configuration.mode === 'fixed' && selectedEntry ? (
                 <>
@@ -134,7 +139,7 @@ const ModelPolicySelect = ({
                 </>
               ) : unavailable ? (
                 <span className="truncate">
-                  {configuration.model} · {configuration.providerId} · Unavailable
+                  {configuration.model} · {configuration.providerId} · {t('Unavailable')}
                 </span>
               ) : (
                 <span className="truncate">{inheritLabel}</span>
@@ -145,7 +150,7 @@ const ModelPolicySelect = ({
             <SelectItem value={INHERIT_KEY}>{inheritLabel}</SelectItem>
             {unavailable ? (
               <SelectItem value={selectedKey} disabled>
-                {configuration.model} · {configuration.providerId} · Unavailable
+                {configuration.model} · {configuration.providerId} · {t('Unavailable')}
               </SelectItem>
             ) : null}
             {groups.map(({ provider, entries }) => (
@@ -171,10 +176,10 @@ const ModelPolicySelect = ({
         </Select>
       </SettingsField>
 
-      <SettingsField label="Reasoning effort">
+      <SettingsField label={t('Reasoning effort')}>
         {configuration.mode === 'inherit' ? (
           <Select value={INHERIT_KEY} disabled>
-            <SelectTrigger aria-label={`${ariaLabel} Reasoning effort`}>
+            <SelectTrigger aria-label={reasoningEffortAriaLabel}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -183,11 +188,11 @@ const ModelPolicySelect = ({
           </Select>
         ) : effortProfile && !effortProfile.supported ? (
           <Select value="not-supported" disabled>
-            <SelectTrigger aria-label={`${ariaLabel} Reasoning effort`}>
+            <SelectTrigger aria-label={reasoningEffortAriaLabel}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="not-supported">Not supported</SelectItem>
+              <SelectItem value="not-supported">{t('Not supported')}</SelectItem>
             </SelectContent>
           </Select>
         ) : (
@@ -207,11 +212,11 @@ const ModelPolicySelect = ({
               void setConfiguration({ ...configuration, reasoningEffort })
             }}
           >
-            <SelectTrigger aria-label={`${ariaLabel} Reasoning effort`}>
+            <SelectTrigger aria-label={reasoningEffortAriaLabel}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="default">Default</SelectItem>
+              <SelectItem value="default">{t('Default')}</SelectItem>
               {effortControl?.options.map((option) => (
                 <SelectItem key={option.intent} value={option.intent}>
                   {option.label}
@@ -225,24 +230,34 @@ const ModelPolicySelect = ({
   )
 }
 
-const SubagentModelSelect = (): React.JSX.Element => (
-  <ModelPolicySelect
-    ariaLabel="Subagent model"
-    inheritLabel="Same as main model"
-    configuration={useSettingsStore((state) => state.subagentModel)}
-    pending={useSettingsStore((state) => state.subagentModelPending)}
-    setConfiguration={useSettingsStore((state) => state.setSubagentModel)}
-  />
-)
+const SubagentModelSelect = (): React.JSX.Element => {
+  const { t } = useTranslation()
 
-const ReviewerModelSelect = (): React.JSX.Element => (
-  <ModelPolicySelect
-    ariaLabel="Reviewer model"
-    inheritLabel="Follow Active model"
-    configuration={useSettingsStore((state) => state.reviewerModel)}
-    pending={useSettingsStore((state) => state.reviewerModelPending)}
-    setConfiguration={useSettingsStore((state) => state.setReviewerModel)}
-  />
-)
+  return (
+    <ModelPolicySelect
+      modelAriaLabel={t('Subagent model Model')}
+      reasoningEffortAriaLabel={t('Subagent model Reasoning effort')}
+      inheritLabel={t('Same as main model')}
+      configuration={useSettingsStore((state) => state.subagentModel)}
+      pending={useSettingsStore((state) => state.subagentModelPending)}
+      setConfiguration={useSettingsStore((state) => state.setSubagentModel)}
+    />
+  )
+}
+
+const ReviewerModelSelect = (): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <ModelPolicySelect
+      modelAriaLabel={t('Reviewer model Model')}
+      reasoningEffortAriaLabel={t('Reviewer model Reasoning effort')}
+      inheritLabel={t('Follow Active model')}
+      configuration={useSettingsStore((state) => state.reviewerModel)}
+      pending={useSettingsStore((state) => state.reviewerModelPending)}
+      setConfiguration={useSettingsStore((state) => state.setReviewerModel)}
+    />
+  )
+}
 
 export { ReviewerModelSelect, SubagentModelSelect }

@@ -21,7 +21,7 @@ const publishSession = (
   registry.publish(reserved.reservation, appSessionId, {
     session: providerSession,
     cwd: '/old-workspace',
-    projectName: 'old-project',
+    projectId: 'old-project',
     frameworkId,
     permissionProfile: {
       selectedProfile: 'ask',
@@ -54,7 +54,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     const adopt = vi.fn(async () => replacement)
     const workflow = new AcpSessionReplacementWorkflow({
       defaultCwd: '/default-workspace',
-      defaultProjectName: 'default-project',
+      defaultProjectId: 'default-project',
       currentCwd: () => '/current-workspace',
       currentFrameworkId: () => 'claude-code',
       ensureConnected: vi.fn(async () => connection),
@@ -76,7 +76,7 @@ describe('AcpSessionReplacementWorkflow', () => {
       workflow.reset({
         sessionId: 'app-session',
         cwd: '/new-workspace',
-        projectName: 'new-project',
+        projectId: 'new-project',
         permissionProfile: 'ask'
       })
     ).resolves.toEqual(replacement)
@@ -92,7 +92,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     expect(adopt).toHaveBeenCalledWith('app-session', {
       connection,
       cwd: resolve('/new-workspace'),
-      projectName: 'new-project',
+      projectId: 'new-project',
       identity: expect.any(Object),
       permissionProfile: 'ask',
       specialistId: undefined
@@ -118,7 +118,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     })
     const workflow = new AcpSessionReplacementWorkflow({
       defaultCwd: '/workspace',
-      defaultProjectName: 'project',
+      defaultProjectId: 'project',
       currentCwd: vi.fn(),
       currentFrameworkId: () => 'claude-code',
       ensureConnected: vi.fn(async () => connection),
@@ -159,7 +159,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     }))
     const workflow = new AcpSessionReplacementWorkflow({
       defaultCwd: '/default-workspace',
-      defaultProjectName: 'default-project',
+      defaultProjectId: 'default-project',
       currentCwd: () => '/current-workspace',
       currentFrameworkId: () => 'claude-code',
       ensureConnected: vi.fn(async () => connection),
@@ -212,7 +212,7 @@ describe('AcpSessionReplacementWorkflow', () => {
       const registerSessionSpecialist = vi.fn()
       const workflow = new AcpSessionReplacementWorkflow({
         defaultCwd: '/workspace',
-        defaultProjectName: 'project',
+        defaultProjectId: 'project',
         currentCwd: vi.fn(),
         currentFrameworkId: () => frameworkId,
         ensureConnected: vi.fn(),
@@ -258,7 +258,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     const registerSessionSpecialist = vi.fn()
     const workflow = new AcpSessionReplacementWorkflow({
       defaultCwd: '/default-workspace',
-      defaultProjectName: 'default-project',
+      defaultProjectId: 'default-project',
       currentCwd: vi.fn(),
       currentFrameworkId: () => 'codex',
       ensureConnected: vi.fn(),

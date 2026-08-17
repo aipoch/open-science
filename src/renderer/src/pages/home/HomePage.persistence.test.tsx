@@ -67,7 +67,31 @@ vi.mock('radix-ui', () => ({
       <button type="button" disabled={disabled} onClick={onSelect}>
         {children}
       </button>
-    )
+    ),
+    Group: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Label: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Sub: ({ children }: { children: ReactNode }) => <>{children}</>,
+    SubContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+    SubTrigger: ({ children }: { children: ReactNode }) => <>{children}</>
+  },
+  // The header's language picker is built on the Select primitive. This suite is about persistence
+  // recovery, so the picker only has to mount — passthroughs keep it out of the way.
+  Select: {
+    Root: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Group: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Value: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Trigger: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
+    Icon: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Portal: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Content: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Viewport: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Label: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Item: ({ children }: { children: ReactNode }) => <>{children}</>,
+    ItemText: ({ children }: { children: ReactNode }) => <>{children}</>,
+    ItemIndicator: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Separator: () => null,
+    ScrollUpButton: () => null,
+    ScrollDownButton: () => null
   }
 }))
 
@@ -168,6 +192,38 @@ describe('HomePage persistence recovery', () => {
 
     expect(container.textContent).toContain('Session count unavailable')
     expect(container.textContent).not.toContain('1 session')
+  })
+
+  it('maps a raced incomplete-catalog archive rejection to index repair guidance', async () => {
+    const updateProjectArchive = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Error invoking remote method 'projects:update-archive': Error: Cannot archive a Project while its Session catalog is incomplete."
+        )
+      )
+    useProjectStore.setState({ updateProjectArchive } as never)
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const archive = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Archive'
+    )
+    await act(async () => archive?.click())
+
+    expect(updateProjectArchive).toHaveBeenCalledWith({
+      id: project.id,
+      archived: true,
+      expectedArchivedAt: null
+    })
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Repair the project index before archiving.'
+    )
+    expect(container.textContent).not.toContain('Session catalog is incomplete')
   })
 
   it('guards confirmation when persistence becomes unavailable after the dialog opens', async () => {

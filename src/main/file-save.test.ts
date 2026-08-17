@@ -794,7 +794,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -887,7 +887,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -947,7 +947,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1005,7 +1005,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1061,7 +1061,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1107,7 +1107,7 @@ describe('file save IPC handlers', () => {
       { sender: {} },
       {
         projectId: 'project-1',
-        projectName: 'Research',
+        suggestedArchiveName: 'Research',
         files: [
           {
             source: 'artifact',
@@ -1154,7 +1154,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1211,7 +1211,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1267,7 +1267,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1318,7 +1318,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1346,7 +1346,7 @@ describe('file save IPC handlers', () => {
       { sender: {} },
       {
         projectId: 'project-1',
-        projectName: 'Research',
+        suggestedArchiveName: 'Research',
         files: [
           {
             source: 'artifact',
@@ -1394,7 +1394,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1454,7 +1454,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1514,7 +1514,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1571,7 +1571,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1606,7 +1606,7 @@ describe('file save IPC handlers', () => {
     await expect(
       handlers.get('file:save-project-artifacts')!(
         { sender: {} },
-        { projectId: 'project-1', projectName: 'Research', files: [] }
+        { projectId: 'project-1', suggestedArchiveName: 'Research', files: [] }
       )
     ).rejects.toThrow('Invalid Project Artifact save request.')
 
@@ -1627,7 +1627,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1670,7 +1670,7 @@ describe('file save IPC handlers', () => {
       { sender: {} },
       {
         projectId: 'project-1',
-        projectName: 'Research',
+        suggestedArchiveName: 'Research',
         files: [
           {
             source: 'artifact',
@@ -1715,7 +1715,7 @@ describe('file save IPC handlers', () => {
       { sender: {} },
       {
         projectId: 'project-1',
-        projectName: 'Research',
+        suggestedArchiveName: 'Research',
         files: [
           {
             source: 'artifact',
@@ -1757,7 +1757,7 @@ describe('file save IPC handlers', () => {
     await expect(
       handlers.get('file:save-project-artifacts')!(
         { sender: {} },
-        { projectId: 'project-1', projectName: 'Research', files }
+        { projectId: 'project-1', suggestedArchiveName: 'Research', files }
       )
     ).rejects.toThrow('Invalid Project Artifact save request.')
 
@@ -1773,8 +1773,8 @@ describe('file save IPC handlers', () => {
     ['   ', 'project-artifacts.zip'],
     ['Research', 'Research-artifacts.zip']
   ])(
-    'sanitizes the project name %p for the zip default path',
-    async (projectName, expectedFileName) => {
+    'sanitizes the suggested archive name %p for the zip default path',
+    async (suggestedArchiveName, expectedFileName) => {
       const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-name-'))
       const sourcePath = join(root, 'managed-report.csv')
       await writeFile(sourcePath, 'artifact bytes')
@@ -1787,7 +1787,7 @@ describe('file save IPC handlers', () => {
           { sender: {} },
           {
             projectId: 'project-1',
-            projectName,
+            suggestedArchiveName,
             files: [
               {
                 source: 'artifact',
@@ -1827,7 +1827,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1869,7 +1869,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1907,7 +1907,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [
             {
               source: 'artifact',
@@ -1942,7 +1942,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [{ ...baseFile, source: 'notebook-input' }]
         }
       )
@@ -1952,7 +1952,7 @@ describe('file save IPC handlers', () => {
         { sender: {} },
         {
           projectId: 'project-1',
-          projectName: 'Research',
+          suggestedArchiveName: 'Research',
           files: [{ ...baseFile, sessionId: '' }]
         }
       )

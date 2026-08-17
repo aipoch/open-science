@@ -1,4 +1,5 @@
 import { parse } from 'papaparse'
+import { useTranslation } from 'react-i18next'
 
 import { getFileExtension } from '../../preview-support'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -25,6 +26,7 @@ const parseCsvRows = (
 }
 
 export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -34,7 +36,7 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="CSV couldn't be read for preview"
+        fallbackMessage={t("CSV couldn't be read for preview")}
       />
     )
   }
@@ -53,7 +55,10 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
         <span>{rowCountLabel}</span>
         <span className="shrink-0">
-          Showing {dataRows.length} rows · {visibleHeaders.length} columns
+          {t('Showing {{rows}} rows · {{columns}} columns', {
+            rows: dataRows.length,
+            columns: visibleHeaders.length
+          })}
         </span>
         {errors[0] ? <span className="text-danger-000"> · {errors[0]}</span> : null}
       </div>
@@ -69,8 +74,11 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
                   key={`${header}-${index}`}
                   className="max-w-[180px] border-b border-r border-border-300 bg-bg-200 px-3 py-2 font-medium"
                 >
-                  <span className="block truncate" title={header || `Column ${index + 1}`}>
-                    {header || `Column ${index + 1}`}
+                  <span
+                    className="block truncate"
+                    title={header || t('Column {{index}}', { index: index + 1 })}
+                  >
+                    {header || t('Column {{index}}', { index: index + 1 })}
                   </span>
                 </th>
               ))}
@@ -99,7 +107,10 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
       </div>
       {hiddenColumnCount > 0 ? (
         <div className="shrink-0 border-t border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
-          {hiddenColumnCount} more columns hidden in this preview
+          {t('{{count}} more columns hidden in this preview', {
+            count: hiddenColumnCount,
+            defaultValue_one: '{{count}} more column hidden in this preview'
+          })}
         </div>
       ) : null}
     </div>

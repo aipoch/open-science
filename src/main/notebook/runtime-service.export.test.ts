@@ -6,13 +6,12 @@ import { NotebookRuntimeService } from './runtime-service'
 
 const document: NotebookRunDocument = {
   version: 1,
-  projectName: 'default-project',
+  projectId: 'default-project',
   sessionId: '12345678-abcd',
   workspaceCwd: '/workspace',
   notebookSessionRoot: '/storage/notebooks/default-project/12345678-abcd',
   dataRoot: '/storage/notebooks/default-project/12345678-abcd/data',
   kernel: {
-    language: 'python',
     kernelName: 'python3',
     runtimeRoot: '/storage/runtime',
     lastKnownStatus: 'idle'
@@ -58,7 +57,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     const service = new NotebookRuntimeService({
       configRoot: '/config',
       dataRoot: '/storage',
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       saveIpynb
     })
@@ -111,7 +110,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     const service = new NotebookRuntimeService({
       configRoot: '/config',
       dataRoot: '/storage',
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       appVersion: '1.2.3',
       saveIpynb
@@ -149,7 +148,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     const service = new NotebookRuntimeService({
       configRoot: '/config',
       dataRoot: '/storage',
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       saveIpynb
     })
@@ -171,7 +170,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     const service = new NotebookRuntimeService({
       configRoot: '/config',
       dataRoot: '/storage',
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       saveIpynb
     })
@@ -205,7 +204,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     const service = new NotebookRuntimeService({
       configRoot: '/config',
       dataRoot: '/storage',
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       saveIpynbAll
     })

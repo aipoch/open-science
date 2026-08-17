@@ -1,4 +1,5 @@
 import { Children, memo, useMemo, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { AgentMarkdown, type AgentMarkdownExtension } from '@/components/streamdown/AgentMarkdown'
 import type { PreviewFileFormat } from '@/stores/preview-workbench-store'
@@ -23,20 +24,22 @@ const markdownChangeStyles =
 type ManagedDiffTagProps = Record<string, unknown> & { children?: ReactNode }
 
 const ManagedDiffAdded = ({ children }: ManagedDiffTagProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isMarker = Children.count(children) === 0
   return (
     <ins data-managed-diff="added" data-managed-diff-marker={isMarker ? 'added' : undefined}>
-      <span className="sr-only">Added: </span>
+      <span className="sr-only">{t('Added:')} </span>
       {isMarker ? null : <span data-managed-diff-content="">{children}</span>}
     </ins>
   )
 }
 
 const ManagedDiffRemoved = ({ children }: ManagedDiffTagProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isMarker = Children.count(children) === 0
   return (
     <del data-managed-diff="removed" data-managed-diff-marker={isMarker ? 'removed' : undefined}>
-      <span className="sr-only">Removed: </span>
+      <span className="sr-only">{t('Removed:')} </span>
       {isMarker ? null : <span data-managed-diff-content="">{children}</span>}
     </del>
   )
@@ -63,6 +66,7 @@ const resolveDiffPresentationKind = (
 
 const ManagedVersionDiffContent = memo(
   ({ result, format, name }: ManagedVersionDiffContentProps): React.JSX.Element => {
+    const { t } = useTranslation()
     const presentationKind = resolveDiffPresentationKind(format, name)
     const [markdownChangeTags] = useState(createMarkdownChangeTags)
     const markdownExtension = useMemo<AgentMarkdownExtension>(
@@ -87,7 +91,7 @@ const ManagedVersionDiffContent = memo(
       <div
         className="min-h-full bg-bg-000 py-2 font-mono text-xs text-text-000"
         role="region"
-        aria-label="File version differences"
+        aria-label={t('File version differences')}
       >
         {blocks.map((block) => {
           if (block.kind === 'markdown') {
@@ -113,7 +117,7 @@ const ManagedVersionDiffContent = memo(
                 data-diff-kind="added"
                 data-managed-diff="added"
               >
-                <span className="sr-only">Added content: </span>
+                <span className="sr-only">{t('Added content:')} </span>
                 <AgentMarkdown
                   content={block.content}
                   allowMedia={false}
@@ -127,7 +131,7 @@ const ManagedVersionDiffContent = memo(
                 data-diff-kind="removed"
                 data-managed-diff="removed"
               >
-                <span className="sr-only">Removed content: </span>
+                <span className="sr-only">{t('Removed content:')} </span>
                 <AgentMarkdown
                   content={block.content}
                   allowMedia={false}
@@ -157,7 +161,7 @@ const ManagedVersionDiffContent = memo(
                       data-managed-diff="added"
                       className="bg-diff-added-highlight font-medium text-text-000 no-underline"
                     >
-                      <span className="sr-only">Added: </span>
+                      <span className="sr-only">{t('Added:')} </span>
                       <span data-managed-diff-content="">{segment.text}</span>
                     </ins>
                   ) : segment.kind === 'removed' ? (
@@ -167,7 +171,7 @@ const ManagedVersionDiffContent = memo(
                       data-managed-diff="removed"
                       className="bg-diff-removed-highlight text-text-000 line-through"
                     >
-                      <span className="sr-only">Removed: </span>
+                      <span className="sr-only">{t('Removed:')} </span>
                       <span data-managed-diff-content="">{segment.text}</span>
                     </del>
                   ) : (

@@ -159,6 +159,15 @@ describe('ProviderAccountsModule', () => {
       provider: { model: 'lab-model', key: 'secret-key' },
       needsChatResponsesBridge: true
     })
+    expect(module.resolveProviderApiEndpoints(stored)).toEqual(['openai'])
+    expect(module.resolveProvider(stored)).toMatchObject({
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key'
+    })
+    expect(module.resolveRuntimeModelCatalog(stored, getAgentFramework('codex'))).toEqual([
+      expect.objectContaining({ providerId: stored.id, effectiveModel: 'lab-model' })
+    ])
     expect(module.resolveRuntimeReasoningEffortProfile(stored, 'lab-model')).toMatchObject({
       supported: true
     })
@@ -270,5 +279,82 @@ describe('ProviderAccountsModule', () => {
     expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
     expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('exposes authentication lifecycle operations through the Module Interface', async () => {
+    await module.upsertProvider({ type: 'codex-isolated' })
+
+    module.cancelCodexLogin()
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    await expect(module.loginIsolatedCodex()).resolves.toMatchObject({
+      ok: true,
+      category: 'ok',
+      applied: true
+    })
+
+    await module.upsertProvider({ type: 'claude-isolated' })
+    vi.mocked(claudeIsolatedAuth.loginIsolated).mockResolvedValueOnce({
+      supported: true,
+      authenticated: true
+    })
+    vi.mocked(claudeIsolatedAuth.loginIsolatedBrowser).mockResolvedValueOnce({
+      supported: true,
+      authenticated: false,
+      cancelled: true,
+      message: 'Sign-in cancelled.'
+    })
+
+    await expect(module.loginIsolatedClaude('setup-token')).resolves.toMatchObject({
+      ok: true,
+      category: 'ok',
+      applied: true
+    })
+    await expect(module.loginIsolatedClaudeBrowser()).resolves.toMatchObject({
+      ok: false,
+      applied: false,
+      cancelled: true
+    })
+    await module.cancelClaudeIsolatedLogin()
+    expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
+
+    module.cancelClaudeLogin()
+    expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
+  })
+
+  it('returns bounded failures for missing model catalogs and incompatible drafts', async () => {
+    await expect(module.refreshProviderModels({ providerId: 'missing-provider' })).resolves.toEqual(
+      {
+        ok: false,
+        category: 'unknown',
+        message: 'Provider not found.'
+      }
+    )
+
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'No catalog',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key',
+      apiEndpoints: ['openai']
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+    await expect(module.refreshProviderModels({ providerId })).resolves.toEqual({
+      ok: false,
+      category: 'unknown',
+      message: 'This provider has no model-list endpoint.'
+    })
+
+    await expect(
+      module.validateProvider({
+        draft: {
+          type: 'custom',
+          baseUrl: 'https://lab.example/v1',
+          model: 'lab-model',
+          key: 'secret-key',
+          apiEndpoints: ['openai']
+        }
+      })
+    ).resolves.toMatchObject({ ok: false, category: 'incompatible' })
   })
 })

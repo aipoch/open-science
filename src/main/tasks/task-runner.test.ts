@@ -44,13 +44,21 @@ const session: PersistedChatSession = {
   updatedAt: 2
 }
 
-const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunner =>
-  new TaskRunner({
+type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'sessions'> & {
+  sessions?: Partial<TaskSessionPort>
+}
+
+const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
+  const defaultSessions: TaskSessionPort = {
+    list: async () => [],
+    save: async () => undefined,
+    setDelegationPolicy: async () => undefined
+  }
+  return new TaskRunner({
     projects: {
       list: async () => [project],
       create: async (request) => ({ ...project, ...request })
     },
-    sessions: { list: async () => [], save: async () => undefined },
     previewResources: {
       acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
       release: async () => undefined
@@ -68,11 +76,14 @@ const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunn
       finalizeRun: async () => ({ ok: true, artifacts: [] })
     },
     runtimeEvents: { subscribe: () => () => undefined },
+    specialists: { resolve: async (reference) => ({ id: reference }) },
+    reviewer: { review: async () => ({ started: true }) },
     createId: () => 'generated-id',
     now: () => 1,
-    ...overrides
+    ...overrides,
+    sessions: { ...defaultSessions, ...overrides.sessions }
   })
-
+}
 describe('TaskRunner', () => {
   it('lists projects through its public interface', async () => {
     const projects: TaskProjectPort = {
@@ -102,20 +113,36 @@ describe('TaskRunner', () => {
     expect(created).toBe(false)
   })
 
-  it('lists session snapshots for a project name', async () => {
+  it('lists session snapshots for a project id', async () => {
     const projects: TaskProjectPort = {
       list: async () => [project],
       create: async (request) => ({ ...project, ...request })
     }
     const sessions: TaskSessionPort = {
       list: async () => [session],
-      save: async () => undefined
+      save: async () => undefined,
+      setDelegationPolicy: async () => undefined
     }
     const runner = createRunner({ projects, sessions })
 
-    await expect(runner.listSessions(project.name)).resolves.toEqual([
+    await expect(runner.listSessions(project.id)).resolves.toEqual([
       expect.objectContaining({ id: session.id, projectId: project.id, title: session.title })
     ])
+  })
+
+  it('does not route headless requests by project display name', async () => {
+    const projects: TaskProjectPort = {
+      list: async () => [project],
+      create: async (request) => ({ ...project, ...request })
+    }
+    const runner = createRunner({ projects })
+
+    await expect(runner.listSessions(project.name)).rejects.toMatchObject({
+      code: 'project_not_found'
+    })
+    await expect(
+      runner.startRun({ project: project.name, prompt: 'Review these papers.' })
+    ).rejects.toMatchObject({ code: 'project_not_found' })
   })
 
   it('returns a durable session snapshot and its artifacts', async () => {
@@ -264,6 +291,26 @@ describe('TaskRunner', () => {
     expect(createSession).not.toHaveBeenCalled()
   })
 
+  it('rejects rebinding an existing Session to a different Specialist', async () => {
+    const bound = { ...session, specialistId: 'specialist-existing' }
+    const runner = createRunner({
+      sessions: { list: async () => [bound], save: async () => undefined },
+      specialists: { resolve: async () => ({ id: 'specialist-other' }) }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: bound.id,
+        prompt: 'Continue with another Specialist.',
+        specialist: 'other-name'
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: `Session ${bound.id} is bound to a different Specialist.`
+    })
+  })
+
   it('rejects a cwd that conflicts with an existing Session workspace', async () => {
     const existingRoot = await mkdtemp(join(tmpdir(), 'open-science-task-existing-cwd-'))
     const requestedRoot = await mkdtemp(join(tmpdir(), 'open-science-task-requested-cwd-'))
@@ -396,7 +443,7 @@ describe('TaskRunner', () => {
     })
 
     const started = await runner.startRun({
-      project: project.name,
+      project: project.id,
       prompt: 'Review these papers.',
       permissionProfile: 'auto',
       cwd: requestedCwd
@@ -436,6 +483,348 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('applies Plan, review, Specialist, and delegation controls to a new Session', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const savedSessions: PersistedChatSession[] = []
+    const createSession = vi.fn(async () => ({
+      sessionId: 'session-controlled',
+      frameworkId: 'codex' as const
+    }))
+    const prompt = vi.fn(async () => {
+      emitEvent?.({
+        id: 'plan-event',
+        timestamp: 9,
+        kind: 'plan',
+        level: 'info',
+        sessionId: 'session-controlled',
+        text: 'Plan awaiting approval.',
+        planProjection: {
+          artifactId: 'plan-artifact',
+          artifactVersionId: 'plan-version',
+          artifactChecksum: 'plan-checksum',
+          revision: 2,
+          approval: 'pending',
+          lifecycle: 'awaiting_approval'
+        } as never
+      })
+      emitEvent?.({
+        id: 'message-event',
+        timestamp: 10,
+        kind: 'message',
+        level: 'info',
+        sessionId: 'session-controlled',
+        role: 'assistant',
+        text: 'Controlled output.'
+      })
+    })
+    const resolveSpecialist = vi.fn(async () => ({ id: 'specialist-uuid' }))
+    const review = vi.fn(async () => ({
+      started: true,
+      id: 'review-1',
+      lifecycle: 'complete' as const,
+      outcome: 'pass' as const
+    }))
+    const ids = ['user-controlled', 'run-controlled', 'assistant-controlled']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession,
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt
+      },
+      specialists: { resolve: resolveSpecialist },
+      reviewer: { review },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Plan and execute.',
+      turnIntent: 'plan-first',
+      autoReviewEnabled: true,
+      specialist: 'stable-specialist-name',
+      delegationPolicy: 'deny'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(resolveSpecialist).toHaveBeenCalledWith('stable-specialist-name')
+    expect(createSession).toHaveBeenCalledWith({
+      projectId: project.id,
+      permissionProfile: 'ask',
+      specialistId: 'specialist-uuid'
+    })
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turnIntent: 'plan-first',
+        promptMessageId: 'user-controlled'
+      }),
+      expect.any(Object)
+    )
+    expect(savedSessions.at(-1)).toMatchObject({
+      autoReviewEnabled: true,
+      specialistId: 'specialist-uuid',
+      delegationPolicy: 'deny',
+      messages: [
+        expect.objectContaining({ id: 'user-controlled', turnIntent: 'plan-first' }),
+        expect.objectContaining({ id: 'assistant-controlled', content: 'Controlled output.' })
+      ]
+    })
+    expect(review).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-controlled' }),
+      'assistant-controlled',
+      expect.any(AbortSignal)
+    )
+    expect(completed.review).toEqual({
+      started: true,
+      id: 'review-1',
+      lifecycle: 'complete',
+      outcome: 'pass'
+    })
+    expect(completed.attention).toMatchObject({
+      kind: 'plan-approval',
+      plan: { artifactVersionId: 'plan-version', revision: 2 }
+    })
+  })
+
+  it('aborts an in-flight automatic review when Run cancellation is accepted', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const review = vi.fn(
+      (_session: PersistedChatSession, _turnMessageId: string, signal: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          markReviewStarted?.()
+          const rejectCancellation = (): void => reject(new Error('review cancelled'))
+          if (signal.aborted) rejectCancellation()
+          else signal.addEventListener('abort', rejectCancellation, { once: true })
+        })
+    )
+    const cancelPrompt = vi.fn(async () => undefined)
+    const ids = ['review-user', 'review-run', 'review-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => undefined
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-review-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'review-message-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-review-cancel',
+            role: 'assistant',
+            text: 'Review this output.'
+          })
+        }
+      },
+      reviewer: { review },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Produce and review.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+    const cancelled = await runner.cancelRun(started.id)
+
+    expect(cancelled).toMatchObject({ status: 'cancelled', review: undefined })
+    expect(cancelPrompt).toHaveBeenCalledWith('session-review-cancel')
+    expect(review.mock.calls[0]?.[2].aborted).toBe(true)
+  })
+
+  it('aborts and awaits an in-flight automatic review when disposed', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    let releaseReviewCleanup: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const reviewCleanup = new Promise<void>((resolve) => {
+      releaseReviewCleanup = resolve
+    })
+    const review = vi.fn(
+      (_session: PersistedChatSession, _turnMessageId: string, signal: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          markReviewStarted?.()
+          const rejectAfterCleanup = (): void => {
+            void reviewCleanup.then(() => reject(new Error('review disposed')))
+          }
+          if (signal.aborted) rejectAfterCleanup()
+          else signal.addEventListener('abort', rejectAfterCleanup, { once: true })
+        })
+    )
+    const ids = ['dispose-user', 'dispose-run', 'dispose-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => undefined
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-review-dispose' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'dispose-message-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-review-dispose',
+            role: 'assistant',
+            text: 'Review before disposal.'
+          })
+        }
+      },
+      reviewer: { review },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    await runner.startRun({
+      project: project.id,
+      prompt: 'Produce and review before disposal.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+    let disposed = false
+    const disposal = runner.dispose().then(() => {
+      disposed = true
+    })
+
+    expect(review.mock.calls[0]?.[2].aborted).toBe(true)
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    releaseReviewCleanup?.()
+    await disposal
+    expect(disposed).toBe(true)
+  })
+
+  it('uses the dedicated policy mutation for an existing Session', async () => {
+    const existing = { ...session, delegationPolicy: 'allow' as const }
+    const setDelegationPolicy = vi.fn(async () => undefined)
+    const ids = ['policy-user', 'policy-run', 'policy-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async () => undefined,
+        setDelegationPolicy
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Continue without delegation.',
+      delegationPolicy: 'deny'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(setDelegationPolicy).toHaveBeenCalledOnce()
+    expect(setDelegationPolicy).toHaveBeenCalledWith(project.id, existing.id, 'deny')
+  })
+
+  it('skips automatic review when the current turn has no assistant message', async () => {
+    const historical: PersistedChatSession = {
+      ...session,
+      autoReviewEnabled: true,
+      messages: [
+        {
+          id: 'historical-user',
+          role: 'user',
+          content: 'Earlier request.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'historical-agent',
+          role: 'agent',
+          content: 'Earlier response.',
+          status: 'complete',
+          responseToMessageId: 'historical-user',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    }
+    const savedSessions: PersistedChatSession[] = []
+    const review = vi.fn(async () => ({ started: true }))
+    const ids = ['current-user', 'current-run', 'unused-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [historical],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [historical.id],
+        createSession: async () => ({ sessionId: 'must-not-create' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      },
+      reviewer: { review },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: historical.id,
+      prompt: 'Produce no visible response.'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(completed).toMatchObject({ status: 'completed', output: '' })
+    expect(review).not.toHaveBeenCalled()
+    expect(savedSessions.at(-1)?.messages).toHaveLength(3)
+  })
   it('keeps concurrent external-workspace Sessions isolated by canonical cwd', async () => {
     const requestedCwds = await Promise.all([
       mkdtemp(join(tmpdir(), 'open-science-task-concurrent-a-')),
@@ -517,7 +906,7 @@ describe('TaskRunner', () => {
     ])
 
     unsubscribe()
-    runner.dispose()
+    await runner.dispose()
   })
 
   it('marks provider acceptance before the first visible provider event', async () => {
@@ -567,7 +956,7 @@ describe('TaskRunner', () => {
       'first-visible-output',
       'completed'
     ])
-    runner.dispose()
+    await runner.dispose()
   })
 
   it('emits liveness heartbeats until the first visible provider event', async () => {
@@ -610,7 +999,7 @@ describe('TaskRunner', () => {
       await vi.advanceTimersByTimeAsync(20_000)
       expect(progress).toHaveLength(countAfterCompletion)
     } finally {
-      runner.dispose()
+      await runner.dispose()
       vi.useRealTimers()
     }
   })
@@ -624,7 +1013,7 @@ describe('TaskRunner', () => {
     const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
 
     await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
-    runner.dispose()
+    await runner.dispose()
   })
 
   it('stops liveness heartbeats after the first visible provider event', async () => {
@@ -721,7 +1110,7 @@ describe('TaskRunner', () => {
       const completed = await runner.waitForRun(started.id)
       expect(completed.output).toBe('Working on it.')
     } finally {
-      runner.dispose()
+      await runner.dispose()
       vi.useRealTimers()
     }
   })
@@ -772,6 +1161,52 @@ describe('TaskRunner', () => {
       finishPrompt?.()
       await runner.waitForRun(first.id)
     }
+  })
+
+  it('rejects a new authored turn while a restored Plan awaits approval', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      id: 'session-plan-pending',
+      status: 'waiting-plan-approval',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: {
+          artifactId: 'plan-artifact',
+          artifactVersionId: 'plan-version',
+          artifactChecksum: 'plan-checksum',
+          approval: 'pending',
+          stepStatuses: {}
+        }
+      }
+    }
+    const resumeSession = vi.fn(async () => ({ sessionId: existing.id }))
+    const save = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession,
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Start another turn.'
+      })
+    ).rejects.toMatchObject({
+      code: 'session_busy',
+      message: `Session is waiting for Plan approval: ${existing.id}`
+    })
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
   })
 
   it('checks archive admission before an existing session is resumed or saved', async () => {
@@ -1228,7 +1663,7 @@ describe('TaskRunner', () => {
           artifacts: [
             {
               id: 'artifact-file',
-              projectName: project.id,
+              projectId: project.id,
               sessionId: 'session-artifact',
               messageId: 'artifact-agent',
               name: 'result.txt',
@@ -1236,6 +1671,7 @@ describe('TaskRunner', () => {
               fileUrl: 'open-science-preview://artifact-file/result.txt',
               mimeType: 'text/plain',
               size: 6,
+              createdAt: '1970-01-01T00:00:00.010Z',
               mtimeMs: 11
             }
           ]
@@ -1264,6 +1700,9 @@ describe('TaskRunner', () => {
       turnUsageUnavailable: true,
       artifactIds: ['artifact-file']
     })
+    expect(savedSessions.at(-1)?.artifacts).toEqual([
+      expect.objectContaining({ id: 'artifact-file', createdAt: 10 })
+    ])
   })
 
   it('settles a run as failed when final session persistence fails', async () => {
@@ -1388,7 +1827,7 @@ describe('TaskRunner', () => {
             artifacts: [
               {
                 id: 'artifact-partial',
-                projectName: project.id,
+                projectId: project.id,
                 sessionId: 'session-partial',
                 messageId: 'partial-agent',
                 name: 'partial-report.md',
@@ -1447,6 +1886,22 @@ describe('TaskRunner', () => {
         cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
+            id: 'failed-plan',
+            timestamp: 9,
+            kind: 'plan',
+            level: 'info',
+            sessionId: 'session-tool',
+            text: 'Plan awaiting approval.',
+            planProjection: {
+              artifactId: 'failed-plan-artifact',
+              artifactVersionId: 'failed-plan-version',
+              artifactChecksum: 'failed-plan-checksum',
+              revision: 1,
+              approval: 'pending',
+              lifecycle: 'awaiting_approval'
+            } as never
+          })
+          emitEvent?.({
             id: 'tool-start',
             timestamp: 10,
             kind: 'tool',
@@ -1500,10 +1955,12 @@ describe('TaskRunner', () => {
     })
 
     const started = await runner.startRun({ project: project.id, prompt: 'Run analysis.' })
-    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({
+    const failed = await runner.waitForRun(started.id)
+    expect(failed).toMatchObject({
       status: 'failed',
       error: 'Provider quota exceeded.'
     })
+    expect(failed.attention).toBeUndefined()
     expect(savedSessions.at(-1)).toMatchObject({
       status: 'error',
       error: 'Provider quota exceeded.',
@@ -1558,7 +2015,25 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-cancel' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        prompt: async () => promptGate,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'cancel-plan',
+            timestamp: 10,
+            kind: 'plan',
+            level: 'info',
+            sessionId: 'session-cancel',
+            text: 'Plan awaiting approval.',
+            planProjection: {
+              artifactId: 'cancel-plan-artifact',
+              artifactVersionId: 'cancel-plan-version',
+              artifactChecksum: 'cancel-plan-checksum',
+              revision: 1,
+              approval: 'pending',
+              lifecycle: 'awaiting_approval'
+            } as never
+          })
+          return promptGate
+        },
         cancelPrompt
       },
       runtimeEvents: {
@@ -1576,6 +2051,10 @@ describe('TaskRunner', () => {
     runner.subscribeProgress((event) => progressPhases.push(event.phase))
 
     const started = await runner.startRun({ project: project.id, prompt: 'Long research.' })
+    expect(started.attention).toMatchObject({
+      kind: 'plan-approval',
+      plan: { artifactVersionId: 'cancel-plan-version' }
+    })
     const cancelled = await runner.cancelRun(started.id)
 
     expect(cancelPrompt).toHaveBeenCalledOnce()
@@ -1588,6 +2067,7 @@ describe('TaskRunner', () => {
       completedAt: expect.any(Number)
     })
     expect(cancelled.cancelledAt).toBe(cancelled.completedAt)
+    expect(cancelled.attention).toBeUndefined()
     expect(progressPhases.at(-1)).toBe('cancelled')
     expect(savedSessions.at(-1)).toMatchObject({
       id: 'session-cancel',
@@ -1868,7 +2348,7 @@ describe('TaskRunner', () => {
     })
   })
 
-  it('releases its runtime-event subscription when disposed', () => {
+  it('releases its runtime-event subscription when disposed', async () => {
     let unsubscribeCount = 0
     const runner = createRunner({
       runtimeEvents: {
@@ -1878,7 +2358,7 @@ describe('TaskRunner', () => {
       }
     })
 
-    runner.dispose()
+    await runner.dispose()
 
     expect(unsubscribeCount).toBe(1)
   })

@@ -49,13 +49,24 @@ export class OpenScienceClient {
     })
   }
 
-  listSessions(project) {
-    const query = project ? `?project=${encodeURIComponent(project)}` : ''
+  listSessions(projectId) {
+    const query = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
     return this.request(`/api/v1/sessions${query}`)
   }
 
   getSession(sessionId) {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`)
+  }
+
+  getSessionPlan(sessionId) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`)
+  }
+
+  respondSessionPlan(sessionId, response) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan/respond`, {
+      method: 'POST',
+      body: response
+    })
   }
 
   startRun(request) {
@@ -70,7 +81,10 @@ export class OpenScienceClient {
     return this.request(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
   }
 
-  async waitForRun(runId, { pollIntervalMs = 250, signal, timeoutMs } = {}) {
+  async waitForRun(
+    runId,
+    { pollIntervalMs = 250, returnOnAttention = false, signal, timeoutMs } = {}
+  ) {
     if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
       throw new TypeError('timeoutMs must be a positive number.')
     }
@@ -82,6 +96,7 @@ export class OpenScienceClient {
       }
       const run = await this.getRun(runId)
       if (run.status !== 'running') return run
+      if (returnOnAttention && run.attention) return run
       await this.sleep(pollIntervalMs)
     }
   }

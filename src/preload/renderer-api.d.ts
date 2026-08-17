@@ -149,6 +149,7 @@ import type {
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
+  NotebookSessionStateRequest,
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../shared/notebook'
@@ -200,6 +201,7 @@ import type {
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
+  SessionDeletionResult,
   LoadAllSessionsResult,
   LoadSessionRequest,
   PersistedChatSession,
@@ -299,6 +301,7 @@ import type {
   ActiveSessionInfo,
   DataRootInspection,
   DataRootValidationResult,
+  DiscardMigratedCopyResult,
   MigrationOutcome,
   MigrationProgress,
   RevealAppStorageResult,
@@ -441,7 +444,7 @@ export interface OpenScienceAPI {
       options?: SaveSessionOptions
     ): Promise<PersistedChatSession>
     updateArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession>
-    deleteSession(request: DeleteSessionRequest): Promise<void>
+    deleteSession(request: DeleteSessionRequest): Promise<SessionDeletionResult>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
     onFlushRequest?(listener: AcpListener<SessionPersistenceFlushRequest>): RemoveListener
@@ -705,7 +708,7 @@ export interface OpenScienceAPI {
     ): Promise<void>
     // Scratch root: set path and mark pinned.
     scratchSet(providerId: string, path: string): Promise<void>
-    // Concurrent job limit: store 1..500 (not enforced in Phase 1).
+    // Enforced concurrent job limit: set 1..500.
     concurrencySet(providerId: string, limit: number): Promise<void>
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest(listener: (request: ComputeApprovalRequest) => void): () => void
@@ -823,7 +826,7 @@ export interface OpenScienceAPI {
     removeGrantedRoot(request: RemoveGrantedLocalRootRequest): Promise<GrantedLocalRoot[]>
   }
   notebook: {
-    state(request: NotebookSessionRequest): Promise<NotebookSessionState>
+    state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
     readInputPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
     getReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
     beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
@@ -921,7 +924,7 @@ export interface OpenScienceAPI {
     ): Promise<DataRootValidationResult>
     cancelMigrate(): Promise<void>
     commitAndRelaunch(parent: string): Promise<MigrationOutcome>
-    discardMigratedCopy(parent: string): Promise<void>
+    discardMigratedCopy(parent: string): Promise<DiscardMigratedCopyResult>
     // Marks the one-time legacy-data-move prompt as answered (declined / keep-here) so it's not shown again.
     dismissLegacyMovePrompt(): Promise<void>
     onProgress(listener: AcpListener<MigrationProgress>): RemoveListener

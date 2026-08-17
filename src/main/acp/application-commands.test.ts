@@ -143,7 +143,7 @@ describe('ACP application commands', () => {
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
     const connect = { cwd: '/workspace' }
-    const createSession = { projectName: 'project-1', permissionProfile: 'ask' as const }
+    const createSession = { projectId: 'project-1', permissionProfile: 'ask' as const }
     const resumeSession = { sessionId: 'session-1', cwd: '/workspace' }
     const interruptedTurn = {
       sessionId: 'session-1',
@@ -412,7 +412,7 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledTimes(humanCallers.length)
   })
 
-  it('routes Plan decisions and revision feedback only from a current human', async () => {
+  it('routes Plan decisions and revision feedback from current humans and Task automation', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -440,7 +440,24 @@ describe('ACP application commands', () => {
         acpCommands.respondPlan,
         invocation([request], createTaskCallerContext())
       )
-    ).rejects.toThrow('Only a current human caller can respond to a Session Plan.')
+    ).resolves.toMatchObject({ changed: true })
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation([request], createTaskCallerContext({ isAuthorizationCurrent: () => false }))
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation(
+          [request],
+          createWebCallerContext('agent-origin', { actionOrigin: 'agent-session' })
+        )
+      )
+    ).rejects.toThrow(
+      'Only a current human or Task automation caller can respond to a Session Plan.'
+    )
   })
 
   it('checks archive availability before resetting Session context or compacting', async () => {
@@ -479,7 +496,298 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()
   })
 
-  it('exposes Plan projection reads to the same current human callers on Electron and Web', async () => {
+  it('holds Session admission through ACP response mutations', async () => {
+    const responseSnapshot: AcpStateSnapshot = {
+      ...snapshot,
+      pendingPermissions: [
+        {
+          requestId: 'permission-1',
+          sessionId: 'permission-session',
+          toolCallId: 'tool-1',
+          title: 'Use a tool',
+          options: []
+        }
+      ],
+      pendingElicitations: [
+        {
+          requestId: 'question-1',
+          sessionId: 'elicitation-session',
+          toolCallId: 'tool-2',
+          message: 'Choose',
+          fields: []
+        }
+      ]
+    }
+    let admittedSessionId: string | undefined
+    const admitted: string[] = []
+    const withinAdmission = async <Result>(
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => {
+      expect(admittedSessionId).toBeUndefined()
+      admittedSessionId = sessionId
+      admitted.push(sessionId)
+      try {
+        return await operation()
+      } finally {
+        admittedSessionId = undefined
+      }
+    }
+    const base = createDependencies()
+    const runtime: AcpApplicationCommandDependencies['runtime'] = {
+      ...base.runtime,
+      getSnapshot: vi.fn(() => responseSnapshot),
+      respondToPermission: vi.fn(async (response) => {
+        expect(admittedSessionId).toBe(
+          response.requestId === 'restored-permission'
+            ? 'restored-permission-session'
+            : 'permission-session'
+        )
+        return responseSnapshot
+      }),
+      respondToElicitation: vi.fn(async (response) => {
+        expect(admittedSessionId).toBe(
+          response.requestId === 'restored-question'
+            ? 'restored-elicitation-session'
+            : 'elicitation-session'
+        )
+        return responseSnapshot
+      }),
+      respondSessionPlan: vi.fn(async () => {
+        expect(admittedSessionId).toBe('plan-session')
+        return { projection: {} as never, changed: true }
+      }),
+      setPermissionProfile: vi.fn(async () => {
+        expect(admittedSessionId).toBe('profile-session')
+        return responseSnapshot
+      }),
+      revokePermissionGrant: vi.fn(async () => {
+        expect(admittedSessionId).toBe('profile-session')
+        return responseSnapshot
+      })
+    }
+    const respondDelegatedQuestion = vi.fn(async () => {
+      expect(admittedSessionId).toBe('delegated-session')
+    })
+    const dependencies: AcpApplicationCommandDependencies = {
+      ...base,
+      runtime,
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => withinAdmission(sessionId, operation),
+        withSessionAvailableById: withinAdmission
+      },
+      respondDelegatedQuestion
+    }
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await router.dispatcher.invoke(
+      acpCommands.respondPermission,
+      invocation([{ requestId: 'permission-1', optionId: 'allow-once' }])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondElicitation,
+      invocation([{ requestId: 'question-1', action: 'decline' }])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondPermission,
+      invocation([
+        {
+          requestId: 'restored-permission',
+          optionId: 'allow-once',
+          restored: {
+            projectId: 'project-1',
+            sessionId: 'restored-permission-session'
+          }
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondElicitation,
+      invocation([
+        {
+          requestId: 'restored-question',
+          action: 'decline',
+          request: {
+            requestId: 'restored-question',
+            sessionId: 'restored-elicitation-session',
+            toolCallId: 'tool-restored',
+            message: 'Choose again',
+            fields: []
+          }
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondElicitation,
+      invocation([
+        {
+          requestId: 'delegated-question-1',
+          action: 'accept',
+          delegatedQuestion: {
+            projectId: 'project-1',
+            sessionId: 'delegated-session',
+            action: 'confirm',
+            answers: []
+          }
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondPlan,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'plan-session',
+          feedback: 'Revise the plan.'
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.setPermissionProfile,
+      invocation([{ sessionId: 'profile-session', profile: 'auto' }])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.revokePermissionGrant,
+      invocation([{ sessionId: 'profile-session', categoryKey: 'mcp:tool' }])
+    )
+
+    expect(admitted).toEqual([
+      'permission-session',
+      'elicitation-session',
+      'restored-permission-session',
+      'restored-elicitation-session',
+      'delegated-session',
+      'plan-session',
+      'profile-session',
+      'profile-session'
+    ])
+    expect(respondDelegatedQuestion).toHaveBeenCalledOnce()
+  })
+
+  it('rejects forged and unknown ACP response authority before Session admission', async () => {
+    const responseSnapshot: AcpStateSnapshot = {
+      ...snapshot,
+      sessionIds: ['permission-session', 'elicitation-session', 'forged-session'],
+      pendingPermissions: [
+        {
+          requestId: 'permission-1',
+          sessionId: 'permission-session',
+          toolCallId: 'tool-1',
+          title: 'Use a tool',
+          options: []
+        }
+      ],
+      pendingElicitations: [
+        {
+          requestId: 'question-1',
+          sessionId: 'elicitation-session',
+          toolCallId: 'tool-2',
+          message: 'Choose',
+          fields: []
+        }
+      ]
+    }
+    const base = createDependencies()
+    const admitted: string[] = []
+    const withSessionAvailableById = <Result>(
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => {
+      admitted.push(sessionId)
+      return operation()
+    }
+    const respondDelegatedQuestion = vi.fn(async () => undefined)
+    const dependencies: AcpApplicationCommandDependencies = {
+      ...base,
+      runtime: {
+        ...base.runtime,
+        getSnapshot: vi.fn(() => responseSnapshot)
+      },
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation(),
+        withSessionAvailableById
+      },
+      respondDelegatedQuestion
+    }
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPermission,
+        invocation([
+          {
+            requestId: 'permission-1',
+            optionId: 'allow-once',
+            restored: { projectId: 'forged-project', sessionId: 'forged-session' }
+          }
+        ])
+      )
+    ).rejects.toThrow('Permission response Session does not match the pending request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([
+          {
+            requestId: 'question-1',
+            action: 'decline',
+            request: {
+              requestId: 'question-1',
+              sessionId: 'forged-session',
+              toolCallId: 'tool-2',
+              message: 'Choose',
+              fields: []
+            }
+          }
+        ])
+      )
+    ).rejects.toThrow('Structured input response Session does not match the pending request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([
+          {
+            requestId: 'question-1',
+            action: 'accept',
+            delegatedQuestion: {
+              projectId: 'forged-project',
+              sessionId: 'forged-session',
+              action: 'confirm',
+              answers: []
+            }
+          }
+        ])
+      )
+    ).rejects.toThrow('Structured input response Session does not match the pending request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPermission,
+        invocation([{ requestId: 'unknown-permission', optionId: 'allow-once' }])
+      )
+    ).rejects.toThrow('Unknown permission request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([{ requestId: 'unknown-question', action: 'decline' }])
+      )
+    ).rejects.toThrow('Unknown structured input request.')
+
+    expect(admitted).toEqual([])
+    expect(dependencies.runtime.respondToPermission).not.toHaveBeenCalled()
+    expect(dependencies.runtime.respondToElicitation).not.toHaveBeenCalled()
+    expect(respondDelegatedQuestion).not.toHaveBeenCalled()
+  })
+
+  it('exposes Plan projection reads to current humans and Task automation', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -502,7 +810,7 @@ describe('ACP application commands', () => {
         acpCommands.getPlanProjection,
         invocation(['project-1', 'session-1'], createTaskCallerContext())
       )
-    ).rejects.toThrow('Only a current human caller can access a Session Plan.')
+    ).resolves.toBeNull()
     await expect(
       router.dispatcher.invoke(
         acpCommands.getPlanProjection,
@@ -513,7 +821,9 @@ describe('ACP application commands', () => {
       )
     ).rejects.toThrow('Caller authorization is no longer current.')
 
-    expect(dependencies.runtime.getSessionPlanProjection).toHaveBeenCalledTimes(humanCallers.length)
+    expect(dependencies.runtime.getSessionPlanProjection).toHaveBeenCalledTimes(
+      humanCallers.length + 1
+    )
   })
 
   it('accepts structured answers only from a current human-originated caller', async () => {

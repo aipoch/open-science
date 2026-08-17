@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { PackagePlus } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { Trans, useTranslation } from 'react-i18next'
 
 import type {
   ConversationSkillImportApprovalRequest,
@@ -34,6 +35,8 @@ const SkillImportApprovalRequestDialog = ({
   request,
   respond
 }: SkillImportApprovalRequestDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const [selected, setSelected] = useState<Set<string>>(() =>
     request.source.kind === 'github'
       ? new Set(
@@ -80,10 +83,10 @@ const SkillImportApprovalRequestDialog = ({
   const count = selected.size
   const importLabel =
     request.source.kind === 'github'
-      ? `Import selected (${count})`
+      ? t('Import selected ({{count}})', { count })
       : count > 0
-        ? `Import ${count} Skill${count === 1 ? '' : 's'}`
-        : 'Import selected'
+        ? t('Import {{count}} Skills', { defaultValue_one: 'Import {{count}} Skill', count })
+        : t('Import selected')
 
   return (
     <>
@@ -102,15 +105,18 @@ const SkillImportApprovalRequestDialog = ({
               <div className="min-w-0">
                 <Dialog.Title className={dialogTitleClassName}>
                   {request.source.kind === 'github'
-                    ? 'Import Skills from GitHub?'
-                    : 'Import Skill package?'}
+                    ? t('Import Skills from GitHub?')
+                    : t('Import Skill package?')}
                 </Dialog.Title>
                 <Dialog.Description className={cn(dialogDescriptionClassName, 'text-xs')}>
-                  The agent requested an import from{' '}
-                  <span className="break-all font-medium text-foreground">
-                    {request.source.label}
-                  </span>
-                  . Review and choose exactly what Open Science may install.
+                  {/* The source label is user data: interpolated, never translated. */}
+                  <Trans
+                    i18nKey="The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install."
+                    values={{ source: request.source.label }}
+                    components={{
+                      name: <span className="break-all font-medium text-foreground" />
+                    }}
+                  />
                 </Dialog.Description>
               </div>
             </div>
@@ -118,20 +124,23 @@ const SkillImportApprovalRequestDialog = ({
             <div className={cn(dialogBodyClassName, 'min-h-0 flex-1 overflow-y-auto py-3')}>
               <div className="flex items-center gap-3">
                 <h3 className="text-sm font-semibold text-foreground">
-                  Found {request.previews.length} skill{request.previews.length === 1 ? '' : 's'}
+                  {t('Found {{count}} skills', {
+                    defaultValue_one: 'Found {{count}} skill',
+                    count: request.previews.length
+                  })}
                 </h3>
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <input
                     type="checkbox"
-                    aria-label="Select all"
+                    aria-label={t('Select all')}
                     checked={allSelected}
                     onChange={toggleAll}
                     className="size-4 shrink-0"
                   />
-                  Select all
+                  {t('Select all')}
                 </label>
                 <Button type="button" variant="ghost" size="sm" onClick={invertSelection}>
-                  Invert
+                  {t('Invert')}
                 </Button>
               </div>
 
@@ -140,7 +149,9 @@ const SkillImportApprovalRequestDialog = ({
                   <li key={candidate.subPath} className="flex items-center gap-3 py-2.5">
                     <input
                       type="checkbox"
-                      aria-label={`Select ${candidate.name}`}
+                      aria-label={t('Select {{name}}', {
+                        name: candidate.name
+                      })}
                       checked={selected.has(candidate.subPath)}
                       onChange={() => toggle(candidate.subPath)}
                       className="size-4 shrink-0"
@@ -155,11 +166,11 @@ const SkillImportApprovalRequestDialog = ({
                     </div>
                     {candidate.alreadyImported ? (
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        {request.source.kind === 'github' ? 'Imported' : 'Already imported'}
+                        {request.source.kind === 'github' ? t('Imported') : t('Already imported')}
                       </span>
                     ) : candidate.replaceableId ? (
                       <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">
-                        Updates existing
+                        {t('Updates existing')}
                       </span>
                     ) : null}
                     <Button
@@ -185,7 +196,7 @@ const SkillImportApprovalRequestDialog = ({
                         })
                       }
                     >
-                      Preview
+                      {t('Preview')}
                     </Button>
                   </li>
                 ))}
@@ -193,7 +204,8 @@ const SkillImportApprovalRequestDialog = ({
 
               {request.skipped.length > 0 ? (
                 <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
-                  <div className="font-medium text-foreground">Not importable</div>
+                  <div className="font-medium text-foreground">{t('Not importable')}</div>
+                  {/* item.source and item.reason are backend-supplied and pass through verbatim. */}
                   <ul className="mt-1 list-disc space-y-1 pl-4">
                     {request.skipped.map((item) => (
                       <li key={`${item.source}:${item.reason}`}>
@@ -212,7 +224,7 @@ const SkillImportApprovalRequestDialog = ({
                 className={dialogCancelButtonClassName}
                 onClick={() => void respond({ id: request.id, cancelled: true })}
               >
-                Cancel
+                {tCommon('Cancel')}
               </Button>
               <Button
                 type="button"

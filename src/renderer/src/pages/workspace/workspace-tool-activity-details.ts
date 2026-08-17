@@ -2,7 +2,9 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
+import type { NotebookRunStatus } from '../../../../shared/notebook'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
+import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 
 type ToolCodeSection = {
   kind: 'code'
@@ -280,7 +282,10 @@ const formatDiffMeta = (added: number, removed: number): string | undefined => {
 }
 
 // Assembles diff sections for edit-kind tools (Edit/Write) with per-file summaries.
-const buildDiffDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildDiffDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   const diffs = collectDiffs(activity)
 
   if (diffs.length === 0) return undefined
@@ -308,14 +313,18 @@ const buildDiffDetails = (activity: ToolActivity): ToolActivityDetails | undefin
 
   return {
     displayName: getToolDisplayName(activity),
-    subtitle: diffs.length === 1 ? primaryPath : `${diffs.length} files`,
+    // A single diff shows its path; several collapse to a count, which is prose and so translates.
+    subtitle: diffs.length === 1 ? primaryPath : t('{{count}} files', { count: diffs.length }),
     metaLabel: formatDiffMeta(totalAdded, totalRemoved),
     sections
   }
 }
 
 // Assembles command/output code sections for execute-kind tools (Bash, scripts).
-const buildExecuteDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildExecuteDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   const command = getCommandText(activity)
   const output = getOutputText(activity)
   const sections: ToolDetailSection[] = []
@@ -336,7 +345,7 @@ const buildExecuteDetails = (activity: ToolActivity): ToolActivityDetails | unde
   return {
     displayName: getToolDisplayName(activity),
     subtitle: command,
-    metaLabel: typeof exitCode === 'number' ? `exit ${exitCode}` : undefined,
+    metaLabel: typeof exitCode === 'number' ? t('exit {{code}}', { code: exitCode }) : undefined,
     sections
   }
 }
@@ -705,6 +714,43 @@ const getNotebookOutput = (summary: Record<string, unknown> | undefined): string
   return parts.length > 0 ? parts.join('\n') : undefined
 }
 
+const getNotebookRunIdFromActivity = (activity: ToolActivity): string | undefined => {
+  const summary = parseNotebookRunSummary(activity)
+  return summary && typeof summary.runId === 'string' ? trimDetail(summary.runId) : undefined
+}
+
+const NOTEBOOK_RUN_STATUSES = new Set<NotebookRunStatus>([
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'timeout',
+  'interrupted',
+  'cancelled'
+])
+
+// Restores execution truth for transcript rows outside the hydrated Run window. The app-owned
+// invocation identity and compact Run result must both be present; otherwise callers stay
+// fail-closed instead of trusting an outer ACP observer's status.
+const getNotebookRunStatusFromActivity = (
+  activity: ToolActivity
+): NotebookRunStatus | undefined => {
+  if (!activity.executionInvocationId) return undefined
+  const summary = parseNotebookRunSummary(activity)
+  if (
+    !summary ||
+    typeof summary.runId !== 'string' ||
+    summary.executionInvocationId !== activity.executionInvocationId ||
+    typeof summary.status !== 'string'
+  ) {
+    return undefined
+  }
+
+  return NOTEBOOK_RUN_STATUSES.has(summary.status as NotebookRunStatus)
+    ? (summary.status as NotebookRunStatus)
+    : undefined
+}
+
 // Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
 // kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
 const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
@@ -736,8 +782,7 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
   return {
     displayName,
     metaLabel: status,
-    notebookRunId:
-      summary && typeof summary.runId === 'string' ? trimDetail(summary.runId) : undefined,
+    notebookRunId: getNotebookRunIdFromActivity(activity),
     sections
   }
 }
@@ -807,7 +852,10 @@ const formatPackageChange = (value: unknown): string | undefined => {
 
 // Summarizes a package install: which packages, the installer used, and a cleaned collapsible log —
 // instead of dumping the raw { ok, needsRestart, log, method } JSON envelope into the transcript.
-const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildManagePackagesDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   const result = parseManagePackagesResult(activity)
 
   // Nothing parseable to summarize; let the generic input/output view handle it.
@@ -826,11 +874,24 @@ const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails
   const needsRestart = result.needsRestart === true
   const prefix = typeof result.prefix === 'string' ? trimDetail(result.prefix) : undefined
   const log = typeof result.log === 'string' ? cleanInstallLog(result.log) : ''
+  const logTruncation = isRecord(result.logTruncation) ? result.logTruncation : undefined
+  const droppedLogBytes =
+    logTruncation &&
+    Number.isSafeInteger(logTruncation.droppedBytes) &&
+    Number(logTruncation.droppedBytes) > 0
+      ? Number(logTruncation.droppedBytes)
+      : undefined
   const error = typeof result.error === 'string' ? trimDetail(result.error) : undefined
   const packageChanges = Array.isArray(result.packageChanges)
     ? result.packageChanges.map(formatPackageChange).filter((change): change is string => !!change)
     : []
-  const metaLabel = [ok === false ? 'failed' : method, needsRestart ? 'restart needed' : undefined]
+  const metaLabel = [
+    ok === false ? t('failed') : method,
+    needsRestart ? t('restart needed') : undefined,
+    droppedLogBytes !== undefined
+      ? t('log truncated ({{size}} dropped)', { size: formatByteSize(droppedLogBytes) })
+      : undefined
+  ]
     .filter(Boolean)
     .join(' · ')
   const sections: ToolDetailSection[] = []
@@ -978,21 +1039,25 @@ const buildFetchDetails = (activity: ToolActivity): ToolActivityDetails | undefi
 }
 
 // Projects one tool activity into the structured, expandable detail model, or nothing for chips.
-const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildToolActivityDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   if (isSkillActivity(activity)) return undefined
   // Saved files show a metadata summary instead of dumping their (possibly base64) content.
   if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
-  if (isEditActivity(activity)) return buildDiffDetails(activity) ?? buildGenericDetails(activity)
+  if (isEditActivity(activity))
+    return buildDiffDetails(activity, t) ?? buildGenericDetails(activity)
   // Package installs show which packages / installer and a cleaned log, not the raw result JSON.
   if (isManagePackagesActivity(activity)) {
-    return buildManagePackagesDetails(activity) ?? buildGenericDetails(activity)
+    return buildManagePackagesDetails(activity, t) ?? buildGenericDetails(activity)
   }
   // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
   if (isNotebookKernelRunActivity(activity)) {
     return buildNotebookDetails(activity) ?? buildGenericDetails(activity)
   }
-  if (activity.toolKind === 'execute') return buildExecuteDetails(activity)
+  if (activity.toolKind === 'execute') return buildExecuteDetails(activity, t)
   // Tool-discovery steps summarize the tools they found rather than repeating "ToolSearch".
   if (isToolSearchActivity(activity)) return buildToolSearchDetails(activity)
   // WebFetch shows the URL and fetched result; other fetches without a URL stay plain chips.
@@ -1003,6 +1068,8 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
 
 export {
   buildToolActivityDetails,
+  getNotebookRunIdFromActivity,
+  getNotebookRunStatusFromActivity,
   getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,

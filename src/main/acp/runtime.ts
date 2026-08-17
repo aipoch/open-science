@@ -31,7 +31,9 @@ import {
   type AcpSetPermissionProfileRequest,
   type AcpStateSnapshot
 } from '../../shared/acp'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { type AgentFrameworkId } from '../../shared/settings'
+import type { MessageAttribution } from '../../shared/session-persistence'
 import {
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
@@ -166,11 +168,11 @@ type AcpRuntimeOptions = {
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
-  // Resolves a granted local root id to its absolute path (backed by the GrantedLocalRoot table),
-  // enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references stay
-  // unavailable.
+  // Resolves a granted local root and its current access level (backed by the GrantedLocalRoot
+  // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
+  // stay unavailable.
   grantedRoots?: {
-    resolveRootPath: (rootId: string) => Promise<string | undefined>
+    resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
   skillImport?: AcpRuntimeSkillImportOptions
@@ -237,8 +239,8 @@ type AcpRuntimeOptions = {
   // eligible for a Specialist.
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
   // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
-  // projectName carries the Project id. Returns undefined when absent or on lookup failure.
-  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
+  // projectId carries the Project id. Returns undefined when absent or on lookup failure.
+  resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
 }
 
 type AcpRuntimeArtifactOptions = {
@@ -246,7 +248,7 @@ type AcpRuntimeArtifactOptions = {
   configRoot: string
   // Data root: where artifacts/notebooks/runtime live (user-relocatable).
   dataRoot: string
-  projectName: string
+  projectId: string
   mcpEntryPath: string
   mcpCommand?: string
   repository?: ArtifactRepository
@@ -278,7 +280,7 @@ type AcpRuntimeUploadOptions = {
 }
 
 type AcpRuntimeNotebookOptions = {
-  projectName: string
+  projectId: string
   mcpEntryPath: string
   mcpCommand?: string
   getRpcConnection?: (binding: {
@@ -569,6 +571,18 @@ class AcpRuntime {
     return this.backend
   }
 
+  captureSessionModel(
+    sessionId: string
+  ): Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined {
+    const record = this.sessionRegistry.lookup(sessionId)
+    if (!record?.attachment) return undefined
+    const aggregate = record.aggregate.snapshot()
+    return Object.freeze({
+      backend: this.backend,
+      ...(aggregate.appliedModel ? { appliedModel: aggregate.appliedModel } : {})
+    })
+  }
+
   callSessionPlan(input: AcpSessionPlanCall): Promise<unknown> {
     return this.sessionPlanWorkflow.call(input)
   }
@@ -591,20 +605,20 @@ class AcpRuntime {
   }
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
-  getActivePromptSessions(): { projectName: string; sessionId: string }[] {
+  getActivePromptSessions(): { projectId: string; sessionId: string }[] {
     return this.getInFlightSessionIds().map((sessionId) => ({
-      projectName: this.resolveSessionProjectName(sessionId),
+      projectId: this.resolveSessionProjectId(sessionId),
       sessionId
     }))
   }
 
   // A permission-blocked prompt whose authority reached durable storage is quiescent for app quit:
   // teardown loses only the dead provider RPC, while the card remains actionable after restart.
-  getQuitBlockingPromptSessions(): { projectName: string; sessionId: string }[] {
+  getQuitBlockingPromptSessions(): { projectId: string; sessionId: string }[] {
     return this.getInFlightSessionIds()
       .filter((sessionId) => !this.permissionContext.hasDurablePendingForSession(sessionId))
       .map((sessionId) => ({
-        projectName: this.resolveSessionProjectName(sessionId),
+        projectId: this.resolveSessionProjectId(sessionId),
         sessionId
       }))
   }
@@ -612,12 +626,12 @@ class AcpRuntime {
   hasLiveSession(projectId: string, sessionId: string): boolean {
     return (
       this.activeSessionFor(sessionId) !== undefined &&
-      this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName === projectId
+      this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId === projectId
     )
   }
 
   liveSessionProjectId(sessionId: string): string | undefined {
-    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId
   }
 
   // Handoff adapters select their framework without reaching into session ownership maps. The
@@ -713,7 +727,7 @@ class AcpRuntime {
         contextResetSessionIds.add(request.sessionId)
       }
       this.scheduleQueuedPlanContinuation(
-        this.sessionEnvironment.projectName(request.sessionId),
+        this.sessionEnvironment.projectId(request.sessionId),
         request.sessionId
       )
       return resumed
@@ -1060,6 +1074,20 @@ class AcpRuntime {
     )
   }
 
+  async sendApplicationPrompt(
+    request: AcpPromptRequest,
+    attribution: MessageAttribution,
+    promptAttemptId?: string
+  ): Promise<PromptResponse> {
+    return this.withOperationLease(() =>
+      this.runPromptTurn(request, {
+        kind: 'application',
+        attribution,
+        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+      })
+    )
+  }
+
   // App-owned continuations participate in the same prompt ownership, cancellation, provenance, and
   // accounting lifecycle as user turns. Their synthesized control text is provider input, however,
   // and must never be projected into the transcript as a second user-authored message.
@@ -1081,6 +1109,11 @@ class AcpRuntime {
     request: AcpPromptRequest,
     intent:
       | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+      | Readonly<{
+          kind: 'application'
+          attribution: MessageAttribution
+          promptAttemptId?: string
+        }>
       | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
@@ -1274,7 +1307,7 @@ class AcpRuntime {
     const restored = response.restored!
     const activeSession = this.activeSessionFor(restored.sessionId)
     if (!activeSession) throw new Error(`ACP session not found: ${restored.sessionId}`)
-    const projectId = this.sessionEnvironment.projectName(restored.sessionId)
+    const projectId = this.sessionEnvironment.projectId(restored.sessionId)
     const decision = await this.permissionWaitOwner.resolveRestored(
       response,
       projectId,
@@ -1429,7 +1462,7 @@ class AcpRuntime {
         throw new Error(`ACP session not found: ${response.request.sessionId}`)
       }
       restoredContinuation = await this.durableContinuationContext.prepareElicitation({
-        projectId: this.sessionEnvironment.projectName(response.request.sessionId),
+        projectId: this.sessionEnvironment.projectId(response.request.sessionId),
         sessionId: response.request.sessionId,
         requestId: response.request.requestId,
         toolCallId: response.request.toolCallId,
@@ -2099,8 +2132,8 @@ class AcpRuntime {
   }
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
-  private resolveSessionProjectName(sessionId: string): string {
-    return this.sessionEnvironment.projectName(sessionId)
+  private resolveSessionProjectId(sessionId: string): string {
+    return this.sessionEnvironment.projectId(sessionId)
   }
 
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting

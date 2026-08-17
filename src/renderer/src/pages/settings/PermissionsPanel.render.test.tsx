@@ -267,7 +267,8 @@ describe('PermissionsPanel', () => {
     expect(revoke).toHaveBeenCalledWith({ grants: [{ id: 'grant-1', revision: 1 }] })
     expect(usePermissionGrantsStore.getState().undo).toMatchObject({
       token: 'undo-1',
-      message: 'Revoked Local compute · Shell'
+      messageKey: 'Revoked {{family}} · {{capability}}',
+      messageParams: { family: 'Local compute', capability: 'Shell' }
     })
   })
 
@@ -330,7 +331,7 @@ describe('PermissionsPanel', () => {
     await act(async () => root.render(<PermissionsPanel />))
 
     expect(document.body.textContent).toContain(
-      'Session names, Connector policy could not be loaded'
+      'The following permission details could not be loaded: Session names, Connector policy'
     )
     expect(
       document.body.querySelector<HTMLButtonElement>('[aria-label*="Revoke all"]')?.disabled

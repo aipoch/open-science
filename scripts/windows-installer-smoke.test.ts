@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   assertPackagedResources,
+  assertDatabaseDowngradeBlocked,
   authenticatePackagedAppEndpoint,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
@@ -16,10 +18,14 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  observeChildClose,
+  packagedArtifactSmokeRpcResult,
   packagedMainEntryPath,
   packagedResourcePaths,
+  parseArguments,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
+  releasedMigrationCountForPhase,
   requestPackagedAppShutdown,
   runProcess,
   terminateProcessTree,
@@ -48,6 +54,188 @@ describe('Windows installer smoke plan', () => {
     expect(installerVersion('aipoch-open-science-0.8.0-nightly.abc1234-win-x64-setup.exe')).toBe(
       '0.8.0-nightly.abc1234'
     )
+  })
+
+  it('parses an optional positive released migration count', () => {
+    expect(parseArguments(['--installer-dir', 'dist'])).toMatchObject({
+      artifactRpcContract: 'reservation',
+      expectedMigrationCount: undefined
+    })
+    expect(
+      parseArguments([
+        '--installer-dir',
+        'dist',
+        '--previous-installer-dir',
+        'previous',
+        '--expected-migration-count',
+        '4'
+      ]).expectedMigrationCount
+    ).toBe(4)
+    for (const value of [
+      undefined,
+      '0',
+      '-1',
+      '1.5',
+      'not-a-number',
+      String(Number.MAX_SAFE_INTEGER + 1)
+    ]) {
+      expect(() =>
+        parseArguments([
+          '--installer-dir',
+          'dist',
+          '--expected-migration-count',
+          ...(value === undefined ? [] : [value])
+        ])
+      ).toThrow(/migration count must be a positive/)
+    }
+  })
+
+  it('accepts only explicit packaged Artifact RPC contracts', () => {
+    expect(
+      parseArguments(['--installer-dir', 'dist', '--artifact-rpc-contract', 'legacy'])
+        .artifactRpcContract
+    ).toBe('legacy')
+    for (const value of [undefined, 'automatic']) {
+      expect(() =>
+        parseArguments([
+          '--installer-dir',
+          'dist',
+          '--artifact-rpc-contract',
+          ...(value === undefined ? [] : [value])
+        ])
+      ).toThrow(/Artifact RPC contract must be legacy or reservation/)
+    }
+  })
+
+  it('models the packaged Artifact reservation, Version, and release RPC contract', () => {
+    const workspace = 'C:\\smoke\\workspace'
+    const fileBytes = Buffer.byteLength('windows-rpc-smoke\n')
+    const checksum = createHash('sha256').update('windows-rpc-smoke\n').digest('hex')
+    const artifactScope = {
+      projectId: 'installer-smoke-project',
+      appSessionId: 'installer-smoke-session',
+      artifactStorageSessionId: 'installer-smoke-session',
+      artifactRunId: 'installer-smoke-artifact-run'
+    }
+    const writeOperationId = `artifact-write-${'a'.repeat(64)}`
+    const reservation = packagedArtifactSmokeRpcResult(
+      {
+        method: 'artifactReserveWrite',
+        params: {
+          ...artifactScope,
+          writeOperationId,
+          filename: 'windows-rpc-smoke.txt',
+          fileBytes
+        }
+      },
+      workspace
+    )
+    expect(reservation).toMatchObject({
+      id: 'installer-smoke-reservation',
+      fileBytes,
+      expiresAt: expect.any(Number)
+    })
+
+    const version = packagedArtifactSmokeRpcResult(
+      {
+        method: 'artifactCreateVersion',
+        params: {
+          ...artifactScope,
+          writeOperationId,
+          resourceReservationId: reservation.id,
+          resourceSizeBytes: fileBytes,
+          resourceChecksum: checksum
+        }
+      },
+      workspace
+    )
+    expect(version).toMatchObject({
+      versionId: 'installer-smoke-version',
+      path: join(workspace, 'windows-rpc-smoke.txt'),
+      size: fileBytes
+    })
+    expect(
+      packagedArtifactSmokeRpcResult(
+        {
+          method: 'artifactReleaseWrite',
+          params: { ...artifactScope, reservationId: reservation.id }
+        },
+        workspace
+      )
+    ).toEqual({ released: true })
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          method: 'artifactCreateVersion',
+          params: {
+            ...artifactScope,
+            writeOperationId,
+            resourceReservationId: 'wrong-reservation',
+            resourceSizeBytes: fileBytes,
+            resourceChecksum: checksum
+          }
+        },
+        workspace
+      )
+    ).toThrow(/reservation metadata/)
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          method: 'artifactReserveWrite',
+          params: {
+            ...artifactScope,
+            appSessionId: 'wrong-session',
+            writeOperationId,
+            filename: 'windows-rpc-smoke.txt',
+            fileBytes
+          }
+        },
+        workspace
+      )
+    ).toThrow(/write scope/)
+  })
+
+  it('supports the released legacy Artifact contract without weakening reservation enforcement', () => {
+    const workspace = 'C:\\smoke\\workspace'
+    const legacyRequest = {
+      method: 'artifactCreateVersion',
+      params: {
+        projectId: 'installer-smoke-project',
+        appSessionId: 'installer-smoke-session',
+        artifactStorageSessionId: 'installer-smoke-session',
+        artifactRunId: 'installer-smoke-artifact-run',
+        writeOperationId: `artifact-write-${'a'.repeat(64)}`
+      }
+    }
+
+    expect(packagedArtifactSmokeRpcResult(legacyRequest, workspace, 'legacy')).toMatchObject({
+      versionId: 'installer-smoke-version',
+      path: join(workspace, 'windows-rpc-smoke.txt')
+    })
+    expect(() => packagedArtifactSmokeRpcResult(legacyRequest, workspace, 'reservation')).toThrow(
+      /reservation metadata/
+    )
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          ...legacyRequest,
+          params: {
+            ...legacyRequest.params,
+            resourceReservationId: 'partial-reservation'
+          }
+        },
+        workspace,
+        'legacy'
+      )
+    ).toThrow(/must omit reservation metadata/)
+  })
+
+  it('uses the released migration prefix only for current-version launch phases', () => {
+    expect(
+      ['previous', 'current', 'rollback', 'restart'].map((phase) =>
+        releasedMigrationCountForPhase(phase, 4)
+      )
+    ).toEqual([undefined, 4, undefined, 4])
   })
 
   it('drills upgrade, process-lock rollback without old-app health, and final restart', async () => {
@@ -131,6 +319,33 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     expect(parsePackagedAppEndpoint('[main] app starting')).toBeUndefined()
   })
 
+  it('accepts a blocked database downgrade regardless of process exit status', () => {
+    expect(
+      assertDatabaseDowngradeBlocked({
+        becameHealthy: false,
+        output: '[main] database_newer_than_app'
+      })
+    ).toBeUndefined()
+  })
+
+  it('rejects a database downgrade that became healthy', () => {
+    expect(() =>
+      assertDatabaseDowngradeBlocked({
+        becameHealthy: true,
+        output: '[main] database_newer_than_app'
+      })
+    ).toThrow(/unexpectedly became healthy/)
+  })
+
+  it('requires a compatibility diagnostic for a blocked database downgrade', () => {
+    expect(() =>
+      assertDatabaseDowngradeBlocked({
+        becameHealthy: false,
+        output: '[main] app exited'
+      })
+    ).toThrow(/expected compatibility error/)
+  })
+
   it('accepts only a packaged bootstrap that reports an absolute Windows config root', async () => {
     const configRoot = 'C:\\Users\\runneradmin\\.open-science'
     await expect(
@@ -175,6 +390,25 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       [`${runnerConfigRoot}\\web-token`, 'utf8'],
       [`${isolatedConfigRoot}\\web-token`, 'utf8']
     ])
+  })
+
+  it('waits for child stdio close after exit before evaluating downgrade output', async () => {
+    const child = new EventEmitter()
+    let output = ''
+    const close = observeChildClose(child)
+    let closed = false
+    void close.then(() => {
+      closed = true
+    })
+
+    child.emit('exit', 0)
+    output += '[main] database_newer_than_app'
+    await Promise.resolve()
+    expect(closed).toBe(false)
+
+    child.emit('close', 0)
+    await expect(close).resolves.toBe(0)
+    expect(output).toContain('database_newer_than_app')
   })
 
   it('gives shutdown its own timeout budget after startup completes', async () => {

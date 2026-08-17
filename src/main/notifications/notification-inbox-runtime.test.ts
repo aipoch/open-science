@@ -6,12 +6,12 @@ import { bindNotificationInboxDeletionRuntime } from './notification-inbox-runti
 describe('notification inbox deletion runtime', () => {
   it('invalidates durable Side chats at the authoritative Session deletion boundary', async () => {
     let handlers: SessionDeletionHandlers | undefined
-    const deleteSessions = vi.fn(async () => undefined)
+    const invalidateSessions = vi.fn(async () => undefined)
     const onSessionsDeleted = vi.fn(async () => undefined)
 
     bindNotificationInboxDeletionRuntime({
       inbox: {
-        deleteSessions,
+        invalidateSessions,
         markSessionsRead: vi.fn(async () => undefined),
         reconcileSessionCatalog: vi.fn(async () => undefined)
       },
@@ -25,7 +25,7 @@ describe('notification inbox deletion runtime', () => {
 
     await handlers?.commit(['session-1', 'session-2'])
 
-    expect(deleteSessions).toHaveBeenCalledWith(['session-1', 'session-2'])
+    expect(invalidateSessions).toHaveBeenCalledWith(['session-1', 'session-2'])
     expect(onSessionsDeleted).toHaveBeenCalledWith(['session-1', 'session-2'])
   })
 })

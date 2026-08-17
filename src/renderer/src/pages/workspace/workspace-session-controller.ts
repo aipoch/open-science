@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent
+} from 'react'
 
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
+import type {
+  DeleteSessionRequest,
+  SessionDeletionResult
+} from '../../../../shared/session-persistence'
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -8,8 +19,15 @@ import type {
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
-import type { ChatSession } from '@/stores/session-store'
+import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
+
+import {
+  getWorkspaceSpecialistBarrierSnapshot,
+  isWorkspaceSpecialistBarrierInFlight,
+  setWorkspaceSpecialistBarrier,
+  subscribeWorkspaceSpecialistBarriers
+} from './workspace-specialist-barrier'
 
 type ReconfigureError = {
   sessionId: string
@@ -32,7 +50,15 @@ type WorkspaceSessionControllerOptions = {
   hasUnfinishedTransfers: (sessionId: string) => boolean
   beginSessionDeletion: (sessionId: string) => boolean
   settleSessionDeletion: (sessionId: string, deleted: boolean) => void
-  deleteRuntimeSession: (sessionId: string) => Promise<boolean>
+  deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
+}
+
+type SessionDeletionFailureReason = Extract<SessionDeletionResult, { status: 'failed' }>['reason']
+
+type SessionDeleteDialogState = {
+  session: ChatSession
+  isDeleting: boolean
+  error: SessionDeletionFailureReason | null
 }
 
 type SpecialistSendIntent = {
@@ -45,7 +71,7 @@ type WorkspaceSessionController = {
   view: {
     dialogs: {
       rename: { session: ChatSession; draft: string } | null
-      delete: ChatSession | null
+      delete: SessionDeleteDialogState | null
       downloadArtifacts: ChatSession | null
       notebook: ChatSession | null
       jobList: { open: boolean; sessionId: string }
@@ -58,6 +84,7 @@ type WorkspaceSessionController = {
       unavailable: boolean
       hasPendingSwitch: boolean
       barrierInFlight: boolean
+      sendAvailable: boolean
       reconfigureError: ReconfigureError | null
     }
   }
@@ -87,7 +114,7 @@ type WorkspaceSessionController = {
   }
   lifecycle: {
     canArchive: (session: ChatSession) => boolean
-    canStartSend: () => boolean
+    canStartSend: (sessionId?: string) => boolean
     captureSendIntent: (branchInNewSession: boolean) => SpecialistSendIntent
     prepareSpecialistSend: (sessionId: string, specialistId: string | undefined) => Promise<boolean>
     isBarrierInFlight: (sessionId: string) => boolean
@@ -127,7 +154,7 @@ const useWorkspaceSessionController = ({
   hasUnfinishedTransfers,
   beginSessionDeletion,
   settleSessionDeletion,
-  deleteRuntimeSession
+  deleteSession
 }: WorkspaceSessionControllerOptions): WorkspaceSessionController => {
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
@@ -146,8 +173,11 @@ const useWorkspaceSessionController = ({
     {}
   )
   const [reconfigureError, setReconfigureError] = useState<ReconfigureError | null>(null)
-  const [barrierInFlightIds, setBarrierInFlightIds] = useState<ReadonlySet<string>>(new Set())
-  const barrierInFlightRef = useRef(new Set<string>())
+  const barrierInFlightIds = useSyncExternalStore(
+    subscribeWorkspaceSpecialistBarriers,
+    getWorkspaceSpecialistBarrierSnapshot,
+    getWorkspaceSpecialistBarrierSnapshot
+  )
   const specialistItemsRef = useRef(specialistItems)
 
   const [exportError, setExportError] = useState<string | null>(null)
@@ -155,11 +185,12 @@ const useWorkspaceSessionController = ({
     session: ChatSession
     draft: string
   } | null>(null)
-  const [deleteDialog, setDeleteDialog] = useState<ChatSession | null>(null)
+  const [deleteDialog, setDeleteDialog] = useState<SessionDeleteDialogState | null>(null)
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
   const [notebookDialog, setNotebookDialog] = useState<ChatSession | null>(null)
   const [jobListDialog, setJobListDialog] = useState({ open: false, sessionId: '' })
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
+  const deletingIdsRef = useRef(new Set<string>())
   const [archivingIds, setArchivingIds] = useState<ReadonlySet<string>>(new Set())
 
   const activeHasPending = Boolean(
@@ -184,23 +215,18 @@ const useWorkspaceSessionController = ({
         (item) => item.kind === 'custom' && item.enabled && item.id === activeSession.specialistId
       )
     : newConversationSpecialistUnavailable
+  const specialistSendAvailable = activeSession
+    ? activeSession.specialistId === undefined ||
+      (specialistCatalogLoaded && (activeHasPending || !activeSpecialistUnavailable))
+    : !newConversationSpecialistUnavailable
   const activeHasPendingSwitch = Boolean(
     activeSession &&
     activeHasPending &&
-    (activeSession.status === 'running' ||
-      activeSession.status === 'waiting-for-user' ||
-      activeSession.status === 'waiting-permission')
+    projectSessionActionability(activeSession).activity !== 'inactive'
   )
 
   const setBarrier = useCallback((sessionId: string, inFlight: boolean): void => {
-    if (inFlight) barrierInFlightRef.current.add(sessionId)
-    else barrierInFlightRef.current.delete(sessionId)
-    setBarrierInFlightIds((current) => {
-      const next = new Set(current)
-      if (inFlight) next.add(sessionId)
-      else next.delete(sessionId)
-      return next
-    })
+    setWorkspaceSpecialistBarrier(sessionId, inFlight)
   }, [])
 
   const clearPending = useCallback((sessionId: string): void => {
@@ -220,11 +246,9 @@ const useWorkspaceSessionController = ({
     !promptInFlightSessionIds.includes(session.id) &&
     !sendPreparationInFlightSessionIds.includes(session.id) &&
     !saveAsSkillInFlightSessionIds.includes(session.id) &&
-    session.status !== 'running' &&
-    session.status !== 'waiting-for-user' &&
-    session.status !== 'waiting-permission' &&
-    session.status !== 'waiting-plan-approval' &&
-    !hasCurrentRunningDelegatedAttempt(session) &&
+    projectSessionActionability(session, {
+      hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
+    }).actions.archive.allowed &&
     !hasUnfinishedTransfers(session.id)
 
   const openRename = (session: ChatSession): void => {
@@ -274,27 +298,61 @@ const useWorkspaceSessionController = ({
   }
 
   const openDelete = (session: ChatSession): void => {
-    if (isPersistenceHydrated && canDeleteConversations) setDeleteDialog(session)
+    if (isPersistenceHydrated && canDeleteConversations && deletingIdsRef.current.size === 0) {
+      setDeleteDialog({
+        session,
+        isDeleting: false,
+        error: null
+      })
+    }
   }
 
   const confirmDelete = (): void => {
     if (!isPersistenceHydrated || !canDeleteConversations || !deleteDialog) return
     useNavigationStore.getState().recordUserNavigation()
-    const sessionId = deleteDialog.id
-    if (!beginSessionDeletion(sessionId)) {
-      setDeleteDialog(null)
-      return
-    }
+    const { session } = deleteDialog
+    const sessionId = session.id
+    if (deletingIdsRef.current.has(sessionId) || !beginSessionDeletion(sessionId)) return
+    deletingIdsRef.current.add(sessionId)
     setDeletingIds((current) => new Set(current).add(sessionId))
-    setDeleteDialog(null)
-    void deleteRuntimeSession(sessionId).then((deleted) => {
-      setDeletingIds((current) => {
-        const next = new Set(current)
-        next.delete(sessionId)
-        return next
+    setDeleteDialog((current) =>
+      current?.session.id === sessionId ? { ...current, isDeleting: true, error: null } : current
+    )
+    void deleteSession({ projectId: session.projectId, sessionId })
+      .then((result) => {
+        const deleted = result.status === 'deleted'
+        settleSessionDeletion(sessionId, deleted)
+        if (deleted) {
+          setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
+          return
+        }
+        setDeleteDialog((current) =>
+          current?.session.id === sessionId
+            ? {
+                ...current,
+                isDeleting: false,
+                error: result.reason
+              }
+            : current
+        )
       })
-      settleSessionDeletion(sessionId, deleted)
-    })
+      .catch((error: unknown) => {
+        console.warn('Unexpected Session deletion failure', error)
+        settleSessionDeletion(sessionId, false)
+        setDeleteDialog((current) =>
+          current?.session.id === sessionId
+            ? { ...current, isDeleting: false, error: 'runtime' }
+            : current
+        )
+      })
+      .finally(() => {
+        deletingIdsRef.current.delete(sessionId)
+        setDeletingIds((current) => {
+          const next = new Set(current)
+          next.delete(sessionId)
+          return next
+        })
+      })
   }
 
   const selectSpecialist = (specialistId: string | undefined): void => {
@@ -303,11 +361,8 @@ const useWorkspaceSessionController = ({
       return
     }
     const sessionId = activeSession.id
-    if (barrierInFlightRef.current.has(sessionId)) return
-    const running =
-      activeSession.status === 'running' ||
-      activeSession.status === 'waiting-for-user' ||
-      activeSession.status === 'waiting-permission'
+    if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
+    const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
     } else {
@@ -327,15 +382,29 @@ const useWorkspaceSessionController = ({
     if (reconfigureError?.sessionId === sessionId) setReconfigureError(null)
   }
 
-  const canStartSend = (): boolean => {
+  const canStartSend = (sessionId?: string): boolean => {
+    if (sessionId && sessionId !== activeSession?.id) {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session || isWorkspaceSpecialistBarrierInFlight(sessionId)) return false
+      if (session.specialistId === undefined) return true
+      if (!specialistCatalogLoaded) {
+        void loadSpecialists()
+        return false
+      }
+      return specialistItems.some(
+        (item) => item.kind === 'custom' && item.enabled && item.id === session.specialistId
+      )
+    }
     if (!activeSession) return !newConversationSpecialistUnavailable
-    if (barrierInFlightRef.current.has(activeSession.id)) return false
-    if (activeSession.specialistId === undefined) return true
+    if (isWorkspaceSpecialistBarrierInFlight(activeSession.id)) return false
+    if (activeSession.specialistId === undefined) return specialistSendAvailable
     if (!specialistCatalogLoaded) {
       void loadSpecialists()
       return false
     }
-    return activeHasPending || !activeSpecialistUnavailable
+    return specialistSendAvailable
   }
 
   const captureSendIntent = (branchInNewSession: boolean): SpecialistSendIntent => {
@@ -358,7 +427,7 @@ const useWorkspaceSessionController = ({
     sessionId: string,
     specialistId: string | undefined
   ): Promise<boolean> => {
-    if (barrierInFlightRef.current.has(sessionId)) return false
+    if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return false
     setBarrier(sessionId, true)
     try {
       const result = await window.api?.specialist?.setSessionSpecialist?.({
@@ -409,7 +478,7 @@ const useWorkspaceSessionController = ({
     if (!activeSession || !reconfigureError) return
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
-    if (!setter || barrierInFlightRef.current.has(sessionId)) return
+    if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
@@ -524,6 +593,7 @@ const useWorkspaceSessionController = ({
         unavailable: activeSpecialistUnavailable,
         hasPendingSwitch: activeHasPendingSwitch,
         barrierInFlight: barrierInFlightIds.has(activeSession?.id ?? ''),
+        sendAvailable: specialistSendAvailable && !barrierInFlightIds.has(activeSession?.id ?? ''),
         reconfigureError:
           reconfigureError?.sessionId === activeSession?.id ? reconfigureError : null
       }
@@ -541,7 +611,7 @@ const useWorkspaceSessionController = ({
       archive,
       exportConversation,
       openDelete,
-      closeDelete: () => setDeleteDialog(null),
+      closeDelete: () => setDeleteDialog((current) => (current?.isDeleting ? current : null)),
       confirmDelete,
       openDownloadArtifacts: setDownloadArtifactsDialog,
       closeDownloadArtifacts: () => setDownloadArtifactsDialog(null),
@@ -560,10 +630,16 @@ const useWorkspaceSessionController = ({
       canStartSend,
       captureSendIntent,
       prepareSpecialistSend,
-      isBarrierInFlight: (sessionId: string) => barrierInFlightRef.current.has(sessionId)
+      isBarrierInFlight: isWorkspaceSpecialistBarrierInFlight
     }
   }
 }
 
 export { useWorkspaceSessionController }
-export type { ReconfigureError, SpecialistSendIntent, WorkspaceSessionController }
+export type {
+  ReconfigureError,
+  SessionDeleteDialogState,
+  SessionDeletionFailureReason,
+  SpecialistSendIntent,
+  WorkspaceSessionController
+}

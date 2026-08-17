@@ -72,10 +72,14 @@ const productionSources = (): readonly string[] => {
 const ownerNames = [
   'workspace-runtime-event-owner',
   'workspace-runtime-prompt-preparation-owner',
+  'workspace-runtime-session-branch-owner',
   'workspace-runtime-command-owner',
   'workspace-runtime-session-lifecycle-owner',
   'workspace-runtime-save-as-skill-owner'
 ] as const
+const facadeOwnerNames = ownerNames.filter(
+  (name) => name !== 'workspace-runtime-session-branch-owner'
+)
 const ownerTargets = new Map(ownerNames.map((name) => [name, modulePath(resolve(__dirname, name))]))
 const ownerFilePath = (name: (typeof ownerNames)[number]): string => `${ownerTargets.get(name)}.ts`
 const privateOwnerTargets = new Set(ownerTargets.values())
@@ -463,7 +467,6 @@ const hookKeys = [
   'resendEditedMessage',
   'cancelRun',
   'resumeInterruptedSession',
-  'deleteRuntimeSession',
   'respondToPermission',
   'setPermissionProfile',
   'revokePermissionGrant'
@@ -471,13 +474,13 @@ const hookKeys = [
 const sendIntentKeys = [
   'sessionId',
   'branchSourceSessionId',
+  'branchSourceMessageId',
   'text',
   'turnIntent',
   'planContinuation',
   'attachments',
   'cwd',
   'projectId',
-  'projectName',
   'permissionProfile',
   'forcedSkillIds',
   'referencedArtifacts',
@@ -572,8 +575,7 @@ describe('workspace runtime architecture', () => {
       compact: 1,
       ensureReady: 1,
       resume: 1,
-      cancel: 1,
-      delete: 1
+      cancel: 1
     })
     expect(Object.fromEntries(propertyCallCounts(facadeFile, 'runtime'))).toEqual({
       setPermissionProfile: 1,
@@ -598,7 +600,7 @@ describe('workspace runtime architecture', () => {
     expect(readSource(facadePath)).toContain('window.api?.acp?.onAgentRuntimeUpdate')
   })
   it('keeps the owner dependency DAG explicit and acyclic', () => {
-    expect(ownerDependencyNames(facadePath)).toEqual(ownerNames)
+    expect(ownerDependencyNames(facadePath)).toEqual(facadeOwnerNames)
     expect(
       Object.fromEntries(
         ownerNames.map((name) => [name, ownerDependencyNames(ownerFilePath(name))])
@@ -606,7 +608,11 @@ describe('workspace runtime architecture', () => {
     ).toEqual({
       'workspace-runtime-event-owner': [],
       'workspace-runtime-prompt-preparation-owner': [],
-      'workspace-runtime-command-owner': ['workspace-runtime-prompt-preparation-owner'],
+      'workspace-runtime-session-branch-owner': [],
+      'workspace-runtime-command-owner': [
+        'workspace-runtime-prompt-preparation-owner',
+        'workspace-runtime-session-branch-owner'
+      ],
       'workspace-runtime-session-lifecycle-owner': [
         'workspace-runtime-prompt-preparation-owner',
         'workspace-runtime-command-owner'
@@ -635,7 +641,10 @@ describe('workspace runtime architecture', () => {
       }
     }
     expect(unsupportedFacadeImports).toEqual([])
-    expect(hookConsumers).toEqual(['pages/workspace/WorkspacePage.tsx'])
+    expect(hookConsumers).toEqual([
+      'pages/workspace/WorkspacePage.tsx',
+      'pages/workspace/workspace-message-queue-controller.ts'
+    ])
   })
   it('keeps the delegated runtime transport subscription in the App-level owner', () => {
     expect(
@@ -771,7 +780,7 @@ describe('workspace runtime architecture', () => {
     })
     expect(violations).toEqual([])
   })
-  it('keeps the lifecycle owner interface at seven operations', () => {
+  it('keeps the lifecycle owner interface at six operations', () => {
     const lifecyclePath = `${ownerTargets.get('workspace-runtime-session-lifecycle-owner')}.ts`
     const lifecycle = variableArrow(
       sourceFileFor(lifecyclePath),
@@ -783,8 +792,7 @@ describe('workspace runtime architecture', () => {
       'compact',
       'ensureReady',
       'resume',
-      'cancel',
-      'delete'
+      'cancel'
     ])
   })
   it('keeps the module-impact owner and test closure complete', () => {

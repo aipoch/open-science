@@ -4,6 +4,7 @@ import { APPLICATION_COMMAND_ERROR_CODES } from './application-command-contract'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
 
 export const WEB_RPC_PROTOCOL_VERSION = 1 as const
+export const WEB_EVENT_STREAM_PROTOCOL_VERSION = 2 as const
 export const WEB_RPC_TRANSPORT_ERROR_CODES = [
   'invalid_request',
   'method_not_found',
@@ -97,6 +98,13 @@ export const webRpcBootstrapSchema = z
     platform: z.string(),
     versions: z.object({ electron: z.string(), chrome: z.string(), node: z.string() }).strict(),
     rpcProtocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),
+    eventStream: z
+      .object({
+        protocolVersion: z.literal(WEB_EVENT_STREAM_PROTOCOL_VERSION),
+        streamId: z.string().min(1),
+        latestSequence: z.number().int().nonnegative()
+      })
+      .strict(),
     restrictedRpcChannels: z.array(z.string()).optional(),
     rpcChannels: z.array(z.string()).superRefine((channels, context) => {
       for (const channel of channels) {
@@ -112,11 +120,40 @@ export const webRpcBootstrapSchema = z
 
 export const webRpcEventSchema = z
   .object({
-    protocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),
+    kind: z.literal('event'),
+    protocolVersion: z.literal(WEB_EVENT_STREAM_PROTOCOL_VERSION),
+    streamId: z.string().min(1),
+    sequence: z.number().int().positive(),
     channel: z.string().refine(isWebRpcEventChannel, 'Unknown Web RPC event channel'),
     payload: webRpcValueSchema
   })
   .strict()
 
+export const webRpcEventReadySchema = z
+  .object({
+    kind: z.literal('ready'),
+    protocolVersion: z.literal(WEB_EVENT_STREAM_PROTOCOL_VERSION),
+    streamId: z.string().min(1),
+    latestSequence: z.number().int().nonnegative()
+  })
+  .strict()
+
+export const webRpcEventResyncRequiredSchema = z
+  .object({
+    kind: z.literal('resync-required'),
+    protocolVersion: z.literal(WEB_EVENT_STREAM_PROTOCOL_VERSION),
+    streamId: z.string().min(1),
+    latestSequence: z.number().int().nonnegative(),
+    reason: z.enum(['stream-changed', 'cursor-expired'])
+  })
+  .strict()
+
+export const webRpcEventMessageSchema = z.discriminatedUnion('kind', [
+  webRpcEventSchema,
+  webRpcEventReadySchema,
+  webRpcEventResyncRequiredSchema
+])
+
 export type WebRpcRequest = z.infer<typeof webRpcRequestSchema>
 export type WebRpcResponse = z.infer<typeof webRpcResponseSchema>
+export type WebRpcEventMessage = z.infer<typeof webRpcEventMessageSchema>

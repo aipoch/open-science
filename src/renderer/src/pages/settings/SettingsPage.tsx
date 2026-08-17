@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Bot,
   Brain,
+  ChartNoAxesCombined,
   Cloud,
   Globe,
   LockKeyhole,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import {
   resolveCodexSubscriptionType,
@@ -32,8 +34,10 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
+import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { useComputeStore } from '@/stores/compute-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -59,6 +63,7 @@ import { PermissionsPanel } from './PermissionsPanel'
 import { ArchivedPanel, type ArchivedView } from './ArchivedPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
+import { TokenUsagePanel } from './TokenUsagePanel'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
@@ -74,6 +79,10 @@ type SettingsPageProps = {
   open: boolean
   onClose: () => void
   onOpenSession?: (sessionId: string) => void
+  canDeleteProjects?: boolean
+  hasCompleteSessionCatalog?: boolean
+  catalogRecovery?: SessionCatalogRecovery
+  onRetryCatalogRecovery?: () => void
 }
 
 type SettingsPageHandle = {
@@ -128,44 +137,73 @@ const toUpsertRequest = (
 
 type SettingsPanel = {
   id: SettingsPanelId
-  label: string
+  // A catalog key, not finished copy: this table is module-level, so a resolved string would freeze the
+  // language at import time and never re-render on a language change. Callers resolve it through t().
+  labelKey: string
   Icon: React.ComponentType<{ className?: string }>
 }
 
+// The panels that can host a drilled-in sub-view, mapped from the capitalized name the breadcrumb
+// button shows to the lowercase form mid-sentence copy needs ("Back to skills"). English distinguishes
+// the two, Chinese does not, so they are separate catalog entries that resolve to the same translation.
+// Keyed rather than derived: the old code sliced a prefix off the key and cast the result, which hid
+// that one panel had no lowercase entry at all and rendered a raw key path to screen readers.
+const PANEL_NAME_LOWER = {
+  Skills: 'skills',
+  Model: 'model',
+  Network: 'network',
+  Connectors: 'connectors',
+  Compute: 'compute',
+  Specialists: 'specialists',
+  Archived: 'archived'
+} as const
+
+type DrillablePanelName = keyof typeof PANEL_NAME_LOWER
+
 type SettingsGroup = {
-  label?: string
+  // Absent for the bottom-pinned group, which renders no heading at all. The union rather than `string`
+  // is deliberate: a group added later cannot compile until its heading is a known catalog key, so it
+  // can never reach the nav as a raw untranslated label.
+  labelKey?: 'Capabilities' | 'Workspace' | 'Remote access'
   panels: ReadonlyArray<SettingsPanel>
   bottom?: boolean
 }
 
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
   {
-    label: 'Capabilities',
+    labelKey: 'Capabilities',
     panels: [
-      { id: 'skills', label: 'Skills', Icon: ScrollText },
-      { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon },
-      { id: 'specialists', label: 'Specialists', Icon: Users },
-      { id: 'compute', label: 'Compute', Icon: Zap },
-      { id: 'network', label: 'Network', Icon: Globe }
+      { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
+      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
+      { id: 'specialists', labelKey: 'Specialists', Icon: Users },
+      { id: 'compute', labelKey: 'Compute', Icon: Zap },
+      { id: 'network', labelKey: 'Network', Icon: Globe }
     ]
   },
   {
-    label: 'Workspace',
+    labelKey: 'Workspace',
     panels: [
-      { id: 'model', label: 'Model', Icon: Brain },
-      { id: 'agent', label: 'Agent', Icon: Bot },
-      { id: 'permissions', label: 'Permissions', Icon: LockKeyhole },
-      { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
-      { id: 'storage', label: 'Storage', Icon: Cloud },
-      { id: 'general', label: 'General', Icon: Settings2 }
+      { id: 'model', labelKey: 'Model', Icon: Brain },
+      { id: 'agent', labelKey: 'Agent', Icon: Bot },
+      { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
+      { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
+      { id: 'storage', labelKey: 'Storage', Icon: Cloud },
+      { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
+      { id: 'general', labelKey: 'General', Icon: Settings2 }
     ]
   },
   {
-    label: 'Remote access',
-    panels: [{ id: 'remote-control', label: 'Remote control', Icon: MonitorSmartphone }]
+    labelKey: 'Remote access',
+    panels: [
+      {
+        id: 'remote-control',
+        labelKey: 'Remote control',
+        Icon: MonitorSmartphone
+      }
+    ]
   },
   {
-    panels: [{ id: 'archived', label: 'Archived', Icon: Archive }],
+    panels: [{ id: 'archived', labelKey: 'Archived', Icon: Archive }],
     bottom: true
   }
 ]
@@ -174,6 +212,8 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
 const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
   (group) => group.panels
 )
+const EMPTY_USAGE_SESSIONS = [] as const
+const EMPTY_USAGE_PROJECTS = [] as const
 
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
 // (skills: list / manage / detail / create / edit / import; model: list / create / edit; connectors: list /
@@ -206,9 +246,18 @@ const INITIAL_LOCATION: NavLocation = {
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
 const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
-  { open, onClose, onOpenSession },
+  {
+    open,
+    onClose,
+    onOpenSession,
+    canDeleteProjects = true,
+    hasCompleteSessionCatalog = true,
+    catalogRecovery = { kind: 'ready' },
+    onRetryCatalogRecovery
+  },
   ref
 ): React.JSX.Element {
+  const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -249,7 +298,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const computeHosts = useComputeStore((state) => state.hosts)
-  const projects = useProjectStore((state) => state.projects)
   const specialistItems = useSpecialistStore((state) => state.items)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
@@ -354,6 +402,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const currentLocation = history[historyIndex]
   const activePanel = currentLocation.panel
+  const isUsageVisible = open && activePanel === 'usage'
+  const sessions = useSessionStore((state) =>
+    isUsageVisible ? state.sessions : EMPTY_USAGE_SESSIONS
+  )
+  const projects = useProjectStore((state) =>
+    isUsageVisible ? state.projects : EMPTY_USAGE_PROJECTS
+  )
   const skillsView = currentLocation.skills
   const modelView = currentLocation.model
   const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
@@ -403,7 +458,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // entry point, so Back returns to the recovery panel the user just completed.
   const navigatePanel = (panel: SettingsPanelId): void => navigate({ ...INITIAL_LOCATION, panel })
 
-  // Navigates within the skills panel (list/manage/detail/create/edit/import) as a history entry.
+  // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
   const navigateSkills = (skills: SkillsView): void =>
     navigate({ panel: 'skills', skills, model: modelView, connectors: connectorsView })
 
@@ -448,28 +503,28 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
   const breadcrumb = ((): {
-    rootLabel: string
+    rootLabelKey: DrillablePanelName
     rootTo: NavLocation
     leaf: string
   } | null => {
     if (activePanel === 'skills' && skillsView.kind !== 'list') {
       const leaf =
         skillsView.kind === 'create'
-          ? 'New skill'
+          ? t('New skill')
           : skillsView.kind === 'manage'
-            ? 'Manage skills'
+            ? t('Manage skills')
             : skillsView.kind === 'upload'
-              ? 'Upload skills'
+              ? t('Upload skills')
               : skillsView.kind === 'import'
-                ? 'Import from GitHub'
+                ? t('Import from GitHub')
                 : skillsView.kind === 'import-agent-home'
-                  ? 'Import installed skills'
+                  ? t('Import installed skills')
                   : (() => {
                       const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                      return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
+                      return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
                     })()
       return {
-        rootLabel: 'Skills',
+        rootLabelKey: 'Skills',
         rootTo: { panel: 'skills', skills: { kind: 'list' }, model: currentLocation.model },
         leaf
       }
@@ -480,36 +535,42 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           ? (providers.find((provider) => provider.id === modelView.providerId)?.name ?? '')
           : ''
       return {
-        rootLabel: 'Model',
+        rootLabelKey: 'Model',
         rootTo: { panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } },
-        leaf: modelView.kind === 'create' ? 'Add provider' : `Edit ${name}`.trim()
+        leaf: modelView.kind === 'create' ? t('Add provider') : t('Edit {{name}}', { name }).trim()
       }
     }
     if (activePanel === 'network' && networkView.kind !== 'list') {
       return {
-        rootLabel: 'Network',
+        rootLabelKey: 'Network',
         rootTo: {
           panel: 'network',
           skills: currentLocation.skills,
           model: currentLocation.model,
           network: { kind: 'list' }
         },
-        leaf: networkView.kind === 'proxy' ? 'Proxy' : 'Package mirror'
+        leaf: networkView.kind === 'proxy' ? t('Proxy') : t('Package mirror')
       }
     }
     if (activePanel === 'connectors' && connectorsView.kind !== 'list') {
       const leaf =
         connectorsView.kind === 'add'
-          ? 'Add connector'
+          ? t('Add connector')
           : connectorsView.kind === 'import'
-            ? 'Import configuration'
+            ? t('Import configuration')
             : connectorsView.kind === 'export'
-              ? `Export ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
+              ? t('Export {{name}}', {
+                  name:
+                    customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
+                }).trim()
               : connectorsView.kind === 'edit'
-                ? `Edit ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
+                ? t('Edit {{name}}', {
+                    name:
+                      customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
+                  }).trim()
                 : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
-        rootLabel: 'Connectors',
+        rootLabelKey: 'Connectors',
         rootTo: {
           panel: 'connectors',
           skills: currentLocation.skills,
@@ -522,11 +583,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (activePanel === 'compute' && computeView.kind !== 'list') {
       const leaf =
         computeView.kind === 'add'
-          ? 'Add SSH host'
+          ? t('Add SSH host')
           : (computeHosts.find((host) => host.providerId === computeView.providerId)?.displayName ??
             computeView.providerId)
       return {
-        rootLabel: 'Compute',
+        rootLabelKey: 'Compute',
         rootTo: {
           panel: 'compute',
           skills: currentLocation.skills,
@@ -547,10 +608,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           : undefined
       const leaf =
         specialistsView.kind === 'create'
-          ? 'New specialist'
-          : (editingSpecialist?.name ?? 'Edit specialist')
+          ? t('New specialist')
+          : (editingSpecialist?.name ?? t('Edit specialist'))
       return {
-        rootLabel: 'Specialists',
+        rootLabelKey: 'Specialists',
         rootTo: {
           panel: 'specialists',
           skills: currentLocation.skills,
@@ -562,7 +623,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
     if (activePanel === 'archived' && archivedView.kind === 'project') {
       return {
-        rootLabel: 'Archived',
+        rootLabelKey: 'Archived',
         rootTo: {
           panel: 'archived',
           skills: currentLocation.skills,
@@ -571,7 +632,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         },
         leaf:
           projects.find((project) => project.id === archivedView.projectId)?.name ??
-          'Archived project'
+          t('Archived project')
       }
     }
     return null
@@ -622,8 +683,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }))
 
-  // A provider form (add/edit) is open when the model panel is on a non-list sub-view.
-  const isProviderFormOpen = activePanel === 'model' && modelView.kind !== 'list'
+  // Only create/edit locations open a provider form.
+  const isProviderFormOpen =
+    activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
@@ -684,7 +746,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       }
     } catch (error) {
       setStatusOk(false)
-      setStatusMessage(error instanceof Error ? error.message : 'Could not save provider.')
+      setStatusMessage(error instanceof Error ? error.message : t('Could not save provider.'))
     } finally {
       setIsSaving(false)
     }
@@ -702,8 +764,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       setStatusOk(result.ok)
       setStatusMessage(
         result.ok
-          ? `Loaded ${result.models?.length ?? 0} models from the vendor.`
-          : `Couldn't fetch models: ${result.message ?? 'request failed'}. Using the bundled list.`
+          ? t('Loaded {{count}} models from the vendor.', {
+              defaultValue_one: 'Loaded {{count}} model from the vendor.',
+              count: result.models?.length ?? 0
+            })
+          : t("Couldn't fetch models: {{reason}}. Using the bundled list.", {
+              reason: result.message ?? t('request failed')
+            })
       )
     } finally {
       setIsRefreshingModels(false)
@@ -748,23 +815,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           )}
         >
           {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
-          <Dialog.Title className="sr-only">Settings</Dialog.Title>
+          <Dialog.Title className="sr-only">{t('Settings')}</Dialog.Title>
           <Dialog.Description className="sr-only">
-            Manage your agent runtime and model providers.
+            {t('Manage your agent runtime and model providers.')}
           </Dialog.Description>
 
           {isMobileNavOpen ? (
             <button
               type="button"
               className="fixed inset-0 z-[65] bg-black/45 md:hidden"
-              aria-label="Close settings navigation"
+              aria-label={t('Close settings navigation')}
               onClick={() => setIsMobileNavOpen(false)}
             />
           ) : null}
 
           {/* Left navigation becomes an off-canvas drawer on narrow browser screens. */}
           <nav
-            aria-label="Settings"
+            aria-label={t('Settings')}
             aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
             inert={isMobile && !isMobileNavOpen ? true : undefined}
             className={cn(
@@ -774,16 +841,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           >
             {SETTINGS_GROUPS.map((group) => (
               <div
-                key={group.label ?? group.panels[0]?.id}
+                key={group.labelKey ?? group.panels[0]?.id}
                 className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
               >
-                {group.label ? (
+                {group.labelKey ? (
                   <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
-                    {group.label}
+                    {t(group.labelKey)}
                   </div>
                 ) : null}
                 <ul className="flex flex-col gap-0.5">
-                  {group.panels.map(({ id, label, Icon }) => {
+                  {group.panels.map(({ id, labelKey, Icon }) => {
                     const isActive = activePanel === id
                     return (
                       <li key={id}>
@@ -804,7 +871,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             className="size-4 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                           />
-                          <span className="min-w-0 flex-1 truncate">{label}</span>
+                          <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
                         </button>
                       </li>
                     )
@@ -826,13 +893,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => setIsMobileNavOpen(true)}
-                        aria-label="Open settings navigation"
+                        aria-label={t('Open settings navigation')}
                         className="shrink-0 rounded-lg text-muted-foreground md:hidden"
                       >
                         <Menu className="size-4" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Navigation</TooltipContent>
+                    <TooltipContent>{t('Navigation')}</TooltipContent>
                   </Tooltip>
                   {/* Browser-like history controls for the settings navigation. */}
                   <Tooltip>
@@ -843,13 +910,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         size="icon-sm"
                         onClick={goBack}
                         disabled={!canGoBack}
-                        aria-label="Back"
+                        aria-label={t('Back', { context: 'step' })}
                         className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
                       >
                         <ArrowLeft className="size-4" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Back</TooltipContent>
+                    <TooltipContent>{t('Back', { context: 'step' })}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -859,13 +926,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         size="icon-sm"
                         onClick={goForward}
                         disabled={!canGoForward}
-                        aria-label="Forward"
+                        aria-label={t('Forward')}
                         className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
                       >
                         <ArrowRight className="size-4" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Forward</TooltipContent>
+                    <TooltipContent>{t('Forward')}</TooltipContent>
                   </Tooltip>
                   <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
                   {breadcrumb !== null ? (
@@ -873,10 +940,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <button
                         type="button"
                         onClick={() => navigate(breadcrumb.rootTo)}
-                        aria-label={`Back to ${breadcrumb.rootLabel.toLowerCase()}`}
+                        aria-label={t('Back to {{panel}}', {
+                          panel: t(PANEL_NAME_LOWER[breadcrumb.rootLabelKey])
+                        })}
                         className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
                       >
-                        {breadcrumb.rootLabel}
+                        {t(breadcrumb.rootLabelKey)}
                       </button>
                       <span className="shrink-0 text-muted-foreground" aria-hidden="true">
                         ›
@@ -885,7 +954,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     </div>
                   ) : (
                     <h2 className="truncate text-sm font-semibold text-foreground">
-                      {SETTINGS_PANELS.find((panel) => panel.id === activePanel)?.label}
+                      {(() => {
+                        const panel = SETTINGS_PANELS.find((item) => item.id === activePanel)
+                        return panel ? t(panel.labelKey) : null
+                      })()}
                     </h2>
                   )}
                 </div>
@@ -897,7 +969,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => setIsExpanded((value) => !value)}
-                        aria-label={isExpanded ? 'Restore' : 'Maximize'}
+                        aria-label={isExpanded ? t('Restore') : t('Maximize')}
                         className="rounded-lg text-muted-foreground"
                       >
                         {isExpanded ? (
@@ -907,7 +979,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         )}
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>{isExpanded ? 'Restore' : 'Maximize'}</TooltipContent>
+                    <TooltipContent>{isExpanded ? t('Restore') : t('Maximize')}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <Dialog.Close asChild>
@@ -916,14 +988,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          aria-label="Close settings"
+                          aria-label={t('Close settings')}
                           className="rounded-lg text-muted-foreground"
                         >
                           <X className="size-4" aria-hidden="true" />
                         </Button>
                       </TooltipTrigger>
                     </Dialog.Close>
-                    <TooltipContent>Close settings</TooltipContent>
+                    <TooltipContent>{t('Close settings')}</TooltipContent>
                   </Tooltip>
                 </div>
               </div>
@@ -942,14 +1014,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         type="button"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Dismiss settings error"
+                        aria-label={t('Dismiss settings error')}
                         className="-my-1 -mr-1 shrink-0 rounded-md text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
                         onClick={clearSettingsWriteError}
                       >
                         <X className="size-3.5" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Dismiss</TooltipContent>
+                    <TooltipContent>{t('Dismiss')}</TooltipContent>
                   </Tooltip>
                 </div>
               ) : null}
@@ -1036,22 +1108,35 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     }
                   />
                 ) : activePanel === 'archived' ? (
-                  <ArchivedPanel view={archivedView} onNavigate={navigateArchived} />
+                  <ArchivedPanel
+                    view={archivedView}
+                    onNavigate={navigateArchived}
+                    canDeleteProjects={canDeleteProjects}
+                    hasCompleteSessionCatalog={hasCompleteSessionCatalog}
+                    catalogRecovery={catalogRecovery}
+                    onRetryCatalogRecovery={onRetryCatalogRecovery}
+                  />
                 ) : activePanel === 'runtimes' ? (
                   <RuntimesPanel
-                    title="Notebook runtimes"
-                    description="Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent."
+                    title={t('Notebook runtimes')}
+                    description={t(
+                      'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
+                    )}
                   />
                 ) : activePanel === 'network' ? (
                   <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
+                ) : activePanel === 'usage' ? (
+                  <TokenUsagePanel sessions={sessions} projects={projects} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
                 ) : activePanel === 'remote-control' ? (
                   <RemoteControlPanel />
                 ) : activePanel === 'agent' ? (
                   <AgentPanel
-                    title="Agent framework"
-                    description="Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+                    title={t('Agent framework')}
+                    description={t(
+                      "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+                    )}
                   />
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
@@ -1059,8 +1144,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     {/* Secret writes fail closed when the OS keychain is unavailable. */}
                     {!encryptionAvailable ? (
                       <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                        Secure key storage is unavailable. API keys cannot be saved until the system
-                        keychain is unlocked or authorized.
+                        {t(
+                          'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
+                        )}
                       </p>
                     ) : null}
                     <ProviderForm
@@ -1100,10 +1186,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : null}
                     <div className="mt-6 flex justify-end gap-2">
                       <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
-                        Cancel
+                        {t('Cancel')}
                       </Button>
                       <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-                        {isSaving ? 'Saving…' : 'Save'}
+                        {isSaving ? t('Saving…') : t('Save')}
                       </Button>
                     </div>
                   </div>

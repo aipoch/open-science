@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
 
@@ -252,6 +253,7 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
 }
 
 const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   let rendered: React.JSX.Element[]
   const errorClassName = run.status === 'failed' ? 'text-danger-000' : 'text-text-200'
 
@@ -275,8 +277,8 @@ const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.
         <span aria-hidden="true" className="transition-transform group-open:rotate-90">
           ▸
         </span>
-        <span className="group-open:hidden">Show output</span>
-        <span className="hidden group-open:inline">Hide output</span>
+        <span className="group-open:hidden">{t('Show output')}</span>
+        <span className="hidden group-open:inline">{t('Hide output')}</span>
       </summary>
       <div className="space-y-1 pt-1">{rendered}</div>
     </details>
@@ -306,6 +308,8 @@ const NotebookRunFigureOutputs = ({
               src={`data:${figure.mimeType};base64,${figure.payload}`}
               alt={figure.name}
               className={figureImageClassName}
+              loading="lazy"
+              decoding="async"
               draggable={false}
             />
           </div>
@@ -317,6 +321,7 @@ const NotebookRunFigureOutputs = ({
 
 // Composes the two independent output surfaces used by the notebook panel and session dialog.
 const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const hasText =
     run.outputs.some((output) => {
       if (output.type === 'stream' || output.type === 'text') return output.text.trim().length > 0
@@ -329,12 +334,17 @@ const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Elem
       ))
   const hasFigures = resolveNotebookRunFigures(run).length > 0
 
-  if (!hasText && !hasFigures) return null
+  if (!hasText && !hasFigures && !run.truncated) return null
 
   return (
     <div data-testid="notebook-run-outputs">
       <NotebookRunTextOutputs run={run} />
       <NotebookRunFigureOutputs run={run} />
+      {run.truncated ? (
+        <p className="mt-2 text-xs text-text-300" data-testid="notebook-output-truncated">
+          {t('Output was truncated to keep this Notebook responsive.')}
+        </p>
+      ) : null}
     </div>
   )
 }

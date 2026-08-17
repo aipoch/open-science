@@ -7,14 +7,7 @@ import {
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
-import {
-  sanitizeActivityGroup,
-  sanitizeToolActivity,
-  type MessagePart,
-  type PersistedActivityGroup,
-  type PersistedToolActivity,
-  type PersistedUploadedAttachment
-} from '../../../shared/session-persistence'
+import type { MessagePart, PersistedUploadedAttachment } from '../../../shared/session-persistence'
 import {
   buildMessage,
   canBranchInNewSession,
@@ -26,13 +19,13 @@ import {
   createTitleFromMessage,
   createTitleFromUploads,
   isBeforeTimelineItem,
+  projectSessionBranchSnapshot,
   projectElicitationRevision,
   synchronizeSessionGraph,
   type SessionMessageGraphActions
 } from './session-store-message-graph-helpers'
 import {
   hydrateToolActivity,
-  stripTransientMessageState,
   type ActiveRun,
   type ChatMessage,
   type ChatMessageRole,
@@ -52,6 +45,24 @@ export const createMessageId = (): string => {
 const createPendingSessionId = (): string => {
   pendingSessionSequence += 1
   return `pending-session-${Date.now()}-${pendingSessionSequence}`
+}
+
+const createSessionBranchSource = (
+  source: ChatSession,
+  headMessageId?: string
+): NonNullable<ChatSession['branchSource']> => {
+  const graph = source.conversationGraph
+  const frame = graph?.frames.find((candidate) => candidate.id === graph.activeFrameId)
+  const branch = graph?.branches.find((candidate) => candidate.id === frame?.activeBranchId)
+
+  return {
+    sessionId: source.id,
+    ...(frame ? { agentFrameId: frame.id } : {}),
+    ...(branch ? { messageBranchId: branch.id } : {}),
+    ...((headMessageId ?? branch?.headMessageId)
+      ? { headMessageId: headMessageId ?? branch?.headMessageId }
+      : {})
+  }
 }
 
 export const createSortIndex = (): number => {
@@ -128,6 +139,7 @@ export const createSessionMessageGraphOwner = <
     eventId,
     content,
     createdAt,
+    attribution,
     responseToMessageId,
     relayedFrom
   }) => {
@@ -164,6 +176,7 @@ export const createSessionMessageGraphOwner = <
       sortIndex: createSortIndex(),
       createdAt,
       updatedAt: createdAt,
+      ...(attribution ? { attribution } : {}),
       ...(relayedFrom ? { relayedFrom } : {}),
       ...(responseToMessageId ? { responseToMessageId } : {})
     }
@@ -267,9 +280,7 @@ export const createSessionMessageGraphOwner = <
                 messages: nextMessages,
                 pendingContextReplayMessageId: replayPromptIndex >= 0 ? userMessage.id : undefined,
                 conversationGraph: synchronizeSessionGraph(
-                  replayPromptIndex >= 0
-                    ? { ...session, messages: nextMessages, conversationGraph: undefined }
-                    : session,
+                  session,
                   nextMessages,
                   now,
                   agentFrameworkId ?? session.agentFrameworkId ?? 'claude-code',
@@ -325,6 +336,7 @@ export const createSessionMessageGraphOwner = <
     }),
   branchInNewSession: ({
     sourceSessionId,
+    sourceMessageId,
     content,
     attachments = [],
     parts,
@@ -335,40 +347,33 @@ export const createSessionMessageGraphOwner = <
     agentModel,
     specialistId
   }) => {
-    const trimmedContent = content.trim()
+    const trimmedContent = content?.trim() ?? ''
     const uploads = attachments.map(createPersistedUpload)
-    if (!sourceSessionId || (!trimmedContent && uploads.length === 0)) return undefined
+    if (!sourceSessionId || (!sourceMessageId && !trimmedContent && uploads.length === 0)) {
+      return undefined
+    }
 
     const state = get()
     const source = state.sessions.find((session) => session.id === sourceSessionId)
     if (!source || !canBranchInNewSession(source)) return undefined
 
-    const sourceMessages = source.messages.map((message, index) => ({
-      message: stripTransientMessageState(message),
-      sortIndex: message.sortIndex ?? index
-    }))
-    const sourceActivities = (source.activities ?? [])
-      .map(sanitizeToolActivity)
-      .filter((activity): activity is PersistedToolActivity => Boolean(activity))
-    const sourceActivityGroups = (source.activityGroups ?? [])
-      .map(sanitizeActivityGroup)
-      .filter((group): group is PersistedActivityGroup => Boolean(group))
+    const snapshot = projectSessionBranchSnapshot(source, sourceMessageId)
+    if (!snapshot) return undefined
+    const {
+      sourceMessage,
+      messages: sourceMessages,
+      activities: sourceActivities,
+      activityGroups: sourceActivityGroups
+    } = snapshot
 
     const now = Date.now()
     const sessionId = createPendingSessionId()
-    const userMessage = createMessage(
-      'user',
-      trimmedContent,
-      'complete',
-      undefined,
-      [],
-      uploads,
-      parts,
-      turnIntent
-    )
+    const userMessage = sourceMessage
+      ? undefined
+      : createMessage('user', trimmedContent, 'complete', undefined, [], uploads, parts, turnIntent)
     const messages = [
       ...sourceMessages.map(({ message, sortIndex }) => copySnapshotMessage(message, sortIndex)),
-      userMessage
+      ...(userMessage ? [userMessage] : [])
     ]
     const normalizedAgentBackendId = agentBackendId?.trim() || source.agentBackendId
     const normalizedAgentModel = agentModel?.trim() || source.agentModel
@@ -378,12 +383,15 @@ export const createSessionMessageGraphOwner = <
     const newSession: ChatSession = {
       id: sessionId,
       projectId: source.projectId,
+      branchSource: createSessionBranchSource(source, sourceMessage?.id),
       isPending: true,
-      title: trimmedContent
-        ? createBranchTitleFromMessage(trimmedContent)
-        : createTitleFromUploads(uploads),
+      title: sourceMessage
+        ? source.title
+        : trimmedContent
+          ? createBranchTitleFromMessage(trimmedContent)
+          : createTitleFromUploads(uploads),
       cwd: source.cwd,
-      status: 'running',
+      status: userMessage ? 'running' : 'idle',
       permissionProfile:
         permissionProfile ?? source.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
       agentFrameworkId: normalizedFrameworkId,
@@ -401,8 +409,12 @@ export const createSessionMessageGraphOwner = <
       activityGroups: sourceActivityGroups.map((group) =>
         copySnapshotActivityGroup(group, sessionId)
       ),
-      pendingContextReplayMessageId: userMessage.id,
-      activeRun: { promptMessageId: userMessage.id, startedAt: now },
+      ...(userMessage
+        ? {
+            pendingContextReplayMessageId: userMessage.id,
+            activeRun: { promptMessageId: userMessage.id, startedAt: now }
+          }
+        : { pendingHistoryReplay: { kind: 'all' as const } }),
       createdAt: now,
       updatedAt: now
     }
@@ -420,7 +432,7 @@ export const createSessionMessageGraphOwner = <
       sessions: [newSession, ...state.sessions]
     } as Partial<State>)
 
-    return { sessionId, messageId: userMessage.id }
+    return userMessage ? { sessionId, messageId: userMessage.id } : { sessionId }
   },
 
   bindPendingSession: ({
@@ -438,7 +450,7 @@ export const createSessionMessageGraphOwner = <
     const pendingSession = state.sessions.find(
       (session) => session.id === pendingSessionId && session.isPending
     )
-    if (!pendingSession?.activeRun) return undefined
+    if (!pendingSession) return undefined
 
     const now = Date.now()
     set({
@@ -461,7 +473,9 @@ export const createSessionMessageGraphOwner = <
       )
     } as Partial<State>)
 
-    return { sessionId, messageId: pendingSession.activeRun.promptMessageId }
+    return pendingSession.activeRun
+      ? { sessionId, messageId: pendingSession.activeRun.promptMessageId }
+      : { sessionId }
   },
 
   clearPendingContextReplay: (sessionId, messageId) => {
@@ -626,6 +640,7 @@ export const createSessionMessageGraphOwner = <
               session.status === 'running' ||
               session.status === 'waiting-for-user' ||
               session.status === 'waiting-permission' ||
+              session.status === 'waiting-plan-approval' ||
               session.fixLoopActive ||
               session.compacting ||
               session.branchSwitchBlocked

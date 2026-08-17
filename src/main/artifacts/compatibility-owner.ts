@@ -31,16 +31,16 @@ class ArtifactCompatibilityOwner {
   constructor(private readonly options: ArtifactCompatibilityOwnerOptions) {}
 
   async listMessageFiles(request: ListProjectMessageArtifactsRequest): Promise<ArtifactFile[]> {
-    const projectName = assertSafePathSegment(request.projectName)
+    const projectId = assertSafePathSegment(request.projectId)
     const sessionId = assertSafePathSegment(request.sessionId)
     const messageId = assertSafePathSegment(request.messageId)
-    const messageDir = this.options.storage.getMessageDir(projectName, sessionId, messageId)
+    const messageDir = this.options.storage.getMessageDir(projectId, sessionId, messageId)
     const entries = await this.options.storage.readFileEntries(messageDir)
 
     return Promise.all(
       entries.map(async (entry) =>
         this.options.storage.createArtifactFile({
-          projectName,
+          projectId,
           sessionId,
           messageId,
           filename: entry.name,
@@ -52,10 +52,10 @@ class ArtifactCompatibilityOwner {
   }
 
   async listProjectArtifacts(
-    projectName: string,
+    projectId: string,
     activeRunIds: ReadonlySet<string> = new Set()
   ): Promise<ArtifactFile[]> {
-    const project = assertSafePathSegment(projectName)
+    const project = assertSafePathSegment(projectId)
     const projectDir = this.options.storage.getProjectArtifactDir(project)
     const files: ArtifactFile[] = []
 
@@ -70,7 +70,7 @@ class ArtifactCompatibilityOwner {
           const metadata = await this.options.storage.readArtifactMetadata(messageDir, entry.name)
           files.push(
             await this.options.storage.createArtifactFile({
-              projectName: project,
+              projectId: project,
               sessionId,
               messageId,
               filename: entry.name,
@@ -91,7 +91,7 @@ class ArtifactCompatibilityOwner {
           const metadata = await this.options.storage.readArtifactMetadata(runDir, entry.name)
           files.push(
             await this.options.storage.createArtifactFile({
-              projectName: project,
+              projectId: project,
               sessionId,
               runId,
               filename: entry.name,
@@ -163,12 +163,12 @@ class ArtifactCompatibilityOwner {
   }
 
   async resolveSessionArtifactFilePath(
-    projectName: string,
+    projectId: string,
     sessionId: string,
     path: string
   ): Promise<string> {
     const resolvedFilePath = await this.resolveManagedFilePath({ path })
-    const sessionRoot = join(this.options.storage.getProjectArtifactDir(projectName), sessionId)
+    const sessionRoot = join(this.options.storage.getProjectArtifactDir(projectId), sessionId)
     let resolvedSessionRoot: string
     try {
       resolvedSessionRoot = await realpath(sessionRoot)

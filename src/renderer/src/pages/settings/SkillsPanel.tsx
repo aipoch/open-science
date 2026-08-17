@@ -10,6 +10,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { SkillSource } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
@@ -51,18 +52,33 @@ const skillExportErrorMessage = (error: unknown): string => {
   return message.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
 }
 
-const FILTER_LABELS: Record<SourceFilter, string> = {
+// Both tables hold catalog keys, not resolved strings: a module-level constant is evaluated once at
+// import, so resolved text would pin the language of whichever locale happened to load first and
+// never update on a language switch. `as const satisfies` keeps the literals for t()'s key check.
+const FILTER_LABEL_KEYS = {
   all: 'All',
   featured: 'Featured',
   imported: 'Imported',
   personal: 'Personal'
-}
+} as const satisfies Record<SourceFilter, string>
 
-const SOURCE_GROUPS: ReadonlyArray<{ source: SkillSource; label: string; subtitle: string }> = [
-  { source: 'featured', label: 'Featured', subtitle: 'Research skills bundled with the app.' },
-  { source: 'imported', label: 'Imported', subtitle: 'Skills you added from GitHub.' },
-  { source: 'personal', label: 'Personal', subtitle: 'Your custom skills.' }
-]
+const SOURCE_GROUPS = [
+  {
+    source: 'featured',
+    labelKey: 'Featured',
+    subtitleKey: 'Research skills bundled with the app.'
+  },
+  {
+    source: 'imported',
+    labelKey: 'Imported',
+    subtitleKey: 'Skills you added from GitHub.'
+  },
+  {
+    source: 'personal',
+    labelKey: 'Personal',
+    subtitleKey: 'Your custom skills.'
+  }
+] as const satisfies ReadonlyArray<{ source: SkillSource; labelKey: string; subtitleKey: string }>
 
 type SkillsPanelProps = {
   view: SkillsView
@@ -75,6 +91,7 @@ const SkillsPanel = ({
   onNavigate,
   canImportInstalledSkills = true
 }: SkillsPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
@@ -114,9 +131,10 @@ const SkillsPanel = ({
     setExportingId(id)
     try {
       const result = await window.api.settings.exportSkill({ id })
-      if (result.saved) setExportStatus({ id, message: `Exported ${name}.` })
+      if (result.saved) setExportStatus({ id, message: t('Exported {{name}}.', { name }) })
     } catch (error) {
-      setExportError(skillExportErrorMessage(error) || 'Could not export this Skill.')
+      // Main-process failures arrive already worded; only the fallback is ours to translate.
+      setExportError(skillExportErrorMessage(error) || t('Could not export this Skill.'))
     } finally {
       setExportingId(undefined)
     }
@@ -170,7 +188,7 @@ const SkillsPanel = ({
       <AgentHomeImportView key={agentFrameworkId} onImported={() => undefined} />
     ) : (
       <div className="p-5 text-sm text-muted-foreground">
-        Installed-skill import is available in the desktop app.
+        {t('Installed-skill import is available in the desktop app.')}
       </div>
     )
   }
@@ -191,17 +209,19 @@ const SkillsPanel = ({
   return (
     <div className="p-5">
       <SettingsSection
-        title="Conversation imports"
-        description="Choose what conversations can import into Open Science."
-        aria-label="Conversation imports"
+        title={t('Conversation imports')}
+        description={t('Choose what conversations can import into Open Science.')}
+        aria-label={t('Conversation imports')}
         className="mb-4 border-b border-border pb-4"
         contentClassName="mt-1"
       >
         <SettingsRow
-          label="Skill packages"
+          label={t('Skill packages')}
           description={
             <span className="line-clamp-2">
-              Let the agent detect attached .zip and .skill packages and ask before importing them.
+              {t(
+                'Let the agent detect attached .zip and .skill packages and ask before importing them.'
+              )}
             </span>
           }
           className="min-h-0 py-1.5"
@@ -209,7 +229,7 @@ const SkillsPanel = ({
           <div className="flex justify-end">
             <SettingsToggle
               enabled={conversationSkillImportEnabled}
-              aria-label="Toggle conversation Skill imports"
+              aria-label={t('Toggle conversation Skill imports')}
               onToggle={() =>
                 void setConversationSkillImportEnabled(!conversationSkillImportEnabled)
               }
@@ -220,31 +240,31 @@ const SkillsPanel = ({
 
       <div className="mb-4 flex items-center gap-2">
         <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
-          <SelectTrigger aria-label="Filter skills by source" className="w-36">
-            <span>{FILTER_LABELS[filter]}</span>
+          <SelectTrigger aria-label={t('Filter skills by source')} className="w-36">
+            <span>{t(FILTER_LABEL_KEYS[filter])}</span>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="featured">Featured</SelectItem>
-            <SelectItem value="imported">Imported</SelectItem>
-            <SelectItem value="personal">Personal</SelectItem>
+            <SelectItem value="all">{t('All')}</SelectItem>
+            <SelectItem value="featured">{t('Featured')}</SelectItem>
+            <SelectItem value="imported">{t('Imported')}</SelectItem>
+            <SelectItem value="personal">{t('Personal')}</SelectItem>
           </SelectContent>
         </Select>
         <SettingsSearchInput
-          aria-label="Search skills"
-          placeholder="Search skills…"
+          aria-label={t('Search skills')}
+          placeholder={t('Search skills…')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
           <ListChecks data-icon="inline-start" aria-hidden="true" />
-          Manage
+          {t('Manage')}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="shrink-0">
               <Plus data-icon="inline-start" aria-hidden="true" />
-              Add skill
+              {t('Add skill')}
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
@@ -256,29 +276,33 @@ const SkillsPanel = ({
             >
               <MessagesSquare className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Chat with agent</span>
-                <span className="text-xs text-muted-foreground">Describe it in a new session</span>
+                <span>{t('Chat with agent')}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t('Describe it in a new session')}
+                </span>
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
               <Pencil className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Write from scratch</span>
-                <span className="text-xs text-muted-foreground">Open the skill creator</span>
+                <span>{t('Write from scratch')}</span>
+                <span className="text-xs text-muted-foreground">{t('Open the skill creator')}</span>
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'upload' })}>
               <FileUp className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Upload skills</span>
-                <span className="text-xs text-muted-foreground">Pick SKILL.md files</span>
+                <span>{t('Upload skills')}</span>
+                <span className="text-xs text-muted-foreground">{t('Pick SKILL.md files')}</span>
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
               <Download className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Import from GitHub</span>
-                <span className="text-xs text-muted-foreground">Add a skill from a repo</span>
+                <span>{t('Import from GitHub')}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t('Add a skill from a repo')}
+                </span>
               </span>
             </DropdownMenuItem>
             {canImportInstalledSkills ? (
@@ -288,8 +312,10 @@ const SkillsPanel = ({
               >
                 <FolderInput className="size-4 shrink-0" aria-hidden="true" />
                 <span className="flex flex-col">
-                  <span>Import installed skills</span>
-                  <span className="text-xs text-muted-foreground">Scan global skill folders</span>
+                  <span>{t('Import installed skills')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('Scan global skill folders')}
+                  </span>
                 </span>
               </DropdownMenuItem>
             ) : null}
@@ -331,7 +357,7 @@ const SkillsPanel = ({
                 className="flex w-full flex-col items-start gap-0.5 text-left"
               >
                 <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
-                  {group.label}
+                  {t(group.labelKey)}
                   <ChevronDown
                     className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
                       expanded ? '' : '-rotate-90'
@@ -339,7 +365,7 @@ const SkillsPanel = ({
                     aria-hidden="true"
                   />
                 </span>
-                <span className="text-xs text-muted-foreground">{group.subtitle}</span>
+                <span className="text-xs text-muted-foreground">{t(group.subtitleKey)}</span>
               </button>
 
               {expanded ? (
@@ -370,7 +396,7 @@ const SkillsPanel = ({
                         ) : null}
                         {skill.source !== 'featured' && canExportSkills ? (
                           <SettingsIconAction
-                            label={`Export ${skill.displayName}`}
+                            label={t('Export {{name}}', { name: skill.displayName })}
                             icon={Download}
                             disabled={exportingId !== undefined}
                             onClick={() => void exportSkill(skill.id, skill.displayName)}
@@ -378,14 +404,14 @@ const SkillsPanel = ({
                         ) : null}
                         {skill.source === 'personal' ? (
                           <SettingsIconAction
-                            label={`Edit ${skill.displayName}`}
+                            label={t('Edit {{name}}', { name: skill.displayName })}
                             icon={Pencil}
                             onClick={() => onNavigate({ kind: 'edit', id: skill.id })}
                           />
                         ) : null}
                         {skill.source !== 'featured' ? (
                           <SettingsIconAction
-                            label={`Delete ${skill.displayName}`}
+                            label={t('Delete {{name}}', { name: skill.displayName })}
                             icon={Trash2}
                             onClick={() => {
                               setDeleteError(undefined)
@@ -393,7 +419,7 @@ const SkillsPanel = ({
                                 setDeleteError(
                                   error instanceof Error
                                     ? error.message
-                                    : 'This Skill is protected and cannot be deleted.'
+                                    : t('This Skill is protected and cannot be deleted.')
                                 )
                               )
                             }}
@@ -402,8 +428,10 @@ const SkillsPanel = ({
                         ) : null}
                         <SettingsToggle
                           enabled={skill.enabled}
-                          aria-label={`Toggle ${skill.displayName}`}
-                          onToggle={() => void setSkillEnabled(skill.id, !skill.enabled)}
+                          aria-label={t('Toggle {{name}}', { name: skill.displayName })}
+                          onToggle={() =>
+                            void setSkillEnabled(skill.id, !skill.enabled).catch(() => undefined)
+                          }
                         />
                       </li>
                     ))}
@@ -411,10 +439,10 @@ const SkillsPanel = ({
                 ) : (
                   <p className="mt-2 py-2 text-xs text-muted-foreground">
                     {group.source === 'personal'
-                      ? 'Create a skill to teach Claude a workflow you use.'
+                      ? t('Create a skill to teach Claude a workflow you use.')
                       : group.source === 'imported'
-                        ? 'No imported skills yet.'
-                        : 'No skills match your search.'}
+                        ? t('No imported skills yet.')
+                        : t('No skills match your search.')}
                   </p>
                 )
               ) : null}

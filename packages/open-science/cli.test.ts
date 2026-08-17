@@ -11,6 +11,10 @@ import {
   runTaskCommand
 } from './cli.mjs'
 
+const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
+  { id: 'project-1', name: 'Research' }
+]
+
 describe('task CLI', () => {
   it('parses the first milestone run interface', () => {
     expect(
@@ -102,15 +106,42 @@ describe('task CLI', () => {
         '--skill',
         'literature-review',
         '--skill',
-        'citation-check'
+        'citation-check',
+        '--plan-first',
+        '--auto-review',
+        '--specialist',
+        'literature-specialist',
+        '--delegation',
+        'deny',
+        '--wait',
+        '--return-on-attention'
       ])
     ).toMatchObject({
       command: 'run',
       options: {
         session: 'session-1',
         approvalProfile: 'full',
-        skills: ['literature-review', 'citation-check']
+        skills: ['literature-review', 'citation-check'],
+        planFirst: true,
+        autoReviewEnabled: true,
+        specialist: 'literature-specialist',
+        delegation: 'deny',
+        returnOnAttention: true
       }
+    })
+    expect(() => parseCliArgs(['run', '--delegation', 'sometimes'])).toThrow(
+      'Invalid delegation policy: sometimes'
+    )
+    expect(() => parseCliArgs(['run', '--return-on-attention'])).toThrow(
+      '--return-on-attention requires run --wait.'
+    )
+    expect(() => parseCliArgs(['run', '--auto-review', '--no-auto-review'])).toThrow(
+      'Use only one of --auto-review or --no-auto-review.'
+    )
+    expect(parseCliArgs(['plan', 'show', 'session-1', '--json'])).toMatchObject({
+      command: 'plan',
+      subcommand: 'show',
+      positionals: ['session-1']
     })
     expect(() => parseCliArgs(['run', '--approval-profile', 'unsafe'])).toThrow(
       'Invalid approval profile: unsafe'
@@ -139,6 +170,7 @@ describe('task CLI', () => {
 
   it('reads a prompt file, waits for completion, and emits one JSON result', async () => {
     const client = {
+      listProjects,
       startRun: vi.fn().mockResolvedValue({ id: 'run-1', status: 'running' }),
       waitForRun: vi.fn().mockResolvedValue({
         id: 'run-1',
@@ -183,6 +215,124 @@ describe('task CLI', () => {
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ status: 'completed', output: 'Done' })
     expect(log).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves an exact project name to its id before starting a run', async () => {
+    const client = {
+      listProjects: vi.fn(listProjects),
+      startRun: vi
+        .fn()
+        .mockResolvedValue({ id: 'run-1', sessionId: 'session-1', status: 'running' })
+    }
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'Research',
+          prompt: 'Review these papers.',
+          wait: false,
+          json: true,
+          jsonl: false
+        }
+      },
+      { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
+    )
+
+    expect(client.startRun).toHaveBeenCalledWith({
+      project: 'project-1',
+      prompt: 'Review these papers.'
+    })
+  })
+
+  it('requires an id when project names are duplicated', async () => {
+    const client = {
+      listProjects: vi.fn().mockResolvedValue([
+        { id: 'project-1', name: 'Research' },
+        { id: 'project-2', name: 'Research' }
+      ]),
+      startRun: vi.fn()
+    }
+
+    await expect(
+      runTaskCommand(
+        {
+          command: 'run',
+          options: {
+            project: 'Research',
+            prompt: 'Review these papers.',
+            wait: false,
+            json: true,
+            jsonl: false
+          }
+        },
+        { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true }
+      )
+    ).rejects.toThrow('Project name is ambiguous: Research. Use a project ID.')
+    expect(client.startRun).not.toHaveBeenCalled()
+  })
+
+  it('forwards execution controls and can return on actionable Plan attention', async () => {
+    const attention = {
+      kind: 'plan-approval',
+      plan: { artifactVersionId: 'plan-version', revision: 4 }
+    }
+    const client = {
+      listProjects,
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        status: 'running',
+        startedAt: 1,
+        artifacts: [],
+        attention
+      })
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Plan this.',
+          wait: true,
+          returnOnAttention: true,
+          planFirst: true,
+          autoReviewEnabled: true,
+          specialist: 'literature-specialist',
+          delegation: 'deny',
+          json: false,
+          jsonl: false
+        }
+      },
+      {
+        connect: vi.fn().mockResolvedValue(client),
+        log,
+        stdinIsTTY: true
+      }
+    )
+
+    expect(client.startRun).toHaveBeenCalledWith({
+      project: 'project-1',
+      prompt: 'Plan this.',
+      turnIntent: 'plan-first',
+      autoReviewEnabled: true,
+      specialist: 'literature-specialist',
+      delegationPolicy: 'deny'
+    })
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', {
+      returnOnAttention: true
+    })
+    expect(log).toHaveBeenCalledWith(
+      'Run is waiting for Plan approval: open-science plan approve session-1 --artifact-version plan-version --revision 4'
+    )
   })
 
   it('parses and runs the explicit offline rollback command', async () => {
@@ -314,8 +464,66 @@ describe('task CLI', () => {
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
   })
 
+  it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {
+    const client = {
+      getSessionPlan: vi.fn().mockResolvedValue({
+        artifactVersionId: 'plan-version',
+        revision: 2
+      }),
+      respondSessionPlan: vi.fn().mockResolvedValue({ changed: true })
+    }
+    const deps = {
+      connect: vi.fn().mockResolvedValue(client),
+      log: vi.fn()
+    }
+    const outputOptions = { json: true, jsonl: false }
+
+    await runTaskCommand(
+      {
+        command: 'plan',
+        subcommand: 'show',
+        positionals: ['session-1'],
+        options: outputOptions
+      },
+      deps
+    )
+    await runTaskCommand(
+      {
+        command: 'plan',
+        subcommand: 'approve',
+        positionals: ['session-1'],
+        options: {
+          ...outputOptions,
+          artifactVersion: 'plan-version',
+          revision: 2
+        }
+      },
+      deps
+    )
+    await runTaskCommand(
+      {
+        command: 'plan',
+        subcommand: 'revise',
+        positionals: ['session-1'],
+        options: { ...outputOptions, feedback: 'Split the validation step.' }
+      },
+      deps
+    )
+
+    expect(client.getSessionPlan).toHaveBeenCalledWith('session-1')
+    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(1, 'session-1', {
+      decision: 'approved',
+      artifactVersionId: 'plan-version',
+      expectedRevision: 2
+    })
+    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(2, 'session-1', {
+      feedback: 'Split the validation step.'
+    })
+  })
+
   it('reads stdin, emits JSONL events, and sets a failed-run exit code', async () => {
     const client = {
+      listProjects,
       events: async function* () {
         yield PUBLIC_TERMINAL_FIXTURE
       },
@@ -373,6 +581,7 @@ describe('task CLI', () => {
       data: { sessionId: stableSessionId, kind: 'tool' }
     }
     const client = {
+      listProjects,
       events: async function* () {
         yield { type: 'run.event', data: { sessionId: providerSessionId, kind: 'tool' } }
         yield stableEvent
@@ -426,6 +635,7 @@ describe('task CLI', () => {
       yield { type: 'permission.requested', data: { sessionId: 'session-1' } }
     }
     const client = {
+      listProjects,
       events,
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
@@ -499,6 +709,7 @@ describe('task CLI', () => {
       }
     }
     const client = {
+      listProjects,
       events,
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
@@ -551,6 +762,7 @@ describe('task CLI', () => {
       }
     })
     const client = {
+      listProjects,
       events,
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
@@ -588,6 +800,7 @@ describe('task CLI', () => {
       code: 'timeout'
     })
     const client = {
+      listProjects,
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
         sessionId: 'session-1',
@@ -629,6 +842,7 @@ describe('task CLI', () => {
     })
     const cancelError = new Error('daemon disconnected')
     const client = {
+      listProjects,
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
         sessionId: 'session-1',

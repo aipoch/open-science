@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Archive, Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
@@ -28,6 +29,10 @@ type SettledArtifactList = {
   loadError?: string
 }
 
+type DownloadError =
+  | { kind: 'partial'; downloaded: number; total: number; failed: number }
+  | { kind: 'raw'; message: string }
+
 const EMPTY_ARTIFACTS: ProjectFileItem[] = []
 
 const getArtifactType = (artifact: ProjectFileItem): string => {
@@ -41,16 +46,16 @@ const getArtifactType = (artifact: ProjectFileItem): string => {
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-const pluralizeArtifact = (count: number): string => `${count} artifact${count === 1 ? '' : 's'}`
-
 const DownloadSessionArtifactsDialog = ({
   session,
   onClose
 }: DownloadSessionArtifactsDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const dialogSession = useRetainedDialogValue(session)
   const [settledArtifactList, setSettledArtifactList] = useState<SettledArtifactList>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [downloadError, setDownloadError] = useState<string>()
+  const [downloadError, setDownloadError] = useState<DownloadError>()
   const [isDownloading, setIsDownloading] = useState(false)
   const [retryVersion, setRetryVersion] = useState(0)
   const projectId = session?.projectId
@@ -145,14 +150,17 @@ const DownloadSessionArtifactsDialog = ({
               .map((artifact) => artifact.id)
           )
         )
-        setDownloadError(
-          `Downloaded ${result.filePaths.length} of ${selectedArtifacts.length} artifacts. ${result.failures.length} failed.`
-        )
+        setDownloadError({
+          kind: 'partial',
+          downloaded: result.filePaths.length,
+          total: selectedArtifacts.length,
+          failed: result.failures.length
+        })
         return
       }
       onClose()
     } catch (error) {
-      setDownloadError(getErrorMessage(error))
+      setDownloadError({ kind: 'raw', message: getErrorMessage(error) })
     } finally {
       setIsDownloading(false)
     }
@@ -177,10 +185,10 @@ const DownloadSessionArtifactsDialog = ({
               <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0">
                 <Dialog.Title className="text-sm font-semibold text-foreground">
-                  Download session artifacts
+                  {t('Download session artifacts')}
                 </Dialog.Title>
                 <Dialog.Description className="truncate text-xs text-muted-foreground">
-                  {dialogSession?.title ?? 'Session'}
+                  {dialogSession?.title ?? t('Session')}
                 </Dialog.Description>
               </div>
               {status === 'ready' ? (
@@ -193,7 +201,7 @@ const DownloadSessionArtifactsDialog = ({
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               onClick={onClose}
             >
@@ -205,27 +213,27 @@ const DownloadSessionArtifactsDialog = ({
             {status === 'loading' ? (
               <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                Loading artifacts…
+                {t('Loading artifacts…')}
               </div>
             ) : status === 'error' ? (
               <div className="flex min-h-32 flex-col items-center justify-center gap-3 px-6 text-center">
                 <p role="alert" className="text-sm text-danger-000">
-                  {loadError ?? 'Could not load session artifacts.'}
+                  {loadError ?? t('Could not load session artifacts.')}
                 </p>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setRetryVersion((v) => v + 1)}
                 >
-                  Retry
+                  {t('Retry')}
                 </Button>
               </div>
             ) : artifacts.length === 0 ? (
               <div className="flex min-h-32 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-                No downloadable artifacts in this session.
+                {t('No downloadable artifacts in this session.')}
               </div>
             ) : (
-              <div role="group" aria-label="Session artifacts">
+              <div role="group" aria-label={t('Session artifacts')}>
                 {artifacts.map((artifact) => (
                   <label
                     key={artifact.id}
@@ -260,12 +268,17 @@ const DownloadSessionArtifactsDialog = ({
               disabled={status !== 'ready' || artifacts.length === 0 || isDownloading}
               onClick={toggleAll}
             >
-              {allSelected ? 'Uncheck all' : 'Check all'}
+              {allSelected ? t('Uncheck all') : t('Check all')}
             </Button>
             <div className="flex min-w-0 items-center gap-3">
               {status === 'ready' && downloadError ? (
                 <p role="alert" className="truncate text-xs text-danger-000">
-                  {downloadError}
+                  {downloadError.kind === 'partial'
+                    ? t(
+                        'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
+                        downloadError
+                      )
+                    : downloadError.message}
                 </p>
               ) : null}
               <Button
@@ -281,8 +294,11 @@ const DownloadSessionArtifactsDialog = ({
                   <Download className="size-4" aria-hidden="true" />
                 )}
                 {isDownloading
-                  ? 'Downloading…'
-                  : `Download ${pluralizeArtifact(selectedArtifacts.length)}`}
+                  ? t('Downloading…')
+                  : t('Download {{count}} artifacts', {
+                      count: selectedArtifacts.length,
+                      defaultValue_one: 'Download {{count}} artifact'
+                    })}
               </Button>
             </div>
           </div>

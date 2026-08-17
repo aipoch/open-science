@@ -1,5 +1,6 @@
 import { ArrowUpRight } from 'lucide-react'
 import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -36,6 +37,8 @@ const SpecialistSwitchDetail = ({
 }: {
   request: AcpPermissionRequest
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const items = useSpecialistStore((state) => state.items)
   const isLoaded = useSpecialistStore((state) => state.isLoaded)
   const load = useSpecialistStore((state) => state.load)
@@ -60,7 +63,7 @@ const SpecialistSwitchDetail = ({
   // names resolve to their display names through the catalog when available, matching the detail
   // block's identity presentation.
   const resolveLabel = (name: string | null): string => {
-    if (name === null) return 'Main Agent'
+    if (name === null) return t('Main Agent')
     const found = items.find((item) => item.kind === 'custom' && item.name === name)
     return found && found.kind === 'custom' ? (found.displayName ?? found.name) : name
   }
@@ -80,10 +83,11 @@ const SpecialistSwitchDetail = ({
   if (targetName === null) {
     return (
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/60 p-3">
-        <div className="text-sm font-semibold text-foreground">Main Agent</div>
+        <div className="text-sm font-semibold text-foreground">{t('Main Agent')}</div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Reverts to the default agent. Specialist capability scoping is removed — all enabled
-          skills and connectors become available again.
+          {t(
+            'Reverts to the default agent. Specialist capability scoping is removed — all enabled skills and connectors become available again.'
+          )}
         </p>
         {direction}
       </div>
@@ -97,8 +101,9 @@ const SpecialistSwitchDetail = ({
       <div className="flex flex-col gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
         <div className="text-sm font-semibold text-destructive">{targetName}</div>
         <p className="text-xs leading-relaxed text-destructive">
-          This Specialist can no longer be resolved by name — it was renamed or removed since the
-          request started. Approving will be rejected.
+          {t(
+            'This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.'
+          )}
         </p>
         {direction}
       </div>
@@ -106,7 +111,7 @@ const SpecialistSwitchDetail = ({
   }
 
   const capabilityLabel =
-    profile.capabilityMode === 'full' ? 'Full access' : 'Selected capabilities'
+    profile.capabilityMode === 'full' ? t('Full access') : t('Selected capabilities')
   const openConfig = (): void => openSettingsToSpecialist(profile.id)
 
   return (
@@ -114,7 +119,9 @@ const SpecialistSwitchDetail = ({
       <button
         type="button"
         data-testid="specialist-detail"
-        aria-label={`Open ${profile.displayName ?? profile.name} configuration`}
+        aria-label={t('Open {{name}} configuration', {
+          name: profile.displayName ?? profile.name
+        })}
         onClick={openConfig}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -140,13 +147,13 @@ const SpecialistSwitchDetail = ({
             </span>
             {!profile.enabled ? (
               <span className="inline-flex items-center rounded-md border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] font-semibold text-destructive">
-                Disabled
+                {t('Disabled')}
               </span>
             ) : null}
           </div>
           {!profile.enabled ? (
             <p className="mt-1 text-xs text-destructive">
-              This Specialist is disabled. Approving will be rejected.
+              {t('This Specialist is disabled. Approving will be rejected.')}
             </p>
           ) : null}
         </div>
@@ -155,7 +162,7 @@ const SpecialistSwitchDetail = ({
           aria-hidden="true"
           className="ml-auto inline-flex shrink-0 items-center gap-1 self-center whitespace-nowrap text-[11.5px] font-semibold text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
         >
-          Configure
+          {t('Configure')}
           <ArrowUpRight className="size-3" />
         </span>
       </button>

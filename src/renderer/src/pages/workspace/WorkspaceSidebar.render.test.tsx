@@ -8,6 +8,9 @@ import type { ChatSession } from '@/stores/session-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
+
+vi.mock('react-i18next', () => createI18nTestStub())
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/lib/utils', () => ({
@@ -25,6 +28,98 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   updatedAt: 1710000000000,
   ...overrides
 })
+
+const createDelegatedQuestionSession = (): ChatSession =>
+  createSession({
+    id: 'delegated-question',
+    title: 'Delegated question',
+    status: 'running',
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'root',
+      activeFrameId: 'root',
+      frames: [
+        {
+          id: 'root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'running',
+          activeBranchId: 'root-branch',
+          createdAt: 1
+        },
+        {
+          id: 'child',
+          parentFrameId: 'root',
+          originMessageId: 'root-prompt',
+          originBindingState: 'validated',
+          kind: 'delegate',
+          delegateName: 'Researcher',
+          status: 'completed',
+          activeBranchId: 'child-branch',
+          createdAt: 2
+        }
+      ],
+      branches: [
+        {
+          id: 'root-branch',
+          agentFrameId: 'root',
+          headMessageId: 'root-prompt',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'child-branch',
+          agentFrameId: 'child',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      messages: [
+        {
+          id: 'root-prompt',
+          role: 'user',
+          content: 'Research this topic',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: 'root-branch',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [],
+        questionRequests: [
+          {
+            requestId: 'question-1',
+            canonicalDigest: 'a'.repeat(64),
+            sourceFrameId: 'child',
+            sourceAttemptId: 'attempt-1',
+            sourceRuntimeSegmentId: 'runtime-1',
+            sourceMessageBranchId: 'child-branch',
+            rootOriginMessageId: 'root-prompt',
+            rootBranchId: 'root-branch',
+            sourceName: 'Researcher',
+            questions: [
+              { question: 'Which scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }
+            ],
+            sequence: 1,
+            askedAt: 2,
+            status: 'pending',
+            draftAnswers: [],
+            draftQuestionIndex: 0
+          }
+        ]
+      }
+    }
+  })
 
 const createMessage = (): ChatSession['messages'][number] => ({
   id: 'message-1',
@@ -113,6 +208,16 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('m-2 flex min-h-0 flex-1 flex-col rounded-lg')
     expect(html).not.toContain('mr-0')
     expect(html).toContain('aria-label="Messages, no unread messages"')
+  })
+
+  it('places Settings before notifications in the footer controls', async () => {
+    const html = await renderSidebar([createSession({ id: 'session-a' })])
+    const settingsIndex = html.indexOf('aria-label="Settings"')
+    const notificationsIndex = html.indexOf('aria-label="Messages, no unread messages"')
+
+    expect(settingsIndex).toBeGreaterThanOrEqual(0)
+    expect(notificationsIndex).toBeGreaterThanOrEqual(0)
+    expect(settingsIndex).toBeLessThan(notificationsIndex)
   })
 
   it('softens the session list behind the footer controls', async () => {
@@ -458,6 +563,14 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('Session status: Running')
     expect(html).toContain('Session status: Waiting for permission')
+  })
+
+  it('uses the shared answer wait reason for an active delegated question', async () => {
+    const html = await renderSidebar([createDelegatedQuestionSession()])
+
+    expect(html).toContain('Session status: Waiting for your answer')
+    expect(html).toContain('bg-session-waiting')
+    expect(html).not.toContain('Session status: Running')
   })
 
   it('gives each session action trigger a session-specific accessible name', async () => {

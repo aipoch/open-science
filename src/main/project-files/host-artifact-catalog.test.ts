@@ -41,8 +41,14 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     artifactId: string,
     versionId: string,
     versionNumber = 1,
-    options: { managedVisibleAt?: Date | null } = {}
+    options: {
+      managedVisibleAt?: Date | null
+      agentFrameId?: string
+      rootFrameId?: string
+    } = {}
   ): Promise<void> => {
+    const agentFrameId = options.agentFrameId ?? 'agent-frame'
+    const rootFrameId = options.rootFrameId ?? `root-${versionId}`
     await client.artifactLineage.upsert({
       where: {
         projectId_sessionId_normalizedFilename: {
@@ -56,7 +62,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         projectId,
         sessionId,
         normalizedFilename: `${artifactId}.csv`,
-        filename: `${artifactId}.csv`
+        filename: `${artifactId}.csv`,
+        createdAt: new Date('2026-07-01T00:00:00.000Z')
       },
       update: {}
     })
@@ -68,8 +75,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       artifactRunId: `run-${versionId}`,
       writeOperationId: `write-${versionId}`,
       writeRequestChecksum: 'a'.repeat(64),
-      rootFrameId: `root-${versionId}`,
-      agentFrameId: 'agent-frame',
+      rootFrameId,
+      agentFrameId,
       messageBranchId: 'branch',
       runtimeSegmentId: 'runtime',
       promptMessageId: 'prompt',
@@ -109,6 +116,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         sessionId,
         filename: `${uploadId}.pdf`,
         originalFilename: `${uploadId}.pdf`,
+        createdAt: new Date('2026-07-02T00:00:00.000Z'),
         versions: {
           create: {
             id: versionId,
@@ -409,7 +417,11 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     await client.projectDeletionIntent.delete({ where: { projectId: 'project-a' } })
     await client.fileOriginSession.updateMany({
       where: { projectId: 'project-a' },
-      data: { state: 'deleting', deletionOperationId: 'delete-origin' }
+      data: {
+        state: 'deleting',
+        deletionOperationId: 'delete-origin',
+        retainedReviewIdsJson: '[]'
+      }
     })
     await expectCatalogIds([])
 
@@ -418,7 +430,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       data: {
         state: 'deleted',
         deletedAt: new Date('2026-08-05T00:00:00.000Z'),
-        deletionOperationId: null
+        deletionOperationId: null,
+        retainedReviewIdsJson: null
       }
     })
     await expectCatalogIds(['artifact-a', 'upload-a'])
@@ -476,12 +489,20 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       expect.objectContaining({
         source: 'upload',
         sourceFileId: 'upload-a',
-        rootFrameId: null
+        createdAt: '2026-08-03T00:00:00.000Z',
+        sourceCreatedAt: '2026-08-03T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-02T00:00:00.000Z',
+        rootFrameId: null,
+        agentFrameId: null
       }),
       expect.objectContaining({
         source: 'artifact',
         sourceFileId: 'artifact-a',
-        rootFrameId: 'root-artifact-version-a'
+        createdAt: '2026-08-01T00:00:00.000Z',
+        sourceCreatedAt: '2026-08-01T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-01T00:00:00.000Z',
+        rootFrameId: 'root-artifact-version-a',
+        agentFrameId: 'agent-frame'
       })
     ])
   })
@@ -500,6 +521,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         versionNumber: 1,
         createdAt: '2026-08-01T00:00:00.000Z',
         sourceCreatedAt: '2026-08-01T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-01T00:00:00.000Z',
         rootFrameId: 'root-history-v1',
         agentFrameId: 'agent-frame'
       })
@@ -522,7 +544,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     expect(nullableUpload).toEqual([
       expect.objectContaining({
         versionId: 'upload-null-created-at-v1',
-        createdAt: '2026-08-04T00:00:00.000Z'
+        createdAt: '2026-08-04T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-02T00:00:00.000Z'
       })
     ])
     expect(nullableUpload[0]).not.toHaveProperty('sourceCreatedAt')
@@ -532,5 +555,51 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     await expect(
       repository.readHostArtifactCatalog({ projectId: 'project-a', versionId: 'collision' })
     ).rejects.toThrow('ambiguous across generated Artifacts and Uploads')
+  })
+
+  it('projects producer provenance from the latest generated Version only', async () => {
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-a-v1', 1, {
+      agentFrameId: 'frame-a',
+      rootFrameId: 'shared-root'
+    })
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-a-v2', 2, {
+      agentFrameId: 'frame-b',
+      rootFrameId: 'shared-root'
+    })
+    await client.managedFile.create({
+      data: {
+        source: 'artifact',
+        sourceFileId: 'artifact-a',
+        sourceVersionId: 'artifact-a-v2',
+        checksum: checksum('artifact-a-v2'),
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        displayName: 'artifact-a.csv',
+        storageKey: 'artifact-a',
+        mimeType: 'text/csv',
+        sizeBytes: 10n,
+        sortAtMs: BigInt(Date.parse('2026-08-02T00:00:00.000Z'))
+      }
+    })
+
+    await expect(repository.readHostArtifactCatalog({ projectId: 'project-a' })).resolves.toEqual([
+      expect.objectContaining({
+        versionId: 'artifact-a-v2',
+        rootFrameId: 'shared-root',
+        agentFrameId: 'frame-b',
+        createdAt: '2026-08-02T00:00:00.000Z',
+        sourceCreatedAt: '2026-08-02T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-01T00:00:00.000Z'
+      })
+    ])
+    await expect(
+      repository.readHostArtifactCatalog({ projectId: 'project-a', versionId: 'artifact-a-v1' })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        versionId: 'artifact-a-v1',
+        rootFrameId: 'shared-root',
+        agentFrameId: 'frame-a'
+      })
+    ])
   })
 })

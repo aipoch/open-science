@@ -88,7 +88,7 @@ describe('createProjectHandlers', () => {
 
     await handlers.get('project-1')
     await handlers.create({ name: 'Project' })
-    await handlers.update({ id: 'project-1', name: 'Renamed' })
+    await handlers.update({ id: 'project-1', name: 'Renamed', expectedUpdatedAt: 2 })
 
     expect(order).toEqual(['recover', 'get', 'recover', 'create', 'recover', 'update'])
   })
@@ -107,7 +107,7 @@ describe('createProjectHandlers', () => {
     const handlers = createProjectHandlers(repository, deletionCoordinator)
 
     await handlers.create({ name: 'Research', agentContext: 'Always cite DOIs.' })
-    await handlers.update({ id: 'project-1', agentContext: 'Prefer Python.' })
+    await handlers.update({ id: 'project-1', agentContext: 'Prefer Python.', expectedUpdatedAt: 2 })
 
     expect(repository.create).toHaveBeenCalledWith({
       name: 'Research',
@@ -115,7 +115,8 @@ describe('createProjectHandlers', () => {
     })
     expect(repository.update).toHaveBeenCalledWith({
       id: 'project-1',
-      agentContext: 'Prefer Python.'
+      agentContext: 'Prefer Python.',
+      expectedUpdatedAt: 2
     })
   })
 

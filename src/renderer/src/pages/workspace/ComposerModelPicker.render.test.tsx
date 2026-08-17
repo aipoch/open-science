@@ -1,3 +1,5 @@
+import { i18next } from '@/i18n'
+
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -223,7 +225,8 @@ describe('ComposerModelPicker', () => {
     const expectedReason = incompatibilityReason(
       { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic']
+      ['anthropic'],
+      i18next.getFixedT('en')
     )
     expect(expectedReason).toContain('/v1/messages')
     expect(expectedReason).toContain('/v1/chat/completions')
@@ -324,7 +327,8 @@ describe('ComposerModelPicker', () => {
     const reason = incompatibilityReason(
       { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic']
+      ['anthropic'],
+      i18next.getFixedT('en')
     )
 
     expect(reason).toContain('OpenAI Gateway')
@@ -398,7 +402,7 @@ describe('ComposerModelPicker', () => {
     expect(trigger?.textContent).not.toContain('OpenAI')
   })
 
-  it('keeps the effort suffix fully visible and ellipsizes only the model name on the trigger', () => {
+  it('lets the trigger shrink while preserving the effort suffix and ellipsizing the model', () => {
     // Long model names must not swallow the effort suffix: the model span truncates, the suffix
     // span is shrink-protected and never wraps.
     useSettingsStore.setState({
@@ -420,6 +424,10 @@ describe('ComposerModelPicker', () => {
     const trigger = container.querySelector('[aria-label="Select model"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('· High')
+    const triggerClasses = trigger?.className.split(/\s+/) ?? []
+    expect(triggerClasses).toContain('min-w-0')
+    expect(triggerClasses).toContain('shrink')
+    expect(triggerClasses).not.toContain('shrink-0')
     const suffix = Array.from(trigger!.querySelectorAll('span')).find(
       (el) => el.textContent?.trim() === '· High'
     )

@@ -569,7 +569,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/acp/artifact-code-reconstruction-runner.ts',
       'src/main/acp/restricted-inference-runner.ts',
       'src/main/artifacts/code-reconstruction.ts',
-      'src/main/notebook/host-llm-service.ts',
+      'src/main/notebook/host-model-service.ts',
       'src/main/reviewer/model-runtime-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
@@ -631,6 +631,8 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the complete Notebook local-RPC capability inventory', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'ARTIFACT_RPC_METHODS')).toEqual([
+      'artifactReserveWrite',
+      'artifactReleaseWrite',
       'artifactCreateVersion',
       'artifactReplayVersion'
     ])
@@ -639,6 +641,7 @@ describe('Settings backend ownership architecture', () => {
       'artifactsCall',
       'lineageCall',
       'framesCall',
+      'sessionsCall',
       'mcpCall',
       'computeCall',
       'agentsCall',
@@ -646,6 +649,8 @@ describe('Settings backend ownership architecture', () => {
       'delegatedWorkCall',
       'skillsCall',
       'llmCall',
+      'currentModelCall',
+      'listModelsCall',
       'viewImageCall',
       'requestUserInput'
     ])
@@ -736,7 +741,7 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
     const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
     expect(mainIpc).toContain(
-      'capability: new SettingsService({\n      repository: settingsRepository,\n      applyNetworkProxy:'
+      'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      applyNetworkProxy:'
     )
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })

@@ -1,7 +1,7 @@
 name: Feature request
 description: Suggest an idea or improvement for Open Science
-title: "[Feature]: "
-labels: ["enhancement"]
+title: '[Feature]: '
+labels: ['enhancement']
 body:
   - type: markdown
     attributes:

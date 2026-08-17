@@ -198,7 +198,7 @@ describe('UserSkillCompatibilityIndex', () => {
       const bytes = await readFile(path)
       if (path === assetPath && !changed) {
         changed = true
-        await writeFile(path, 'after!')
+        await writeFile(path, 'after!!')
       }
       return createHash('sha256').update(bytes).digest('hex')
     })

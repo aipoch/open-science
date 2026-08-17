@@ -9,7 +9,10 @@ type AcpConnectionTransitionOwnerOptions = Readonly<{
   disconnect: (emitClosedStatus: boolean) => Promise<unknown>
   onRetired: () => void
   publishIdle: () => void
-  recoverFailedDeferredDisconnect: (error: unknown) => void | Promise<void>
+  recoverFailedDeferredDisconnect: (
+    error: unknown,
+    disconnectedGeneration: number
+  ) => void | Promise<void>
   reportFailure: (message: string, error: unknown) => void
 }>
 
@@ -88,12 +91,13 @@ export class AcpConnectionTransitionOwner {
 
   private async disconnectDeferred(): Promise<void> {
     const expectedBarrierGeneration = this.barrierGeneration
+    const disconnectedGeneration = this.options.connectionGeneration()
     try {
       await this.disconnectPlanned()
     } catch (error) {
       this.reportFailure('deferred reconnect disconnect failed', error)
       try {
-        await this.options.recoverFailedDeferredDisconnect(error)
+        await this.options.recoverFailedDeferredDisconnect(error, disconnectedGeneration)
       } catch (recoveryError) {
         this.reportFailure('failed deferred reconnect recovery failed', recoveryError)
       }

@@ -275,6 +275,48 @@ class SessionRepository {
     return quarantine.exists ? { status: 'unreadable' } : { status: 'missing' }
   }
 
+  // Verifies durable Session identity from directory/file authority without parsing JSON. This lets
+  // an incomplete hydration catalog distinguish a corrupt Session file from a genuinely unused id.
+  async assertSessionIdentityOwnership(
+    sessionIdValue: string,
+    expectedProjectIdValue: string
+  ): Promise<void> {
+    const sessionId = assertSafeSegment(sessionIdValue)
+    const expectedProjectId = assertSafeSegment(expectedProjectIdValue)
+    const fileName = `${sessionId}.json`
+    const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
+    let belongsToAnotherProject = false
+    let isComplete = projectDirectories.isComplete
+
+    for (const projectIdValue of projectDirectories.names) {
+      let projectId: string
+      try {
+        projectId = assertSafeSegment(projectIdValue)
+      } catch {
+        isComplete = false
+        continue
+      }
+      const sessionFiles = await this.listSessionFileNames(join(this.sessionsDir, projectId), {
+        missingIsIncomplete: true
+      })
+      isComplete &&= sessionFiles.isComplete
+      if (
+        projectId !== expectedProjectId &&
+        (sessionFiles.names.includes(fileName) ||
+          sessionFiles.quarantinedPrimaryFileNames.includes(fileName))
+      ) {
+        belongsToAnotherProject = true
+      }
+    }
+
+    if (!isComplete) {
+      throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
+    }
+    if (belongsToAnotherProject) {
+      throw new Error('Cannot save a Session id that is already owned by another Project.')
+    }
+  }
+
   // Reports whether the live sessions tree was fully scanned so DB reconciliation never acts on a
   // partial read. Project recovery owns tombstone cleanup before ordinary hydration is allowed.
   async loadAllWithDiagnostics(options: SessionScanOptions = {}): Promise<SessionLoadDiagnostics> {
@@ -288,14 +330,51 @@ class SessionRepository {
       quarantineInvalidFiles,
       scanMetrics
     })
+    const projectIdsBySessionId = new Map<string, Set<string>>()
+    const recordIdentityOwner = (sessionId: string, projectId: string): void => {
+      const projectIds = projectIdsBySessionId.get(sessionId) ?? new Set<string>()
+      projectIds.add(projectId)
+      projectIdsBySessionId.set(sessionId, projectIds)
+    }
+    for (const session of sessions) recordIdentityOwner(session.id, session.projectId)
+    for (const warning of warnings) {
+      if (!('projectId' in warning) || !warning.fileName.endsWith('.json')) continue
+      recordIdentityOwner(warning.fileName.slice(0, -'.json'.length), warning.projectId)
+    }
+    const duplicateSessionIds = new Set(
+      [...projectIdsBySessionId].filter(([, projectIds]) => projectIds.size > 1).map(([id]) => id)
+    )
+    const globallyIdentifiedSessions = sessions.filter(
+      (session) => !duplicateSessionIds.has(session.id)
+    )
+    const warnedIdentityFiles = new Set(
+      warnings.flatMap((warning) =>
+        'projectId' in warning ? [`${warning.projectId}\0${warning.fileName}`] : []
+      )
+    )
+    const identityWarnings: SessionLoadWarning[] = []
+    for (const sessionId of duplicateSessionIds) {
+      for (const projectId of projectIdsBySessionId.get(sessionId) ?? []) {
+        const fileName = `${sessionId}.json`
+        if (warnedIdentityFiles.has(`${projectId}\0${fileName}`)) continue
+        identityWarnings.push({
+          kind: 'unreadable',
+          projectId,
+          fileName,
+          recovered: false
+        })
+      }
+    }
     const manifestRead = await this.readManifest({ quarantineInvalidFiles })
 
     return {
-      result: { sessions, manifest: manifestRead.manifest },
+      result: { sessions: globallyIdentifiedSessions, manifest: manifestRead.manifest },
       // The manifest is only a last-open pointer. It must never make a complete Session authority
       // scan read-only; a later selection write will retry persistence through the normal saver.
-      isComplete,
-      warnings: manifestRead.warning ? [...warnings, manifestRead.warning] : warnings,
+      isComplete: isComplete && duplicateSessionIds.size === 0,
+      warnings: manifestRead.warning
+        ? [...warnings, ...identityWarnings, manifestRead.warning]
+        : [...warnings, ...identityWarnings],
       scanMetrics
     }
   }
@@ -869,6 +948,16 @@ class SessionRepository {
         }
       }
 
+      // The file name is authoritative for global Session identity. Unlike the owning Project,
+      // an id mismatch is corruption rather than a legacy field that may be repaired from the path.
+      const fileName = basename(filePath)
+      const fileSessionId = fileName.endsWith('.json')
+        ? fileName.slice(0, -'.json'.length)
+        : undefined
+      if (session.id !== fileSessionId) {
+        throw new Error('Session id does not match its file name')
+      }
+
       return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
     } catch {
       const wasQuarantined =
@@ -977,7 +1066,10 @@ class SessionRepository {
 
   private async backupInvalidFile(filePath: string): Promise<void> {
     this.backupSequence += 1
-    await rename(filePath, `${filePath}.invalid-${Date.now()}-${this.backupSequence}`)
+    await this.dependencies.renameFile(
+      filePath,
+      `${filePath}.invalid-${Date.now()}-${this.backupSequence}`
+    )
   }
 }
 

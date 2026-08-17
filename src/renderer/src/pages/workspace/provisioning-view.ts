@@ -70,6 +70,12 @@ export function notebookGated(
   if (ui.kind !== 'ready' && ui.sessionId && sessionId && ui.sessionId !== sessionId) {
     return false
   }
+  // A progress event can identify Python/upgrade work before its follow-up status refresh observes
+  // provisioning=true. Fail closed from either signal so a refresh failure never opens the gate;
+  // R-only work stays additive, and the error overlay still exposes Retry.
+  if (ui.kind === 'error' && ui.scope !== 'r' && (status.provisioning || ui.scope !== undefined)) {
+    return true
+  }
   if (!status.pythonReady) return true
   return ui.kind === 'preparing' && ui.scope === 'upgrade'
 }

@@ -1,7 +1,16 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import {
+  createWriteStream,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync
+} from 'node:fs'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Transform, type TransformCallback } from 'node:stream'
+import { finished } from 'node:stream/promises'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import type { OptionalProjectIdScope } from '../../shared/project-scope'
@@ -66,6 +75,9 @@ export type InstallResult = {
   ok: boolean
   needsRestart: boolean
   log: string
+  // Present when the bounded installer stdout/stderr collectors discarded older bytes. The count is
+  // aggregated across every command whose retained output contributes to `log`.
+  logTruncation?: { droppedBytes: number }
   method?: 'conda' | 'pip' | 'cran'
   attempts?: NotebookPackageInstallerAttempt[]
   fallbackUsed?: boolean
@@ -81,8 +93,29 @@ export type InstallResult = {
   error?: string
 }
 
+type CondaStructuredResult = {
+  transaction: boolean
+  actions: {
+    LINK: Array<{ name: 'r-base'; version?: string }>
+    UNLINK: Array<{ name: 'r-base'; version?: string }>
+  }
+  diagnostics: string[]
+}
+
 // One spawned install command's outcome; injected so tests never launch micromamba/pip/R.
-export type SpawnResult = { code: number; stdout: string; stderr: string }
+export type SpawnResult = {
+  code: number
+  stdout: string
+  stderr: string
+  stdoutDroppedBytes?: number
+  stderrDroppedBytes?: number
+  // When a bounded stream truncated micromamba --json output, a short-lived parser subprocess
+  // reduces the complete temporary capture to only the facts needed for fail-closed decisions.
+  structuredCondaResult?: CondaStructuredResult
+  // Bounded recovery-only evidence reduced from the complete capture. It is never merged into the
+  // user-facing log or persisted activity result.
+  maxPathRecoveryEvidence?: string
+}
 export type InstallSpawn = (
   command: string,
   args: string[],
@@ -178,6 +211,7 @@ const condaMatchSpecName = (spec: string): string | undefined => {
 type CondaFailureClassification = Pick<NotebookPackageInstallerAttempt, 'mutationRisk' | 'reason'>
 
 const parseStructuredCondaResult = (result: SpawnResult): Record<string, unknown> | undefined => {
+  if (result.structuredCondaResult) return result.structuredCondaResult
   for (const candidate of [result.stdout, result.stderr]) {
     try {
       const parsed = JSON.parse(candidate) as unknown
@@ -350,6 +384,7 @@ const executeCondaWithRBaseProtection = async (options: {
         ok: false,
         needsRestart: false,
         log: [mergeLog(preflight), planError].filter(Boolean).join('\n'),
+        ...installLogTruncation(preflight),
         method: 'conda',
         attempts: [
           {
@@ -385,6 +420,7 @@ const executeCondaWithRBaseProtection = async (options: {
         ok: false,
         needsRestart: false,
         log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+        ...installLogTruncation(preflight, conda),
         method: 'conda',
         attempts: [installerAttempt(0, 'conda', options.packages, conda)],
         fallbackUsed: false,
@@ -472,13 +508,397 @@ const condaFallbackIsAuthorized = (classification: CondaFailureClassification): 
   classification.mutationRisk === 'none' &&
   (classification.reason === 'package-not-found' || classification.reason === 'solver-failed')
 
+export const INSTALLER_STREAM_LOG_LIMIT_BYTES = 512 * 1024
+export const CONDA_JSON_CAPTURE_LIMIT_BYTES = 32 * 1024 * 1024
+
+// Fixed-capacity byte ring retaining the newest installer output. Byte accounting happens before
+// UTF-8 decoding so the reported discard count is exact even when a process splits a code point
+// across chunks.
+class InstallerLogTailBuffer {
+  private readonly buffer: Buffer
+  private start = 0
+  private length = 0
+  private droppedBytes = 0
+
+  constructor(private readonly capacity: number) {
+    this.buffer = Buffer.allocUnsafe(capacity)
+  }
+
+  push(value: unknown): void {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8')
+    if (chunk.length === 0) return
+
+    if (chunk.length >= this.capacity) {
+      this.addDroppedBytes(this.length + chunk.length - this.capacity)
+      chunk.copy(this.buffer, 0, chunk.length - this.capacity)
+      this.start = 0
+      this.length = this.capacity
+      return
+    }
+
+    const overflow = Math.max(0, this.length + chunk.length - this.capacity)
+    if (overflow > 0) {
+      this.start = (this.start + overflow) % this.capacity
+      this.length -= overflow
+      this.addDroppedBytes(overflow)
+    }
+
+    const writeStart = (this.start + this.length) % this.capacity
+    const firstLength = Math.min(chunk.length, this.capacity - writeStart)
+    chunk.copy(this.buffer, writeStart, 0, firstLength)
+    if (firstLength < chunk.length) chunk.copy(this.buffer, 0, firstLength)
+    this.length += chunk.length
+  }
+
+  snapshot(): { text: string; droppedBytes: number } {
+    if (this.length === 0) return { text: '', droppedBytes: this.droppedBytes }
+    const firstLength = Math.min(this.length, this.capacity - this.start)
+    const bytes = Buffer.allocUnsafe(this.length)
+    this.buffer.copy(bytes, 0, this.start, this.start + firstLength)
+    if (firstLength < this.length)
+      this.buffer.copy(bytes, firstLength, 0, this.length - firstLength)
+    return { text: bytes.toString('utf8'), droppedBytes: this.droppedBytes }
+  }
+
+  private addDroppedBytes(count: number): void {
+    this.droppedBytes = Math.min(Number.MAX_SAFE_INTEGER, this.droppedBytes + count)
+  }
+}
+
+type CondaJsonCapture = {
+  directory: string
+  stdoutPath: string
+  stderrPath: string
+  stdoutLimiter: Transform
+  stderrLimiter: Transform
+  stdoutStream: ReturnType<typeof createWriteStream>
+  stderrStream: ReturnType<typeof createWriteStream>
+  state: { truncated: boolean }
+}
+
+type CondaJsonCaptureSummary = Pick<
+  SpawnResult,
+  'structuredCondaResult' | 'maxPathRecoveryEvidence'
+>
+
+const CONDA_JSON_SUMMARIZER_SOURCE = String.raw`
+const { readFileSync } = require('node:fs')
+
+const strings = (value) =>
+  Array.isArray(value)
+    ? value.flatMap(strings)
+    : typeof value === 'string'
+      ? [value]
+      : typeof value === 'object' && value !== null
+        ? Object.values(value).flatMap(strings)
+        : []
+
+const summarize = (value) => {
+  let transaction = false
+  const actions = { LINK: [], UNLINK: [] }
+  const visit = (nested) => {
+    if (Array.isArray(nested)) {
+      nested.forEach(visit)
+      return
+    }
+    if (typeof nested !== 'object' || nested === null) return
+    for (const [key, child] of Object.entries(nested)) {
+      const normalized = key.toUpperCase()
+      if (/^(?:LINK|UNLINK|FETCH|PREFIX_ACTIONS|TRANSACTION)$/.test(normalized)) {
+        transaction ||= Array.isArray(child) ? child.length > 0 : Boolean(child)
+      }
+      if ((normalized === 'LINK' || normalized === 'UNLINK') && Array.isArray(child)) {
+        for (const record of child) {
+          if (
+            actions[normalized].length < 16 &&
+            typeof record === 'object' &&
+            record !== null &&
+            typeof record.name === 'string' &&
+            record.name.toLowerCase() === 'r-base'
+          ) {
+            actions[normalized].push({
+              name: 'r-base',
+              ...(typeof record.version === 'string' ? { version: record.version } : {})
+            })
+          }
+        }
+      }
+      visit(child)
+    }
+  }
+  visit(value)
+  const diagnostics = strings(value).join('\n')
+  const canonicalDiagnostic =
+    /nothing provides|package(?:s)?[^\n]*not found|does not exist|not installed/iu.test(diagnostics)
+      ? 'package not found'
+      : /solver|unsatisfiable|conflict/iu.test(diagnostics)
+        ? 'solver failed'
+        : /permission|access denied/iu.test(diagnostics)
+          ? 'permission denied'
+          : /network|timeout|tls|ssl|http/iu.test(diagnostics)
+            ? 'network timeout'
+            : undefined
+  return {
+    transaction,
+    actions,
+    diagnostics: canonicalDiagnostic ? [canonicalDiagnostic] : []
+  }
+}
+
+const maxPathEvidence = (texts) => {
+  const diagnosticText = texts.join('\n')
+  const hasMissingContext =
+    /invalid package cache/i.test(diagnosticText) &&
+    /(?:is missing|package cache error)/i.test(diagnosticText)
+  const hasRemoveContext =
+    /error when extracting package/i.test(diagnosticText) &&
+    /remove_all[^]*(?:not empty|directory)/i.test(diagnosticText)
+  if (!hasMissingContext && !hasRemoveContext) return undefined
+  const archiveMatch = diagnosticText.match(
+    /(?:for|cache for)\s+[\x27\x22]([^\x27\x22]+\.(?:conda|tar\.bz2))[\x27\x22]/i
+  )
+  const archive = archiveMatch?.[1]
+  const paths = [
+    ...diagnosticText.matchAll(/[\x27\x22]([^\x27\x22\r\n]+)[\x27\x22]/g)
+  ]
+    .map((match) => match[1])
+    .filter((value) => value !== archive && value.length > 240)
+  if (paths.length === 0) return undefined
+  const parts = []
+  if (hasMissingContext) {
+    parts.push('Invalid package cache; file is missing; Package cache error.')
+  }
+  if (hasRemoveContext) {
+    parts.push('Error when extracting package; remove_all: not empty.')
+  }
+  const quote = String.fromCharCode(39)
+  if (archive) parts.push('for ' + quote + archive.slice(0, 4096) + quote)
+  let remaining = 60_000 - parts.join('\n').length
+  for (const path of paths) {
+    const quoted = quote + path.slice(0, 32_768) + quote
+    if (quoted.length > remaining) break
+    parts.push(quoted)
+    remaining -= quoted.length + 1
+  }
+  return parts.join('\n')
+}
+
+const texts = process.argv.slice(1).map((path) => {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return ''
+  }
+})
+let structuredCondaResult
+const decodedDiagnosticTexts = []
+for (const text of texts) {
+  try {
+    const value = JSON.parse(text)
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      decodedDiagnosticTexts.push(strings(value).join('\n'))
+      structuredCondaResult ??= summarize(value)
+    }
+  } catch {
+    // Try the other captured stream.
+  }
+}
+const maxPathRecoveryEvidence = maxPathEvidence([...decodedDiagnosticTexts, ...texts])
+process.stdout.write(
+  JSON.stringify({
+    ...(structuredCondaResult ? { structuredCondaResult } : {}),
+    ...(maxPathRecoveryEvidence ? { maxPathRecoveryEvidence } : {})
+  })
+)
+process.exitCode = 0
+`
+
+const createCondaJsonCaptureLimiter = (state: { truncated: boolean }): Transform => {
+  let writtenBytes = 0
+  return new Transform({
+    transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback) {
+      const retainedBytes = Math.min(
+        chunk.length,
+        Math.max(0, CONDA_JSON_CAPTURE_LIMIT_BYTES - writtenBytes)
+      )
+      writtenBytes += retainedBytes
+      if (retainedBytes < chunk.length) state.truncated = true
+      callback(null, retainedBytes > 0 ? chunk.subarray(0, retainedBytes) : undefined)
+    }
+  })
+}
+
+const createCondaJsonCapture = (): CondaJsonCapture => {
+  const directory = mkdtempSync(join(tmpdir(), 'open-science-conda-json-'))
+  const stdoutPath = join(directory, 'stdout.json')
+  const stderrPath = join(directory, 'stderr.json')
+  const state = { truncated: false }
+  const stdoutLimiter = createCondaJsonCaptureLimiter(state)
+  const stderrLimiter = createCondaJsonCaptureLimiter(state)
+  const stdoutStream = createWriteStream(stdoutPath, { mode: 0o600 })
+  const stderrStream = createWriteStream(stderrPath, { mode: 0o600 })
+  // Keep late disk errors from becoming unhandled events; finished() below observes the failure and
+  // makes the structured decision fail closed. Drain the limiter after a disk error so capture
+  // failure cannot stall the installer child.
+  stdoutStream.on('error', () => {
+    stdoutLimiter.unpipe(stdoutStream)
+    stdoutLimiter.resume()
+  })
+  stderrStream.on('error', () => {
+    stderrLimiter.unpipe(stderrStream)
+    stderrLimiter.resume()
+  })
+  stdoutLimiter.on('error', (error) => {
+    state.truncated = true
+    stdoutStream.destroy(error)
+  })
+  stderrLimiter.on('error', (error) => {
+    state.truncated = true
+    stderrStream.destroy(error)
+  })
+  stdoutLimiter.pipe(stdoutStream)
+  stderrLimiter.pipe(stderrStream)
+  return {
+    directory,
+    stdoutPath,
+    stderrPath,
+    stdoutLimiter,
+    stderrLimiter,
+    stdoutStream,
+    stderrStream,
+    state
+  }
+}
+
+const isCondaStructuredResult = (value: unknown): value is CondaStructuredResult => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const candidate = value as Partial<CondaStructuredResult>
+  if (
+    typeof candidate.transaction !== 'boolean' ||
+    !candidate.actions ||
+    !Array.isArray(candidate.actions.LINK) ||
+    !Array.isArray(candidate.actions.UNLINK) ||
+    !Array.isArray(candidate.diagnostics) ||
+    !candidate.diagnostics.every((diagnostic) => typeof diagnostic === 'string')
+  ) {
+    return false
+  }
+  return [...candidate.actions.LINK, ...candidate.actions.UNLINK].every(
+    (action) =>
+      typeof action === 'object' &&
+      action !== null &&
+      action.name === 'r-base' &&
+      (action.version === undefined || typeof action.version === 'string')
+  )
+}
+
+const isCondaJsonCaptureSummary = (value: unknown): value is CondaJsonCaptureSummary => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const candidate = value as CondaJsonCaptureSummary
+  return (
+    (candidate.structuredCondaResult === undefined ||
+      isCondaStructuredResult(candidate.structuredCondaResult)) &&
+    (candidate.maxPathRecoveryEvidence === undefined ||
+      (typeof candidate.maxPathRecoveryEvidence === 'string' &&
+        candidate.maxPathRecoveryEvidence.length <= 60_000))
+  )
+}
+
+const summarizeCondaJsonCapture = (
+  capture: CondaJsonCapture
+): Promise<CondaJsonCaptureSummary | undefined> =>
+  new Promise((resolve) => {
+    const stdout = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    const parser = nodeSpawn(
+      process.execPath,
+      ['-e', CONDA_JSON_SUMMARIZER_SOURCE, capture.stdoutPath, capture.stderrPath],
+      {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      }
+    )
+    parser.stdout?.on('data', (chunk) => stdout.push(chunk))
+    let settled = false
+    const settle = (result?: CondaJsonCaptureSummary): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(result)
+    }
+    const timeout = setTimeout(() => {
+      parser.kill()
+      settle()
+    }, 30_000)
+    timeout.unref()
+    parser.on('error', () => settle())
+    parser.on('close', (code) => {
+      if (code !== 0) {
+        settle()
+        return
+      }
+      try {
+        const snapshot = stdout.snapshot()
+        if (snapshot.droppedBytes > 0) {
+          settle()
+          return
+        }
+        const parsed = JSON.parse(snapshot.text) as unknown
+        settle(isCondaJsonCaptureSummary(parsed) ? parsed : undefined)
+      } catch {
+        settle()
+      }
+    })
+  })
+
+const finalizeCondaJsonCapture = async (
+  capture: CondaJsonCapture | undefined,
+  summarize: boolean
+): Promise<CondaJsonCaptureSummary | undefined> => {
+  if (!capture) return undefined
+  try {
+    await Promise.all([finished(capture.stdoutStream), finished(capture.stderrStream)])
+    return summarize && !capture.state.truncated
+      ? await summarizeCondaJsonCapture(capture)
+      : undefined
+  } catch {
+    return undefined
+  } finally {
+    try {
+      rmSync(capture.directory, { recursive: true, force: true })
+    } catch {
+      // The installer result must still settle; the OS temp directory remains best-effort cleanup.
+    }
+  }
+}
+
+const discardCondaJsonCapture = async (capture: CondaJsonCapture | undefined): Promise<void> => {
+  if (!capture) return
+  capture.stdoutLimiter.end()
+  capture.stderrLimiter.end()
+  await finalizeCondaJsonCapture(capture, false)
+}
+
 // Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
 // Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
-export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) =>
-  new Promise((resolve, reject) => {
+export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) => {
+  let condaJsonCapture: CondaJsonCapture | undefined
+  try {
+    if (args.includes('--json')) condaJsonCapture = createCondaJsonCapture()
+  } catch (error) {
+    return Promise.resolve({
+      code: 1,
+      stdout: '',
+      stderr: `Failed to create the temporary micromamba JSON capture; not spawning: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    })
+  }
+  return new Promise((resolve, reject) => {
     try {
       onBeforeSpawn?.() // re-arm the per-spawn intent; fail closed if it can't be recorded
     } catch (error) {
+      void discardCondaJsonCapture(condaJsonCapture)
       resolve({
         code: 1,
         stdout: '',
@@ -488,7 +908,18 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
       })
       return
     }
-    const child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
+    let child: ReturnType<typeof nodeSpawn>
+    try {
+      child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
+    } catch (error) {
+      void discardCondaJsonCapture(condaJsonCapture)
+      resolve({
+        code: 1,
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error)
+      })
+      return
+    }
     if (child.pid !== undefined) {
       try {
         onChild?.(child.pid)
@@ -497,6 +928,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
         // If it can't be confirmed, REJECT with the CHILD_UNCONFIRMED marker so the caller retains the
         // recovery evidence (a worker may still be writing) instead of clearing it.
         void killAndConfirmExit(child).then((confirmed) => {
+          void discardCondaJsonCapture(condaJsonCapture)
           if (confirmed) {
             resolve({
               code: 1,
@@ -516,21 +948,93 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
         return
       }
     }
-    let stdout = ''
-    let stderr = ''
+    const stdout = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    const stderr = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
     child.stdout?.on('data', (chunk) => {
-      stdout += String(chunk)
+      stdout.push(chunk)
     })
     child.stderr?.on('data', (chunk) => {
-      stderr += String(chunk)
+      stderr.push(chunk)
     })
-    child.on('error', (error) => resolve({ code: 1, stdout, stderr: `${stderr}${String(error)}` }))
-    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
+    if (condaJsonCapture) {
+      if (child.stdout) child.stdout.pipe(condaJsonCapture.stdoutLimiter)
+      else condaJsonCapture.stdoutLimiter.end()
+      if (child.stderr) child.stderr.pipe(condaJsonCapture.stderrLimiter)
+      else condaJsonCapture.stderrLimiter.end()
+    }
+    let settled = false
+    const result = async (code: number): Promise<SpawnResult> => {
+      const stdoutSnapshot = stdout.snapshot()
+      const stderrSnapshot = stderr.snapshot()
+      const condaJsonSummary = await finalizeCondaJsonCapture(
+        condaJsonCapture,
+        stdoutSnapshot.droppedBytes > 0 || stderrSnapshot.droppedBytes > 0
+      )
+      return {
+        code,
+        stdout: stdoutSnapshot.text,
+        stderr: stderrSnapshot.text,
+        ...(stdoutSnapshot.droppedBytes > 0
+          ? { stdoutDroppedBytes: stdoutSnapshot.droppedBytes }
+          : {}),
+        ...(stderrSnapshot.droppedBytes > 0
+          ? { stderrDroppedBytes: stderrSnapshot.droppedBytes }
+          : {}),
+        ...(condaJsonSummary ?? {})
+      }
+    }
+    const settle = (code: number): void => {
+      if (settled) return
+      settled = true
+      void result(code).then(resolve)
+    }
+    child.on('error', (error) => {
+      stderr.push(String(error))
+      if (condaJsonCapture) {
+        child.stdout?.unpipe(condaJsonCapture.stdoutLimiter)
+        child.stderr?.unpipe(condaJsonCapture.stderrLimiter)
+        condaJsonCapture.stdoutLimiter.end()
+        condaJsonCapture.stderrLimiter.end()
+      }
+      settle(1)
+    })
+    child.on('close', (code) => settle(code ?? 1))
   })
+}
 
 // Flattens one command's output into a single log string for the agent to read as install facts.
 const mergeLog = (result: SpawnResult): string =>
   [result.stdout, result.stderr].filter((part) => part.length > 0).join('\n')
+
+const spawnLogTruncation = (
+  ...results: Array<SpawnResult | undefined>
+): Pick<SpawnResult, 'stdoutDroppedBytes' | 'stderrDroppedBytes'> => {
+  const sum = (field: 'stdoutDroppedBytes' | 'stderrDroppedBytes'): number =>
+    results.reduce(
+      (total, result) => Math.min(Number.MAX_SAFE_INTEGER, total + (result?.[field] ?? 0)),
+      0
+    )
+  const stdoutDroppedBytes = sum('stdoutDroppedBytes')
+  const stderrDroppedBytes = sum('stderrDroppedBytes')
+  return {
+    ...(stdoutDroppedBytes > 0 ? { stdoutDroppedBytes } : {}),
+    ...(stderrDroppedBytes > 0 ? { stderrDroppedBytes } : {})
+  }
+}
+
+const installLogTruncation = (
+  ...results: Array<SpawnResult | undefined>
+): Pick<InstallResult, 'logTruncation'> => {
+  const droppedBytes = results.reduce(
+    (total, result) =>
+      Math.min(
+        Number.MAX_SAFE_INTEGER,
+        total + (result?.stdoutDroppedBytes ?? 0) + (result?.stderrDroppedBytes ?? 0)
+      ),
+    0
+  )
+  return droppedBytes > 0 ? { logTruncation: { droppedBytes } } : {}
+}
 
 const condaFailureMessage = (action: 'install' | 'remove', result: SpawnResult): string =>
   /Retry failure after MAX_PATH recovery/i.test(mergeLog(result))
@@ -660,7 +1164,9 @@ export async function installPackages(
     )
     if (await stopAfterSpawn?.(result)) return result
     if (result.code === 0) return result
-    const evidence = `${result.stdout}\n${result.stderr}`
+    const evidence = [result.maxPathRecoveryEvidence, result.stdout, result.stderr]
+      .filter(Boolean)
+      .join('\n')
     let recovered = false
     let cleanupError: unknown
     try {
@@ -695,6 +1201,7 @@ export async function installPackages(
     if (await stopAfterSpawn?.(retry)) {
       return {
         ...retry,
+        ...spawnLogTruncation(result, retry),
         stdout:
           `Original failure before MAX_PATH recovery (stdout):\n${result.stdout}\n` +
           `Retry result after MAX_PATH recovery (stdout):\n${retry.stdout}`,
@@ -706,6 +1213,7 @@ export async function installPackages(
     if (retry.code === 0) return retry
     return {
       ...retry,
+      ...spawnLogTruncation(result, retry),
       stdout:
         `Original failure before MAX_PATH recovery (stdout):\n${result.stdout}\n` +
         `Retry failure after MAX_PATH recovery (stdout):\n${retry.stdout}`,
@@ -744,6 +1252,7 @@ export async function installPackages(
       ok: result.code === 0,
       needsRestart: false,
       log: mergeLog(result),
+      ...installLogTruncation(result),
       method: 'pip',
       attempts: [installerAttempt(0, 'pip', req.packages, result)],
       fallbackUsed: false,
@@ -816,6 +1325,7 @@ export async function installPackages(
         ok: result.code === 0,
         needsRestart: false,
         log: mergeLog(result),
+        ...installLogTruncation(result),
         method: 'pip',
         attempts: [installerAttempt(0, 'pip', req.packages, result)],
         fallbackUsed: false,
@@ -879,6 +1389,7 @@ export async function installPackages(
         ok: true,
         needsRestart: false,
         log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
+        ...installLogTruncation(preflight, result),
         method: 'conda',
         attempts: [installerAttempt(0, 'conda', req.packages, result)],
         fallbackUsed: false,
@@ -900,6 +1411,7 @@ export async function installPackages(
         log: [preflight ? mergeLog(preflight) : '', mergeLog(result), mergeLog(fallback)]
           .filter(Boolean)
           .join('\n'),
+        ...installLogTruncation(preflight, result, fallback),
         method: 'pip',
         attempts: [condaAttempt, installerAttempt(1, 'pip', req.packages, fallback)],
         fallbackUsed: true,
@@ -911,6 +1423,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, result),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -971,6 +1484,7 @@ export async function installPackages(
       log: [approvedPlan ? mergeLog(approvedPlan) : '', condaLog, mergeLog(fallback)]
         .filter(Boolean)
         .join('\n'),
+      ...installLogTruncation(approvedPlan, conda, fallback),
       method: 'cran',
       attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
       fallbackUsed: true,
@@ -1006,6 +1520,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: mergeLog(preflight),
+      ...installLogTruncation(preflight),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -1019,12 +1534,14 @@ export async function installPackages(
     const rejectedPlan: SpawnResult = {
       code: 1,
       stdout: preflight.stdout,
-      stderr: [preflight.stderr, planError].filter(Boolean).join('\n')
+      stderr: [preflight.stderr, planError].filter(Boolean).join('\n'),
+      ...spawnLogTruncation(preflight)
     }
     return {
       ok: false,
       needsRestart: false,
       log: mergeLog(rejectedPlan),
+      ...installLogTruncation(rejectedPlan),
       method: 'conda',
       attempts: [
         {
@@ -1070,6 +1587,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1086,6 +1604,7 @@ export async function installPackages(
       ok: true,
       needsRestart: true,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1101,6 +1620,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: condaLog,
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -1154,6 +1674,7 @@ async function uninstallPackages(
         ok: result.code === 0,
         needsRestart: false,
         log: mergeLog(result),
+        ...installLogTruncation(result),
         method: 'pip',
         attempts: [installerAttempt(0, 'pip', req.packages, result)],
         fallbackUsed: false,
@@ -1218,6 +1739,7 @@ async function uninstallPackages(
       ok: result.code === 0,
       needsRestart: false,
       log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, result),
       method: 'conda',
       attempts: [
         installerAttempt(
@@ -1294,6 +1816,7 @@ async function uninstallPackages(
       ok,
       needsRestart: ok,
       log: `${condaLog}\n${mergeLog(fallback)}`,
+      ...installLogTruncation(approvedPlan, condaResult, fallback),
       method: 'cran',
       attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
       fallbackUsed: true,
@@ -1317,6 +1840,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: mergeLog(preflight),
+      ...installLogTruncation(preflight),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -1330,6 +1854,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: [mergeLog(preflight), planError].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight),
       method: 'conda',
       attempts: [
         {
@@ -1367,6 +1892,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1383,6 +1909,7 @@ async function uninstallPackages(
       ok: true,
       needsRestart: true,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1400,6 +1927,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: condaLog,
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,

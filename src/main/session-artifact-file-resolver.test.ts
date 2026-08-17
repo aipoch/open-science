@@ -8,7 +8,7 @@ describe('Session Artifact file resolver', () => {
     const resolveVersionContent = vi.fn().mockResolvedValue({ path: '/managed/report.csv' })
     const resolveLegacyArtifactPath = vi.fn().mockResolvedValue('/managed/legacy.csv')
     const resolve = createSessionArtifactFileResolver({
-      compatibilityProjectName: 'default-project',
+      compatibilityProjectId: 'default-project',
       resolveVersionContent,
       resolveLegacyArtifactPath
     })
@@ -30,7 +30,7 @@ describe('Session Artifact file resolver', () => {
     const resolveVersionContent = vi.fn().mockResolvedValue({ path: '/managed/report.csv' })
     const resolveLegacyArtifactPath = vi.fn()
     const resolve = createSessionArtifactFileResolver({
-      compatibilityProjectName: 'default-project',
+      compatibilityProjectId: 'default-project',
       resolveVersionContent,
       resolveLegacyArtifactPath
     })
@@ -55,7 +55,7 @@ describe('Session Artifact file resolver', () => {
     const resolveVersionContent = vi.fn()
     const resolveLegacyArtifactPath = vi.fn().mockResolvedValue('/managed/legacy.csv')
     const resolve = createSessionArtifactFileResolver({
-      compatibilityProjectName: 'default-project',
+      compatibilityProjectId: 'default-project',
       resolveVersionContent,
       resolveLegacyArtifactPath
     })
@@ -78,7 +78,7 @@ describe('Session Artifact file resolver', () => {
       .mockRejectedValueOnce(new Error('outside requested Project'))
       .mockResolvedValueOnce('/managed/default-project/session-1/legacy.csv')
     const resolve = createSessionArtifactFileResolver({
-      compatibilityProjectName: 'default-project',
+      compatibilityProjectId: 'default-project',
       resolveVersionContent,
       resolveLegacyArtifactPath
     })

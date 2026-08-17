@@ -37,6 +37,8 @@ let downloadArtifactsDialogProps: {
 let deleteDialogProps: {
   session: ChatSession | undefined
   canDelete: boolean
+  isDeleting?: boolean
+  error?: 'runtime' | 'persistence'
   onConfirmDelete: () => void
 }
 
@@ -45,9 +47,9 @@ const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   cancelRun: vi.fn(),
   resumeInterruptedSession: vi.fn(),
-  deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn()
 }))
+const deleteSession = vi.hoisted(() => vi.fn())
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -66,7 +68,6 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     sendMessage: runtime.sendMessage,
     cancelRun: runtime.cancelRun,
     resumeInterruptedSession: runtime.resumeInterruptedSession,
-    deleteRuntimeSession: runtime.deleteRuntimeSession,
     respondToPermission: runtime.respondToPermission
   })
 }))
@@ -200,9 +201,9 @@ describe('WorkspacePage draft preservation', () => {
     useSpecialistStore.setState({ items: [], isLoaded: false })
     vi.clearAllMocks()
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'm1' })
-    runtime.deleteRuntimeSession.mockImplementation((id: string) => {
-      useSessionStore.getState().deleteSession(id)
-      return Promise.resolve(true)
+    deleteSession.mockReset().mockImplementation(({ sessionId }: { sessionId: string }) => {
+      useSessionStore.getState().deleteSession(sessionId)
+      return Promise.resolve({ status: 'deleted', runtimeDetached: true })
     })
     deleteUpload.mockResolvedValue(undefined)
 
@@ -221,6 +222,7 @@ describe('WorkspacePage draft preservation', () => {
 
     window.api = {
       acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
+      sessions: { deleteSession },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))
@@ -795,8 +797,7 @@ describe('WorkspacePage draft preservation', () => {
         sessionId: undefined,
         branchSourceSessionId: 'sess-a',
         text: 'try a different approach',
-        projectId: 'proj-1',
-        projectName: 'proj-1'
+        projectId: 'proj-1'
       })
     )
     expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
@@ -921,7 +922,7 @@ describe('WorkspacePage draft preservation', () => {
 
     // B's abandoned staged file is deleted and its draft entry is dropped; A stays untouched.
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
-    expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
+    expect(deleteSession).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'sess-b' })
     expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
   })
 
@@ -936,7 +937,7 @@ describe('WorkspacePage draft preservation', () => {
       deleteDialogProps.onConfirmDelete()
     })
 
-    expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
+    expect(deleteSession).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'sess-b' })
     expect(useSessionStore.getState().sessions).not.toContainEqual(
       expect.objectContaining({ id: 'sess-b' })
     )
@@ -988,7 +989,7 @@ describe('WorkspacePage draft preservation', () => {
     expect(sidebarProps.canDeleteConversations).toBe(false)
     expect(deleteDialogProps.session).toBeUndefined()
     expect(deleteDialogProps.canDelete).toBe(false)
-    expect(runtime.deleteRuntimeSession).not.toHaveBeenCalled()
+    expect(deleteSession).not.toHaveBeenCalled()
   })
 
   it('disables an open delete dialog when Project deletion recovery becomes incomplete', async () => {
@@ -1016,7 +1017,7 @@ describe('WorkspacePage draft preservation', () => {
     await act(async () => {
       deleteDialogProps.onConfirmDelete()
     })
-    expect(runtime.deleteRuntimeSession).not.toHaveBeenCalled()
+    expect(deleteSession).not.toHaveBeenCalled()
   })
 
   it('records explicit user takeover before starting Session deletion', async () => {
@@ -1031,7 +1032,7 @@ describe('WorkspacePage draft preservation', () => {
     })
 
     expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
-    expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
+    expect(deleteSession).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'sess-b' })
   })
 
   it('cancels in-flight and queued transfers before deleting their session draft', async () => {
@@ -1096,12 +1097,12 @@ describe('WorkspacePage draft preservation', () => {
         })
     )
     let finishDeletion: (() => void) | undefined
-    runtime.deleteRuntimeSession.mockImplementationOnce(
-      (id: string) =>
+    deleteSession.mockImplementationOnce(
+      ({ sessionId }: { sessionId: string }) =>
         new Promise((resolve) => {
           finishDeletion = () => {
-            useSessionStore.getState().deleteSession(id)
-            resolve(true)
+            useSessionStore.getState().deleteSession(sessionId)
+            resolve({ status: 'deleted', runtimeDetached: true })
           }
         })
     )
@@ -1150,12 +1151,12 @@ describe('WorkspacePage draft preservation', () => {
         })
     )
     let finishDeletion: (() => void) | undefined
-    runtime.deleteRuntimeSession.mockImplementationOnce(
-      (id: string) =>
+    deleteSession.mockImplementationOnce(
+      ({ sessionId }: { sessionId: string }) =>
         new Promise((resolve) => {
           finishDeletion = () => {
-            useSessionStore.getState().deleteSession(id)
-            resolve(true)
+            useSessionStore.getState().deleteSession(sessionId)
+            resolve({ status: 'deleted', runtimeDetached: true })
           }
         })
     )
@@ -1191,8 +1192,10 @@ describe('WorkspacePage draft preservation', () => {
   it('ignores a duplicate deletion request while the same session deletion is pending', async () => {
     await renderPage()
 
-    const finishDeletions: Array<(deleted: boolean) => void> = []
-    runtime.deleteRuntimeSession.mockImplementation(
+    const finishDeletions: Array<
+      (result: { status: 'failed'; reason: 'runtime'; runtimeDetached: false }) => void
+    > = []
+    deleteSession.mockImplementation(
       () =>
         new Promise((resolve) => {
           finishDeletions.push(resolve)
@@ -1215,10 +1218,14 @@ describe('WorkspacePage draft preservation', () => {
       await Promise.resolve()
     })
 
-    expect(runtime.deleteRuntimeSession).toHaveBeenCalledTimes(1)
+    expect(deleteSession).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      finishDeletions[0]?.(false)
+      finishDeletions[0]?.({
+        status: 'failed',
+        reason: 'runtime',
+        runtimeDetached: false
+      })
       await Promise.resolve()
     })
   })
@@ -1233,7 +1240,11 @@ describe('WorkspacePage draft preservation', () => {
     const attachmentB = createAttachment('att-keep')
     await stageAttachment(attachmentB)
     await openSession('sess-a')
-    runtime.deleteRuntimeSession.mockResolvedValueOnce(false)
+    deleteSession.mockResolvedValueOnce({
+      status: 'failed',
+      reason: 'runtime',
+      runtimeDetached: false
+    })
 
     const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
     await act(async () => {
@@ -1244,6 +1255,11 @@ describe('WorkspacePage draft preservation', () => {
     })
 
     expect(deleteUpload).not.toHaveBeenCalled()
+    expect(deleteDialogProps).toMatchObject({
+      session: { id: 'sess-b' },
+      isDeleting: false,
+      error: 'runtime'
+    })
     await openSession('sess-b')
     expect(conversationProps.composer.view.doc).toEqual(textDoc('keep draft B'))
     expect(conversationProps.composer.view.attachments).toEqual([attachmentB])

@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -41,6 +42,7 @@ const DeleteProjectDialog = ({
   onCancel,
   onConfirmDelete
 }: DeleteProjectDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogProject = useRetainedDialogValue(project)
   const dialogSessionCount =
     useRetainedDialogValue(project ? sessionCount : undefined) ?? sessionCount
@@ -63,14 +65,14 @@ const DeleteProjectDialog = ({
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
-                Delete project?
+                {t('Delete project?')}
               </AlertDialog.Title>
             </div>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               disabled={isDeleting}
               onClick={onCancel}
@@ -80,15 +82,30 @@ const DeleteProjectDialog = ({
           </div>
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              This will permanently delete &quot;{dialogProject?.name}&quot;
+              {/* Whole sentences per branch rather than a spliced-in clause: the session count
+                    sits mid-sentence in English but not in every language. */}
               {dialogHasCompleteSessionCatalog
                 ? dialogSessionCount > 0
-                  ? ` and its ${dialogSessionCount} ${dialogSessionCount === 1 ? 'session' : 'sessions'}`
-                  : ''
-                : ' and all of its saved conversations, including any that could not be loaded during recovery'}
-              . Generated artifacts and uploaded files stored by Open Science will also be deleted.
-              Files in the project&apos;s working folder are not deleted. This action cannot be
-              undone.
+                  ? t(
+                      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                      {
+                        defaultValue_one:
+                          'This will permanently delete "{{name}}" and its {{count}} session. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                        name: dialogProject?.name,
+                        count: dialogSessionCount
+                      }
+                    )
+                  : t(
+                      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                      { name: dialogProject?.name }
+                    )
+                : t(
+                    'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                    {
+                      name: dialogProject?.name
+                    }
+                  )}{' '}
+              {t('Deleting this project will stop its running tasks and notebooks.')}
             </AlertDialog.Description>
             {error ? (
               <p className="mt-4 text-sm text-danger-000" role="alert">
@@ -104,7 +121,7 @@ const DeleteProjectDialog = ({
                 className={dialogCancelButtonClassName}
                 disabled={isDeleting}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             {/* Async confirmation owns dialog closure so a failed deletion remains visible. */}
@@ -114,7 +131,7 @@ const DeleteProjectDialog = ({
               disabled={!canDelete || isDeleting}
               onClick={onConfirmDelete}
             >
-              {isDeleting ? 'Deleting…' : 'Delete'}
+              {isDeleting ? t('Deleting…') : t('Delete')}
             </Button>
           </div>
         </AlertDialog.Content>

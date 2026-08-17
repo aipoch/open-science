@@ -1,4 +1,5 @@
 import { AlertTriangle, Brain, Check, ChevronDown, ChevronRight, Cpu } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -30,7 +31,7 @@ import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effo
 import { incompatibilityReason } from './composer-model-picker-utils'
 
 const triggerClassName =
-  'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
+  'flex h-8 min-w-0 max-w-[220px] shrink items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
 
 // Label for an option: the model name, or the provider name when the option carries no concrete model.
 const optionLabel = (option: ConfiguredModelCatalogEntry): string => option.label
@@ -71,6 +72,10 @@ const MenuRadioItem = ({
 // selectable model it shows a warning that opens Settings; with a single option it renders nothing
 // (there's nothing to switch between); otherwise it renders the switcher.
 const ComposerModelPicker = (): React.JSX.Element | null => {
+  // Only the shared incompatibility copy is translated here; the rest of this picker's strings belong
+  // to the workspace surface and are converted with it.
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
@@ -130,10 +135,10 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
         type="button"
         onClick={() => openSettings()}
         className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm text-amber-700 hover:bg-amber-50 transition-colors dark:text-amber-400 dark:hover:bg-amber-950/30"
-        aria-label="No model available — open settings"
+        aria-label={t('No model available — open settings')}
       >
         <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-        <span className="truncate">No model available</span>
+        <span className="truncate">{t('No model available')}</span>
       </button>
     )
   }
@@ -168,7 +173,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
             !hasUsable &&
               'text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400'
           )}
-          aria-label={hasUsable ? 'Select model' : 'No compatible model'}
+          aria-label={hasUsable ? t('Select model') : t('No compatible model')}
         >
           {hasUsable ? (
             <>
@@ -193,14 +198,14 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                     ) : null}
                   </>
                 ) : (
-                  <span className="truncate">Select model</span>
+                  <span className="truncate">{t('Select model')}</span>
                 )}
               </span>
             </>
           ) : (
             <>
               <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-              <span className="truncate">No compatible model</span>
+              <span className="truncate">{t('No compatible model')}</span>
             </>
           )}
           <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
@@ -215,13 +220,15 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
             <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
               <Brain className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
               <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium leading-5">Reasoning effort</span>
+                <span className="block text-[13px] font-medium leading-5">
+                  {tCommon('Reasoning effort')}
+                </span>
                 <span className="block text-[11px] leading-4 text-text-300">
-                  How long the model thinks before answering
+                  {tCommon('How long the model thinks before answering')}
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-bg-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-text-100">
-                {defaultEffortChecked ? 'Default' : selectedEffortLabel}
+                {defaultEffortChecked ? t('Default') : selectedEffortLabel}
                 <ChevronRight
                   className="size-3 shrink-0 opacity-60"
                   strokeWidth={2}
@@ -235,7 +242,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                 onSelect={() => void setReasoningEffort('default')}
                 hint="provider default"
               >
-                Default
+                {t('Default')}
               </MenuRadioItem>
               {effortControl.options.map((option) => (
                 // Checked by concrete value, not intent: several intents can project onto one
@@ -262,9 +269,9 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                 right-hand two-line summary instead. */}
             <Cpu className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
             <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-medium leading-5">Model</span>
+              <span className="block text-[13px] font-medium leading-5">{tCommon('Model')}</span>
               <span className="block text-[11px] leading-4 text-text-300">
-                Provider and model for this chat
+                {tCommon('Provider and model for this chat')}
               </span>
             </span>
             {/* The current pick echoes on the right inside a capsule: small bold provider line
@@ -293,7 +300,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
               </span>
             ) : (
               <>
-                <span className="shrink-0 text-[11px] text-text-300">Select</span>
+                <span className="shrink-0 text-[11px] text-text-300">{tCommon('Select')}</span>
                 <ChevronRight
                   className="size-3.5 shrink-0 opacity-60"
                   strokeWidth={2}
@@ -325,7 +332,8 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                         name: group.provider.name
                       },
                       frameworkName,
-                      frameworkEndpoints
+                      frameworkEndpoints,
+                      tCommon
                     )
 
               return (
@@ -398,7 +406,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1 truncate">
-                        Unavailable for {frameworkName}
+                        {t('Unavailable for {{framework}}', { framework: frameworkName })}
                       </span>
                     </DropdownMenuItem>
                   )}
@@ -410,7 +418,9 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
         {hasUsable ? null : (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => openSettings()}>Open Settings</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openSettings()}>
+              {t('Open Settings')}
+            </DropdownMenuItem>
           </>
         )}
       </DropdownMenuContent>

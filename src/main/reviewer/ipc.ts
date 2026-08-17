@@ -25,6 +25,7 @@ import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { acquireDataRootWriter } from '../storage/migration-state'
+import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
 
 const log = createLogger('reviewer:ipc')
 
@@ -80,7 +81,10 @@ type ReviewerIpcOptions = {
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
-  artifactProvenanceRepository?: Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>
+  artifactProvenanceRepository?: Pick<
+    ArtifactProvenanceRepository,
+    'resolveVersionContent' | 'resolveVersionContentForStreamingVerification'
+  >
   withSessionMutation?: <Result>(
     projectId: string,
     sessionId: string,
@@ -95,12 +99,14 @@ type ReviewerIpcOptions = {
       }>
     >
   }>
+  projectRuntime?: Pick<ReviewerProjectRuntimeOwner, 'admit'>
 }
 
 type ReviewerCommandOwner = Readonly<{
   run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
+  abort: (request: ReviewSessionRequest) => void
   abortFixLoop: (request: ReviewSessionRequest) => void
 }>
 
@@ -110,6 +116,26 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
   const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)
+  let recoveryGate: Promise<void> | undefined
+  const ensureRecovery = (): Promise<void> => {
+    if (recoveryGate) return recoveryGate
+    const attempt = reviewRepository.recoverInterruptedReviews().then((count) => {
+      if (count > 0) {
+        log.warn('recovered interrupted reviews', { count })
+      }
+    })
+    recoveryGate = attempt
+    void attempt.catch((error: unknown) => {
+      log.error('review recovery failed', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      if (recoveryGate === attempt) {
+        recoveryGate = undefined
+      }
+    })
+    return attempt
+  }
+  void ensureRecovery()
   const sessionRepository = new SessionRepository(storageRoot)
   const artifactProvenanceRepository =
     options.artifactProvenanceRepository ??
@@ -119,9 +145,15 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       loadSession: (projectId, appSessionId) =>
         sessionRepository.loadSession(projectId, appSessionId)
     })
-  // Per-session AbortControllers for active fix loops. Keyed by the main session id (not the
-  // reviewer session id). Entries are created when a fix loop starts and deleted when it ends.
-  const fixLoopAbortControllers = new Map<string, AbortController>()
+  const projectRuntime = options.projectRuntime ?? new ReviewerProjectRuntimeOwner()
+  // Per-session abort capabilities for active fix loops. Keyed by the main session id (not the
+  // reviewer session id). Project deletion owns the same signal, so user cancellation and Project
+  // quiescence converge on one operation without maintaining competing AbortControllers.
+  const fixLoopAbortControllers = new Map<string, () => void>()
+  // Task cancellation targets the whole admitted Review chain, including the initial assessment.
+  // Keep this separate from the renderer's fix-loop-only affordance and allow concurrent manual
+  // Reviews for different turns in one Session to be cancelled together.
+  const activeReviewAbortControllers = new Map<string, Set<() => void>>()
 
   // Guards against concurrent reviews of the same turn — e.g. a double-clicked "Re-run review" or two
   // stale cards fired at once. Project is part of the key because Session ids are not globally owned.
@@ -132,6 +164,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
   // does not present a stale verdict as current.
   const getForSession = async (request: ReviewSessionRequest): Promise<ReviewWithChecks[]> => {
+    await ensureRecovery()
     const reviews = await reviewRepository.getReviewsForProjectSession(
       request.projectId,
       request.appSessionId
@@ -152,17 +185,31 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     const controller = fixLoopAbortControllers.get(key)
     if (controller) {
       log.info('fix loop abort requested', request)
-      controller.abort()
+      controller()
     } else {
       log.warn('abort-fix-loop: no active fix loop found for session', request)
     }
+  }
+
+  const abort = (request: ReviewSessionRequest): void => {
+    const key = `${request.projectId}\0${request.appSessionId}`
+    const controllers = activeReviewAbortControllers.get(key)
+    if (!controllers || controllers.size === 0) {
+      log.warn('abort: no active review found for session', request)
+      return
+    }
+    log.info('review abort requested', request)
+    for (const controller of controllers) controller()
   }
 
   // Returns whether a review actually STARTED. The session is loaded up front (not in the background)
   // so a load failure — or an already-in-flight run for this turn — is reported as started:false with
   // NO Review row created. That lets a caller (e.g. the ReviewerCard "Re-run") release its pending
   // state and leave the turn retriable, instead of us fabricating a non-retriable error review.
-  const triggerReview = async (request: ReviewRunRequest): Promise<ReviewRunResult> => {
+  const triggerAdmittedReview = async (
+    request: ReviewRunRequest,
+    projectAdmission: ReviewerProjectAdmission
+  ): Promise<ReviewRunResult> => {
     const {
       sessionId,
       turnMessageId,
@@ -172,6 +219,10 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       mainSessionId,
       model: rendererModel
     } = request
+    const finishBeforeBackground = (result: ReviewRunResult): ReviewRunResult => {
+      projectAdmission.release()
+      return result
+    }
 
     // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
     // both pass the guard before the key is set. Released on the start-failure paths and, on success,
@@ -181,9 +232,16 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       log.info('review skipped: already in flight for this turn', { sessionId, turnMessageId })
       // The turn IS being handled by the in-flight run — this is NOT a retry candidate. Retrying
       // after the lock releases would launch a duplicate review (and possibly a second fix loop).
-      return { started: false, reason: 'already-in-flight' }
+      return finishBeforeBackground({ started: false, reason: 'already-in-flight' })
     }
     inFlightReviewKeys.add(inFlightKey)
+
+    try {
+      await ensureRecovery()
+    } catch (error) {
+      inFlightReviewKeys.delete(inFlightKey)
+      throw error
+    }
 
     // Atomic per-turn idempotency for auto-review. The in-flight key (reserved synchronously above)
     // serializes concurrent starts; this DB check — running while we hold that key — covers the other
@@ -198,7 +256,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         if (existing.some((review) => review.turnMessageId === turnMessageId)) {
           inFlightReviewKeys.delete(inFlightKey)
           log.info('auto review skipped: turn already has a review', { sessionId, turnMessageId })
-          return { started: false, reason: 'already-reviewed' }
+          return finishBeforeBackground({ started: false, reason: 'already-reviewed' })
         }
       } catch (error) {
         // Fail CLOSED: if the lookup itself threw we cannot confirm the turn is un-reviewed, and
@@ -211,7 +269,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           turnMessageId,
           error: error instanceof Error ? error.message : String(error)
         })
-        return { started: false, reason: 'idempotency-check-failed' }
+        return finishBeforeBackground({ started: false, reason: 'idempotency-check-failed' })
       }
     }
 
@@ -236,7 +294,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         error: error instanceof Error ? error.message : String(error)
       })
       // Transient store read failure — no Review row, lock released. Safe (and worth) retrying.
-      return { started: false, reason: 'load-failed' }
+      return finishBeforeBackground({ started: false, reason: 'load-failed' })
     }
 
     // Session load succeeded but the id is gone (deleted between the card render and the click).
@@ -249,7 +307,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       log.warn('review start failed: session not found', { sessionId, turnMessageId })
       // The session may simply not be flushed to disk yet (async persistence queue) — a retry can
       // catch it once the write lands, so report the race-shaped reason rather than a hard failure.
-      return { started: false, reason: 'not-found' }
+      return finishBeforeBackground({ started: false, reason: 'not-found' })
     }
 
     log.info('review triggered', { sessionId, turnMessageId })
@@ -271,7 +329,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         turnMessageId,
         error: error instanceof Error ? error.message : String(error)
       })
-      return { started: false, reason: 'run-failed' }
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
     }
 
     let releaseDataRootWriter: (() => void) | undefined
@@ -289,7 +347,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           error: error instanceof Error ? error.message : String(error)
         })
       })
-      return { started: false, reason: 'run-failed' }
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
     }
 
     // Resolve `started` only once the running Review row has actually been created and pushed
@@ -304,11 +362,12 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         resolveStart(result)
       }
 
-      // Create an AbortController for this review's fix loop. The controller is registered
-      // before runReview starts so the abort-fix-loop handler can find it immediately.
-      const abortController = new AbortController()
       const effectiveMainSessionId = mainSessionId ?? sessionId
       const effectiveMainSessionKey = `${projectId}\0${effectiveMainSessionId}`
+      const activeControllers =
+        activeReviewAbortControllers.get(effectiveMainSessionKey) ?? new Set<() => void>()
+      activeControllers.add(projectAdmission.abort)
+      activeReviewAbortControllers.set(effectiveMainSessionKey, activeControllers)
 
       void runReview({
         sessionId,
@@ -332,7 +391,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
         artifactVersionContentResolver: (request) =>
-          artifactProvenanceRepository.resolveVersionContent(request),
+          artifactProvenanceRepository.resolveVersionContentForStreamingVerification(request),
         reviewerMcpEntryPath: options.mcpEntryPath,
         onStarted: () => settle({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {
@@ -352,16 +411,16 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
             broadcastSuppressNextAutoReview(projectId, mainSessionId, true)
           }
         },
-        // Broadcast fix-loop lifecycle events and register/deregister the abort controller.
+        // Broadcast fix-loop lifecycle events and register/deregister the admitted abort capability.
         onFixLoopStart: () => {
-          fixLoopAbortControllers.set(effectiveMainSessionKey, abortController)
+          fixLoopAbortControllers.set(effectiveMainSessionKey, projectAdmission.abort)
           broadcastFixLoopStart(projectId, effectiveMainSessionId)
         },
         onFixLoopEnd: () => {
           fixLoopAbortControllers.delete(effectiveMainSessionKey)
           broadcastFixLoopEnd(projectId, effectiveMainSessionId)
         },
-        fixLoopAbortSignal: abortController.signal
+        fixLoopAbortSignal: projectAdmission.signal
       })
         .catch((error: unknown) => {
           // runReview records expected failures as lifecycle='error' itself; an unexpected throw here
@@ -377,19 +436,42 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           // genuine pre-push failure (scope/insert), not a persistence race, so it is not auto-retried.
           settle({ started: false, reason: 'run-failed' })
           inFlightReviewKeys.delete(inFlightKey)
-          releaseDataRootWriter?.()
-          await modelAdmission.release().catch((error: unknown) => {
-            log.error('review runtime cleanup failed', {
-              sessionId,
-              turnMessageId,
-              error: error instanceof Error ? error.message : String(error)
+          activeControllers.delete(projectAdmission.abort)
+          if (activeControllers.size === 0) {
+            activeReviewAbortControllers.delete(effectiveMainSessionKey)
+          }
+          try {
+            releaseDataRootWriter?.()
+          } finally {
+            await modelAdmission.release().catch((error: unknown) => {
+              log.error('review runtime cleanup failed', {
+                sessionId,
+                turnMessageId,
+                error: error instanceof Error ? error.message : String(error)
+              })
             })
-          })
+            projectAdmission.release()
+          }
         })
     })
   }
 
-  return { run: triggerReview, triggerReview, getForSession, abortFixLoop }
+  const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {
+    let projectAdmission: ReviewerProjectAdmission
+    try {
+      // Admission is acquired synchronously before session/repository/model work begins. Once
+      // Project deletion closes it, no new Reviewer operation can slip into the quiescence snapshot.
+      projectAdmission = projectRuntime.admit(request.projectId)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {
+      projectAdmission.release()
+      throw error
+    })
+  }
+
+  return { run: triggerReview, triggerReview, getForSession, abort, abortFixLoop }
 }
 
 // Registers the legacy Electron adapter against an injectable owner. A future Host command

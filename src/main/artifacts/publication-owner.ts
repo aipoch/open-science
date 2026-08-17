@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
@@ -24,6 +24,11 @@ import type {
   PendingFileTransactionOptions,
   PrepareArtifactRunFinalizationRequest
 } from './publication-types'
+import type { FileDigest } from '../bounded-file-io'
+import type { PendingFileBudgetReservation } from './pending-file-transaction'
+import { assertDiskReserve, copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
+import { availableBytes } from '../storage/usage'
 
 class ArtifactCompatibilityScanIncompleteError extends Error {
   constructor(cause: unknown) {
@@ -65,7 +70,7 @@ class ArtifactPublicationOwner {
     }
     return {
       ...request,
-      projectName: this.storage.assertSafePathSegment(request.projectName),
+      projectId: this.storage.assertSafePathSegment(request.projectId),
       sessionId: this.storage.assertSafePathSegment(request.sessionId),
       runId,
       filename: this.storage.assertSafeFilename(request.filename),
@@ -82,8 +87,8 @@ class ArtifactPublicationOwner {
     input: PendingArtifactVersionRoutingRequest
   ): Promise<void> {
     const request = this.normalizeRoutingRequest(input)
-    const { projectName, sessionId, runId, filename, routing } = request
-    const directory = this.storage.getPendingRunDir(projectName, sessionId, runId)
+    const { projectId, sessionId, runId, filename, routing } = request
+    const directory = this.storage.getPendingRunDir(projectId, sessionId, runId)
     const filePath = join(directory, filename)
     await mkdir(directory, { recursive: true })
     const existing = await this.storage.readArtifactMetadata(directory, filename)
@@ -99,16 +104,33 @@ class ArtifactPublicationOwner {
     ) {
       throw new Error('Artifact pending routing conflicts with an existing Version.')
     }
-    let bytes: Buffer
+    let checksum: string
     try {
-      bytes = await readFile(filePath)
+      checksum = (
+        await digestFileWithinBudget(
+          filePath,
+          LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+          request.signal
+        )
+      ).checksum
     } catch (error) {
       if (!this.storage.isMissingFileError(error)) throw error
       const temporaryPath = `${filePath}.${randomUUID()}.tmp`
       try {
-        await copyFile(request.sourcePath, temporaryPath)
-        bytes = await readFile(temporaryPath)
-        if (this.storage.sha256(bytes) !== routing.checksum) {
+        const source = await stat(request.sourcePath)
+        assertDiskReserve(
+          await availableBytes(directory),
+          source.size,
+          LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+        )
+        const copied = await copyFileWithinBudget(
+          request.sourcePath,
+          temporaryPath,
+          LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+          request.signal
+        )
+        checksum = copied.checksum
+        if (checksum !== routing.checksum) {
           throw new Error('Artifact routing source checksum mismatch.')
         }
         await this.storage.durability.syncFile(temporaryPath)
@@ -118,15 +140,25 @@ class ArtifactPublicationOwner {
         await rm(temporaryPath, { force: true }).catch(() => undefined)
       }
     }
-    if (this.storage.sha256(bytes) !== routing.checksum) {
+    if (checksum !== routing.checksum) {
       if (existingRouting || !request.replaceUnroutedBytes) {
         throw new Error('Artifact pending bytes conflict with Version routing.')
       }
       const replacementPath = `${filePath}.${randomUUID()}.tmp`
       try {
-        await copyFile(request.sourcePath, replacementPath)
-        const replacement = await readFile(replacementPath)
-        if (this.storage.sha256(replacement) !== routing.checksum) {
+        const source = await stat(request.sourcePath)
+        assertDiskReserve(
+          await availableBytes(directory),
+          source.size,
+          LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+        )
+        const replacement = await copyFileWithinBudget(
+          request.sourcePath,
+          replacementPath,
+          LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+          request.signal
+        )
+        if (replacement.checksum !== routing.checksum) {
           throw new Error('Artifact routing source checksum mismatch.')
         }
         await this.storage.durability.syncFile(replacementPath)
@@ -144,21 +176,21 @@ class ArtifactPublicationOwner {
   }
 
   async findPendingVersionRouting(request: {
-    projectName: string
+    projectId: string
     artifactId: string
     versionId: string
   }): Promise<PendingArtifactVersionRoute | undefined> {
-    const projectName = this.storage.assertSafePathSegment(request.projectName)
+    const projectId = this.storage.assertSafePathSegment(request.projectId)
     const artifactId = this.storage.assertSafePathSegment(request.artifactId)
     const versionId = this.storage.assertSafePathSegment(request.versionId)
     const matches: PendingArtifactVersionRoute[] = []
     try {
       for (const storageSessionId of await this.storage.readSubdirectoryNames(
-        this.storage.getProjectArtifactDir(projectName)
+        this.storage.getProjectArtifactDir(projectId)
       )) {
         if (!SAFE_SEGMENT_PATTERN.test(storageSessionId)) continue
         const pendingRoot = join(
-          this.storage.getProjectArtifactDir(projectName),
+          this.storage.getProjectArtifactDir(projectId),
           storageSessionId,
           PENDING_DIR
         )
@@ -178,7 +210,12 @@ class ArtifactPublicationOwner {
               continue
             }
             const path = join(runDirectory, entry.name)
-            if (this.storage.sha256(await readFile(path)) !== routing.checksum) continue
+            if (
+              (await digestFileWithinBudget(path, LOCAL_RESOURCE_BUDGETS.artifactFileBytes))
+                .checksum !== routing.checksum
+            ) {
+              continue
+            }
             matches.push({ ...routing, storageSessionId, filename: entry.name, path })
           }
         }
@@ -193,22 +230,25 @@ class ArtifactPublicationOwner {
   }
 
   async findPendingFileForRun(request: {
-    projectName: string
+    projectId: string
     runId: string
     filename: string
     checksum: string
   }): Promise<{ storageSessionId: string; path: string } | undefined> {
-    const projectName = this.storage.assertSafePathSegment(request.projectName)
+    const projectId = this.storage.assertSafePathSegment(request.projectId)
     const runId = this.storage.assertSafePathSegment(request.runId)
     const filename = this.storage.assertSafeFilename(request.filename)
-    const projectDirectory = this.storage.getProjectArtifactDir(projectName)
+    const projectDirectory = this.storage.getProjectArtifactDir(projectId)
     const matches: Array<{ storageSessionId: string; path: string }> = []
     try {
       for (const storageSessionId of await this.storage.readSubdirectoryNames(projectDirectory)) {
         if (!SAFE_SEGMENT_PATTERN.test(storageSessionId)) continue
         const path = join(projectDirectory, storageSessionId, PENDING_DIR, runId, filename)
         try {
-          if (this.storage.sha256(await readFile(path)) === request.checksum) {
+          if (
+            (await digestFileWithinBudget(path, LOCAL_RESOURCE_BUDGETS.artifactFileBytes))
+              .checksum === request.checksum
+          ) {
             matches.push({ storageSessionId, path })
           }
         } catch (error) {
@@ -230,12 +270,14 @@ class ArtifactPublicationOwner {
     operation: (
       artifact: ArtifactFile,
       sourceFileObservation: ArtifactSourceFileObservation | undefined,
-      bindVersionRouting: BindPendingArtifactVersionRouting
+      bindVersionRouting: BindPendingArtifactVersionRouting,
+      fileDigest: FileDigest,
+      reservation: PendingFileBudgetReservation | undefined
     ) => Promise<Result>
   ): Promise<Result> {
     const normalized = {
       ...request,
-      projectName: this.storage.assertSafePathSegment(request.projectName),
+      projectId: this.storage.assertSafePathSegment(request.projectId),
       sessionId: this.storage.assertSafePathSegment(request.sessionId),
       runId: this.storage.assertSafePathSegment(request.runId),
       filename: this.storage.assertSafeFilename(request.filename)
@@ -246,19 +288,24 @@ class ArtifactPublicationOwner {
         writeOptions: options,
         storage: this.storage,
         publishRouting: (routing, sourcePath) =>
-          this.publishPendingVersionRoutingLocked({ ...normalized, sourcePath, routing }),
+          this.publishPendingVersionRoutingLocked({
+            ...normalized,
+            sourcePath,
+            routing,
+            signal: options.signal
+          }),
         operation
       })
     )
   }
 
   private writeKey(request: {
-    projectName: string
+    projectId: string
     sessionId: string
     runId: string
     filename: string
   }): string {
-    return `${request.projectName}\0${request.sessionId}\0${request.runId}\0${request.filename}`
+    return `${request.projectId}\0${request.sessionId}\0${request.runId}\0${request.filename}`
   }
 
   private async withPendingFileWriteLock<Result>(
@@ -282,7 +329,7 @@ class ArtifactPublicationOwner {
   }
 
   async finalizeRunArtifacts(request: MovePendingRunArtifactsRequest): Promise<ArtifactFile[]> {
-    const projectName = this.storage.assertSafePathSegment(request.projectName)
+    const projectId = this.storage.assertSafePathSegment(request.projectId)
     const sessionId = this.storage.assertSafePathSegment(request.sessionId)
     const sourceSessionId = this.storage.assertSafePathSegment(
       request.sourceSessionId ?? request.sessionId
@@ -292,10 +339,10 @@ class ArtifactPublicationOwner {
     const artifactVersionIds = request.artifactVersionIds
       ? this.storage.normalizeArtifactVersionIds(request.artifactVersionIds)
       : undefined
-    const pendingDir = this.storage.getPendingRunDir(projectName, sourceSessionId, runId)
-    const messageDir = this.storage.getMessageDir(projectName, sessionId, messageId)
+    const pendingDir = this.storage.getPendingRunDir(projectId, sourceSessionId, runId)
+    const messageDir = this.storage.getMessageDir(projectId, sessionId, messageId)
     const entries = await this.storage.readFileEntries(pendingDir)
-    await this.writeRunMarker(projectName, sourceSessionId, runId, {
+    await this.writeRunMarker(projectId, sourceSessionId, runId, {
       sessionId,
       messageId,
       ...(artifactVersionIds ? { artifactVersionIds } : {}),
@@ -304,7 +351,7 @@ class ArtifactPublicationOwner {
     if (entries.length === 0) {
       await this.storage.recoverMovedArtifactMetadata(pendingDir, messageDir)
       await rm(pendingDir, { recursive: true, force: true })
-      return this.storage.listMessageFiles({ projectName, sessionId, messageId })
+      return this.storage.listMessageFiles({ projectId, sessionId, messageId })
     }
     await mkdir(messageDir, { recursive: true })
     for (const entry of entries) {
@@ -313,7 +360,7 @@ class ArtifactPublicationOwner {
     }
     await this.storage.recoverMovedArtifactMetadata(pendingDir, messageDir)
     await rm(pendingDir, { recursive: true, force: true })
-    return this.storage.listMessageFiles({ projectName, sessionId, messageId })
+    return this.storage.listMessageFiles({ projectId, sessionId, messageId })
   }
 
   async prepareRunFinalization(request: PrepareArtifactRunFinalizationRequest): Promise<void> {
@@ -322,7 +369,7 @@ class ArtifactPublicationOwner {
       ? this.storage.normalizeArtifactVersionIds(request.artifactVersionIds)
       : undefined
     await this.writeRunMarker(
-      safe(request.projectName),
+      safe(request.projectId),
       safe(request.sourceSessionId),
       safe(request.runId),
       {
@@ -340,14 +387,14 @@ class ArtifactPublicationOwner {
   }
 
   async listPendingRunFiles(request: ListPendingRunArtifactsRequest): Promise<ArtifactFile[]> {
-    const projectName = this.storage.assertSafePathSegment(request.projectName)
+    const projectId = this.storage.assertSafePathSegment(request.projectId)
     const sessionId = this.storage.assertSafePathSegment(request.sessionId)
     const runId = this.storage.assertSafePathSegment(request.runId)
-    const pendingDir = this.storage.getPendingRunDir(projectName, sessionId, runId)
+    const pendingDir = this.storage.getPendingRunDir(projectId, sessionId, runId)
     return Promise.all(
       (await this.storage.readFileEntries(pendingDir)).map(async (entry) =>
         this.storage.createArtifactFile({
-          projectName,
+          projectId,
           sessionId,
           runId,
           filename: entry.name,
@@ -359,7 +406,7 @@ class ArtifactPublicationOwner {
   }
 
   async reconcilePendingArtifactPaths(request: {
-    projectName: string
+    projectId: string
     sessionId: string
     messageId: string
     pendingPaths: string[]
@@ -371,7 +418,7 @@ class ArtifactPublicationOwner {
     }
     for (const { artifactSessionId, runId } of runs.values()) {
       await this.finalizeRunArtifacts({
-        projectName: request.projectName,
+        projectId: request.projectId,
         sessionId: request.sessionId,
         sourceSessionId: artifactSessionId,
         runId,
@@ -395,10 +442,10 @@ class ArtifactPublicationOwner {
   }
 
   async listPendingRunPublications(
-    projectNameValue: string
+    projectIdValue: string
   ): Promise<PendingArtifactRunPublication[]> {
-    const projectName = this.storage.assertSafePathSegment(projectNameValue)
-    const projectDirectory = this.storage.getProjectArtifactDir(projectName)
+    const projectId = this.storage.assertSafePathSegment(projectIdValue)
+    const projectDirectory = this.storage.getProjectArtifactDir(projectId)
     const publications: PendingArtifactRunPublication[] = []
     const observedRunIds = new Set<string>()
     try {
@@ -427,7 +474,7 @@ class ArtifactPublicationOwner {
           }
           observedRunIds.add(runId)
           const markerResult = await this.readRunMarker(
-            this.getRunMarkerPath(projectName, sourceSessionId, runId)
+            this.getRunMarkerPath(projectId, sourceSessionId, runId)
           )
           if (markerResult.present && !markerResult.marker) {
             throw new Error(`Artifact pending publication marker is corrupt: ${runId}`)
@@ -450,12 +497,12 @@ class ArtifactPublicationOwner {
   }
 
   async findRunFinalizationMarker(
-    projectNameValue: string,
+    projectIdValue: string,
     runIdValue: string
   ): Promise<(ArtifactRunFinalizationMarker & { sourceSessionId: string }) | undefined> {
-    const projectName = this.storage.assertSafePathSegment(projectNameValue)
+    const projectId = this.storage.assertSafePathSegment(projectIdValue)
     const runId = this.storage.assertSafePathSegment(runIdValue)
-    const projectDirectory = this.storage.getProjectArtifactDir(projectName)
+    const projectDirectory = this.storage.getProjectArtifactDir(projectId)
     const sessions = await readdir(projectDirectory, { withFileTypes: true }).catch((error) => {
       if (this.storage.isMissingFileError(error)) return []
       throw error
@@ -463,9 +510,7 @@ class ArtifactPublicationOwner {
     const matches: Array<ArtifactRunFinalizationMarker & { sourceSessionId: string }> = []
     for (const session of sessions) {
       if (!session.isDirectory() || !SAFE_SEGMENT_PATTERN.test(session.name)) continue
-      const result = await this.readRunMarker(
-        this.getRunMarkerPath(projectName, session.name, runId)
-      )
+      const result = await this.readRunMarker(this.getRunMarkerPath(projectId, session.name, runId))
       if (!result.present) continue
       if (!result.marker) return undefined
       matches.push({ ...result.marker, sourceSessionId: session.name })
@@ -473,9 +518,9 @@ class ArtifactPublicationOwner {
     return matches.length === 1 ? matches[0] : undefined
   }
 
-  private getRunMarkerPath(projectName: string, sourceSessionId: string, runId: string): string {
+  private getRunMarkerPath(projectId: string, sourceSessionId: string, runId: string): string {
     return join(
-      this.storage.getProjectArtifactDir(projectName),
+      this.storage.getProjectArtifactDir(projectId),
       sourceSessionId,
       RUNS_DIR,
       `${runId}.json`
@@ -483,12 +528,12 @@ class ArtifactPublicationOwner {
   }
 
   private async writeRunMarker(
-    projectName: string,
+    projectId: string,
     sourceSessionId: string,
     runId: string,
     marker: ArtifactRunFinalizationMarker
   ): Promise<void> {
-    const markerPath = this.getRunMarkerPath(projectName, sourceSessionId, runId)
+    const markerPath = this.getRunMarkerPath(projectId, sourceSessionId, runId)
     const temporaryPath = `${markerPath}.${Date.now()}-${randomUUID()}.tmp`
     let markerToWrite = marker
     try {

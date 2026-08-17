@@ -5,14 +5,35 @@ import { dump as dumpYaml, load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
 const canonicalSkillDocument = (
   raw: string,
   name: string,
-  options: { omitDisplayName?: boolean } = {}
+  options: {
+    omitDisplayName?: boolean
+    synthesizeFrontmatter?: { description: string }
+  } = {}
 ): string => {
   const normalized = raw.replace(/\r\n?/g, '\n')
+  const synthesize = (body: string): string => {
+    const frontmatter = {
+      name,
+      description: options.synthesizeFrontmatter?.description.trim() || name
+    }
+    return `---\n${dumpYaml(frontmatter, { lineWidth: -1 }).trimEnd()}\n---\n${body}`
+  }
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
-  if (!match) return raw
+  if (!match) {
+    if (!options.synthesizeFrontmatter) return raw
+    return synthesize(normalized)
+  }
 
-  const parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
+  let parsed: unknown
+  try {
+    parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
+  } catch (error) {
+    if (!options.synthesizeFrontmatter) throw error
+    return synthesize(normalized.slice(match[0].length))
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return options.synthesizeFrontmatter ? synthesize(normalized.slice(match[0].length)) : raw
+  }
   const fields = Object.entries(parsed as Record<string, unknown>)
   const frontmatter = {
     ...Object.fromEntries(
@@ -44,9 +65,13 @@ export const hasCanonicalSkillDocumentName = (raw: string, name: string): boolea
   )
 }
 
-export const normalizeSkillDocumentName = async (path: string, name: string): Promise<void> => {
+export const normalizeSkillDocumentName = async (
+  path: string,
+  name: string,
+  options: { synthesizeFrontmatter?: { description: string } } = {}
+): Promise<void> => {
   const raw = await readFile(path, 'utf8')
-  const normalized = canonicalSkillDocument(raw, name)
+  const normalized = canonicalSkillDocument(raw, name, options)
   if (normalized !== raw) await writeFile(path, normalized, 'utf8')
 }
 

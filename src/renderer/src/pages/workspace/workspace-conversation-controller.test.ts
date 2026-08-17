@@ -3,8 +3,11 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { ChatSession } from '@/stores/session-store'
-import { useSessionStore } from '@/stores/session-store'
+import {
+  projectSessionActionability,
+  type ChatSession,
+  useSessionStore
+} from '@/stores/session-store'
 
 import type { ComposerDoc } from './composer/composer-doc'
 import {
@@ -23,6 +26,7 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
   title: 'Session A',
   cwd: '/workspace/project-a',
   status: 'idle',
+  permissionProfile: 'full',
   messages: [
     {
       id: 'message-user-a',
@@ -39,12 +43,46 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
   ...overrides
 })
 
+const runningSession = (): ChatSession =>
+  session({
+    status: 'running',
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'root',
+      activeFrameId: 'root',
+      frames: [
+        {
+          id: 'root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'running',
+          activeBranchId: 'branch-a',
+          createdAt: 1
+        }
+      ],
+      branches: [
+        {
+          id: 'branch-a',
+          agentFrameId: 'root',
+          headMessageId: 'message-user-a',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      messages: [],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    }
+  })
+
 const options = (
   overrides: Partial<WorkspaceConversationControllerOptions> = {}
 ): WorkspaceConversationControllerOptions => {
   const doc = textDoc('hello')
+  const activeSession = overrides.activeSession ?? session()
   return {
-    activeSession: session(),
+    activeSession,
     projectId: 'project-a',
     currentDraftKey: 'session-a',
     isPersistenceReady: true,
@@ -54,7 +92,8 @@ const options = (
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
     saveAsSkillInFlightSessionIds: [],
-    hasBlockingRootPermissionRequest: false,
+    actionability: projectSessionActionability(activeSession),
+    hasPendingPermissionRequest: vi.fn(() => false),
     newConversationAutoReviewEnabled: false,
     newConversationEnabledComputeHosts: [],
     composer: {
@@ -68,11 +107,15 @@ const options = (
           attachments: []
         })),
         clearDraft: vi.fn(),
-        restoreFailedSend: vi.fn()
+        restoreFailedSend: vi.fn(() => true),
+        discardSnapshot: vi.fn()
       }
     },
     session: {
-      view: { deletingIds: new Set(), specialist: { barrierInFlight: false } },
+      view: {
+        deletingIds: new Set(),
+        specialist: { barrierInFlight: false, sendAvailable: true }
+      },
       actions: {
         beginReconfigureRetry: vi.fn(() => true),
         resetNewConversationSpecialist: vi.fn(),
@@ -101,6 +144,7 @@ const options = (
     resetNewConversationSettings: vi.fn(),
     abortFixLoop: vi.fn(() => Promise.resolve()),
     getSession: (sessionId) => (sessionId === 'session-a' ? session() : undefined),
+    subscribeSessionChanges: () => () => undefined,
     ...overrides
   }
 }
@@ -140,6 +184,104 @@ afterEach(() => {
 })
 
 describe('workspace conversation controller', () => {
+  it('branches from a completed Agent Message without consuming the composer draft', async () => {
+    const input = options()
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(true)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith({
+      branchSourceSessionId: 'session-a',
+      branchSourceMessageId: 'agent-message-a',
+      text: '',
+      specialistId: undefined
+    })
+    expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+  })
+
+  it('uses the pending Specialist intent for the branched child Session', async () => {
+    const input = options()
+    input.session.lifecycle.captureSendIntent = vi.fn(() => ({
+      draftSpecialistId: 'specialist-b',
+      hasPendingSwitch: false,
+      pendingSpecialistId: 'specialist-b'
+    }))
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.session.lifecycle.captureSendIntent).toHaveBeenCalledWith(true)
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ specialistId: 'specialist-b' })
+    )
+  })
+
+  it('disables Agent Message branching while the source Session is running', () => {
+    const input = options({
+      activeSession: session({
+        status: 'running',
+        activeRun: { promptMessageId: 'message-user-a', startedAt: 2 }
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('disables Agent Message branching while the source Session awaits Plan approval', () => {
+    const input = options({
+      activeSession: session({ status: 'waiting-plan-approval' })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('disables Agent Message branching while the Specialist barrier is in flight', () => {
+    const input = options()
+    input.session.view.specialist.barrierInFlight = true
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('checks Specialist admission again before creating the branched Session', () => {
+    const input = options()
+    input.session.lifecycle.canStartSend = vi.fn(() => false)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(true)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.session.lifecycle.canStartSend).toHaveBeenCalledOnce()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('disables Agent Message branching when the Specialist is not ready to send', () => {
+    const input = options()
+    input.session.view.specialist.sendAvailable = false
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('submits a restored Plan approval through the human-gated Plan command', async () => {
     const pendingPlan = {
       artifactId: 'artifact-plan-a',
@@ -208,6 +350,154 @@ describe('workspace conversation controller', () => {
     act(() => hook.result.current.actions.revise('message-a', textDoc('changed')))
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+  })
+
+  it('blocks submit while a selected branched Session is still binding', () => {
+    const pendingSession = session({ isPending: true })
+    const input = options({
+      activeSession: pendingSession,
+      actionability: projectSessionActionability(pendingSession)
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.submit).toBe(false)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps the main Turn available for a delegated Permission', () => {
+    const delegatedWait = session({
+      status: 'waiting-permission',
+      interactionState: { permission: true, elicitation: false, plan: false }
+    })
+    const input = options({
+      activeSession: delegatedWait,
+      actionability: projectSessionActionability(delegatedWait, {
+        rootPermissionPending: false
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability).toMatchObject({ submit: true, revise: true })
+  })
+
+  it('queues an ordinary submit during a running turn without overlapping the runtime prompt', () => {
+    const running = runningSession()
+    const input = options({
+      activeSession: running,
+      promptInFlightSessionIds: [running.id],
+      getSession: () => running
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability).toMatchObject({
+      submit: true,
+      submitMode: 'queue'
+    })
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: ['skill-a'] }))
+
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
+    expect(hook.result.current.queue.items).toEqual([
+      expect.objectContaining({ text: 'hello', phase: 'queued' })
+    ])
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('queues without dispatching while the selected Specialist is not ready', () => {
+    const running = runningSession()
+    const input = options({ activeSession: running, getSession: () => running })
+    input.session.lifecycle.canStartSend = vi.fn(() => false)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+
+    expect(hook.result.current.queue.items).toEqual([
+      expect.objectContaining({ text: 'hello', phase: 'queued' })
+    ])
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('captures the active Session Specialist when queueing', async () => {
+    let currentSession = { ...runningSession(), specialistId: 'specialist-a' }
+    const input = options({ activeSession: currentSession, getSession: () => currentSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    currentSession = { ...currentSession, status: 'idle' }
+    hook.rerender({ ...input, activeSession: currentSession, getSession: () => currentSession })
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ specialistId: 'specialist-a' })
+    )
+  })
+
+  it('drains queued work after another Session becomes active', async () => {
+    const queuedSession = runningSession()
+    const activeSession = session({ id: 'session-b' })
+    const input = options({
+      activeSession: queuedSession,
+      promptInFlightSessionIds: [queuedSession.id],
+      getSession: (sessionId) => (sessionId === queuedSession.id ? queuedSession : activeSession)
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    const settledQueuedSession = { ...queuedSession, status: 'idle' as const }
+    hook.rerender({
+      ...input,
+      activeSession,
+      promptInFlightSessionIds: [],
+      getSession: (sessionId) =>
+        sessionId === queuedSession.id ? settledQueuedSession : activeSession
+    })
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.session.lifecycle.canStartSend).toHaveBeenCalledWith(queuedSession.id)
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: queuedSession.id })
+    )
+  })
+
+  it('blocks immediate submit and revision while the queued head is being admitted', async () => {
+    let currentSession = runningSession()
+    let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
+    const admission = new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const input = options({
+      activeSession: currentSession,
+      promptInFlightSessionIds: [currentSession.id],
+      getSession: () => currentSession
+    })
+    input.runtime.sendMessage = vi.fn(() => admission)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    currentSession = { ...currentSession, status: 'idle' }
+    hook.rerender({
+      ...input,
+      activeSession: currentSession,
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession
+    })
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    act(() => hook.result.current.actions.revise('message-user-a', textDoc('changed')))
+    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+
+    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'queued-message' }))
   })
 
   it('blocks submit and revision while Save as skill owns prompt admission', () => {
@@ -401,6 +691,7 @@ describe('workspace conversation controller', () => {
     const blocked = options({
       ...input,
       activeSession: session({ status: 'running' }),
+      actionability: projectSessionActionability(session({ status: 'running' })),
       runtime: input.runtime,
       composer: input.composer,
       session: input.session

@@ -44,6 +44,44 @@ const listSkillDirs = async (configDir: string): Promise<string[]> =>
   (await readdir(join(configDir, 'skills'))).filter((name) => !name.startsWith('.'))
 
 describe('ClaudeCodeSkillMaterializer', () => {
+  it('uses canonical public names without app-owned markers for an Agent-facing projection', async () => {
+    const configDir = await skillsDir()
+    const skill = await makeSkill('paper-review')
+    skill.id = 'imported-paper-review'
+    await writeFile(
+      join(skill.sourceDir, 'SKILL.md'),
+      '---\nname: paper-review\ndescription: Review papers.\n---\nReview.',
+      'utf8'
+    )
+
+    await new ClaudeCodeSkillMaterializer().sync(configDir, [skill], {
+      directoryLayout: 'agent-facing'
+    })
+
+    expect(await listSkillDirs(configDir)).toEqual(['paper-review'])
+    await expect(
+      readFile(join(configDir, 'skills', 'paper-review', 'SKILL.md'), 'utf8')
+    ).resolves.toContain('name: paper-review')
+    await expect(stat(join(configDir, 'skills', '.os-versions.json'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it.each(['---', 'a--b', 'a'.repeat(65), 'os-private', 'mcp-private'])(
+    'rejects non-canonical Agent-facing Skill name %s',
+    async (name) => {
+      const configDir = await skillsDir()
+      const skill = await makeSkill('safe-source')
+      skill.name = name
+
+      await expect(
+        new ClaudeCodeSkillMaterializer().sync(configDir, [skill], {
+          directoryLayout: 'agent-facing'
+        })
+      ).rejects.toThrow('unsafe Agent-facing Skill name')
+    }
+  )
+
   it('copies enabled skills into os-<id> dirs including subdirectories', async () => {
     const configDir = await skillsDir()
     const skill = await makeSkill('alpha')
@@ -168,6 +206,27 @@ describe('ClaudeCodeSkillMaterializer', () => {
     const file = join(configDir, 'skills', 'os-delta', 'scripts', 'main.py')
     expect((await stat(file)).mode & 0o222).toBe(0)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps executable scripts executable and ordinary files non-executable when read-only',
+    async () => {
+      const configDir = await skillsDir()
+      const skill = { ...(await makeSkill('executable')), updatedAt: 'v1' }
+      const sourceScript = join(skill.sourceDir, 'scripts', 'main.py')
+      await chmod(sourceScript, 0o755)
+      const materializer = new ClaudeCodeSkillMaterializer()
+
+      await materializer.sync(configDir, [skill])
+      // Exercise the unchanged fast path and its final read-only chmod pass as well.
+      await materializer.sync(configDir, [skill])
+
+      const target = join(configDir, 'skills', 'os-executable')
+      const scriptMode = (await stat(join(target, 'scripts', 'main.py'))).mode & 0o777
+      const documentMode = (await stat(join(target, 'SKILL.md'))).mode & 0o777
+      expect(scriptMode).toBe(0o555)
+      expect(documentMode).toBe(0o444)
+    }
+  )
 
   it('re-materializes despite a prior read-only state, leaving the new content read-only', async () => {
     const configDir = await skillsDir()

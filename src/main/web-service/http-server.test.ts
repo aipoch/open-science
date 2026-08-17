@@ -14,7 +14,11 @@ vi.mock('electron', () => ({
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
-import { isWebRpcChannel, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import {
+  isWebRpcChannel,
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_PROTOCOL_VERSION
+} from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
 import {
@@ -472,6 +476,118 @@ describe('startWebHttpServer', () => {
         }
       ])
     })
+    publicSocket.close()
+  })
+
+  it('replays internal renderer events published while the Web client is disconnected', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrap = (await (
+      await fetch(`${base}/api/bootstrap`, {
+        headers: { authorization: 'Bearer test-token' }
+      })
+    ).json()) as {
+      eventStream: {
+        protocolVersion: number
+        streamId: string
+        latestSequence: number
+      }
+    }
+    expect(bootstrap.eventStream).toMatchObject({
+      protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+      latestSequence: 0
+    })
+
+    const eventSocketUrl = (after: number): string => {
+      const url = new URL(`${base.replace('http:', 'ws:')}/events`)
+      url.searchParams.set('token', 'test-token')
+      url.searchParams.set('client', 'replay-client')
+      url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+      url.searchParams.set('stream', bootstrap.eventStream.streamId)
+      url.searchParams.set('after', String(after))
+      return url.toString()
+    }
+
+    const firstSocket = new WebSocket(eventSocketUrl(0))
+    const firstMessage = new Promise<unknown>((resolve) =>
+      firstSocket.once('message', (data) => resolve(JSON.parse(data.toString())))
+    )
+    await new Promise<void>((resolve) => firstSocket.once('open', resolve))
+    await expect(firstMessage).resolves.toMatchObject({ kind: 'ready', latestSequence: 0 })
+    const firstClosed = new Promise<void>((resolve) => firstSocket.once('close', () => resolve()))
+    firstSocket.close()
+    await firstClosed
+
+    applicationEvents.publish('acp:permission-request', {
+      sessionId: 'session-1',
+      requestId: 'permission-1',
+      toolCallId: 'tool-1',
+      title: 'Run command',
+      options: []
+    })
+    applicationEvents.publish('settings:connector-runtime-changed', undefined)
+
+    const replayed: unknown[] = []
+    const secondSocket = new WebSocket(eventSocketUrl(0))
+    secondSocket.on('message', (data) => replayed.push(JSON.parse(data.toString())))
+    await new Promise<void>((resolve) => secondSocket.once('open', resolve))
+    await vi.waitFor(() => expect(replayed).toHaveLength(3))
+    expect(replayed).toEqual([
+      expect.objectContaining({
+        kind: 'event',
+        sequence: 1,
+        channel: 'acp:permission-request',
+        payload: expect.objectContaining({ requestId: 'permission-1' })
+      }),
+      expect.objectContaining({
+        kind: 'event',
+        sequence: 2,
+        channel: 'settings:connector-runtime-changed',
+        payload: null
+      }),
+      expect.objectContaining({ kind: 'ready', latestSequence: 2 })
+    ])
+    secondSocket.close()
+
+    const publicMessages: unknown[] = []
+    const publicSocket = new WebSocket(
+      `${base.replace('http:', 'ws:')}/api/v1/events?token=test-token`
+    )
+    publicSocket.on('message', (data) => publicMessages.push(JSON.parse(data.toString())))
+    await new Promise<void>((resolve) => publicSocket.once('open', resolve))
+    applicationEvents.publish('acp:permission-request', {
+      sessionId: 'session-1',
+      requestId: 'permission-live',
+      toolCallId: 'tool-live',
+      title: 'Run another command',
+      options: []
+    })
+    await vi.waitFor(() => expect(publicMessages).toHaveLength(1))
+    expect(publicMessages).toEqual([
+      expect.objectContaining({
+        type: 'permission.requested',
+        data: expect.objectContaining({ requestId: 'permission-live' })
+      })
+    ])
     publicSocket.close()
   })
 
@@ -1264,6 +1380,12 @@ describe('startWebHttpServer', () => {
       createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
       getSession: vi.fn().mockResolvedValue({ id: 'session/1', title: 'Review' }),
+      getSessionPlan: vi.fn().mockResolvedValue({
+        artifactVersionId: 'plan-version',
+        revision: 2,
+        lifecycle: 'awaiting_approval'
+      }),
+      respondSessionPlan: vi.fn().mockResolvedValue({ changed: true }),
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
         sessionId: 'session-1',
@@ -1379,15 +1501,64 @@ describe('startWebHttpServer', () => {
       description: 'A new project'
     })
 
-    const sessions = await fetch(`${base}/api/v1/sessions?project=Research%20%2F%20Lab`, {
+    const sessions = await fetch(`${base}/api/v1/sessions?project=project-1`, {
       headers
     })
     expect(await sessions.json()).toEqual({ data: [{ id: 'session/1', title: 'Review' }] })
-    expect(tasks.listSessions).toHaveBeenCalledWith('Research / Lab')
+    expect(tasks.listSessions).toHaveBeenCalledWith('project-1')
 
     const session = await fetch(`${base}/api/v1/sessions/session%2F1`, { headers })
     expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
     expect(tasks.getSession).toHaveBeenCalledWith('session/1')
+
+    const plan = await fetch(`${base}/api/v1/sessions/session%2F1/plan`, { headers })
+    expect(await plan.json()).toEqual({
+      data: {
+        artifactVersionId: 'plan-version',
+        revision: 2,
+        lifecycle: 'awaiting_approval'
+      }
+    })
+    expect(tasks.getSessionPlan).toHaveBeenCalledWith('session/1')
+
+    const approvedPlan = await fetch(`${base}/api/v1/sessions/session%2F1/plan/respond`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        decision: 'approved',
+        artifactVersionId: 'plan-version',
+        expectedRevision: 2
+      })
+    })
+    expect(await approvedPlan.json()).toEqual({ data: { changed: true } })
+    expect(tasks.respondSessionPlan).toHaveBeenCalledWith('session/1', {
+      decision: 'approved',
+      artifactVersionId: 'plan-version',
+      expectedRevision: 2
+    })
+
+    tasks.respondSessionPlan.mockClear()
+    for (const invalidResponse of [
+      null,
+      {},
+      { feedback: '   ' },
+      { feedback: 'revise', decision: 'rejected' },
+      { decision: 'maybe', artifactVersionId: 'plan-version', expectedRevision: 2 },
+      { decision: 'approved', artifactVersionId: '', expectedRevision: 2 },
+      { decision: 'approved', artifactVersionId: 'plan-version', expectedRevision: -1 },
+      { decision: 'approved', artifactVersionId: 'plan-version', expectedRevision: 1.5 }
+    ]) {
+      const invalidPlanResponse = await fetch(`${base}/api/v1/sessions/session%2F1/plan/respond`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify(invalidResponse)
+      })
+      expect(invalidPlanResponse.status).toBe(400)
+      expect(await invalidPlanResponse.json()).toMatchObject({
+        error: { code: 'invalid_request' }
+      })
+    }
+    expect(tasks.respondSessionPlan).not.toHaveBeenCalled()
 
     const artifacts = await fetch(`${base}/api/v1/sessions/session%2F1/artifacts`, { headers })
     expect(await artifacts.json()).toEqual({

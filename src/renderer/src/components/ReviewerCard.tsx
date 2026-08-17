@@ -12,10 +12,15 @@
 
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, Loader } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
+import {
+  presentReviewSubmission,
+  type PresentedReviewCheck
+} from '@/lib/reviewer-submission-presentation'
 
-import type { ReviewWithChecks, ReviewCheck, GoToTranscriptIntent } from '../../../shared/reviewer'
+import type { ReviewWithChecks, GoToTranscriptIntent } from '../../../shared/reviewer'
 
 type ReviewerCardProps = {
   review: ReviewWithChecks
@@ -60,6 +65,11 @@ type ItemCardProps = {
   onGoToTranscript: (() => void) | undefined
   // Number of times this claim was re-flagged in the fix loop (0 means no marker).
   reflagCount?: number
+  // Quiet provenance label for this Review's own submission row.
+  kindLabel?: 'New' | 'Tracked'
+  // Explicit compatibility note for a legacy tracked disposition without a persisted assessment.
+  legacyNote?: string
+  dispositionLabel?: string
 }
 
 const ItemCard = ({
@@ -70,97 +80,124 @@ const ItemCard = ({
   body,
   model,
   onGoToTranscript,
-  reflagCount
-}: ItemCardProps): React.JSX.Element => (
-  <div className="rounded-lg bg-bg-000 p-3" data-testid={testId}>
-    {/* Badge + title row */}
-    <div className="flex items-start gap-2">
-      <span
-        className={cn(
-          'mt-0.5 shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] font-semibold uppercase',
-          badgeClassName
-        )}
-        data-testid="reviewer-item-badge"
-      >
-        {badgeText}
-      </span>
-      <span className="min-w-0 flex-1 break-words text-xs font-semibold leading-snug text-text-000 [overflow-wrap:anywhere]">
-        {title}
-      </span>
-      {/* Re-flag marker: shown when this claim was re-flagged in the fix loop. */}
-      {reflagCount != null && reflagCount > 0 && (
-        <span
-          className="shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] text-yellow-600 dark:text-yellow-400"
-          data-testid="reviewer-reflag-marker"
-        >
-          re-flagged ×{reflagCount}
-        </span>
+  reflagCount,
+  kindLabel,
+  legacyNote,
+  dispositionLabel
+}: ItemCardProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <div className="rounded-lg bg-bg-000 p-3" data-testid={testId}>
+      {kindLabel && (
+        <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-text-300">
+          {t(kindLabel)}
+        </div>
       )}
+      {/* Badge + title row */}
+      <div className="flex items-start gap-2">
+        <span
+          className={cn(
+            'mt-0.5 shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] font-semibold uppercase',
+            badgeClassName
+          )}
+          data-testid="reviewer-item-badge"
+        >
+          {t(badgeText)}
+        </span>
+        <span className="min-w-0 flex-1 break-words text-xs font-semibold leading-snug text-text-000 [overflow-wrap:anywhere]">
+          {title}
+        </span>
+        {/* Re-flag marker: shown when this claim was re-flagged in the fix loop. */}
+        {reflagCount != null && reflagCount > 0 && (
+          <span
+            className="shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] text-yellow-600 dark:text-yellow-400"
+            data-testid="reviewer-reflag-marker"
+          >
+            {t('re-flagged ×{{count}}', { count: reflagCount })}
+          </span>
+        )}
+      </div>
+
+      {/* Body — evidence for all check types */}
+      {body ? (
+        <p className="mt-2 break-words text-xs leading-relaxed text-text-300 [overflow-wrap:anywhere]">
+          {body}
+        </p>
+      ) : null}
+
+      {legacyNote && (
+        <p className="mt-2 text-[11px] text-text-300" data-testid="reviewer-legacy-assessment-note">
+          {t(legacyNote)}
+        </p>
+      )}
+      {dispositionLabel && (
+        <p className="mt-1 text-[11px] text-text-300">
+          {t('Disposition: {{disposition}}', {
+            disposition: dispositionLabel === 'still open' ? t('still open') : t(dispositionLabel)
+          })}
+        </p>
+      )}
+
+      {/* Footer row: model pill (left) + Go to transcript button (right) */}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <span
+          className="rounded bg-bg-200 px-1.5 py-0.5 text-[11px] text-text-400"
+          data-testid="reviewer-model-pill"
+        >
+          {model}
+        </span>
+        <button
+          type="button"
+          className="rounded bg-bg-200 px-2 py-0.5 text-[11px] text-text-300 transition-colors hover:bg-bg-300 hover:text-text-000"
+          onClick={onGoToTranscript}
+        >
+          {t('Go to transcript')}
+        </button>
+      </div>
     </div>
-
-    {/* Body — evidence for all check types */}
-    {body ? (
-      <p className="mt-2 break-words text-xs leading-relaxed text-text-300 [overflow-wrap:anywhere]">
-        {body}
-      </p>
-    ) : null}
-
-    {/* Footer row: model pill (left) + Go to transcript button (right) */}
-    <div className="mt-3 flex items-center justify-between gap-2">
-      <span
-        className="rounded bg-bg-200 px-1.5 py-0.5 text-[11px] text-text-400"
-        data-testid="reviewer-model-pill"
-      >
-        {model}
-      </span>
-      <button
-        type="button"
-        className="rounded bg-bg-200 px-2 py-0.5 text-[11px] text-text-300 transition-colors hover:bg-bg-300 hover:text-text-000"
-        onClick={onGoToTranscript}
-      >
-        Go to transcript
-      </button>
-    </div>
-  </div>
-)
-
-// ── Check card ───────────────────────────────────────────────────────────────
-
-type CheckCardProps = {
-  check: ReviewCheck
-  reviewId: string
-  model: string
-  onGoToTranscript?: (intent: GoToTranscriptIntent) => void
+  )
 }
 
-const CheckCard = ({
-  check,
+const PresentedCheckCard = ({
+  item,
   reviewId,
   model,
   onGoToTranscript
-}: CheckCardProps): React.JSX.Element => {
-  const isWarnOrFail = check.status === 'warn' || check.status === 'fail'
-
+}: {
+  item: PresentedReviewCheck
+  reviewId: string
+  model: string
+  onGoToTranscript?: (intent: GoToTranscriptIntent) => void
+}): React.JSX.Element => {
   return (
     <ItemCard
-      testId={isWarnOrFail ? 'reviewer-finding-card' : 'reviewer-check-card'}
-      badgeText={check.status}
-      badgeClassName={STATUS_BADGE_STYLES[check.status] ?? ''}
-      title={check.claim}
-      body={check.evidence}
+      testId={
+        item.kind === 'tracked'
+          ? 'reviewer-tracked-check-card'
+          : item.isWarnOrFail
+            ? 'reviewer-finding-card'
+            : 'reviewer-check-card'
+      }
+      badgeText={item.status}
+      badgeClassName={STATUS_BADGE_STYLES[item.status] ?? ''}
+      title={item.claim}
+      body={item.evidence}
       model={model}
-      reflagCount={check.reflagCount}
+      kindLabel={item.kindLabel}
+      reflagCount={item.reflagCount}
+      legacyNote={item.legacyAssessmentNote}
+      dispositionLabel={item.dispositionLabel}
       onGoToTranscript={() =>
         onGoToTranscript?.(
-          isWarnOrFail
+          item.transcriptFindingId
             ? {
                 reviewId,
-                findingId: check.id,
-                checkId: check.id,
-                locator: check.locator
+                findingId: item.transcriptFindingId,
+                checkId: item.transcriptFindingId,
+                locator: item.locator
               }
-            : // Pass check: open panel without highlighting a specific check.
-              { reviewId }
+            : { reviewId }
         )
       }
     />
@@ -176,6 +213,7 @@ export const ReviewerCard = ({
   onGoToTranscript,
   onRerun
 }: ReviewerCardProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(defaultExpanded)
   // Latches on the first Re-run click so the button can't fire twice. Reset whenever the review updates
   // (a fresh review row arrived, or its lifecycle/timestamp changed) so a later re-stale review can be
@@ -195,11 +233,12 @@ export const ReviewerCard = ({
       <div
         className={cn('mt-2 flex items-center gap-1.5 px-0 py-2 text-xs text-text-300', className)}
         data-testid="reviewer-running-state"
+        data-review-id={review.id}
         role="status"
         aria-live="polite"
       >
         <OpenScienceThinkingIndicator />
-        <span>Reviewing...</span>
+        <span>{t('Reviewing...')}</span>
       </div>
     )
   }
@@ -207,26 +246,35 @@ export const ReviewerCard = ({
   const isError = review.lifecycle === 'error'
   const isComplete = review.lifecycle === 'complete'
 
-  // v2: header count = warn/fail checks only (pass checks don't count toward "findings").
-  const warnFailCount = review.checks.filter(
-    (c) => c.status === 'warn' || c.status === 'fail'
-  ).length
-  const totalCheckCount = review.checks.length
+  // Current reads carry the exact submitted projection. Older in-memory snapshots fall back to the
+  // Review-owned Findings without inventing tracked assessment content.
+  const submittedChecks = presentReviewSubmission(review)
+  const warnFailCount = submittedChecks.filter((item) => item.isWarnOrFail).length
+  const totalCheckCount = submittedChecks.length
   const hasWarnOrFail = warnFailCount > 0
+  // The durable Review verdict is authoritative. A fix-loop Review may commit its tracked failing
+  // assessments as dispositions on earlier Findings, leaving this Review with no local warn/fail
+  // rows (or only newly assessed pass rows) while its outcome correctly remains flagged.
+  const isFlagged = isComplete && review.outcome === 'flagged'
 
-  // Fix loop cap: if any warn/fail check is unaddressed the loop was capped — show the hint.
+  // Terminal dispositions distinguish a true round cap from correction transport/persistence failure.
   const isCapReached =
     isComplete &&
     hasWarnOrFail &&
-    review.checks.some(
-      (c) => (c.status === 'warn' || c.status === 'fail') && c.resolution === 'unaddressed'
+    submittedChecks.some(
+      (item) => item.isUnaddressed && item.unaddressedTrigger === 'loop_terminated'
+    )
+  const isCorrectionFailed =
+    isComplete &&
+    hasWarnOrFail &&
+    submittedChecks.some(
+      (item) => item.isUnaddressed && item.unaddressedTrigger === 'correction_failed'
     )
 
   // A complete review is expandable if it has any checks; an error review is expandable if it carries
   // a message (kept out of the status bar so a verbose Prisma-style error doesn't overflow the line).
   const hasErrorDetail = isError && Boolean(review.errorMessage)
   const canExpand = (isComplete && totalCheckCount > 0) || hasErrorDetail
-  const isFlagged = isComplete && hasWarnOrFail
 
   // The turn changed after this review ran (e.g. an artifact was edited) — the verdict may not
   // describe the current turn. Computed at load time (see flagStaleReviews); only meaningful for a
@@ -235,14 +283,20 @@ export const ReviewerCard = ({
 
   // Compact summary line.
   const summaryText = (): string => {
-    if (isError) return 'Review error'
-    if (isComplete && !hasWarnOrFail)
-      return isStale ? 'No issues found (outdated)' : 'No issues found'
-    if (isComplete && hasWarnOrFail) {
-      const base = `${warnFailCount} finding${warnFailCount === 1 ? '' : 's'}`
-      return isStale ? `${base} (outdated)` : base
+    if (isError) return t('Review error')
+    if (isFlagged) {
+      if (!hasWarnOrFail) {
+        return isStale ? t('Issues found (outdated)') : t('Issues found')
+      }
+      return isStale
+        ? t('{{count}} findings (outdated)', {
+            defaultValue_one: '{{count}} finding (outdated)',
+            count: warnFailCount
+          })
+        : t('{{count}} findings', { defaultValue_one: '{{count}} finding', count: warnFailCount })
     }
-    return 'Review pending'
+    if (isComplete) return isStale ? t('No issues found (outdated)') : t('No issues found')
+    return t('Review pending')
   }
 
   // Status icon. A stale complete review always shows the warning icon (amber), even a stale pass —
@@ -250,9 +304,8 @@ export const ReviewerCard = ({
   const statusIcon = ((): React.JSX.Element => {
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
     if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
-    if (isComplete && !hasWarnOrFail)
-      return <ShieldCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
-    if (isComplete && hasWarnOrFail) return <AlertTriangle className="h-3 w-3 text-red-500" />
+    if (isFlagged) return <AlertTriangle className="h-3 w-3 text-red-500" />
+    if (isComplete) return <ShieldCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
     return <Loader className="h-3 w-3 text-text-400" />
   })()
 
@@ -260,6 +313,7 @@ export const ReviewerCard = ({
     <div
       className={cn('mt-2 rounded-lg bg-bg-200 px-3 py-2 text-xs', className)}
       data-testid="reviewer-card"
+      data-review-id={review.id}
     >
       {/* Header row */}
       <button
@@ -273,14 +327,9 @@ export const ReviewerCard = ({
         aria-expanded={canExpand ? expanded : undefined}
       >
         {statusIcon}
-        <span className="font-medium text-text-200">Reviewer</span>
+        <span className="font-medium text-text-200">{t('Reviewer')}</span>
         <span className="mx-1 text-text-400">&middot;</span>
-        <span
-          className={cn(
-            'text-text-300',
-            isComplete && hasWarnOrFail && 'text-red-600 dark:text-red-400'
-          )}
-        >
+        <span className={cn('text-text-300', isFlagged && 'text-red-600 dark:text-red-400')}>
           {summaryText()}
         </span>
         {/* Total check count — shown for any completed review (pass or flagged), never for zero checks. */}
@@ -288,7 +337,10 @@ export const ReviewerCard = ({
           <>
             <span className="mx-1 text-text-400">&middot;</span>
             <span className="text-text-400">
-              {totalCheckCount} {totalCheckCount === 1 ? 'check' : 'checks'}
+              {t('{{count}} checks', {
+                defaultValue_one: '{{count}} check',
+                count: totalCheckCount
+              })}
             </span>
           </>
         )}
@@ -296,7 +348,13 @@ export const ReviewerCard = ({
         {isCapReached && (
           <>
             <span className="mx-1 text-text-400">&middot;</span>
-            <span className="text-yellow-600 dark:text-yellow-400">fix limit reached</span>
+            <span className="text-yellow-600 dark:text-yellow-400">{t('fix limit reached')}</span>
+          </>
+        )}
+        {isCorrectionFailed && (
+          <>
+            <span className="mx-1 text-text-400">&middot;</span>
+            <span className="text-yellow-600 dark:text-yellow-400">{t('correction failed')}</span>
           </>
         )}
         {canExpand && (
@@ -319,7 +377,7 @@ export const ReviewerCard = ({
           data-testid="reviewer-stale-notice"
         >
           <span className="text-[11px] text-amber-800 dark:text-amber-300">
-            Turn changed after this review ran.
+            {t('Turn changed after this review ran.')}
           </span>
           {onRerun && (
             <button
@@ -337,7 +395,7 @@ export const ReviewerCard = ({
                 })
               }}
             >
-              {rerunRequested ? 'Re-running…' : 'Re-run review'}
+              {rerunRequested ? t('Re-running…') : t('Re-run review')}
             </button>
           )}
         </div>
@@ -360,10 +418,10 @@ export const ReviewerCard = ({
       {/* Expanded item cards: one card per check (pass/warn/fail unified list) */}
       {canExpand && expanded && (
         <div className="mt-2 space-y-2">
-          {review.checks.map((check) => (
-            <CheckCard
-              key={check.id}
-              check={check}
+          {submittedChecks.map((item) => (
+            <PresentedCheckCard
+              key={item.key}
+              item={item}
               reviewId={review.id}
               model={review.model}
               onGoToTranscript={onGoToTranscript}
@@ -371,9 +429,9 @@ export const ReviewerCard = ({
           ))}
 
           {/* Self-correct footer note — shown only for warn/fail (flagged) expansions. */}
-          {isFlagged && (
+          {hasWarnOrFail && (
             <p className="mt-1 text-[11px] italic text-text-400">
-              The agent reads these findings and self-corrects in its next message.
+              {t('The agent reads these findings and self-corrects in its next message.')}
             </p>
           )}
         </div>

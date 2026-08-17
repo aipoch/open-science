@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewRunRequest } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import type { AcpRuntime } from '../acp/runtime'
+import { ReviewerProjectRuntimeOwner } from './project-runtime-owner'
 
 // Distinct roots so a config-vs-data mix-up is unambiguous: artifacts must read from the data root.
 const CONFIG_ROOT = join(tmpdir(), 'open-science-config-root')
@@ -41,12 +42,14 @@ vi.mock('./orchestrator', () => ({
 // invoke it directly and observe which storageRoot the thunk was constructed against.
 const reviewRepositoryThunks: Array<() => unknown> = []
 const getReviewsForSession = vi.fn().mockResolvedValue([])
+const recoverInterruptedReviews = vi.fn().mockResolvedValue(0)
 vi.mock('./repository', () => ({
   ReviewRepository: class {
     constructor(thunk: () => unknown) {
       reviewRepositoryThunks.push(thunk)
     }
     getReviewsForSession = getReviewsForSession
+    recoverInterruptedReviews = recoverInterruptedReviews
     getReviewsForProjectSession = getReviewsForSession
   }
 }))
@@ -122,6 +125,8 @@ beforeEach(() => {
   // Default: the requested session exists, so triggerReview proceeds to runReview.
   sessionLoadOne.mockResolvedValue({ id: 'session-1' })
   getReviewsForSession.mockReset()
+  recoverInterruptedReviews.mockReset()
+  recoverInterruptedReviews.mockResolvedValue(0)
   // Default: no prior review for the turn, so the auto-idempotency check lets the run proceed.
   getReviewsForSession.mockResolvedValue([])
 })
@@ -129,6 +134,41 @@ beforeEach(() => {
 afterEach(() => clearMigrationPending())
 
 describe('reviewer IPC handlers', () => {
+  it('waits for startup recovery before exposing persisted reviews', async () => {
+    let finishRecovery!: (count: number) => void
+    recoverInterruptedReviews.mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          finishRecovery = resolve
+        })
+    )
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    const pendingRead = owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+
+    await Promise.resolve()
+    expect(getReviewsForSession).not.toHaveBeenCalled()
+    finishRecovery(1)
+    await expect(pendingRead).resolves.toEqual([])
+    expect(recoverInterruptedReviews).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries startup recovery after a failed attempt', async () => {
+    recoverInterruptedReviews
+      .mockRejectedValueOnce(new Error('database unavailable'))
+      .mockResolvedValueOnce(0)
+    const owner = createReviewerCommandOwner({ acpRuntime })
+
+    await expect(
+      owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+    ).rejects.toThrow('database unavailable')
+    expect(getReviewsForSession).not.toHaveBeenCalled()
+    await expect(
+      owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+    ).resolves.toEqual([])
+
+    expect(recoverInterruptedReviews).toHaveBeenCalledTimes(2)
+  })
+
   it('shares one in-flight arbitration owner between direct and IPC commands', async () => {
     let finishRun: (() => void) | undefined
     let backgroundRun: Promise<void> | undefined
@@ -152,6 +192,40 @@ describe('reviewer IPC handlers', () => {
 
     finishRun?.()
     await backgroundRun
+  })
+
+  it('fences new Project reviews and drains an admitted background run during deletion', async () => {
+    let finishRun!: () => void
+    let reviewSignal: AbortSignal | undefined
+    runReview.mockImplementation(
+      (options?: { onStarted?: () => void; fixLoopAbortSignal?: AbortSignal }) => {
+        reviewSignal = options?.fixLoopAbortSignal
+        options?.onStarted?.()
+        return new Promise<void>((resolve) => {
+          finishRun = resolve
+        })
+      }
+    )
+    const projectRuntime = new ReviewerProjectRuntimeOwner()
+    const owner = createReviewerCommandOwner({ acpRuntime, projectRuntime })
+
+    await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+
+    let quiesced = false
+    const quiescing = projectRuntime.quiesceProject('project-1').then(() => {
+      quiesced = true
+    })
+    await vi.waitFor(() => expect(reviewSignal?.aborted).toBe(true))
+
+    expect(quiesced).toBe(false)
+    await expect(
+      owner.run({ ...createRequest(), turnMessageId: 'message-after-fence' })
+    ).rejects.toThrow('Project is being deleted.')
+    expect(runReview).toHaveBeenCalledOnce()
+
+    finishRun()
+    await quiescing
+    expect(quiesced).toBe(true)
   })
 
   it('runs reviews with artifacts rooted at the data root, not the config root', async () => {
@@ -573,6 +647,33 @@ describe('reviewer IPC handlers', () => {
 
       // Settle the original review promise so the mock's pending state is released.
       await expect(promise).resolves.toEqual({ started: true })
+    })
+  })
+
+  describe('Task review-chain cancellation', () => {
+    it('aborts an active initial review without exposing a new Electron handler', async () => {
+      let finishRun: (() => void) | undefined
+      let reviewSignal: AbortSignal | undefined
+      runReview.mockImplementation(
+        (options?: { onStarted?: () => void; fixLoopAbortSignal?: AbortSignal }) => {
+          reviewSignal = options?.fixLoopAbortSignal
+          options?.onStarted?.()
+          return new Promise<void>((resolve) => {
+            finishRun = resolve
+          })
+        }
+      )
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+      expect(reviewSignal?.aborted).toBe(false)
+
+      owner.abort({ projectId: 'project-1', appSessionId: 'session-1' })
+      expect(reviewSignal?.aborted).toBe(true)
+      expect(handlers.has('reviewer:abort')).toBe(false)
+
+      finishRun?.()
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledOnce())
     })
   })
 

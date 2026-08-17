@@ -58,6 +58,7 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
 }>
 type AcpPromptPreparationInput = Readonly<{
   request: AcpPromptRequest
+  connectionGeneration?: number
   backend: AcpBackendGenerationView
   tooling: AcpSessionToolingAvailability
   specialistPrefix?: string
@@ -216,6 +217,7 @@ class AcpPromptPreparationOwner {
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
+        connectionGeneration: input.connectionGeneration,
         text: promptText,
         historyImages: input.request.historyImages ?? [],
         historyUploads: input.request.historyAttachments ?? [],

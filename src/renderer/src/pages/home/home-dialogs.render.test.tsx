@@ -3,7 +3,13 @@ import { AlertDialog } from 'radix-ui'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
+import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
+
+// These tests call the components as plain functions, so there is no React context for a real hook.
+// The stub resolves against the actual English catalog rather than echoing keys back: a renamed or
+// deleted key surfaces here as a failed text assertion instead of silently passing.
+vi.mock('react-i18next', () => createI18nTestStub())
 
 vi.mock('@/components/ui/button', () => ({
   Button: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
@@ -132,9 +138,10 @@ describe('home dialogs shared chrome', () => {
 
     expectSettingsDialogChrome(tree, 'w-[min(460px,calc(100vw-2rem))]', onCancel)
     expect(getTextContent(tree)).toContain(
-      'Shown in the project list for your reference — not included in the agent’s prompt.'
+      "Shown in the project list for your reference — not included in the agent's prompt."
     )
     const elements = collectElements(tree)
+    const nameField = elements.find((element) => element.props.id === 'project-form-name')
     const descriptionField = elements.find((element) => element.type === 'textarea')
     const agentContextField = elements.find(
       (element) => element.props.id === 'project-form-agent-context'
@@ -163,6 +170,8 @@ describe('home dialogs shared chrome', () => {
       agentContextField
     ].forEach((field) => expectDialogFormFieldClassName(field?.props.className))
     expect(descriptionField?.props['aria-describedby']).toBe('project-form-description-help')
+    expect(nameField?.props.maxLength).toBe(200)
+    expect(descriptionField?.props.maxLength).toBe(1000)
     expect(descriptionField?.props.placeholder).toBe('Describe what this project is about…')
     expect(agentContextField?.props['aria-describedby']).toBe('project-form-agent-context-help')
     expect(cancelButton?.props.variant).toBe('ghost')
@@ -242,6 +251,7 @@ describe('home dialogs shared chrome', () => {
     expect(text).toContain(
       'Generated artifacts and uploaded files stored by Open Science will also be deleted.'
     )
+    expect(text).toContain('Deleting this project will stop its running tasks and notebooks.')
     expect(text).toContain("Files in the project's working folder are not deleted.")
     expect(text).not.toContain('Generated artifacts remain on disk')
   })

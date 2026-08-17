@@ -8,7 +8,8 @@ import {
   NOTEBOOK_MCP_SERVER_ARG,
   PLAN_MCP_SERVER_ARG,
   REVIEWER_MCP_PROXY_ARG,
-  SKILL_IMPORT_MCP_SERVER_ARG
+  SKILL_IMPORT_MCP_SERVER_ARG,
+  SKILL_RUNTIME_MCP_SERVER_ARG
 } from './mcp-server-args'
 import { withApplicationRuntimeShutdown } from './application-runtime'
 import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
@@ -31,6 +32,7 @@ const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
 const shouldRunReviewerMcpProxy = process.argv.includes(REVIEWER_MCP_PROXY_ARG)
 const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
+const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_SERVER_ARG)
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush = flushLogs
@@ -61,6 +63,13 @@ if (shouldRunArtifactMcpServer) {
 } else if (shouldRunSkillImportMcpServer) {
   void import('./skills/mcp-server')
     .then(({ runSkillImportMcpServer }) => runSkillImportMcpServer())
+    .catch((error: unknown) => {
+      console.error(error)
+      process.exitCode = 1
+    })
+} else if (shouldRunSkillRuntimeMcpServer) {
+  void import('./skills/runtime-mcp-server')
+    .then(({ runSkillRuntimeMcpServer }) => runSkillRuntimeMcpServer())
     .catch((error: unknown) => {
       console.error(error)
       process.exitCode = 1
@@ -205,10 +214,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     },
     quit: () => app.quit(),
     prepare: async () => {
-      // Start Windows Crashpad after the single-instance lock but before any BrowserWindow can create
-      // a renderer. Upload stays disabled: dumps remain local for explicit support collection. Without
-      // this initialization the affected Windows renderer failures surface only as
-      // Crashpad_NotConnectedToHandler, which masks the native crash that caused the white window.
+      // Start local-only Crashpad after the single-instance lock but before any BrowserWindow can
+      // create a renderer. Upload stays disabled: dumps remain local for explicit support collection.
+      // Without this initialization, native failures can terminate a process without leaving the dump
+      // needed to distinguish a renderer, utility, or main-process crash.
       const crashReporting = startLocalCrashReporting({
         platform: process.platform,
         productName: APP_NAME,
@@ -238,6 +247,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createDesktopBadgeAdapter, createWindowsBadgeBitmap },
         { wireNotificationInboxController },
         { registerUnreadTaskIpc },
+        { registerNetworkIpcHandlers },
         { createDatabaseStartupLogging },
         { createDatabaseStartupOwner },
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
@@ -262,6 +272,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./notifications/desktop-badge'),
         import('./notifications/notification-inbox-controller'),
         import('./notifications/unread-task-ipc'),
+        import('./network-ipc'),
         import('./database/database-startup-logging'),
         import('./database/database-startup-owner'),
         import('./database/database-startup-ipc'),
@@ -296,6 +307,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         }
       })
       const startupWindowCloseOptions = createStartupWindowCloseOptions(() => app.quit())
+      // The renderer probes connectivity as soon as it mounts, before the full application runtime
+      // is composed. Install these handlers before creating the first BrowserWindow so that startup
+      // probe cannot race the desktop utility adapter installation.
+      registerNetworkIpcHandlers()
       const disposeDatabaseStartupIpc = registerDatabaseStartupIpc({
         ipcMain,
         owner: databaseStartupOwner,
@@ -367,6 +382,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           notificationInbox,
           settingsService,
           taskAgent,
+          taskControls,
           detectActiveSessions,
           prepareForQuit,
           dispose: disposeApplicationRuntime
@@ -437,7 +453,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           requestQuit: () => app.quit(),
           externalAccess: remoteAccess.webAccess,
           applicationEvents,
-          taskAgent
+          taskAgent,
+          taskControls
         })
         remoteAccess.attachWebController(webController)
         registerRemoteAccessIpcHandlers(remoteAccess)

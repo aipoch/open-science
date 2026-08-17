@@ -1,6 +1,7 @@
 import type {
   NotebookCell,
   NotebookEnvironmentStatus,
+  NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookRunRecord,
@@ -20,6 +21,13 @@ import {
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
+import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
+import { DEFAULT_PY_ENV } from './runtime-paths'
+
+const DEFAULT_KERNEL_PROCESS_KEY = `python:${DEFAULT_PY_ENV}`
+
+const kernelInstanceProcessKey = (instance: NotebookKernelInstanceIdentity): string =>
+  instance.kind === 'repl' ? 'repl' : `${instance.kind}:${instance.environment}`
 
 type NotebookHandoffContext = {
   activeRunId?: string
@@ -56,6 +64,7 @@ type NotebookSessionReadSource = {
   readonly runJsonPath: string
   readonly lane: NotebookLaneIdentity
   snapshot: () => NotebookSessionSnapshot
+  kernelStatus: (processKey: string) => NotebookKernelMetadata['lastKnownStatus'] | undefined
   kernelStatusEntries: () => Array<[string, NotebookKernelMetadata['lastKnownStatus']]>
   runtimeBindingEntries: () => Array<[NotebookLanguage, NotebookRuntimeBinding]>
 }
@@ -126,16 +135,38 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   }
 
   async state(
-    session: Session
+    session: Session,
+    includeRunIds: readonly string[] = [],
+    historySummaryFrameId?: string
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.options.repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       workspaceCwd: session.cwd,
       lane: session.lane
     })
     const snapshot = session.snapshot()
-    const runs = await this.options.repository.readSessionRuns(session.projectId, session.sessionId)
+    const targetedRunRead = includeRunIds.length > 0
+    const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
+    const sparseRunRead = targetedRunRead || summaryOnlyRead
+    const runWindow = await this.options.repository.readSessionRunWindow(
+      session.projectId,
+      session.sessionId,
+      sparseRunRead ? 0 : NOTEBOOK_RENDERER_RUN_LIMIT,
+      includeRunIds,
+      historySummaryFrameId
+    )
+    const terminatedKernelInstances = document.kernel.terminatedKernelInstances
+    const defaultKernelTerminated = terminatedKernelInstances?.some(
+      (instance) => kernelInstanceProcessKey(instance) === DEFAULT_KERNEL_PROCESS_KEY
+    )
+    const legacyUnknownKernelTerminated =
+      document.kernel.lastKnownStatus === 'terminated' && terminatedKernelInstances === undefined
+    const onlyNonDefaultKernelTerminated =
+      document.kernel.lastKnownStatus === 'terminated' &&
+      terminatedKernelInstances !== undefined &&
+      !defaultKernelTerminated
+    const liveDefaultKernelStatus = session.kernelStatus(DEFAULT_KERNEL_PROCESS_KEY)
 
     return {
       id: session.id,
@@ -145,14 +176,30 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       dataRoot: session.dataRoot,
       runtimeRoot: session.runtimeRoot,
       pythonPath: document.kernel.pythonPath,
-      kernelStatus: document.kernel.lastKnownStatus,
+      // Backward-compatible coarse status represents only the default Python environment. Exact
+      // named-environment/R/REPL terminations are projected through `environments` instead. Legacy
+      // coarse terminations have unknown ownership and remain visible until an explicit restart.
+      kernelStatus:
+        liveDefaultKernelStatus ??
+        (defaultKernelTerminated || legacyUnknownKernelTerminated
+          ? 'terminated'
+          : onlyNonDefaultKernelTerminated
+            ? 'idle'
+            : document.kernel.lastKnownStatus),
       runJsonPath: session.runJsonPath,
-      cells: snapshot.cells.map((cell) => ({ ...cell })),
+      cells: sparseRunRead
+        ? []
+        : snapshot.cells.slice(-NOTEBOOK_RENDERER_RUN_LIMIT).map((cell) => ({ ...cell })),
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
-      runs: runs.map((run) => this.toPublicRunRecord(run)),
-      recentRuns: runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
-      environments: this.environmentStatuses(session),
+      runCount: runWindow.total,
+      latestRunEnvironments: runWindow.latestRunEnvironments,
+      ...(runWindow.historySummary ? { historySummary: runWindow.historySummary } : {}),
+      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
+      recentRuns: sparseRunRead
+        ? []
+        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+      environments: this.environmentStatuses(session, terminatedKernelInstances),
       runtimeBindings: this.options.runtimeBindings(session)
     }
   }
@@ -177,8 +224,6 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     return {
       sessionId: request.sessionId,
       projectId,
-      // Compatibility output for an older renderer/main pair; this value is the Project id.
-      projectName: projectId,
       workspaceCwd: rootDocument?.workspaceCwd ?? request.workspaceCwd,
       notebookSessionRoot,
       dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
@@ -191,8 +236,6 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     return {
       sessionId: session.sessionId,
       projectId: session.projectId,
-      // Compatibility output for an older renderer/main pair; this value is the Project id.
-      projectName: session.projectId,
       workspaceCwd: session.cwd,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
@@ -217,8 +260,16 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
-  private environmentStatuses(session: Session): NotebookEnvironmentStatus[] {
-    return session.kernelStatusEntries().map(([processKey, status]) => {
+  private environmentStatuses(
+    session: Session,
+    terminatedKernelInstances: NotebookKernelInstanceIdentity[] | undefined
+  ): NotebookEnvironmentStatus[] {
+    const statuses = new Map(session.kernelStatusEntries())
+    for (const instance of terminatedKernelInstances ?? []) {
+      const processKey = kernelInstanceProcessKey(instance)
+      if (!statuses.has(processKey)) statuses.set(processKey, 'terminated')
+    }
+    return Array.from(statuses, ([processKey, status]) => {
       if (processKey === 'repl') return { processKey, kind: 'repl', status }
       const separator = processKey.indexOf(':')
       return {

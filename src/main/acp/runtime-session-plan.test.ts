@@ -182,7 +182,7 @@ const createRuntimeHarness = (options: {
     callbacks: { onEvent: options.onEvent },
     pushEvent: (event: unknown) => options.onEvent?.(event),
     getSnapshot: () => ({ status: 'connected' }),
-    resolveSessionProjectName: () => 'project-1'
+    resolveSessionProjectId: () => 'project-1'
   })
   return {
     runtime: target as unknown as AcpRuntime,

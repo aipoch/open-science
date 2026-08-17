@@ -11,6 +11,7 @@ const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
+const E2E_LOCALE_ARGUMENT = '--lang=en-US'
 type E2eWindowMode = 'hidden' | 'normal'
 
 const electronLaunchTarget = (
@@ -22,6 +23,7 @@ const electronLaunchTarget = (
   return {
     args: [
       `--user-data-dir=${userDataRoot}`,
+      E2E_LOCALE_ARGUMENT,
       ...(platform === 'linux' ? ['--password-store=basic'] : []),
       ...(executablePath ? [] : [APP_ROOT])
     ],
@@ -391,6 +393,7 @@ class ElectronAppHarness implements ElectronApp {
         executable,
         [
           `--user-data-dir=${this.roots.userDataRoot}`,
+          E2E_LOCALE_ARGUMENT,
           ...(process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? [] : [appPath])
         ],
         {

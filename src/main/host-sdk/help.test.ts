@@ -64,13 +64,13 @@ describe('Host SDK help', () => {
         aliases: [id.slice('host.'.length)]
       }))
     )
-    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_500)
+    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_900)
 
     const unavailableCatalog = hostSdkHelp.query(undefined, {
       callerRole: 'main',
       capabilities: unprovisioned
     })
-    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(2_500)
+    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(2_900)
   })
 
   it('documents the transient visual-model-gated viewImage contract', () => {
@@ -85,9 +85,102 @@ describe('Host SDK help', () => {
       call_forms: [{ signature: 'await host.viewImage(source, options?)' }]
     })
     if (help.kind !== 'operation') throw new Error('expected operation help')
-    expect(JSON.stringify(help.request)).toMatch(
-      /Artifact or Upload Version in the current Project/u
-    )
+    const request = JSON.stringify(help.request)
+    expect(request).toMatch(/Artifact or Upload Version in the current Project/u)
+    expect(request).toMatch(/path relative to the current execution workspace/u)
+    expect(request).toMatch(/same relative path used to save it/u)
+    expect(request).not.toMatch(/Notebook/u)
+  })
+
+  it('documents the zero-argument model introspection contracts independently', () => {
+    const capabilities = {
+      ...mainContext.capabilities,
+      currentModel: true,
+      listModels: false
+    }
+    expect(hostSdkHelp.query('currentModel', { ...mainContext, capabilities })).toMatchObject({
+      kind: 'operation',
+      id: 'host.currentModel',
+      availability: { status: 'available' },
+      call_forms: [{ signature: 'await host.currentModel()' }],
+      returns: { type: 'string' }
+    })
+    expect(hostSdkHelp.query('listModels', { ...mainContext, capabilities })).toMatchObject({
+      kind: 'operation',
+      id: 'host.listModels',
+      availability: { status: 'unavailable' },
+      call_forms: [{ signature: 'await host.listModels()' }],
+      returns: { type: 'string[]' }
+    })
+  })
+
+  it('documents host.llm through its JavaScript topic', () => {
+    const capabilities = { ...mainContext.capabilities, llm: true }
+    const help = hostSdkHelp.query('llm', {
+      ...mainContext,
+      capabilities
+    })
+    expect(help).toMatchObject({
+      kind: 'operation',
+      id: 'host.llm',
+      availability: { status: 'available' },
+      call_forms: [{ signature: 'await host.llm(request, options?)' }]
+    })
+    expect(hostSdkHelp.query('host.llm', { ...mainContext, capabilities })).toEqual(help)
+    if (help.kind !== 'operation') throw new Error('expected operation help')
+    expect(named(fields(help.request), 'prompt')).toMatchObject({
+      type: 'string',
+      required: true
+    })
+    expect(named(fields(help.options), 'maxConcurrency')).toMatchObject({
+      type: 'integer',
+      default: 2,
+      range: '1..4'
+    })
+    expect(fields(help.returns, 'success_fields').map(({ name }) => name)).toEqual([
+      'text',
+      'model',
+      'stopReason',
+      'usage'
+    ])
+    expect(fields(help.returns, 'batch_error_fields').map(({ name }) => name)).toEqual(['error'])
+    expect(
+      fields(help.returns, 'usage_fields').map(({ name, required }) => ({ name, required }))
+    ).toEqual([
+      { name: 'inputTokens', required: true },
+      { name: 'cacheTokens', required: true },
+      { name: 'outputTokens', required: true },
+      { name: 'cachedReadTokens', required: false },
+      { name: 'cachedWriteTokens', required: false },
+      { name: 'turnCount', required: false }
+    ])
+    expect(
+      hostSdkHelp.query('llm', {
+        ...mainContext,
+        capabilities: { ...mainContext.capabilities, llm: false }
+      })
+    ).toMatchObject({ availability: { status: 'unavailable' } })
+  })
+
+  it('documents Main-only Project Session diagnostics through one namespace topic', () => {
+    const capabilities = { ...mainContext.capabilities, sessions: true }
+    const help = hostSdkHelp.query('sessions', { ...mainContext, capabilities })
+    expect(help).toMatchObject({
+      kind: 'operation',
+      id: 'host.sessions',
+      availability: { status: 'available' },
+      call_forms: [
+        { signature: 'await host.sessions.list(options?)' },
+        { signature: 'await host.sessions.inspect(sessionId)' }
+      ]
+    })
+    expect(hostSdkHelp.query('host.sessions', { ...mainContext, capabilities })).toEqual(help)
+    expect(
+      hostSdkHelp.query('sessions', {
+        ...delegateContext,
+        capabilities
+      })
+    ).toMatchObject({ availability: { status: 'unavailable' } })
   })
 
   it('keeps the published REPL subagent surface and Help registry in lockstep', () => {
@@ -303,7 +396,7 @@ describe('Host SDK help', () => {
     expect(hostSdkHelp.query('delegte', mainContext)).toEqual({
       kind: 'not_found',
       query: 'delegte',
-      suggestions: ['host.delegate', 'host.collect', 'host.children']
+      suggestions: ['host.delegate', 'host.collect', 'host.llm']
     })
     for (const unpublished of [
       'delegate.request',

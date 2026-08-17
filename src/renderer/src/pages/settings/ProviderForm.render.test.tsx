@@ -3,8 +3,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { ProviderForm } from './ProviderForm'
-import { getApiKeySecurityCopy } from './provider-key-security'
+import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import {
   createEmptyProviderFormValue,
   type ProviderFormErrors,
@@ -366,12 +367,23 @@ describe('ProviderForm field switching', () => {
   })
 
   it('describes encrypted and unavailable storage accurately', () => {
-    expect(getApiKeySecurityCopy(true)).toEqual({
+    // The selector returns keys, which under natural-language keys are themselves the English copy.
+    // Resolving them through t() still matters: it proves the fail-closed promise reaches the user in
+    // the resolved language instead of only existing as a constant.
+    const resolve = (encryptionAvailable: boolean): { title: string; description: string } => {
+      const keys = getApiKeySecurityCopyKeys(encryptionAvailable)
+      return {
+        title: i18next.t(keys.title),
+        description: i18next.t(keys.description)
+      }
+    }
+
+    expect(resolve(true)).toEqual({
       title: 'Your key stays private.',
       description:
         'It is stored only on this device and never uploaded to Open Science. Your OS secure storage protects it, and it is sent only to the selected provider when you make a request.'
     })
-    expect(getApiKeySecurityCopy(false)).toEqual({
+    expect(resolve(false)).toEqual({
       title: 'Secure storage is unavailable.',
       description:
         'Open Science will not save API keys until the operating-system credential vault is available. Unlock or authorize the system keychain, then retry.'
@@ -379,6 +391,8 @@ describe('ProviderForm field switching', () => {
   })
 
   it('renders inline required-field errors for a custom provider', () => {
+    // Errors arrive as catalog keys; the assertions below are on the rendered English, so this covers
+    // both the key→copy resolution and the fact that each field renders its own message.
     render(createEmptyProviderFormValue({ type: 'custom' }), {
       errors: {
         baseUrl: 'Base URL is required.',

@@ -4,7 +4,7 @@ import type { PrismaClient } from '@prisma/client'
 
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import {
-  DEFAULT_UPLOAD_PROJECT_NAME,
+  DEFAULT_UPLOAD_PROJECT_ID,
   type AppendUploadTransferRequest,
   type BeginUploadTransferRequest,
   type DeleteUploadRequest,
@@ -99,7 +99,7 @@ class UploadRepository {
   async finalizePendingSessionUploads(
     sessionId: string,
     attachments: UploadedAttachment[],
-    projectId = DEFAULT_UPLOAD_PROJECT_NAME
+    projectId = DEFAULT_UPLOAD_PROJECT_ID
   ): Promise<UploadedAttachment[]> {
     return this.stagedPublicationOwner.finalizePendingSessionUploads(
       sessionId,

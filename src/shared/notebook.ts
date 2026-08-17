@@ -302,13 +302,21 @@ export type NotebookWorkingFile = {
 // and internal to the executor, and a kernel-level failure currently surfaces as a run-level 'failed'
 // status rather than a distinct kernel state.
 export type NotebookKernelMetadata = {
-  language: 'python'
   pythonPath?: string
   kernelName: string
   runtimeRoot: string
   lastKnownStatus:
     'idle' | 'starting' | 'running' | 'error' | 'shutdown' | 'restarting' | 'terminated'
+  // Exact persistent kernel instances known to have terminated while the app was alive. Optional
+  // keeps existing run.json documents readable; an old coarse `terminated` without this field has
+  // unknown ownership and is cleared only by an explicit restart.
+  terminatedKernelInstances?: NotebookKernelInstanceIdentity[]
 }
+
+// Durable identity of one persistent notebook kernel. This deliberately stores domain fields rather
+// than the executor's `${kind}:${environment}` routing string or an unstable operating-system PID.
+export type NotebookKernelInstanceIdentity =
+  { kind: 'python' | 'r'; environment: string } | { kind: 'repl' }
 
 // Stores one durable notebook execution, including code, output, and generated-file references.
 export type NotebookRunRecord = {
@@ -405,7 +413,8 @@ export type NotebookWriteLock = {
 // entry per (kind, env) process the session has spawned, keyed by the executor's ProcessKey
 // (`${kind}:${env}` for python/r, `repl` for the control kernel). The coarse `kernelStatus` on the
 // session state stays the DEFAULT env's status for backward compat; this array is the per-env view.
-// In-memory only for now — persisting it into run.json is a separate later task (T8).
+// Live statuses remain in-memory; exact terminated instances are also restored from run.json so a
+// relaunch can identify which environment needs recovery without persisting the full live-status map.
 export type NotebookEnvironmentStatus = {
   processKey: string
   kind: 'python' | 'r' | 'repl'
@@ -415,6 +424,15 @@ export type NotebookEnvironmentStatus = {
   // Set after an R install/uninstall: the live R session won't see the change until it restarts, so
   // the preview surfaces a restart prompt. Only R sets this (Python picks up new packages on import).
   restartRecommended?: boolean
+}
+
+// Bounded, non-persisted discovery metadata for one Agent's complete durable history. The renderer
+// requests one summary at a time so old kernel kinds remain exportable without widening `runs`.
+export type NotebookRunHistorySummary = {
+  agentFrameId: string
+  runCount: number
+  kernelCounts: Record<NotebookKernelKind, number>
+  latestDataKernel?: 'python' | 'r'
 }
 
 // Renderer-facing snapshot of one shared notebook interpreter session.
@@ -432,6 +450,12 @@ export type NotebookSessionState = {
   cells: NotebookCell[]
   activeWrite?: NotebookWriteLock
   activeRunId?: string
+  // Total durable run count across lanes. `runs` is a bounded recent window for renderer safety.
+  runCount: number
+  // Latest durable environment evidence per data kernel, independent of the bounded run window.
+  latestRunEnvironments: Partial<Record<'python' | 'r', string>>
+  // Present only when state() requested one Agent's complete-history discovery metadata.
+  historySummary?: NotebookRunHistorySummary
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
   // Live per-(kind, env) kernel status view (design D6); empty until the session spawns a kernel.
@@ -474,6 +498,16 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
   // Identifies the exact active input lease for this execution. The bridge generates it and the
   // kernel returns it when resolving an immutable input so overlapping runs cannot claim access.
   inputRunLeaseId?: string
+}
+
+// A normal state read returns the latest renderer window. Transcript hydration may additionally
+// request immutable historical Runs by id without changing or widening that default window.
+export const NOTEBOOK_STATE_TARGET_RUN_LIMIT = 20
+export const NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES = 1_024
+
+export type NotebookSessionStateRequest = NotebookSessionRequest & {
+  runIds?: string[]
+  historySummaryFrameId?: string
 }
 
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the

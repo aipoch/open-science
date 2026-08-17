@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -54,4 +54,74 @@ describe('production delegated Frame workspace', () => {
     expect((await stat(join(first.cwd, 'inputs', '02-report.md'))).mode & 0o222).toBe(0)
     await workspace.deleteSession(session)
   })
+
+  it('deletes every Session workspace owned by one Project without touching another Project', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-project-workspace-'))
+    const input = join(root, 'input.csv')
+    await writeFile(input, 'value\n1\n')
+    const workspaceRoot = join(root, 'workspaces')
+    const workspace = createProductionFrameWorkspace({
+      root: workspaceRoot,
+      resolveInput: async () => ({ path: input })
+    })
+    const first = await workspace.prepare(
+      { projectId: 'project-1', sessionId: 'session-1' },
+      'frame-1',
+      ['upload-version:upload-1']
+    )
+    const second = await workspace.prepare(
+      { projectId: 'project-1', sessionId: 'session-2' },
+      'frame-2',
+      ['upload-version:upload-1']
+    )
+    const other = await workspace.prepare(
+      { projectId: 'project-2', sessionId: 'session-3' },
+      'frame-3',
+      ['upload-version:upload-1']
+    )
+
+    try {
+      await workspace.deleteProject('project-1')
+
+      await expect(stat(join(workspaceRoot, 'project-1'))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(first.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(second.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(other.cwd)).resolves.toBeDefined()
+    } finally {
+      // Prepared inputs are read-only. Restore their permissions through the production cleanup
+      // boundary so the shared temporary-root teardown is portable to macOS.
+      await workspace.deleteProject('project-2')
+    }
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'does not follow workspace symlinks while restoring delete permissions',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-project-workspace-symlink-'))
+      const workspaceRoot = join(root, 'workspaces')
+      const externalRoot = join(root, 'external-owned')
+      const externalFile = join(externalRoot, 'protected.txt')
+      await mkdir(join(workspaceRoot, 'project-1'), { recursive: true })
+      await mkdir(externalRoot)
+      await writeFile(externalFile, 'keep permissions')
+      await chmod(externalRoot, 0o500)
+      await chmod(externalFile, 0o400)
+      await symlink(externalRoot, join(workspaceRoot, 'project-1', 'external-link'), 'dir')
+      const workspace = createProductionFrameWorkspace({
+        root: workspaceRoot,
+        resolveInput: async () => ({ path: externalFile })
+      })
+
+      try {
+        await workspace.deleteProject('project-1')
+
+        expect((await stat(externalRoot)).mode & 0o777).toBe(0o500)
+        expect((await stat(externalFile)).mode & 0o777).toBe(0o400)
+        await expect(readFile(externalFile, 'utf8')).resolves.toBe('keep permissions')
+      } finally {
+        await chmod(externalRoot, 0o700)
+        await chmod(externalFile, 0o600)
+      }
+    }
+  )
 })

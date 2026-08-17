@@ -5,6 +5,7 @@ import { app } from 'electron'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import { createLogger } from '../logger'
 import type { ApplicationEventSource } from '../application-events'
+import type { TaskControlPorts } from '../tasks/task-control-ports'
 import type { TaskAgentPort } from '../tasks/task-runner'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
@@ -68,13 +69,15 @@ const createWebServiceController = (
     requestQuit,
     externalAccess,
     applicationEvents,
-    taskAgent
+    taskAgent,
+    taskControls
   }: {
     applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
     requestQuit: () => void
     externalAccess?: ExternalWebAccess
     applicationEvents: ApplicationEventSource
     taskAgent: TaskAgentPort
+    taskControls?: TaskControlPorts
   },
   deps: Partial<WebServiceControllerDeps> = {}
 ): WebServiceController => {
@@ -97,7 +100,7 @@ const createWebServiceController = (
       pid: process.pid
     }))
   const tasks = new HeadlessTaskApi(
-    { commands: applicationCommands.task, agent: taskAgent },
+    { commands: applicationCommands.task, agent: taskAgent, controls: taskControls },
     {
       subscribeEvents: (listener) =>
         applicationEvents.subscribe((event) => {
@@ -143,7 +146,7 @@ const createWebServiceController = (
       try {
         await close()
       } finally {
-        tasks.dispose()
+        await tasks.dispose()
       }
     })()
     return disposal

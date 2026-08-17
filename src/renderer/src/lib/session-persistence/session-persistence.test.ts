@@ -88,7 +88,7 @@ describe('reconcilePendingArtifacts', () => {
 
     const finalized = {
       id: 'session-1:message-1:chart.png',
-      projectName: 'proj-1',
+      projectId: 'proj-1',
       sessionId: 'session-1',
       messageId: 'message-1',
       name: 'chart.png',

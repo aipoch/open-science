@@ -1,5 +1,6 @@
 import { AlertTriangle } from 'lucide-react'
 import { useEffect } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -31,6 +32,8 @@ const SpecialistDeleteDetail = ({
 }: {
   request: AcpPermissionRequest
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const items = useSpecialistStore((state) => state.items)
   const isLoaded = useSpecialistStore((state) => state.isLoaded)
   const load = useSpecialistStore((state) => state.load)
@@ -53,15 +56,16 @@ const SpecialistDeleteDetail = ({
       <div className="flex flex-col gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
         <div className="text-sm font-semibold text-destructive">{name}</div>
         <p className="text-xs leading-relaxed text-destructive">
-          This Specialist can no longer be resolved by name — it was renamed or removed since the
-          request started. Approving will be rejected.
+          {t(
+            'This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.'
+          )}
         </p>
       </div>
     )
   }
 
   const capabilityLabel =
-    profile.capabilityMode === 'full' ? 'Full access' : 'Selected capabilities'
+    profile.capabilityMode === 'full' ? t('Full access') : t('Selected capabilities')
 
   return (
     <div className="flex flex-col gap-2">
@@ -82,11 +86,13 @@ const SpecialistDeleteDetail = ({
             </span>
             {!profile.enabled ? (
               <span className="inline-flex items-center rounded-md border border-border bg-card px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                Disabled
+                {t('Disabled')}
               </span>
             ) : null}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">will be permanently removed</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t('will be permanently removed')}
+          </div>
         </div>
       </div>
       {/* Fail-closed binding warning (design.md §10): bound conversations are NOT switched to Main
@@ -94,10 +100,11 @@ const SpecialistDeleteDetail = ({
       <div className="flex gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs leading-relaxed">
         <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
         <p className="text-foreground">
-          Conversations still bound to <b>{profile.displayName ?? profile.name}</b> will become{' '}
-          <b>unavailable</b> and will <b>not</b> be switched to Main Agent automatically. For each
-          affected conversation you&apos;ll explicitly choose a new specialist or Main Agent before
-          it can send again.
+          <Trans
+            i18nKey="Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again."
+            values={{ name: profile.displayName ?? profile.name }}
+            components={{ name: <b />, em: <b /> }}
+          />
         </p>
       </div>
     </div>

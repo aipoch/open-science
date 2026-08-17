@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import { useTranslation } from 'react-i18next'
 
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
@@ -9,6 +10,7 @@ import {
   useWorkspaceElicitation
 } from '@/lib/acp/useWorkspaceElicitation'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
+import { deleteSession } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -18,7 +20,11 @@ import {
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { useSessionStore } from '@/stores/session-store'
+import {
+  projectSessionActionability,
+  resolveRootPermissionPending,
+  useSessionStore
+} from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import {
@@ -29,7 +35,6 @@ import {
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
-
 import {
   appendArtifactMention,
   docArtifactCount,
@@ -37,7 +42,8 @@ import {
 } from './composer/composer-doc'
 import {
   buildSessionComposerHistory,
-  buildStarterComposerHistory
+  buildStarterComposerHistory,
+  starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
@@ -49,17 +55,14 @@ import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
-import {
-  getVisiblePermissionRequests,
-  hasBlockingRootPermissionRequest
-} from './session-permissions'
+import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
-import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from './visible-project-sessions'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
 import { useWorkspaceSessionController } from './workspace-session-controller'
+import { useWorkspaceBranchSwitchGuard } from './use-workspace-branch-switch-guard'
 import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 
@@ -82,6 +85,7 @@ const WorkspacePage = ({
   canDeleteConversations,
   isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
+  const { t } = useTranslation()
   // The active project scopes which sessions are visible and stamps newly created ones. The workspace
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
   // matches no session and triggers the redirect below.
@@ -240,13 +244,12 @@ const WorkspacePage = ({
     }
     return selected
   })
-  // Return a stable empty list so background sessions cannot re-render an active conversation.
+  // Starter history is only consumed when no session is active, so this subscription collapses to
+  // a stable empty list while a session is selected — background session updates then never
+  // re-render the page through it.
+  const hideStarterHistory = activeSession !== undefined || activeProject?.archivedAt !== undefined
   const starterHistorySessions = useSessionStore(
-    useShallow((state) =>
-      activeSession === undefined && activeProject?.archivedAt === undefined
-        ? visibleProjectSessions(state.sessions, scopedProjectId)
-        : NO_VISIBLE_SESSIONS
-    )
+    useShallow(starterHistorySessionSelector(scopedProjectId, hideStarterHistory))
   )
   const composerHistoryEntries = useMemo(
     () =>
@@ -273,7 +276,7 @@ const WorkspacePage = ({
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
       composer.lifecycle.settleSessionDeletion(sessionId, deleted),
-    deleteRuntimeSession: runtime.deleteRuntimeSession
+    deleteSession
   })
   const historySpecialistId = sessionController.view.specialist.historyId
   const activeSpecialistId = activeSession?.specialistId
@@ -417,6 +420,11 @@ const WorkspacePage = ({
     () => pendingWorkspaceElicitations(activeSession),
     [activeSession]
   )
+  const activeSessionActionability = activeSession
+    ? projectSessionActionability(activeSession, {
+        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id)
+      })
+    : undefined
   const activeNotebookReference = activeSession ? notebookReferences[activeSession.id] : undefined
   const activePermissionProfile =
     activeSession?.permissionProfile ?? newConversationPermissionProfile
@@ -464,10 +472,9 @@ const WorkspacePage = ({
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
-    hasBlockingRootPermissionRequest: hasBlockingRootPermissionRequest(
-      pendingPermissions,
-      activeSession?.id
-    ),
+    actionability: activeSessionActionability,
+    hasPendingPermissionRequest: (sessionId) =>
+      pendingPermissions.some((request) => request.sessionId === sessionId),
     newConversationAutoReviewEnabled,
     newConversationEnabledComputeHosts,
     composer,
@@ -482,7 +489,8 @@ const WorkspacePage = ({
     },
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
-      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
+      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
+    subscribeSessionChanges: useSessionStore.subscribe
   })
   // "Request review" is disabled when:
   //   - there is no active session or no completed agent turn yet, OR
@@ -553,23 +561,21 @@ const WorkspacePage = ({
     pendingArtifactMention
   ])
   const canEditMessage = conversation.availability.revise
-  useEffect(() => {
-    const sessionId = activeSession?.id
-    if (!sessionId) return
-    useSessionStore
-      .getState()
-      .setBranchSwitchBlocked(sessionId, !canEditMessage || activeSessionSaveAsSkillPending)
-    return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
-  }, [activeSession?.id, activeSessionSaveAsSkillPending, canEditMessage])
+  useWorkspaceBranchSwitchGuard(
+    activeSession?.id,
+    !canEditMessage || activeSessionSaveAsSkillPending || conversation.queue.items.length > 0
+  )
   const canChangeAgentControls =
     isSessionPersistenceReady &&
-    activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-for-user' &&
-    activeSession?.status !== 'waiting-permission' &&
+    activeSessionActionability?.actions.changeAgentControls.allowed !== false &&
     !activeSessionHasRuntimeInteraction &&
-    !activeSession?.compacting
+    !activeSession?.compacting &&
+    conversation.queue.items.length === 0
   const canChangePermissionProfile =
-    isSessionPersistenceReady && !activeSessionHasSendPreparation && !activeSession?.compacting
+    isSessionPersistenceReady &&
+    !activeSessionHasSendPreparation &&
+    !activeSession?.compacting &&
+    conversation.queue.items.length === 0
   const canCompactContext =
     isSessionPersistenceReady &&
     activeSessionSupportsNativeCompaction &&
@@ -935,7 +941,7 @@ const WorkspacePage = ({
           <WorkspaceSidebarContainer
             projectId={scopedProjectId}
             isProjectArchived={activeProject?.archivedAt !== undefined}
-            projectName={activeProject?.name ?? 'Project'}
+            projectName={activeProject?.name ?? t('Project')}
             activeSessionId={selectedSessionId}
             canCreateConversation={isSessionPersistenceReady}
             canMutateConversations={isSessionPersistenceReady}
@@ -979,7 +985,7 @@ const WorkspacePage = ({
           <WorkspaceSidebarContainer
             projectId={scopedProjectId}
             isProjectArchived={activeProject?.archivedAt !== undefined}
-            projectName={activeProject?.name ?? 'Project'}
+            projectName={activeProject?.name ?? t('Project')}
             activeSessionId={selectedSessionId}
             canCreateConversation={isSessionPersistenceReady}
             canMutateConversations={isSessionPersistenceReady}
@@ -1151,14 +1157,14 @@ const WorkspacePage = ({
         onCancel={sessionController.actions.closeRename}
         onConfirmRename={sessionController.actions.confirmRename}
       />
-
       <DeleteSessionDialog
-        session={sessionController.view.dialogs.delete ?? undefined}
+        session={sessionController.view.dialogs.delete?.session}
         canDelete={canDeleteConversations}
+        isDeleting={sessionController.view.dialogs.delete?.isDeleting}
+        error={sessionController.view.dialogs.delete?.error ?? undefined}
         onCancel={sessionController.actions.closeDelete}
         onConfirmDelete={conversation.actions.delete}
       />
-
       <DownloadSessionArtifactsDialog
         session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
         onClose={sessionController.actions.closeDownloadArtifacts}

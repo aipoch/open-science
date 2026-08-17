@@ -1,10 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
+
 import { SessionNotebookContent } from './SessionNotebookDialog'
 import {
   createNotebookFrameFilterOptions,
-  filterNotebookRunsForSessionBranch,
   notebookFrameLabels,
   projectNotebookRunsForFrame
 } from './session-notebook-projection'
@@ -33,6 +34,8 @@ const renderContent = (props: {
   projectId?: string
   runs: NotebookRunRecord[]
   status: 'loading' | 'error' | 'ready'
+  runCount?: number
+  loadedRunCount?: number
   error?: string
   frameLabels?: Readonly<Record<string, string>>
 }): string =>
@@ -56,6 +59,24 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('border-t border-border-300/90')
   })
 
+  it('keeps Agent history discovery available when the recent window is empty', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [],
+      runCount: 12,
+      loadedRunCount: 0,
+      status: 'ready',
+      frameLabels: {
+        'root-frame-s1': 'Main Agent',
+        'frame-old': 'Older analysis'
+      }
+    })
+
+    expect(html).not.toContain('No execution records for this session.')
+    expect(html).toContain('aria-label="Filter notebook runs by Agent"')
+    expect(html).toContain('Main Agent')
+  })
+
   it('renders one cell per run with a derived error badge and split output', () => {
     const failing = makeRun({
       status: 'failed',
@@ -73,6 +94,37 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('error (line 2)')
     expect(html).toContain('OPENALEX_API_KEY present: False')
     expect(html).toContain('ModuleNotFoundError')
+  })
+
+  it('keeps Session-wide Runs regardless of their Conversation Branch attribution', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      status: 'ready',
+      runs: [
+        makeRun({ runId: 'shared', script: 'print("shared")', messageBranchId: 'branch-parent' }),
+        makeRun({ runId: 'old', script: 'print("old")', messageBranchId: 'branch-old' }),
+        makeRun({ runId: 'new', script: 'print("new")', messageBranchId: 'branch-new' })
+      ]
+    })
+
+    expect(html).toContain('1 agent · 3 cells')
+    expect(html).toContain('print(&quot;shared&quot;)')
+    expect(html).toContain('print(&quot;old&quot;)')
+    expect(html).toContain('print(&quot;new&quot;)')
+  })
+
+  it('explains when the dialog loads only the recent run window', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [makeRun()],
+      runCount: 125,
+      loadedRunCount: 100,
+      status: 'ready'
+    })
+
+    expect(html).toContain(
+      'This session has 125 runs. This view loads the latest 100; downloads include the complete history.'
+    )
   })
 
   it('renders timeout as a neutral limit instead of an error', () => {
@@ -187,16 +239,20 @@ describe('Session Notebook producer projection', () => {
 
   it('names only the Main Agent and delegated Subagents from the Session graph', () => {
     expect(
-      notebookFrameLabels({
-        conversationGraph: {
-          rootFrameId: 'root-frame-s1',
-          frames: [
-            { id: 'root-frame-s1', kind: 'root' },
-            { id: 'frame-one', kind: 'delegate', delegateName: 'Evidence check' },
-            { id: 'review-frame', kind: 'review', agentName: 'Reviewer' }
-          ]
-        }
-      } as never)
+      notebookFrameLabels(
+        {
+          conversationGraph: {
+            rootFrameId: 'root-frame-s1',
+            frames: [
+              { id: 'root-frame-s1', kind: 'root' },
+              { id: 'frame-one', kind: 'delegate', delegateName: 'Evidence check' },
+              { id: 'review-frame', kind: 'review', agentName: 'Reviewer' }
+            ]
+          }
+        } as never,
+        // Pinned to English so the copy assertion below stays readable.
+        i18next.getFixedT('en')
+      )
     ).toEqual({
       'root-frame-s1': 'Main Agent',
       'frame-one': 'Evidence check'
@@ -208,13 +264,49 @@ describe('Session Notebook producer projection', () => {
       createNotebookFrameFilterOptions(attributedRuns, {
         'root-frame-s1': 'Main agent',
         'frame-one': 'Evidence check',
-        'frame-two': 'Sensitivity check'
+        'frame-two': 'Sensitivity check',
+        'frame-old': 'Older analysis'
       })
     ).toEqual([
       { value: 'frame:root-frame-s1', label: 'Main agent', count: 1 },
       { value: 'frame:frame-one', label: 'Evidence check', count: 1 },
       { value: 'frame:frame-two', label: 'Sensitivity check', count: 1 }
     ])
+    expect(
+      createNotebookFrameFilterOptions(
+        attributedRuns,
+        {
+          'root-frame-s1': 'Main agent',
+          'frame-one': 'Evidence check',
+          'frame-two': 'Sensitivity check',
+          'frame-old': 'Older analysis'
+        },
+        new Map(),
+        true
+      )
+    ).toEqual([
+      { value: 'frame:root-frame-s1', label: 'Main agent', count: 1 },
+      { value: 'frame:frame-one', label: 'Evidence check', count: 1 },
+      { value: 'frame:frame-two', label: 'Sensitivity check', count: 1 },
+      { value: 'frame:frame-old', label: 'Older analysis' }
+    ])
+    expect(
+      createNotebookFrameFilterOptions(
+        attributedRuns,
+        { 'frame-old': 'Older analysis' },
+        new Map([
+          [
+            'frame-old',
+            {
+              agentFrameId: 'frame-old',
+              runCount: 12,
+              kernelCounts: { python: 0, r: 12, repl: 0, bash: 0 },
+              latestDataKernel: 'r' as const
+            }
+          ]
+        ])
+      )
+    ).toEqual([{ value: 'frame:frame-old', label: 'Older analysis', count: 12 }])
     expect(
       projectNotebookRunsForFrame(attributedRuns, 'frame:frame-two').map((run) => run.runId)
     ).toEqual(['child-two-run'])
@@ -249,35 +341,6 @@ describe('Session Notebook producer projection', () => {
     expect(html).not.toContain('>frame-one ·')
     expect(html).toContain('max-w-full')
     expect(html).toContain('focus-visible:ring-3')
-  })
-
-  it('keeps child evidence while applying active-Branch filtering only to root and legacy Runs', () => {
-    const session = {
-      messages: [{ id: 'active-root-message' }],
-      conversationGraph: { rootFrameId: 'root-frame-s1' }
-    }
-    const runs = [
-      makeRun({
-        runId: 'active-root',
-        agentFrameId: 'root-frame-s1',
-        promptMessageId: 'active-root-message'
-      }),
-      makeRun({
-        runId: 'inactive-root',
-        agentFrameId: 'root-frame-s1',
-        promptMessageId: 'old-root-message'
-      }),
-      makeRun({
-        runId: 'child',
-        agentFrameId: 'frame-child',
-        promptMessageId: 'child-message'
-      }),
-      makeRun({ runId: 'inactive-legacy', promptMessageId: 'old-root-message' })
-    ]
-
-    expect(
-      filterNotebookRunsForSessionBranch(runs, session as never).map((run) => run.runId)
-    ).toEqual(['active-root', 'child'])
   })
 })
 

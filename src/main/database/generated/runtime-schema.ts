@@ -40,7 +40,10 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "panelState" TEXT NOT NULL,
     "activeItemId" TEXT,
     "items" TEXT NOT NULL DEFAULT '[]',
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ProjectPreviewState_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ProjectPreviewState_panelState_check" CHECK ("panelState" IN ('open', 'collapsed')),
+    CONSTRAINT "ProjectPreviewState_itemsJson_check" CHECK (json_valid("items") AND json_type("items") = 'array')
 );`,
   `CREATE TABLE IF NOT EXISTS "UnreadTaskSession" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +55,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "dedupeKey" TEXT NOT NULL,
     "kind" TEXT NOT NULL,
     "source" TEXT,
+    "attentionReason" TEXT,
     "projectId" TEXT,
     "sessionId" TEXT,
     "originId" TEXT NOT NULL,
@@ -60,7 +64,15 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "readAt" DATETIME,
     "actionState" TEXT,
-    "settledAt" DATETIME
+    "settledAt" DATETIME,
+    "targetInvalidatedAt" DATETIME,
+    CONSTRAINT "NotificationInboxItem_source_check" CHECK ("source" IS NULL OR "source" IN ('agent-tool', 'agent-question', 'agent-runtime', 'connector', 'compute', 'skill-import', 'session-plan')),
+    CONSTRAINT "NotificationInboxItem_attentionReason_check" CHECK ("attentionReason" IS NULL OR "attentionReason" IN ('waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'task-max-tokens', 'task-max-turn-requests', 'task-refusal', 'task-unclean-stop')),
+    CONSTRAINT "NotificationInboxItem_kind_check" CHECK ("kind" IN ('task.completed', 'task.needs-attention', 'task.failed', 'authorization.required')),
+    CONSTRAINT "NotificationInboxItem_actionState_check" CHECK ("actionState" IS NULL OR "actionState" IN ('pending', 'resolved', 'rejected', 'expired', 'cancelled')),
+    CONSTRAINT "NotificationInboxItem_actionLifecycle_check" CHECK ((("actionState" IS NULL AND "settledAt" IS NULL) OR ("actionState" IS NOT NULL AND (("actionState" = 'pending' AND "settledAt" IS NULL) OR ("actionState" IN ('resolved', 'rejected', 'expired', 'cancelled') AND "settledAt" IS NOT NULL))))),
+    CONSTRAINT "NotificationInboxItem_actionKind_check" CHECK ("actionState" IS NULL OR "kind" IN ('task.needs-attention', 'authorization.required')),
+    CONSTRAINT "NotificationInboxItem_targetInvalidated_check" CHECK ("targetInvalidatedAt" IS NULL OR ("sessionId" IS NOT NULL AND "readAt" IS NOT NULL))
 );`,
   `CREATE TABLE IF NOT EXISTS "Review" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -74,7 +86,12 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "model" TEXT NOT NULL DEFAULT '',
     "reviewerLog" TEXT NOT NULL DEFAULT '[]',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Review_lifecycle_check" CHECK ("lifecycle" IN ('running', 'complete', 'error')),
+    CONSTRAINT "Review_outcome_check" CHECK ("outcome" IS NULL OR "outcome" IN ('pass', 'flagged')),
+    CONSTRAINT "Review_state_check" CHECK ((("lifecycle" = 'running' AND "outcome" IS NULL AND "errorMessage" IS NULL) OR ("lifecycle" = 'complete' AND "outcome" IS NOT NULL AND "errorMessage" IS NULL) OR ("lifecycle" = 'error' AND "outcome" IS NULL AND "errorMessage" IS NOT NULL))),
+    CONSTRAINT "Review_scopeJson_check" CHECK (json_valid("scope") AND json_type("scope") = 'object'),
+    CONSTRAINT "Review_reviewerLogJson_check" CHECK (json_valid("reviewerLog") AND json_type("reviewerLog") = 'array')
 );`,
   `CREATE TABLE IF NOT EXISTS "Finding" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -88,7 +105,15 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "artifactBindingState" TEXT NOT NULL DEFAULT 'legacy_unverified',
     "sortIndex" INTEGER NOT NULL DEFAULT 0,
     "reflagCount" INTEGER NOT NULL DEFAULT 0,
-    CONSTRAINT "Finding_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    CONSTRAINT "Finding_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "Finding_status_check" CHECK ("status" IN ('pass', 'warn', 'fail')),
+    CONSTRAINT "Finding_resolution_check" CHECK ("resolution" IN ('open', 'resolved', 'unaddressed')),
+    CONSTRAINT "Finding_artifactBindingState_check" CHECK ("artifactBindingState" IN ('scope_validated', 'legacy_unverified')),
+    CONSTRAINT "Finding_sortIndex_check" CHECK ("sortIndex" >= 0),
+    CONSTRAINT "Finding_reflagCount_check" CHECK ("reflagCount" >= 0),
+    CONSTRAINT "Finding_statusResolution_check" CHECK ("status" <> 'pass' OR "resolution" = 'open'),
+    CONSTRAINT "Finding_artifactBinding_check" CHECK ("artifactBindingState" <> 'scope_validated' OR "artifactVersionId" IS NOT NULL),
+    CONSTRAINT "Finding_locatorJson_check" CHECK (json_valid("locator") AND json_type("locator") = 'object')
 );`,
   `CREATE TABLE IF NOT EXISTS "ProjectDeletionIntent" (
     "projectId" TEXT NOT NULL PRIMARY KEY,
@@ -112,7 +137,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     "deletedAt" DATETIME,
-    "deleteOperationId" TEXT
+    "deleteOperationId" TEXT,
+    CONSTRAINT "ManagedFile_source_check" CHECK ("source" IN ('artifact', 'upload'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ManagedFileSessionSync" (
     "projectId" TEXT NOT NULL,
@@ -139,7 +165,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "updatedAt" DATETIME NOT NULL,
 
     PRIMARY KEY ("projectId", "sessionId"),
-    CONSTRAINT "FileOriginSession_state_check" CHECK ("state" IN ('active', 'deleting', 'deleted'))
+    CONSTRAINT "FileOriginSession_state_check" CHECK ("state" IN ('active', 'deleting', 'deleted')),
+    CONSTRAINT "FileOriginSession_retainedReviewIdsJson_check" CHECK ("retainedReviewIdsJson" IS NULL OR (json_valid("retainedReviewIdsJson") AND json_type("retainedReviewIdsJson") = 'array')),
+    CONSTRAINT "FileOriginSession_lifecycle_check" CHECK ((("state" = 'active' AND "deletedAt" IS NULL AND "deletionOperationId" IS NULL AND "retainedReviewIdsJson" IS NULL) OR ("state" = 'deleting' AND "deletedAt" IS NULL AND "deletionOperationId" IS NOT NULL AND "retainedReviewIdsJson" IS NOT NULL) OR ("state" = 'deleted' AND "deletedAt" IS NOT NULL AND "deletionOperationId" IS NULL AND "retainedReviewIdsJson" IS NULL)))
 );`,
   `CREATE TABLE IF NOT EXISTS "ArtifactLineage" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -251,7 +279,10 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ArtifactVersion_state_check" CHECK ("state" IN ('staging', 'pending', 'finalized')),
     CONSTRAINT "ArtifactVersion_filename_check" CHECK (length("filename") > 0),
     CONSTRAINT "ArtifactVersion_originKind_check" CHECK ("originKind" IN ('agent_generated', 'user_edit', 'legacy')),
-    CONSTRAINT "ArtifactVersion_provenance_check" CHECK ((("originKind" = 'agent_generated' AND "artifactRunId" IS NOT NULL AND "rootFrameId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL AND "runtimeSegmentId" IS NOT NULL AND "promptMessageId" IS NOT NULL AND "evidenceStorageKey" IS NOT NULL AND "evidenceJson" IS NOT NULL AND "evidenceChecksum" IS NOT NULL AND "evidenceSchemaVersion" IS NOT NULL) OR ("originKind" = 'user_edit' AND "state" = 'finalized' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL AND "artifactRunId" IS NULL AND "writeRequestChecksum" IS NULL AND "rootFrameId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND "runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "evidenceStorageKey" IS NULL AND "evidenceJson" IS NULL AND "evidenceChecksum" IS NULL AND "evidenceSchemaVersion" IS NULL AND "executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR "originKind" = 'legacy'))
+    CONSTRAINT "ArtifactVersion_provenance_check" CHECK ((("originKind" = 'agent_generated' AND "artifactRunId" IS NOT NULL AND "rootFrameId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL AND "runtimeSegmentId" IS NOT NULL AND "promptMessageId" IS NOT NULL AND "evidenceStorageKey" IS NOT NULL AND "evidenceJson" IS NOT NULL AND "evidenceChecksum" IS NOT NULL AND "evidenceSchemaVersion" IS NOT NULL) OR ("originKind" = 'user_edit' AND "state" = 'finalized' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL AND "artifactRunId" IS NULL AND "writeRequestChecksum" IS NULL AND "rootFrameId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND "runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "evidenceStorageKey" IS NULL AND "evidenceJson" IS NULL AND "evidenceChecksum" IS NULL AND "evidenceSchemaVersion" IS NULL AND "executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR "originKind" = 'legacy')),
+    CONSTRAINT "ArtifactVersion_evidenceJson_check" CHECK ("evidenceJson" IS NULL OR (json_valid("evidenceJson") AND json_type("evidenceJson") = 'object')),
+    CONSTRAINT "ArtifactVersion_executionSnapshotJson_check" CHECK ("executionSnapshotJson" IS NULL OR (json_valid("executionSnapshotJson") AND json_type("executionSnapshotJson") = 'object')),
+    CONSTRAINT "ArtifactVersion_executionSnapshotBundle_check" CHECK ((("executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR ("executionSnapshotJson" IS NOT NULL AND "executionSnapshotChecksum" IS NOT NULL AND "executionSnapshotStorageKey" IS NOT NULL AND "executionSnapshotSchemaVersion" IS NOT NULL)))
 );`,
   `CREATE TABLE IF NOT EXISTS "ManagedFileVersionWriteOperation" (
     "operationId" TEXT NOT NULL PRIMARY KEY,
@@ -298,7 +329,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ArtifactVersionInput_sourceUploadVersionId_fkey" FOREIGN KEY ("sourceUploadVersionId") REFERENCES "UploadVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceProjectId_sourceSessionId_fkey" FOREIGN KEY ("sourceProjectId", "sourceSessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version')),
-    CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK ((("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR ("sourceKind" = 'upload-version' AND "sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL AND "inputFileVersionId" = "sourceUploadVersionId")))
+    CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK ((("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR ("sourceKind" = 'upload-version' AND "sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL AND "inputFileVersionId" = "sourceUploadVersionId"))),
+    CONSTRAINT "ArtifactVersionInput_strongestAssociation_check" CHECK ("strongestAssociation" IN ('turn-attached', 'resolver-accessed', 'captured-version'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ReviewFindingDisposition" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -309,9 +341,15 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "outcome" TEXT NOT NULL,
     "note" TEXT,
     "assessedArtifactVersionId" TEXT,
+    "assessmentSnapshot" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ReviewFindingDisposition_sourceFindingId_fkey" FOREIGN KEY ("sourceFindingId") REFERENCES "Finding" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "ReviewFindingDisposition_causeReviewId_fkey" FOREIGN KEY ("causeReviewId") REFERENCES "Review" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    CONSTRAINT "ReviewFindingDisposition_causeReviewId_fkey" FOREIGN KEY ("causeReviewId") REFERENCES "Review" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ReviewFindingDisposition_sequence_check" CHECK ("sequence" >= 1),
+    CONSTRAINT "ReviewFindingDisposition_trigger_check" CHECK ("trigger" IN ('review_submission', 'loop_terminated', 'correction_failed', 'aborted')),
+    CONSTRAINT "ReviewFindingDisposition_outcome_check" CHECK ("outcome" IN ('still_open', 'resolved', 'unaddressed')),
+    CONSTRAINT "ReviewFindingDisposition_state_check" CHECK ((("trigger" = 'review_submission' AND "causeReviewId" IS NOT NULL AND "outcome" IN ('still_open', 'resolved')) OR ("trigger" IN ('loop_terminated', 'correction_failed', 'aborted') AND "causeReviewId" IS NULL AND "outcome" = 'unaddressed'))),
+    CONSTRAINT "ReviewFindingDisposition_assessmentSnapshotJson_check" CHECK ("assessmentSnapshot" IS NULL OR (json_valid("assessmentSnapshot") AND json_type("assessmentSnapshot") = 'object'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ReviewScopeSnapshot" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -327,7 +365,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "blockCount" INTEGER NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ReviewScopeSnapshot_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "ReviewScopeSnapshot_state_check" CHECK ("state" IN ('staging', 'ready'))
+    CONSTRAINT "ReviewScopeSnapshot_state_check" CHECK ("state" IN ('staging', 'ready')),
+    CONSTRAINT "ReviewScopeSnapshot_snapshotJson_check" CHECK (json_valid("snapshotJson") AND json_type("snapshotJson") = 'object')
 );`,
   `CREATE TABLE IF NOT EXISTS "ComputeJob" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -360,7 +399,21 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "submittedAt" DATETIME,
     "startedAt" DATETIME,
     "finishedAt" DATETIME,
-    "harvestedAt" DATETIME
+    "harvestedAt" DATETIME,
+    CONSTRAINT "ComputeJob_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
+    CONSTRAINT "ComputeJob_status_check" CHECK ("status" IN ('queued', 'submitted', 'running', 'success', 'failed', 'timeout', 'error')),
+    CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'host_unreachable', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
+    CONSTRAINT "ComputeJob_timeoutSeconds_check" CHECK ("timeoutSeconds" IS NULL OR "timeoutSeconds" BETWEEN 1 AND 604800),
+    CONSTRAINT "ComputeJob_notification_check" CHECK ("notificationConsumedAt" IS NULL OR "notifiedAt" IS NOT NULL),
+    CONSTRAINT "ComputeJob_harvestPayload_check" CHECK (("harvestError" IS NULL AND "leftOnRemote" IS NULL) OR "harvestedAt" IS NOT NULL),
+    CONSTRAINT "ComputeJob_harvestState_check" CHECK ("harvestedAt" IS NULL OR "status" IN ('success', 'failed', 'timeout')),
+    CONSTRAINT "ComputeJob_errorState_check" CHECK ((("errorCode" IS NULL OR "status" IN ('failed', 'timeout', 'error')) AND ("status" <> 'error' OR "errorCode" IS NOT NULL))),
+    CONSTRAINT "ComputeJob_resourceRequestJson_check" CHECK ("resourceRequest" IS NULL OR (json_valid("resourceRequest") AND json_type("resourceRequest") = 'object')),
+    CONSTRAINT "ComputeJob_inputManifestJson_check" CHECK ("inputManifest" IS NULL OR (json_valid("inputManifest") AND json_type("inputManifest") = 'array')),
+    CONSTRAINT "ComputeJob_outputManifestJson_check" CHECK ("outputManifest" IS NULL OR (json_valid("outputManifest") AND json_type("outputManifest") = 'array')),
+    CONSTRAINT "ComputeJob_harvestConfigJson_check" CHECK ("harvestConfig" IS NULL OR (json_valid("harvestConfig") AND json_type("harvestConfig") = 'object')),
+    CONSTRAINT "ComputeJob_remoteHandleJson_check" CHECK ("remoteHandle" IS NULL OR (json_valid("remoteHandle") AND json_type("remoteHandle") = 'object')),
+    CONSTRAINT "ComputeJob_leftOnRemoteJson_check" CHECK ("leftOnRemote" IS NULL OR (json_valid("leftOnRemote") AND json_type("leftOnRemote") = 'array'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ComputeHost" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -377,7 +430,15 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "detailsUpdatedAt" DATETIME,
     "detailsUpdatedBy" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ComputeHost_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
+    CONSTRAINT "ComputeHost_scratchPinned_check" CHECK ("scratchPinned" IN (false, true)),
+    CONSTRAINT "ComputeHost_concurrencyLimit_check" CHECK ("concurrencyLimit" IS NULL OR "concurrencyLimit" BETWEEN 1 AND 500),
+    CONSTRAINT "ComputeHost_detailsUpdatedBy_check" CHECK ("detailsUpdatedBy" IS NULL OR "detailsUpdatedBy" IN ('user', 'agent')),
+    CONSTRAINT "ComputeHost_detailsUpdate_check" CHECK (("detailsUpdatedAt" IS NULL AND "detailsUpdatedBy" IS NULL) OR ("detailsUpdatedAt" IS NOT NULL AND "detailsUpdatedBy" IS NOT NULL)),
+    CONSTRAINT "ComputeHost_scratchRoot_check" CHECK ("scratchPinned" = false OR "scratchRoot" IS NOT NULL),
+    CONSTRAINT "ComputeHost_sshOverridesJson_check" CHECK ("sshOverrides" IS NULL OR (json_valid("sshOverrides") AND json_type("sshOverrides") = 'object')),
+    CONSTRAINT "ComputeHost_probeResultJson_check" CHECK ("probeResult" IS NULL OR (json_valid("probeResult") AND json_type("probeResult") = 'object'))
 );`,
   `CREATE TABLE IF NOT EXISTS "GrantedLocalRoot" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -385,7 +446,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "name" TEXT NOT NULL,
     "access" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "GrantedLocalRoot_access_check" CHECK ("access" IN ('ro', 'rw'))
 );`
 ] as const
 

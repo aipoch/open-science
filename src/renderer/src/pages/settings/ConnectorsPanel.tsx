@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import type {
@@ -61,12 +62,16 @@ export type ConnectorsView =
 
 type GroupFilter = 'all' | 'featured' | 'directory' | 'custom'
 
-const FILTER_LABELS: Record<GroupFilter, string> = {
+// Keys rather than finished strings: the trigger and the option list both read from this map, so the
+// label has one source and follows a language switch on the next render.
+const FILTER_LABEL_KEYS = {
   all: 'All',
   featured: 'Featured',
   directory: 'Directory',
   custom: 'Custom'
-}
+} as const satisfies Record<GroupFilter, string>
+
+const FILTER_ORDER: GroupFilter[] = ['all', 'featured', 'directory', 'custom']
 
 const specialistNamesUsingConnector = (
   items: SpecialistListItem[],
@@ -98,6 +103,8 @@ type ConnectorsPanelProps = {
 }
 
 export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const ncbi = useSettingsStore((state) => state.ncbi)
@@ -292,14 +299,18 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                   <SettingsToggle
                     enabled={connector.enabled}
                     aria-label={connector.displayName}
-                    onToggle={() => void setConnectorEnabled(connector.id, !connector.enabled)}
+                    onToggle={() =>
+                      void setConnectorEnabled(connector.id, !connector.enabled).catch(
+                        () => undefined
+                      )
+                    }
                   />
                 </li>
               ))}
             </ul>
           ) : (
             <p className="mt-2 py-2 text-xs text-muted-foreground">
-              No connectors match your search.
+              {t('No connectors match your search.')}
             </p>
           )
         ) : null}
@@ -310,13 +321,10 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   return (
     <div className="p-5">
       <SettingsSection
-        title="Contact email"
-        description={
-          <>
-            When allowed, shared with research data services that ask for a contact email (such as
-            those run by NCBI, EBI, and OurResearch) on requests made on your behalf.
-          </>
-        }
+        title={t('Contact email')}
+        description={t(
+          'When allowed, shared with research data services that ask for a contact email (such as those run by NCBI, EBI, and OurResearch) on requests made on your behalf.'
+        )}
         className="mb-5"
       >
         {editing ? (
@@ -324,7 +332,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             <div className="flex flex-col gap-1">
               <Input
                 type="email"
-                aria-label="Contact email"
+                aria-label={t('Contact email')}
                 placeholder="you@example.com"
                 value={emailField}
                 onChange={(event) => setEmailField(event.target.value)}
@@ -333,21 +341,21 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             <div className="flex flex-col gap-1">
               <Input
                 type="password"
-                aria-label="NCBI API key"
-                placeholder={ncbi.hasApiKey ? '••••••••' : 'Optional API key'}
+                aria-label={t('NCBI API key')}
+                placeholder={ncbi.hasApiKey ? '••••••••' : t('Optional API key')}
                 value={keyField}
                 onChange={(event) => setKeyField(event.target.value)}
               />
               <span className="text-xs text-muted-foreground">
-                Higher NCBI rate limits (optional).
+                {t('Higher NCBI rate limits (optional).')}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <Button type="button" onClick={() => void save()}>
-                Save
+                {t('Save')}
               </Button>
               <Button type="button" variant="outline" onClick={() => setEditing(false)}>
-                Cancel
+                {tCommon('Cancel')}
               </Button>
               {ncbi.hasApiKey ? (
                 <Button
@@ -357,7 +365,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                   onClick={() => void clearKey()}
                   className="ml-auto text-muted-foreground hover:text-destructive"
                 >
-                  Clear key
+                  {t('Clear key')}
                 </Button>
               ) : null}
             </div>
@@ -365,10 +373,10 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         ) : (
           <div className="mt-3 flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-              {ncbi.contactEmail ?? 'Not set'}
+              {ncbi.contactEmail ?? t('Not set')}
             </span>
             <Button type="button" variant="outline" onClick={startEditing}>
-              Edit
+              {t('Edit')}
             </Button>
           </div>
         )}
@@ -380,22 +388,23 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       >
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
           <SelectTrigger
-            aria-label="Filter connectors by group"
+            aria-label={t('Filter connectors by group')}
             className="w-full sm:col-start-1 sm:row-start-1"
           >
-            <span>{FILTER_LABELS[filter]}</span>
+            <span>{t(FILTER_LABEL_KEYS[filter])}</span>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="featured">Featured</SelectItem>
-            <SelectItem value="directory">Directory</SelectItem>
-            <SelectItem value="custom">Custom</SelectItem>
+            {FILTER_ORDER.map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(FILTER_LABEL_KEYS[value])}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <SettingsSearchInput
-          aria-label="Search connectors"
+          aria-label={t('Search connectors')}
           containerClassName="min-w-0 sm:col-start-2 sm:row-start-1"
-          placeholder="Search connectors…"
+          placeholder={t('Search connectors…')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -406,7 +415,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               className="col-span-2 row-start-2 w-full justify-center sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:w-auto sm:shrink-0"
             >
               <Plus data-icon="inline-start" aria-hidden="true" />
-              Add connector
+              {t('Add connector')}
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
@@ -417,9 +426,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             >
               <Terminal className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Local command</span>
+                <span>{t('Local command')}</span>
                 <span className="text-xs text-muted-foreground">
-                  Run an MCP server via a command
+                  {t('Run an MCP server via a command')}
                 </span>
               </span>
             </DropdownMenuItem>
@@ -429,16 +438,18 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             >
               <Globe className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Remote server</span>
-                <span className="text-xs text-muted-foreground">Connect to an MCP server URL</span>
+                <span>{t('Remote server')}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t('Connect to an MCP server URL')}
+                </span>
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
               <FileUp className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Import configuration</span>
+                <span>{tCommon('Import configuration')}</span>
                 <span className="text-xs text-muted-foreground">
-                  Validate a shared Connector file
+                  {tCommon('Validate a shared Connector file')}
                 </span>
               </span>
             </DropdownMenuItem>
@@ -453,14 +464,14 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             role="alert"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{authError}</span>
+            <span>{t(authError)}</span>
           </div>
         ) : null}
         {showFeatured
           ? connectorGroup(
               'featured',
-              'Featured',
-              'Research connectors from Anthropic',
+              t('Featured'),
+              t('Research connectors from Anthropic'),
               featuredConnectors
             )
           : null}
@@ -468,8 +479,8 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         {showDirectory
           ? connectorGroup(
               'directory',
-              'Directory',
-              'Syncs with the Claude Connectors Directory',
+              t('Directory'),
+              t('Syncs with the Claude Connectors Directory'),
               directoryConnectors
             )
           : null}
@@ -483,7 +494,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               className="flex w-full flex-col items-start gap-0.5 text-left"
             >
               <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
-                Custom
+                {t('Custom')}
                 <ChevronDown
                   className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
                     customExpanded ? '' : '-rotate-90'
@@ -491,7 +502,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                   aria-hidden="true"
                 />
               </span>
-              <span className="text-xs text-muted-foreground">Connectors you added</span>
+              <span className="text-xs text-muted-foreground">{t('Connectors you added')}</span>
             </button>
 
             {customExpanded ? (
@@ -520,30 +531,30 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           }`}
                         >
                           {retryingIds.has(server.id)
-                            ? 'Checking…'
+                            ? t('Checking…')
                             : server.checking
-                              ? 'Checking…'
+                              ? t('Checking…')
                               : server.availability === 'unavailable'
-                                ? 'Unavailable'
+                                ? t('Unavailable')
                                 : server.availability === 'unauthenticated'
-                                  ? 'Sign-in required'
+                                  ? t('Sign-in required')
                                   : server.enabled
-                                    ? 'Connected'
-                                    : 'Disabled'}
+                                    ? t('Connected')
+                                    : t('Disabled')}
                         </span>
                       </div>
                       <SettingsIconAction
-                        label={`Export ${server.displayName}`}
+                        label={t('Export {{name}}', { name: server.displayName })}
                         icon={Download}
                         onClick={() => onNavigate({ kind: 'export', id: server.id })}
                       />
                       <SettingsIconAction
-                        label={`Edit ${server.displayName}`}
+                        label={t('Edit {{name}}', { name: server.displayName })}
                         icon={Pencil}
                         onClick={() => onNavigate({ kind: 'edit', id: server.id })}
                       />
                       <SettingsIconAction
-                        label={`Remove ${server.displayName}`}
+                        label={t('Remove {{name}}', { name: server.displayName })}
                         icon={Trash2}
                         onClick={() => void requestRemoval(server)}
                         danger
@@ -556,7 +567,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           disabled={retryingIds.has(server.id)}
                           onClick={() => void retry(server.id)}
                         >
-                          {retryingIds.has(server.id) ? 'Checking…' : 'Retry'}
+                          {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
                         </Button>
                       ) : null}
                       {server.availability === 'unauthenticated' && !server.oauth ? (
@@ -566,7 +577,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           variant="outline"
                           onClick={() => onNavigate({ kind: 'edit', id: server.id })}
                         >
-                          Configure
+                          {t('Configure')}
                         </Button>
                       ) : null}
                       {server.oauth ? (
@@ -586,12 +597,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           onClick={() => void signIn(server.id)}
                         >
                           {authenticatingIds.has(server.id)
-                            ? 'Connecting…'
+                            ? t('Connecting…')
                             : server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                              ? 'Connected'
+                              ? t('Connected')
                               : server.availability === 'unauthenticated'
-                                ? 'Retry'
-                                : 'Sign in'}
+                                ? t('Retry')
+                                : t('Sign in')}
                         </Button>
                       ) : null}
                       <SettingsToggle
@@ -605,12 +616,14 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         }
                         title={
                           requiresSignInBeforeEnable(server)
-                            ? 'Sign in before enabling this Connector'
+                            ? t('Sign in before enabling this Connector')
                             : undefined
                         }
                         onToggle={() => {
                           if (requiresSignInBeforeEnable(server)) return
-                          void setCustomServerEnabled(server.id, !server.enabled)
+                          void setCustomServerEnabled(server.id, !server.enabled).catch(
+                            () => undefined
+                          )
                         }}
                       />
                     </li>
@@ -618,7 +631,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                 </ul>
               ) : (
                 <p className="mt-2 py-2 text-xs text-muted-foreground">
-                  Add a custom connector to connect your own server.
+                  {t('Add a custom connector to connect your own server.')}
                 </p>
               )
             ) : null}
@@ -643,7 +656,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <AlertDialog.Title className={dialogTitleClassName}>
-                  Remove “{removal?.server.displayName}”?
+                  {t('Remove “{{name}}”?', { name: removal?.server.displayName ?? '' })}
                 </AlertDialog.Title>
               </div>
               <AlertDialog.Cancel asChild>
@@ -651,7 +664,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Close"
+                  aria-label={t('Close')}
                   className={dialogCloseButtonClassName}
                   disabled={removing}
                 >
@@ -662,16 +675,22 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
 
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                This removes the Connector configuration and credentials from this app. Existing
-                conversation history is kept.
+                {tCommon(
+                  'This removes the Connector configuration and credentials from this app. Existing conversation history is kept.'
+                )}
               </AlertDialog.Description>
               {removal?.specialistNames?.length ? (
                 <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
                   <p>
-                    This Connector is used by {removal.specialistNames.length}{' '}
-                    {removal.specialistNames.length === 1 ? 'Specialist' : 'Specialists'}.{' '}
-                    {removal.specialistNames.length === 1 ? 'Its' : 'Their'} saved references will
-                    become unavailable.
+                    {removal.specialistNames.length === 1
+                      ? t(
+                          'This Connector is used by {{count}} Specialist. Its saved references will become unavailable.',
+                          { count: removal.specialistNames.length }
+                        )
+                      : t(
+                          'This Connector is used by {{count}} Specialists. Their saved references will become unavailable.',
+                          { count: removal.specialistNames.length }
+                        )}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {removal.specialistNames.join(', ')}
@@ -679,7 +698,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                 </div>
               ) : removal?.specialistNames === undefined ? (
                 <p className="mt-4 text-xs text-muted-foreground">
-                  Specialist references could not be checked. You can still remove this Connector.
+                  {tCommon(
+                    'Specialist references could not be checked. You can still remove this Connector.'
+                  )}
                 </p>
               ) : null}
               {removalError ? (
@@ -688,7 +709,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                   className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
                 >
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <span>{removalError}</span>
+                  <span>{t(removalError)}</span>
                 </div>
               ) : null}
             </div>
@@ -701,7 +722,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                   className={dialogCancelButtonClassName}
                   disabled={removing}
                 >
-                  Cancel
+                  {tCommon('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               <Button
@@ -710,7 +731,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                 disabled={removing}
                 onClick={() => void confirmRemoval()}
               >
-                {removing ? 'Removing…' : 'Remove Connector'}
+                {removing ? t('Removing…') : t('Remove Connector')}
               </Button>
             </div>
           </AlertDialog.Content>

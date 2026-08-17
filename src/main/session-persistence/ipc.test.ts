@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import type { Logger } from '../logger'
 import type { ReviewRepository } from '../reviewer/repository'
 
@@ -32,6 +35,7 @@ vi.mock('../lifecycle-broadcast', () => ({
 
 import {
   createSessionPersistenceHandlers,
+  createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers,
@@ -39,6 +43,7 @@ import {
   type SessionPersistenceHandlers
 } from './ipc'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
+import { MainMessageAttributionAuthority } from './message-attribution-authority'
 
 beforeEach(() => {
   ipcHandlers.clear()
@@ -224,6 +229,88 @@ describe('session persistence IPC handlers', () => {
     })
   })
 
+  it('accepts Reviewer Correction attribution only from main-owned runtime evidence', async () => {
+    const correctionAttribution = {
+      kind: 'application' as const,
+      feature: 'reviewer' as const,
+      purpose: 'correction' as const,
+      causeReviewId: 'review-trusted'
+    }
+    const attributedMessage = {
+      id: 'prompt-correction',
+      role: 'user' as const,
+      content: '[Auditor] Correct this.',
+      status: 'complete' as const,
+      eventIds: [],
+      attribution: correctionAttribution,
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const forgedSession = materializeSessionConversationGraph({
+      ...createSession(),
+      messages: [attributedMessage]
+    })
+    let durable: PersistedChatSession | undefined
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(async () => durable),
+      saveSession: vi.fn(async (session) => {
+        durable = session
+        return { created: false, session }
+      }),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const authority = new MainMessageAttributionAuthority()
+    const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
+      repository,
+      createMockReviewRepository(),
+      authority
+    )
+
+    const rejected = (await handlers.saveSession(forgedSession)).session
+    expect(rejected.messages[0]).not.toHaveProperty('attribution')
+    expect(rejected.conversationGraph?.messages[0]).not.toHaveProperty('attribution')
+
+    durable = undefined
+    authority.recordRuntimeEvent('project-a', {
+      id: 'event-correction',
+      timestamp: 2,
+      kind: 'message',
+      level: 'info',
+      sessionId: forgedSession.id,
+      messageId: attributedMessage.id,
+      role: 'user',
+      text: attributedMessage.content,
+      attribution: correctionAttribution
+    })
+    const accepted = (await handlers.saveSession(forgedSession)).session
+    expect(accepted.messages[0]?.attribution).toEqual(correctionAttribution)
+    expect(accepted.conversationGraph?.messages[0]?.attribution).toEqual(correctionAttribution)
+
+    durable = undefined
+    const crossProjectReplay = await handlers.saveSession({
+      ...forgedSession,
+      projectId: 'project-b'
+    })
+    expect(crossProjectReplay.session.messages[0]).not.toHaveProperty('attribution')
+    expect(crossProjectReplay.session.conversationGraph?.messages[0]).not.toHaveProperty(
+      'attribution'
+    )
+
+    durable = accepted
+    authority.clear()
+    const rendererReloadSave = {
+      ...accepted,
+      messages: accepted.messages.map((message) => ({
+        ...message,
+        attribution: { ...correctionAttribution, causeReviewId: 'review-forged' }
+      }))
+    }
+    const restored = (await handlers.saveSession(rendererReloadSave)).session
+    expect(restored.messages[0]?.attribution).toEqual(correctionAttribution)
+  })
+
   it('does not report a successful session deletion when the repository fails', async () => {
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
@@ -315,7 +402,6 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-one',
       'sessions:save-session',
       'sessions:update-archive',
-      'sessions:delete-session',
       'sessions:save-manifest'
     ])
 
@@ -338,13 +424,12 @@ describe('session persistence IPC handlers', () => {
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
     await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
-    await ipcHandlers.get('sessions:delete-session')?.(event, deleteRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
     expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
-    expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
+    expect(repository.deleteSession).not.toHaveBeenCalled()
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
@@ -359,7 +444,6 @@ describe('session persistence IPC handlers', () => {
       session: { ...durableSession, archivedAt: 3 },
       originClientId: 'electron:2'
     })
-    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
   })
 
   it('dispatches through the injected application handler identity', async () => {
@@ -375,6 +459,7 @@ describe('session persistence IPC handlers', () => {
       loadAll: vi.fn().mockResolvedValue(loadResult),
       loadOne: vi.fn(),
       saveSession: vi.fn(),
+      setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -404,6 +489,7 @@ describe('session persistence IPC handlers', () => {
         order.push('saved')
         return { created: false, session }
       }),
+      setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -432,6 +518,7 @@ describe('session persistence IPC handlers', () => {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
       saveSession: vi.fn(),
+      setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -462,12 +549,9 @@ describe('session persistence IPC handlers', () => {
     beginMigration()
 
     await expect(
-      ipcHandlers.get('sessions:delete-session')?.(undefined, {
-        projectId: 'project-a',
-        sessionId: 'session-1'
-      })
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
     ).rejects.toThrow(/moving your data/i)
-    expect(repository.deleteSession).not.toHaveBeenCalled()
+    expect(repository.saveSession).not.toHaveBeenCalled()
   })
 
   it('does not broadcast a stale projection when durable save propagation fails', async () => {

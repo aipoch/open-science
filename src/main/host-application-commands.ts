@@ -34,6 +34,7 @@ import type {
   ActiveSessionInfo,
   DataRootInspection,
   DataRootValidationResult,
+  DiscardMigratedCopyResult,
   MigrationOutcome,
   RevealAppStorageResult,
   StorageInfo
@@ -207,6 +208,9 @@ const remoteAccessCommands = Object.freeze({
 })
 
 const reviewerCommands = Object.freeze({
+  abort: defineApplicationCommand<'reviewer:abort', readonly [request: ReviewSessionRequest], void>(
+    'reviewer:abort'
+  ),
   abortFixLoop: defineApplicationCommand<
     'reviewer:abort-fix-loop',
     readonly [request: ReviewSessionRequest],
@@ -239,7 +243,7 @@ const storageCommands = Object.freeze({
   discardMigratedCopy: defineApplicationCommand<
     'storage:discard-migrated-copy',
     readonly [request: StorageParentRequest],
-    void
+    DiscardMigratedCopyResult
   >('storage:discard-migrated-copy'),
   dismissLegacyMovePrompt: defineApplicationCommand<
     'storage:dismiss-legacy-move-prompt',
@@ -349,7 +353,7 @@ type HostApplicationCommandDependencies = Readonly<{
     RemoteAccessService,
     'snapshot' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
   >
-  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abortFixLoop'>
+  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
     getInfo: () => Promise<StorageInfo>
     revealAppStorage: () => Promise<RevealAppStorageResult>
@@ -361,7 +365,7 @@ type HostApplicationCommandDependencies = Readonly<{
     setDataRootAndRelaunch: (request: StorageRootRequest) => Promise<DataRootValidationResult>
     cancelMigrate: () => void
     commitAndRelaunch: (request: StorageParentRequest) => Promise<MigrationOutcome>
-    discardMigratedCopy: (request: StorageParentRequest) => Promise<void>
+    discardMigratedCopy: (request: StorageParentRequest) => Promise<DiscardMigratedCopyResult>
     dismissLegacyMovePrompt: () => Promise<void>
   }>
   update: UpdateCommandOwner
@@ -504,6 +508,7 @@ const registerHostApplicationCommands = (
       }
     })
     scope.registerGroup(hostApplicationCommandGroups[6], {
+      'reviewer:abort': ({ args }) => dependencies.reviewer.abort(args[0]),
       'reviewer:abort-fix-loop': ({ args }) => dependencies.reviewer.abortFixLoop(args[0]),
       'reviewer:get-for-session': ({ args }) => dependencies.reviewer.getForSession(args[0]),
       'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])

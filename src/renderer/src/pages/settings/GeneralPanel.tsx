@@ -1,7 +1,9 @@
 import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { LanguageSelect } from '@/components/LanguageControls'
 import { ThemeSegmentedControl } from '@/components/ThemeControls'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
@@ -36,6 +38,7 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 // General app settings. Hosts the Diagnostics (log file) tools and the community/connect links. The log
 // file stays on this device and is never transmitted by the app.
 const GeneralPanel = (): React.JSX.Element => {
+  const { t } = useTranslation()
   const isMac = window.api.platform === 'darwin'
   const [logPath, setLogPath] = useState<string | null>(null)
   const [message, setMessage] = useState<string | undefined>(undefined)
@@ -106,35 +109,54 @@ const GeneralPanel = (): React.JSX.Element => {
       <AppVersionSection />
 
       <SettingsSection
-        title="Appearance"
-        description="Choose how the app looks. System follows your device; light and dark stay fixed. Your choice is remembered on this device."
-        aria-label="Appearance"
+        title={t('Appearance')}
+        description={t(
+          'Choose how the app looks and reads. System follows your device; the other choices stay fixed. Your selection is remembered on this device.'
+        )}
+        aria-label={t('Appearance')}
         separated
       >
         <SettingsRow
-          label="Theme"
+          label={t('Theme')}
           description={
             isMac
-              ? 'Follow the system setting, or force light or dark. The Dock icon follows the resolved theme.'
-              : 'Follow the system setting, or force light or dark.'
+              ? t(
+                  'Follow the system setting, or force light or dark. The Dock icon follows the resolved theme.'
+                )
+              : t('Follow the system setting, or force light or dark.')
           }
+
           className="pt-0"
           controlClassName="flex justify-end"
         >
           <ThemeSegmentedControl />
         </SettingsRow>
+
+        <SettingsRow
+          label={t('Language')}
+          description={t(
+            'Follow the system setting, or pick a language. System is detected once at startup, so a change to your device language takes effect the next time the app opens.'
+          )}
+        >
+          <LanguageSelect />
+        </SettingsRow>
       </SettingsSection>
 
       {window.api.platform === 'win32' && window.api.window?.onCloseConfirmRequest ? (
         <SettingsSection
-          title="Window behavior"
-          description="Choose what the titlebar close button does."
-          aria-label="Window behavior"
+          title={t('Window behavior')}
+          description={t('Choose what the titlebar close button does.')}
+          aria-label={t('Window behavior')}
           separated
         >
           <SettingsRow
-            label="When closing the window"
-            description="Ask each time, keep Open Science running in the tray, or quit the app."
+            label={t('When closing the window')}
+            description={t(
+              'Ask each time, keep {{appName}} running in the tray, or quit the app.',
+              {
+                appName: APP.name
+              }
+            )}
             className="pt-0"
           >
             <Select
@@ -145,19 +167,19 @@ const GeneralPanel = (): React.JSX.Element => {
                 )
               }
             >
-              <SelectTrigger aria-label="When closing the window">
+              <SelectTrigger aria-label={t('When closing the window')}>
                 <span>
                   {closePreference === 'minimize'
-                    ? 'Minimize to tray'
+                    ? t('Minimize to tray')
                     : closePreference === 'quit'
-                      ? 'Quit'
-                      : 'Ask every time'}
+                      ? t('Quit')
+                      : t('Ask every time')}
                 </span>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="ask">Ask every time</SelectItem>
-                <SelectItem value="minimize">Minimize to tray</SelectItem>
-                <SelectItem value="quit">Quit</SelectItem>
+                <SelectItem value="ask">{t('Ask every time')}</SelectItem>
+                <SelectItem value="minimize">{t('Minimize to tray')}</SelectItem>
+                <SelectItem value="quit">{t('Quit')}</SelectItem>
               </SelectContent>
             </Select>
           </SettingsRow>
@@ -165,34 +187,36 @@ const GeneralPanel = (): React.JSX.Element => {
       ) : null}
 
       <SettingsSection
-        title="Notifications"
-        description={
-          <>
-            Get a desktop notification when a task finishes, fails, or waits for your approval while
-            you&apos;re away from the app.
-          </>
-        }
-        aria-label="Notifications"
+        title={t('Notifications')}
+        description={t(
+          "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app."
+        )}
+        aria-label={t('Notifications')}
         separated
       >
         <SettingsRow
-          label="Task notifications"
-          description="Selecting a notification brings Open Science back to the front and opens the task."
+          label={t('Task notifications')}
+          description={t(
+            'Selecting a notification brings {{appName}} back to the front and opens the task.',
+            {
+              appName: APP.name
+            }
+          )}
           className="pt-0"
         >
           <div className="flex justify-end">
             <SettingsToggle
               enabled={notificationsEnabled}
-              aria-label="Toggle task notifications"
+              aria-label={t('Toggle task notifications')}
               onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
             />
           </div>
         </SettingsRow>
 
         <p className="mt-1 text-xs text-muted-foreground">
-          Notifications only appear while you&apos;re using another app. Tasks you cancel and
-          failures the app retries automatically stay silent. Your operating system may ask for
-          notification permission the first time one appears.
+          {t(
+            "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears."
+          )}
         </p>
       </SettingsSection>
 
@@ -201,17 +225,18 @@ const GeneralPanel = (): React.JSX.Element => {
       {!isMac ? <AppIconSection /> : null}
 
       <SettingsSection
-        title="Diagnostics"
-        description={
-          <>
-            View this device&apos;s runtime log — it records what the app is doing so problems can
-            be diagnosed.
-          </>
-        }
-        aria-label="Diagnostics"
+        title={t('Diagnostics')}
+        description={t(
+          "View this device's runtime log — it records what the app is doing so problems can be diagnosed."
+        )}
+        aria-label={t('Diagnostics')}
         separated
       >
-        <SettingsRow label="Log file" controlClassName="w-auto justify-self-end" className="pt-0">
+        <SettingsRow
+          label={t('Log file')}
+          controlClassName="w-auto justify-self-end"
+          className="pt-0"
+        >
           <div className="flex items-center gap-2">
             <Button
               type="button"
@@ -220,7 +245,7 @@ const GeneralPanel = (): React.JSX.Element => {
               disabled={!logPath}
             >
               <FolderOpen className="size-4" aria-hidden="true" />
-              Reveal
+              {t('Reveal')}
             </Button>
             <Button
               type="button"
@@ -229,45 +254,51 @@ const GeneralPanel = (): React.JSX.Element => {
               disabled={isOpening || !logPath}
             >
               <ExternalLink className="size-4" aria-hidden="true" />
-              {isOpening ? 'Opening…' : 'Open'}
+              {isOpening ? t('Opening…') : t('Open')}
             </Button>
           </div>
         </SettingsRow>
 
         <pre
           className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
-          aria-label="Log file path"
+          aria-label={t('Log file path')}
         >
-          {logPath ?? 'Not available yet.'}
+          {logPath ?? t('Not available yet.')}
         </pre>
 
         {message ? (
           <p className="mt-2 text-xs text-destructive" role="alert">
-            {message}
+            {t(message)}
           </p>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">
-          Something not working?{' '}
-          <ExternalTextLink href={APP.links.githubIssues}>Open an issue on GitHub</ExternalTextLink>{' '}
-          and attach the log above. It stays on this device and is never sent automatically; it may
-          contain local file paths, so review it before sharing.
+          {/* Trans clones each component and injects the translated text as its children, so the
+              empty string here is only satisfying the required prop — it never renders. */}
+          <Trans
+            i18nKey="Something not working? <docsLink>Open an issue on GitHub</docsLink> and attach the log above. It stays on this device and is never sent automatically; it may contain local file paths, so review it before sharing."
+            components={{
+              // Named docsLink, not link: <link> is a void HTML element, so the parser Trans uses
+              // self-closes it and the label would render as a sibling of an empty anchor.
+              docsLink: <ExternalTextLink href={APP.links.githubIssues}>{''}</ExternalTextLink>
+            }}
+          />
         </p>
       </SettingsSection>
 
       <SettingsSection
-        title="Command line tool"
+        title={t('Command line tool')}
         description={
-          <>
-            Install the <code className="font-mono">open-science</code> command so you can start,
-            stop, and check the backend from a terminal, then use it entirely from your browser.
-          </>
+          <Trans
+            i18nKey="Install the <code>open-science</code> command so you can start, stop, and check the backend from a terminal, then use it entirely from your browser."
+            components={{ code: <code className="font-mono" /> }}
+          />
         }
-        aria-label="Command line tool"
+        aria-label={t('Command line tool')}
         separated
       >
         <SettingsRow
-          label="open-science"
+          label={t('open-science')}
           controlClassName="w-auto justify-self-end"
           className="pt-0"
         >
@@ -278,14 +309,18 @@ const GeneralPanel = (): React.JSX.Element => {
             disabled={isUpdatingCli || cli === null}
           >
             <Terminal className="size-4" aria-hidden="true" />
-            {isUpdatingCli ? 'Working…' : cli?.installed ? 'Uninstall command' : 'Install command'}
+            {isUpdatingCli
+              ? t('Working…')
+              : cli?.installed
+                ? t('Uninstall command')
+                : t('Install command')}
           </Button>
         </SettingsRow>
 
         {cli?.installed ? (
           <pre
             className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
-            aria-label="Command line tool path"
+            aria-label={t('Command line tool path')}
           >
             {cli.target}
           </pre>
@@ -297,28 +332,24 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {cliError ? (
           <p className="mt-2 text-xs text-destructive" role="alert">
-            {cliError}
+            {t(cliError)}
           </p>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">
-          Once installed, run <code className="font-mono">open-science start</code> to launch the
-          backend and open the authenticated URL, then{' '}
-          <code className="font-mono">open-science stop</code> to shut it down.{' '}
-          <code className="font-mono">status</code> and <code className="font-mono">url</code> are
-          also available.
+          <Trans
+            i18nKey="Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available."
+            components={{ code: <code className="font-mono" /> }}
+          />
         </p>
       </SettingsSection>
 
       <SettingsSection
-        title="Enjoying Open Science?"
-        description={
-          <>
-            It&apos;s free and open source. Star it on GitHub to help others find it, and come build
-            in public with us on Discord and X. Thanks for being here.
-          </>
-        }
-        aria-label="Community"
+        title={t('Enjoying {{appName}}?', { appName: APP.name })}
+        description={t(
+          "It's free and open source. Star it on GitHub to help others find it, and come build in public with us on Discord and X. Thanks for being here."
+        )}
+        aria-label={t('Community')}
         separated
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -327,7 +358,7 @@ const GeneralPanel = (): React.JSX.Element => {
             href={APP.links.discord}
             target="_blank"
             rel="noreferrer"
-            aria-label={`Join the ${APP.name} community on Discord`}
+            aria-label={t('Join the {{appName}} community on Discord', { appName: APP.name })}
             className={socialLinkClassName}
           >
             <DiscordMark className="size-4" />
@@ -337,7 +368,7 @@ const GeneralPanel = (): React.JSX.Element => {
             href={APP.links.x}
             target="_blank"
             rel="noreferrer"
-            aria-label={`Follow ${APP.name} on X`}
+            aria-label={t('Follow {{appName}} on X', { appName: APP.name })}
             className={socialLinkClassName}
           >
             <XMark className="size-4" />X
@@ -346,11 +377,11 @@ const GeneralPanel = (): React.JSX.Element => {
             href={APP.links.website}
             target="_blank"
             rel="noreferrer"
-            aria-label={`Open the ${APP.name} website`}
+            aria-label={t('Open the {{appName}} website', { appName: APP.name })}
             className={socialLinkClassName}
           >
             <Globe className="size-4" strokeWidth={2} aria-hidden="true" />
-            Website
+            {t('Website')}
           </a>
         </div>
       </SettingsSection>

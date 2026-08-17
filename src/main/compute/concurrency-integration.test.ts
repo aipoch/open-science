@@ -182,11 +182,64 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     expect(job2?.status).toBe('queued')
   })
 
+  it('promotes queued work when the provider ceiling is raised', async () => {
+    const providerId = computeProviderId('test-host')
+    await service.setConcurrencyLimit(providerId, 1)
+
+    await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    const queued = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-2', projectId: 'project-1' }
+    )
+    expect(queued.status).toBe('queued')
+
+    await service.setConcurrencyLimit(providerId, 2)
+
+    await vi.waitFor(async () => {
+      expect((await jobRepo.get(queued.job_id))?.status).toBe('submitted')
+    })
+  })
+
+  it('promotes queued work when the session limit is raised', async () => {
+    const providerId = computeProviderId('test-host')
+    await service.setSessionConcurrencyLimit('session-1', 1)
+
+    await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    const queued = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    expect(queued.status).toBe('queued')
+
+    await service.setSessionConcurrencyLimit('session-1', 2)
+
+    await vi.waitFor(async () => {
+      expect((await jobRepo.get(queued.job_id))?.status).toBe('submitted')
+    })
+  })
+
   it('should throw queue_full error when 100 jobs are already queued', async () => {
     const providerId = computeProviderId('test-host')
 
-    // Set provider ceiling to 0 by setting a very high session limit and low provider limit
-    // First set provider limit to 1, then submit a job, then reduce to 0 so remaining jobs queue
+    // Keep one active job in the provider's only slot so all future jobs queue.
     await hostRepo.updateConcurrencyLimit(providerId, 1)
 
     // Submit first job (will be submitted)
@@ -197,9 +250,6 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       {},
       { sessionId: 'session-1', projectId: 'project-1' }
     )
-
-    // Now set provider limit to 0 so all future jobs queue
-    await hostRepo.updateConcurrencyLimit(providerId, 0)
 
     // Queue 100 jobs
     for (let i = 0; i < 100; i++) {
@@ -451,6 +501,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       // Complete first job with terminal state
       await jobRepo.update(result1.job_id, {
         status: terminalState,
+        ...(terminalState === 'error' ? { errorCode: 'dispatch_failed' } : {}),
         finishedAt: new Date()
       })
 

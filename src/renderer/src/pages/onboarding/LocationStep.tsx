@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -60,33 +61,35 @@ const LocationStep = ({
   onBack,
   setIsRelaunching
 }: LocationStepProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
   const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
-  // Guards against handleKeepDefault's completeOnboarding firing spuriously after Restart:
-  // AlertDialog.Action fires onOpenChange(false) on click (same as Cancel), and closures inside
-  // that handler can't see isRelaunching's update from the same synchronous batch, so a ref is
-  // used instead of state for this check.
-  const isRestartingRef = useRef(false)
 
   const handleBrowseLocation = async (): Promise<void> => {
-    const picked = await window.api.storage.pickDirectory()
-    if (!picked) return
-
-    const result = await window.api.storage.inspectDataRoot(picked)
-    if (result.kind === 'invalid') {
-      setLocationError(result.error)
-      return
-    }
-
-    onLocationDraftChange({
-      chosenParent: picked,
-      chosenDataRoot: result.dataRoot,
-      chosenKind: result.kind
-    })
-    onRelaunchErrorChange(undefined)
     setLocationError(undefined)
+    try {
+      const picked = await window.api.storage.pickDirectory()
+      if (!picked) return
+
+      const result = await window.api.storage.inspectDataRoot(picked)
+      if (result.kind === 'invalid') {
+        setLocationError(result.error)
+        return
+      }
+
+      onLocationDraftChange({
+        chosenParent: picked,
+        chosenDataRoot: result.dataRoot,
+        chosenKind: result.kind
+      })
+      onRelaunchErrorChange(undefined)
+    } catch (error) {
+      setLocationError(
+        onboardingErrorMessage(error, t('Could not choose the data location. Try again.'))
+      )
+    }
   }
 
   const handleResetLocation = (): void => {
@@ -119,18 +122,11 @@ const LocationStep = ({
   }
 
   const handleKeepDefault = async (): Promise<void> => {
-    // AlertDialog.Action also fires onOpenChange(false) on click (it closes the dialog like Cancel
-    // does), which would otherwise call this a second time right after handleRestart. A ref (not
-    // isRelaunching state) is required here: both handlers run synchronously in the same click
-    // event, so a state-based check would still read the pre-update closure value.
-    if (isRestartingRef.current) return
-
     setConfirmRestart(false)
     await completeWithDefaultLocation()
   }
 
   const handleRestart = async (): Promise<void> => {
-    isRestartingRef.current = true
     setConfirmRestart(false)
     onRelaunchErrorChange(undefined)
     setIsRelaunching(true)
@@ -147,11 +143,9 @@ const LocationStep = ({
 
       // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
       // surface the error here and let the user retry or fall back to Keep default.
-      isRestartingRef.current = false
       setIsRelaunching(false)
       onRelaunchErrorChange(result.error ?? 'Could not restart to apply the new location.')
     } catch (error) {
-      isRestartingRef.current = false
       setIsRelaunching(false)
       onRelaunchErrorChange(
         onboardingErrorMessage(error, 'Could not restart to apply the new location.')
@@ -163,23 +157,26 @@ const LocationStep = ({
     <>
       <CardHeader className="gap-1 rounded-t-lg px-4 py-5 sm:px-6">
         <CardTitle className="text-[15px] font-semibold">
-          Where should Open Science store your data?
+          {t('Where should Open Science store your data?')}
         </CardTitle>
         <CardDescription className="text-xs leading-5">
-          Large files (artifacts, notebooks, environments) go here. Your settings and history always
-          stay in the default location. You can change this later in Settings.
+          {t(
+            'Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.'
+          )}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />
 
       <CardContent className="flex-1 px-4 py-5 sm:px-6">
-        <section aria-label="Choose data location" className="space-y-5">
+        <section aria-label={t('Choose data location')} className="space-y-5">
           {dataRootError ? (
             <div
               className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive sm:flex-row sm:items-center sm:justify-between"
               role="alert"
             >
-              <span>Could not load the default data location: {dataRootError}</span>
+              <span>
+                {t('Could not load the default data location:')} {dataRootError}
+              </span>
               <Button
                 type="button"
                 variant="link"
@@ -187,7 +184,7 @@ const LocationStep = ({
                 onClick={onRetryDataRootInfo}
                 className="h-auto self-start p-0 text-destructive hover:text-text-000 sm:self-auto"
               >
-                Retry
+                {t('Retry')}
               </Button>
             </div>
           ) : null}
@@ -197,16 +194,16 @@ const LocationStep = ({
               className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
               role="alert"
             >
-              Could not finish setting up storage: {relaunchError} You can retry or keep the default
-              location.
+              {t('Could not finish setting up storage:')} {t(relaunchError)}{' '}
+              {t('You can retry or keep the default location.')}
             </p>
           ) : null}
 
           <div className="rounded-xl border border-border-200 p-4">
-            <span className="text-xs font-medium text-text-100">Location</span>
+            <span className="text-xs font-medium text-text-100">{t('Location')}</span>
             <div className="mt-1 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <p
-                aria-label="Data location path"
+                aria-label={t('Data location path')}
                 className="min-w-0 flex-1 truncate rounded-lg border border-border-200 bg-bg-000 px-2.5 py-1.5 font-mono text-xs"
               >
                 {chosenDataRoot || dataRootInfo?.dataRoot || ''}
@@ -216,28 +213,36 @@ const LocationStep = ({
                 onClick={() => void handleBrowseLocation()}
                 className="inline-flex shrink-0 items-center justify-center rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 transition-colors hover:bg-bg-10"
               >
-                Browse…
+                {t('Browse…')}
               </button>
             </div>
 
             {chosenDataRoot ? (
               <p className="mt-2 text-xs text-text-100">
-                Your data will be stored in <span className="font-mono">{chosenDataRoot}</span>.
-                Open Science will restart to set this up.{' '}
-                <button
-                  type="button"
-                  onClick={handleResetLocation}
-                  className="underline underline-offset-2 hover:text-text-000"
-                >
-                  Use default location instead
-                </button>
+                {/* Trans keeps the path's mono styling and the reset button inline while letting each
+                    locale place them where its own word order needs them. */}
+                <Trans
+                  i18nKey="Your data will be stored in <path>{{path}}</path>. Open Science will restart to set this up. <reset>Use default location instead</reset>"
+                  values={{ path: chosenDataRoot }}
+                  components={{
+                    path: <span className="font-mono" />,
+                    reset: (
+                      <button
+                        type="button"
+                        onClick={handleResetLocation}
+                        className="underline underline-offset-2 hover:text-text-000"
+                      />
+                    )
+                  }}
+                />
               </p>
             ) : null}
 
             {chosenKind === 'adopt' ? (
               <p className="mt-2 text-xs text-text-100">
-                This folder already contains Open Science data — it will be used as-is (nothing is
-                moved).
+                {t(
+                  'This folder already contains Open Science data — it will be used as-is (nothing is moved).'
+                )}
               </p>
             ) : null}
 
@@ -253,19 +258,14 @@ const LocationStep = ({
       </CardContent>
       <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-4 py-3 sm:px-6">
         <Button type="button" variant="outline" onClick={onBack}>
-          Back
+          {t('Back', { context: 'step' })}
         </Button>
         <Button type="button" onClick={() => void handleFinishLocation()} className="px-4">
-          Finish
+          {t('Finish')}
         </Button>
       </CardFooter>
 
-      <AlertDialog.Root
-        open={confirmRestart}
-        onOpenChange={(open) => {
-          if (!open) void handleKeepDefault()
-        }}
-      >
+      <AlertDialog.Root open={confirmRestart} onOpenChange={setConfirmRestart}>
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content
@@ -274,7 +274,7 @@ const LocationStep = ({
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <AlertDialog.Title className={dialogTitleClassName}>
-                  Restart to set up your data?
+                  {t('Restart to set up your data?')}
                 </AlertDialog.Title>
               </div>
               <AlertDialog.Cancel asChild>
@@ -282,7 +282,7 @@ const LocationStep = ({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Close"
+                  aria-label={t('Close')}
                   className={dialogCloseButtonClassName}
                 >
                   <X className="size-4" aria-hidden="true" />
@@ -292,20 +292,23 @@ const LocationStep = ({
 
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                Open Science will restart to set up your data at{' '}
-                <span className="font-mono">{chosenDataRoot}</span>.
+                <Trans
+                  i18nKey="Open Science will restart to set up your data at <path>{{path}}</path>."
+                  values={{ path: chosenDataRoot }}
+                  components={{ path: <span className="font-mono" /> }}
+                />
               </AlertDialog.Description>
             </div>
 
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
-                  Keep default
+                <Button type="button" variant="outline" onClick={() => void handleKeepDefault()}>
+                  {t('Keep default')}
                 </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
                 <Button type="button" onClick={() => void handleRestart()}>
-                  Restart
+                  {t('Restart')}
                 </Button>
               </AlertDialog.Action>
             </div>

@@ -346,9 +346,108 @@ describe('UserSkillRepository', () => {
     expect(written).toBe('print(1)')
   })
 
+  it('rejects editor writes that exceed the shared package file-count budget', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+
+    await expect(
+      repo.createPersonal({
+        name: 'too-many-files',
+        description: 'd',
+        body: 'x',
+        references: Array.from({ length: SKILL_IMPORT_LIMITS.maxFiles }, (_, index) => ({
+          path: `reference-${index}.txt`,
+          dataBase64: Buffer.from('x').toString('base64')
+        }))
+      })
+    ).rejects.toThrow('Skill package has too many files.')
+
+    await expect(stat(join(storage, 'skills', 'personal', 'too-many-files'))).rejects.toMatchObject(
+      { code: 'ENOENT' }
+    )
+  })
+
+  it('enforces the canonical SKILL.md body and persisted metadata budget', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const oversizedText = 'x'.repeat(SKILL_IMPORT_LIMITS.maxFileBytes)
+
+    await expect(
+      repo.createPersonal({
+        name: 'oversized-body',
+        description: 'd',
+        body: oversizedText
+      })
+    ).rejects.toThrow('Skill package contains an oversized file.')
+
+    await expect(
+      repo.createPersonal({
+        name: 'oversized-metadata',
+        description: 'd',
+        body: 'x',
+        metadata: { notes: oversizedText }
+      })
+    ).rejects.toThrow('Skill package contains an oversized file.')
+
+    await expect(
+      repo.createPersonal({
+        name: 'filtered-metadata',
+        description: 'd',
+        body: 'x',
+        metadata: { 'not a persisted key': oversizedText }
+      })
+    ).resolves.toBe('personal-filtered-metadata')
+  })
+
+  it('rejects an oversized Base64 reference before publishing a live directory', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const dataBase64 = Buffer.alloc(SKILL_IMPORT_LIMITS.maxFileBytes + 1).toString('base64')
+
+    await expect(
+      repo.createPersonal({
+        name: 'oversized-reference',
+        description: 'd',
+        body: 'x',
+        references: [{ path: 'large.bin', dataBase64 }]
+      })
+    ).rejects.toThrow(/exceeds the .* limit/)
+
+    await expect(
+      stat(join(storage, 'skills', 'personal', 'oversized-reference'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects an update when preserved files exceed the package total budget', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const id = await repo.createPersonal({
+      name: 'oversized-total',
+      description: 'before',
+      body: 'before'
+    })
+    const packageRoot = join(storage, 'skills', 'personal', 'oversized-total')
+    const referencesDir = join(packageRoot, 'references')
+    await mkdir(referencesDir)
+    const sparseFileBytes = Math.floor(SKILL_IMPORT_LIMITS.maxTotalBytes / 3) + 1
+    for (const name of ['one.bin', 'two.bin', 'three.bin']) {
+      const path = join(referencesDir, name)
+      await writeFile(path, '')
+      await truncate(path, sparseFileBytes)
+    }
+
+    await expect(
+      repo.updatePersonal(id, {
+        name: 'oversized-total',
+        description: 'after',
+        body: 'after'
+      })
+    ).rejects.toThrow('Skill package exceeds the total size limit.')
+    await expect(repo.body(id)).resolves.toBe('before')
+  })
+
   it('uses the immutable name and rejects collisions, reserved prefixes, and invalid names', async () => {
     const repo = new UserSkillRepository(await makeStorage())
-
     const id = await repo.createPersonal({ name: 'my-id', description: 'd', body: 'x' })
     expect(id).toBe('personal-my-id')
 

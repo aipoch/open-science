@@ -98,7 +98,7 @@ describe('release and scheduled workflow topology', () => {
     })
     expect(nightly.jobs.build).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_build == 'true'",
+      if: "needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'runtime-source'",
       uses: './.github/workflows/build.yml',
       with: { nightly: true }
     })
@@ -204,6 +204,54 @@ describe('release and scheduled workflow topology', () => {
     expect(smokeWorkflow.on).toHaveProperty('workflow_dispatch')
     expect(smokeWorkflow.concurrency?.['cancel-in-progress']).toBe(false)
     expect(smoke['continue-on-error']).toBeUndefined()
+    const checkout = step(smoke, 'Checkout smoke harness')
+    expect(checkout).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: { 'fetch-depth': 0 }
+    })
+    expect(checkout.with).not.toHaveProperty('ref')
+    const released = step(smoke, 'Resolve released revision')
+    expect(released.run).toContain('git rev-parse "$($env:CURRENT_TAG)^{commit}"')
+    expect(released.run).toContain('git merge-base --is-ancestor $releasedSha $env:GITHUB_SHA')
+    expect(released.run).toContain(
+      'git ls-tree -r --name-only $releasedSha -- src/main/database/migrations'
+    )
+    expect(released.run).toContain('$migrationPattern')
+    expect(released.run).toContain('Unexpected released migration path')
+    expect(released.run).toContain('Released migrations are not a continuous prefix')
+    expect(released.run).toContain('"sha=$releasedSha"')
+    expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
+    expect(released.run).toContain('f12fd1f871022c7a9b771d193202d9ecf98aca96')
+    expect(released.run)
+      .toContain(`$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
+  Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+  exit 1
+}
+if ($artifactReservationBase -eq $artifactReservationCommit) {
+  $artifactRpcContract = 'reservation'
+} else {
+  $artifactRpcContract = 'legacy'
+}`)
+    expect(released.run).toContain('"artifact_rpc_contract=$artifactRpcContract"')
+    const updaterRoot = step(smoke, 'Certify Windows electron-updater differential update').env
+      ?.OPEN_SCIENCE_E2E_STORAGE_ROOT
+    const installerRoot = step(
+      smoke,
+      'Drill Windows silent upgrade, process lock, rollback, and restart'
+    ).env?.OPEN_SCIENCE_E2E_STORAGE_ROOT
+    expect(updaterRoot).toBe('${{ runner.temp }}\\open-science-updater-certification')
+    expect(installerRoot).toBe('${{ runner.temp }}\\open-science-installer-certification')
+    expect(updaterRoot).not.toBe(installerRoot)
+    expect(
+      step(smoke, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
+    ).toContain("--expected-migration-count '${{ steps.current.outputs.migration_count }}'")
+    expect(
+      step(smoke, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
+    ).toContain("--artifact-rpc-contract '${{ steps.current.outputs.artifact_rpc_contract }}'")
+    expect(step(smoke, 'Record Windows update-drill evidence')).toMatchObject({
+      env: { GITHUB_SHA: '${{ steps.current.outputs.sha }}' }
+    })
     expect(step(smoke, 'Download current Windows installer').run).toContain(
       'gh release download $env:CURRENT_TAG'
     )

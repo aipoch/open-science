@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, copyFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
@@ -17,6 +17,7 @@ type ProductionFrameWorkspace = Readonly<{
   validateInput(identity: string, session: SessionKey): Promise<boolean>
   prepare(session: SessionKey, frameId: string, inputs: readonly string[]): Promise<{ cwd: string }>
   deleteSession(session: SessionKey): Promise<void>
+  deleteProject(projectId: string): Promise<void>
 }>
 
 const safeSegment = (value: string, label: string): string => {
@@ -62,8 +63,11 @@ const assertVersionIdentityScope = (identity: string, session: SessionKey): void
 }
 
 const makeTreeRemovable = async (path: string): Promise<void> => {
-  const entry = await stat(path).catch(() => undefined)
+  const entry = await lstat(path).catch(() => undefined)
   if (!entry) return
+  // chmod and traversal must never follow a workspace symlink into caller-owned data. The parent
+  // directory is made writable, which is sufficient for rm to unlink this leaf.
+  if (entry.isSymbolicLink()) return
   if (!entry.isDirectory()) {
     await chmod(path, 0o644)
     return
@@ -75,12 +79,10 @@ const makeTreeRemovable = async (path: string): Promise<void> => {
 const createProductionFrameWorkspace = (
   options: ProductionFrameWorkspaceOptions
 ): ProductionFrameWorkspace => {
+  const projectRoot = (projectId: string): string =>
+    join(options.root, safeSegment(projectId, 'Project id'))
   const sessionRoot = (session: SessionKey): string =>
-    join(
-      options.root,
-      safeSegment(session.projectId, 'Project id'),
-      safeSegment(session.sessionId, 'Session id')
-    )
+    join(projectRoot(session.projectId), safeSegment(session.sessionId, 'Session id'))
 
   const resolve = async (
     identity: string,
@@ -136,6 +138,11 @@ const createProductionFrameWorkspace = (
     },
     async deleteSession(session: SessionKey): Promise<void> {
       const root = sessionRoot(session)
+      await makeTreeRemovable(root)
+      await rm(root, { recursive: true, force: true })
+    },
+    async deleteProject(projectId: string): Promise<void> {
+      const root = projectRoot(projectId)
       await makeTreeRemovable(root)
       await rm(root, { recursive: true, force: true })
     }

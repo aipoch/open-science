@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
@@ -119,6 +119,44 @@ describe('ACP Session presentation policy', () => {
     expect(Object.isFrozen(presentation)).toBe(true)
     expect(Object.isFrozen(presentation.metaArg)).toBe(true)
     expect(Object.isFrozen(presentation.metaArg._meta)).toBe(true)
+  })
+
+  it('grants an explicit Skill runtime scope only on primary Session setup', () => {
+    const buildSessionSetup = vi.fn(() => ({}))
+    const framework = { id: 'claude-code' as const, buildSessionSetup }
+    const baseInput = {
+      framework,
+      tooling: { artifacts: false, notebook: false, skillImport: false }
+    }
+
+    policy.buildSessionSetup(baseInput)
+    expect(buildSessionSetup).toHaveBeenLastCalledWith(
+      expect.objectContaining({ skillRuntimeScope: 'all' })
+    )
+
+    policy.buildSessionSetup({
+      ...baseInput,
+      specialistSkills: {
+        kind: 'specialist',
+        skillIds: ['literature-review'],
+        frameworkNames: ['literature-review'],
+        missingSkillIds: []
+      }
+    })
+    expect(buildSessionSetup).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        skillWhitelist: ['literature-review'],
+        skillRuntimeScope: ['literature-review']
+      })
+    )
+
+    policy.buildSessionSetup({
+      ...baseInput,
+      specialistSkills: { kind: 'unavailable', reason: 'disabled' }
+    })
+    expect(buildSessionSetup).toHaveBeenLastCalledWith(
+      expect.objectContaining({ skillWhitelist: [], skillRuntimeScope: [] })
+    )
   })
 
   it('excludes stable appends installed persistently but preserves one-off Session appends', () => {

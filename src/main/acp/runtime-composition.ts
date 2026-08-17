@@ -4,7 +4,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
-import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
+import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
@@ -51,15 +51,15 @@ import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 const log = createLogger('acp')
 
 // Builds the session-setup resolver for a project's Agent Context system-prompt append. The ACP
-// projectName carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_NAME fallback
+// projectId carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_ID fallback
 // namespace), blank contexts, and lookup failures all yield undefined so session setup proceeds
 // without an append.
 const createProjectAgentContextResolver = (repository: {
   get: (id: string) => Promise<{ agentContext?: string } | null>
-}): ((projectName: string) => Promise<string | undefined>) => {
-  return async (projectName) => {
+}): ((projectId: string) => Promise<string | undefined>) => {
+  return async (projectId) => {
     try {
-      const project = await repository.get(projectName)
+      const project = await repository.get(projectId)
       const context = project?.agentContext?.trim()
       return context ? context : undefined
     } catch (error) {
@@ -113,6 +113,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     turnToken: string,
     attachmentUri: string
   ) => void
+  onTrustedMessageAttribution?: (projectId: string, event: AcpRuntimeEvent) => void
   onSessionCancellationRequested?: (sessionId: string) => void
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
@@ -158,6 +159,7 @@ const createAcpRuntime = ({
   onSessionTurnStarted,
   onSessionTurnEnded,
   onSkillImportAttachmentEligible,
+  onTrustedMessageAttribution,
   onSessionCancellationRequested,
   onSessionUnavailable,
   onAllSessionsCancellationRequested,
@@ -176,11 +178,16 @@ const createAcpRuntime = ({
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
+  const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
   const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
   const callbacks: AcpRuntimeCallbacks = runtimeCallbacks ?? {
     onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
+      const projectId = event.sessionId
+        ? runtimeCoordinatorRef.current?.liveSessionProjectId(event.sessionId)
+        : undefined
+      if (event.attribution && projectId) onTrustedMessageAttribution?.(projectId, event)
       broadcastToRenderers('acp:event', event)
       // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
       if (taskNotifications) {
@@ -209,7 +216,7 @@ const createAcpRuntime = ({
     }
   }
 
-  return new AcpRuntimeCoordinator(
+  const runtimeCoordinator = new AcpRuntimeCoordinator(
     (runtimeCallbacks, permissionGrantStore) => {
       const selection = fixedBackend
         ? undefined
@@ -234,7 +241,7 @@ const createAcpRuntime = ({
               artifacts: {
                 configRoot,
                 dataRoot,
-                projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+                projectId: DEFAULT_ARTIFACT_PROJECT_ID,
                 mcpEntryPath,
                 repository,
                 runRegistry,
@@ -254,13 +261,13 @@ const createAcpRuntime = ({
         ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
         grantedRoots: grantedRootsRepository
           ? {
-              // Read fresh per resolution so a just-removed root stops resolving immediately.
-              resolveRootPath: async (rootId) =>
-                (await grantedRootsRepository.list()).find((root) => root.id === rootId)?.path
+              // Read fresh so revocation and access changes govern every subsequent resolution.
+              resolveRoot: async (rootId) =>
+                (await grantedRootsRepository.list()).find((root) => root.id === rootId)
             }
           : undefined,
         notebook: {
-          projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+          projectId: DEFAULT_ARTIFACT_PROJECT_ID,
           mcpEntryPath,
           getRpcConnection: ({ sessionId, projectId }) =>
             delegatedNotebookConnection
@@ -359,6 +366,7 @@ const createAcpRuntime = ({
                           dedupeKey: `authorization:session-plan:${request.artifactVersionId}`,
                           kind: 'authorization.required',
                           source: 'session-plan',
+                          attentionReason: 'waiting-plan-approval',
                           projectId: request.projectId,
                           sessionId: request.sessionId,
                           originId: request.artifactVersionId,
@@ -482,6 +490,8 @@ const createAcpRuntime = ({
       : undefined,
     delegatedWork
   )
+  runtimeCoordinatorRef.current = runtimeCoordinator
+  return runtimeCoordinator
 }
 
 export { createAcpRuntime, createProjectAgentContextResolver }

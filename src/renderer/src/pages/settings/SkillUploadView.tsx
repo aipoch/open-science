@@ -1,5 +1,6 @@
 import { AlertTriangle, Upload } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
@@ -14,29 +15,38 @@ import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview
 const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
 
 // A danger banner for a parse/validation failure (invalid bundle, missing SKILL.md, no name, ...).
-const ErrorBanner = ({ message }: { message: string }): React.JSX.Element => (
-  <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000">
-    <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-    <span>{message}</span>
-  </div>
-)
+const ErrorBanner = ({ notice }: { notice: Notice }): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000">
+      <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+      <span>{t(notice.key, notice.params)}</span>
+    </div>
+  )
+}
 
 // A muted note listing skills the bundle contained but couldn't import (too large, no SKILL.md, ...),
 // so a partial import tells the user exactly what was left out instead of failing silently.
-const SkippedNote = ({ items }: { items: SkippedEntry[] }): React.JSX.Element => (
-  <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-    <p className="font-medium text-foreground">
-      Skipped {items.length} skill{items.length === 1 ? '' : 's'}
-    </p>
-    <ul className="mt-1 flex flex-col gap-0.5">
-      {items.map((item) => (
-        <li key={`${item.fileName}:${item.source}`} className="truncate">
-          {item.source} — {item.reason}
-        </li>
-      ))}
-    </ul>
-  </div>
-)
+const SkippedNote = ({ items }: { items: SkippedEntry[] }): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+      <p className="font-medium text-foreground">
+        {t('Skipped {{count}} skills', {
+          defaultValue_one: 'Skipped {{count}} skill',
+          count: items.length
+        })}
+      </p>
+      <ul className="mt-1 flex flex-col gap-0.5">
+        {items.map((item) => (
+          <li key={`${item.fileName}:${item.source}`} className="truncate">
+            {item.source} — {item.reason}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 
 type SkillUploadViewProps = {
   onUploaded: () => void
@@ -71,16 +81,32 @@ type Candidate =
       description: string
       metadata: Record<string, string>
       body: string
-      previewError?: string
+      // Ours, so it carries a key; the bundle variant's comes from the main process as plain text.
+      previewError?: Notice
     }
 
 // One skill a bundle contained but that couldn't be imported (too large, no SKILL.md, no name, ...),
 // tagged with the file it came from so the user can tell which upload it belongs to.
 type SkippedEntry = { fileName: string; source: string; reason: string }
 
+// A message kept as its key plus interpolation values instead of a finished string. Parse errors and
+// the import summary outlive the event that produced them, so translating them at render time is what
+// lets them follow a language switch rather than freezing in the language that was active on upload.
+type NoticeKey =
+  | '{{fileName}}: file is too large (limit {{limit}}).'
+  | '{{fileName}}: no skills found in the bundle.'
+  | '{{fileName}}: {{message}}'
+  | '{{fileName}}: needs a name in its YAML frontmatter.'
+  | '{{fileName}}: unsupported file — upload a .md file or a .zip / .skill bundle.'
+  | '{{fileName}}: preview exceeds the {{limit}} limit. You can still import it.'
+  | 'Selection is too large ({{total}}); upload at most {{limit}} at a time.'
+  | 'Imported {{imported}} · skipped {{skipped}} · failed {{failed}}'
+
+type Notice = { key: NoticeKey; params?: Record<string, string> }
+
 // The outcome of parsing one picked file: zero-or-more candidates, an optional per-file error (so one
 // bad file never blocks the others), and any skills inside the file that were individually skipped.
-type ParseResult = { candidates: Candidate[]; error?: string; skipped?: SkippedEntry[] }
+type ParseResult = { candidates: Candidate[]; error?: Notice; skipped?: SkippedEntry[] }
 
 // Strips the electron IPC wrapper ("Error invoking remote method '…': Error: …") off a rejection so
 // the user sees only the human-readable message, never the internal method name.
@@ -105,15 +131,16 @@ const SkillUploadView = ({
   onUploaded,
   onWriteInstead
 }: SkillUploadViewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const createSkill = useSettingsStore((state) => state.createSkill)
   const importSkillZipBatch = useSettingsStore((state) => state.importSkillZipBatch)
   const previewSkillZip = useSettingsStore((state) => state.previewSkillZip)
   const skills = useSettingsStore((state) => state.skills)
   const [candidates, setCandidates] = useState<Candidate[] | null>(null)
-  const [errors, setErrors] = useState<string[]>([])
+  const [errors, setErrors] = useState<Notice[]>([])
   const [skipped, setSkipped] = useState<SkippedEntry[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [summary, setSummary] = useState<string | null>(null)
+  const [summary, setSummary] = useState<Notice | null>(null)
   const [busy, setBusy] = useState(false)
   const candidatePreview = useSkillImportCandidatePreview()
 
@@ -128,7 +155,13 @@ const SkillUploadView = ({
       ? SKILL_IMPORT_LIMITS.maxBundleBytes
       : SKILL_IMPORT_LIMITS.maxFileBytes
     if (file.size > sizeLimit) {
-      return { candidates: [], error: `${file.name}: file is too large (limit ${mb(sizeLimit)}).` }
+      return {
+        candidates: [],
+        error: {
+          key: '{{fileName}}: file is too large (limit {{limit}}).',
+          params: { fileName: file.name, limit: mb(sizeLimit) }
+        }
+      }
     }
 
     if (isBundle) {
@@ -141,7 +174,13 @@ const SkillUploadView = ({
           reason: entry.reason
         }))
         if (previews.length === 0 && skipped.length === 0) {
-          return { candidates: [], error: `${file.name}: no skills found in the bundle.` }
+          return {
+            candidates: [],
+            error: {
+              key: '{{fileName}}: no skills found in the bundle.',
+              params: { fileName: file.name }
+            }
+          }
         }
         return {
           candidates: previews.map((preview) => ({
@@ -162,14 +201,28 @@ const SkillUploadView = ({
           skipped: skippedEntries
         }
       } catch (error) {
-        return { candidates: [], error: `${file.name}: ${cleanMessage(error)}` }
+        // The message half comes from the main process, so it passes through in whatever language the
+        // backend produced; only the "<file>: <message>" frame is localized.
+        return {
+          candidates: [],
+          error: {
+            key: '{{fileName}}: {{message}}',
+            params: { fileName: file.name, message: cleanMessage(error) }
+          }
+        }
       }
     }
 
     if (name.endsWith('.md') || name.endsWith('.markdown')) {
       const parsed = parseSkillDocument(await file.text())
       if (!parsed.name) {
-        return { candidates: [], error: `${file.name}: needs a name in its YAML frontmatter.` }
+        return {
+          candidates: [],
+          error: {
+            key: '{{fileName}}: needs a name in its YAML frontmatter.',
+            params: { fileName: file.name }
+          }
+        }
       }
       return {
         candidates: [
@@ -183,7 +236,13 @@ const SkillUploadView = ({
             body: parsed.body,
             previewError:
               file.size > SKILL_IMPORT_LIMITS.maxPreviewContentBytes
-                ? `${file.name}: preview exceeds the ${mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)} limit. You can still import it.`
+                ? {
+                    key: '{{fileName}}: preview exceeds the {{limit}} limit. You can still import it.',
+                    params: {
+                      fileName: file.name,
+                      limit: mb(SKILL_IMPORT_LIMITS.maxPreviewContentBytes)
+                    }
+                  }
                 : undefined
           }
         ]
@@ -192,7 +251,10 @@ const SkillUploadView = ({
 
     return {
       candidates: [],
-      error: `${file.name}: unsupported file — upload a .md file or a .zip / .skill bundle.`
+      error: {
+        key: '{{fileName}}: unsupported file — upload a .md file or a .zip / .skill bundle.',
+        params: { fileName: file.name }
+      }
     }
   }
 
@@ -208,7 +270,13 @@ const SkillUploadView = ({
       if (totalSize > SKILL_IMPORT_LIMITS.maxBundleBytes) {
         setCandidates([])
         setErrors([
-          `Selection is too large (${mb(totalSize)}); upload at most ${mb(SKILL_IMPORT_LIMITS.maxBundleBytes)} at a time.`
+          {
+            key: 'Selection is too large ({{total}}); upload at most {{limit}} at a time.',
+            params: {
+              total: mb(totalSize),
+              limit: mb(SKILL_IMPORT_LIMITS.maxBundleBytes)
+            }
+          }
         ])
         setSkipped([])
         setSelected(new Set())
@@ -216,7 +284,7 @@ const SkillUploadView = ({
       }
       const results = await Promise.all(files.map(parseFile))
       setCandidates(results.flatMap((result) => result.candidates))
-      setErrors(results.map((result) => result.error).filter((error): error is string => !!error))
+      setErrors(results.map((result) => result.error).filter((error): error is Notice => !!error))
       setSkipped(results.flatMap((result) => result.skipped ?? []))
       // Default selection is empty — the user opts in per row (or via Select all).
       setSelected(new Set())
@@ -282,7 +350,14 @@ const SkillUploadView = ({
       }
     }
 
-    setSummary(`Imported ${imported} · skipped ${skipped} · failed ${failed}`)
+    setSummary({
+      key: 'Imported {{imported}} · skipped {{skipped}} · failed {{failed}}',
+      params: {
+        imported: String(imported),
+        skipped: String(skipped),
+        failed: String(failed)
+      }
+    })
     setBusy(false)
     if (imported > 0) onUploaded()
   }
@@ -331,27 +406,30 @@ const SkillUploadView = ({
   if (candidates !== null && candidates.length > 0) {
     return (
       <div className="p-5">
-        <h2 className="text-base font-semibold text-foreground">Confirm import</h2>
+        <h2 className="text-base font-semibold text-foreground">{t('Confirm import')}</h2>
         <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-          Pick the skills you want to add. Nothing is written until you import.
+          {t('Pick the skills you want to add. Nothing is written until you import.')}
         </p>
 
         <div className="mt-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <h3 className="text-sm font-semibold text-foreground">
-                Found {candidates.length} skill{candidates.length === 1 ? '' : 's'}
+                {t('Found {{count}} skills', {
+                  defaultValue_one: 'Found {{count}} skill',
+                  count: candidates.length
+                })}
               </h3>
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
-                  aria-label="Select all"
+                  aria-label={t('Select all')}
                   checked={allSelected}
                   onChange={toggleAll}
                   disabled={busy}
                   className="size-4 shrink-0"
                 />
-                Select all
+                {t('Select all')}
               </label>
               <Button
                 type="button"
@@ -360,7 +438,7 @@ const SkillUploadView = ({
                 onClick={invertSelection}
                 disabled={busy}
               >
-                Invert
+                {t('Invert')}
               </Button>
             </div>
             <Button
@@ -369,7 +447,9 @@ const SkillUploadView = ({
               onClick={() => void importSelected()}
               disabled={busy || selected.size === 0}
             >
-              {busy ? 'Importing…' : `Import selected (${selected.size})`}
+              {busy
+                ? t('Importing…')
+                : t('Import selected ({{selected}})', { selected: selected.size })}
             </Button>
           </div>
 
@@ -385,7 +465,9 @@ const SkillUploadView = ({
                 <li key={candidate.key} className="flex items-center gap-3 py-2.5">
                   <input
                     type="checkbox"
-                    aria-label={`Select ${candidate.name}`}
+                    aria-label={t('Select {{name}}', {
+                      name: candidate.name
+                    })}
                     checked={selected.has(candidate.key)}
                     onChange={() => toggle(candidate.key)}
                     disabled={busy}
@@ -393,11 +475,18 @@ const SkillUploadView = ({
                   />
                   <button
                     type="button"
-                    aria-label={`Preview ${candidate.name}`}
+                    aria-label={t('Preview {{name}}', {
+                      name: candidate.name
+                    })}
                     onClick={() =>
                       candidatePreview.openPreview(() => {
                         if (candidate.previewError) {
-                          throw new Error(candidate.previewError)
+                          // Bundle previews carry a main-process string; markdown ones carry our key.
+                          throw new Error(
+                            typeof candidate.previewError === 'string'
+                              ? candidate.previewError
+                              : t(candidate.previewError.key, candidate.previewError.params)
+                          )
                         }
                         return {
                           name: candidate.name,
@@ -422,11 +511,11 @@ const SkillUploadView = ({
                     </span>
                     {alreadyImported ? (
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        Already imported
+                        {t('Already imported')}
                       </span>
                     ) : nameExists ? (
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        Name exists
+                        {t('Name exists')}
                       </span>
                     ) : null}
                   </button>
@@ -437,10 +526,12 @@ const SkillUploadView = ({
         </div>
 
         {errors.map((error) => (
-          <ErrorBanner key={error} message={error} />
+          <ErrorBanner key={`${error.key}:${error.params?.fileName ?? ''}`} notice={error} />
         ))}
         {skipped.length > 0 ? <SkippedNote items={skipped} /> : null}
-        {summary ? <p className="mt-3 text-xs text-muted-foreground">{summary}</p> : null}
+        {summary ? (
+          <p className="mt-3 text-xs text-muted-foreground">{t(summary.key, summary.params)}</p>
+        ) : null}
 
         <div className="mt-4">
           <Button
@@ -456,7 +547,7 @@ const SkillUploadView = ({
             disabled={busy}
             className="text-muted-foreground"
           >
-            Choose different files
+            {t('Choose different files')}
           </Button>
         </div>
         <SkillImportCandidatePreview {...candidatePreview.previewProps} />
@@ -466,22 +557,23 @@ const SkillUploadView = ({
 
   return (
     <div className="p-5">
-      <h2 className="text-base font-semibold text-foreground">Upload skills</h2>
+      <h2 className="text-base font-semibold text-foreground">{t('Upload skills')}</h2>
       <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select
-        several files at once, and a single archive may contain multiple skills.
+        {t(
+          'Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.'
+        )}
       </p>
 
       <label
         {...dropZoneProps}
         className="relative mt-4 flex cursor-pointer flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center transition-colors motion-reduce:transition-none hover:bg-muted/40"
       >
-        {isDragging ? <FileDropOverlay label="Drop to upload" className="rounded-lg" /> : null}
+        {isDragging ? <FileDropOverlay label={t('Drop to upload')} className="rounded-lg" /> : null}
         <input
           type="file"
           multiple
           accept=".md,.markdown,.zip,.skill"
-          aria-label="Upload skill files"
+          aria-label={t('Upload skill files')}
           onChange={onInputChange}
           className="sr-only"
         />
@@ -489,23 +581,26 @@ const SkillUploadView = ({
           <Upload className="size-5" aria-hidden="true" />
         </span>
         <span className="text-sm font-medium text-foreground">
-          {busy ? 'Reading…' : 'Drag and drop or click to upload'}
+          {busy ? t('Reading…') : t('Drag and drop or click to upload')}
         </span>
         <span className="max-w-sm text-xs text-muted-foreground">
-          .md files need a name and description in YAML frontmatter. .zip or .skill bundles must
-          contain a SKILL.md. You&apos;ll confirm before anything is added.
+          {t(
+            ".md files need a name and description in YAML frontmatter. .zip or .skill bundles must contain a SKILL.md. You'll confirm before anything is added."
+          )}
         </span>
       </label>
 
       {errors.map((error) => (
-        <ErrorBanner key={error} message={error} />
+        <ErrorBanner key={`${error.key}:${error.params?.fileName ?? ''}`} notice={error} />
       ))}
       {skipped.length > 0 ? <SkippedNote items={skipped} /> : null}
-      {summary ? <p className="mt-3 text-xs text-muted-foreground">{summary}</p> : null}
+      {summary ? (
+        <p className="mt-3 text-xs text-muted-foreground">{t(summary.key, summary.params)}</p>
+      ) : null}
 
       <div className="mt-5 text-center">
         <Button type="button" variant="ghost" onClick={onWriteInstead}>
-          Write from scratch instead
+          {t('Write from scratch instead')}
         </Button>
       </div>
     </div>

@@ -9,6 +9,7 @@ import type {
 } from './notebook'
 import type { AgentFrameworkId } from './settings'
 import type {
+  MessageAttribution,
   PersistedActivityGroup,
   PersistedMessageRole,
   PersistedToolActivity
@@ -41,6 +42,33 @@ export type CreateArtifactVersionRequest = {
   filename: string
   contentType?: string
   titleSnapshot?: string
+  resourceReservationId?: string
+  resourceSizeBytes?: number
+  resourceChecksum?: string
+}
+
+export type ReserveArtifactWriteRequest = {
+  projectId: string
+  appSessionId: string
+  artifactStorageSessionId: string
+  artifactRunId: string
+  writeOperationId: string
+  filename: string
+  fileBytes: number
+}
+
+export type ArtifactWriteReservation = {
+  id: string
+  fileBytes: number
+  expiresAt: number
+}
+
+export type ReleaseArtifactWriteReservationRequest = {
+  projectId: string
+  appSessionId: string
+  artifactStorageSessionId: string
+  artifactRunId: string
+  reservationId: string
 }
 
 export type ReplayArtifactVersionRequest = {
@@ -54,7 +82,11 @@ export type ReplayArtifactVersionRequest = {
   producerRunId?: string
 }
 
-export type ArtifactRpcMethod = 'artifactCreateVersion' | 'artifactReplayVersion'
+export type ArtifactRpcMethod =
+  | 'artifactReserveWrite'
+  | 'artifactReleaseWrite'
+  | 'artifactCreateVersion'
+  | 'artifactReplayVersion'
 
 // App-issued capability scope for one active assistant turn. These fields are runtime-owned and
 // must match every durable Artifact RPC call; the model and MCP process cannot widen the scope.
@@ -453,6 +485,7 @@ export type ProvenanceMessage = {
   supersedesMessageId?: string
   role: PersistedMessageRole
   content: string
+  attribution?: MessageAttribution
   parts?: ProvenanceMessagePart[]
   artifacts?: Array<{ versionId: string; name: string }>
   createdAt: number

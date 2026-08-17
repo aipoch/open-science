@@ -7,8 +7,10 @@ import {
   createSessionFile,
   ConversationGraphMaterializationError,
   materializeSessionConversationGraph,
+  isReviewerCorrectionAttribution,
   sanitizeActivityGroup,
   normalizeSessionFile,
+  sanitizeMessageAttribution,
   sanitizeMessageImages,
   sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
@@ -37,6 +39,52 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
   activities: [activity],
   createdAt: 1,
   updatedAt: 1
+})
+
+describe('artifact persistence', () => {
+  it('preserves valid creation timestamps while accepting historical artifacts without one', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      artifacts: [
+        {
+          id: 'artifact-current',
+          kind: 'managed-file',
+          path: '/workspace/current.md',
+          createdAt: 1_723_000_000_000
+        },
+        {
+          id: 'artifact-historical',
+          kind: 'managed-file',
+          path: '/workspace/historical.md'
+        },
+        {
+          id: 'artifact-invalid',
+          kind: 'managed-file',
+          path: '/workspace/invalid.md',
+          createdAt: -1
+        }
+      ]
+    })
+
+    expect(restored?.artifacts).toEqual([
+      {
+        id: 'artifact-current',
+        kind: 'managed-file',
+        path: '/workspace/current.md',
+        createdAt: 1_723_000_000_000
+      },
+      {
+        id: 'artifact-historical',
+        kind: 'managed-file',
+        path: '/workspace/historical.md'
+      },
+      {
+        id: 'artifact-invalid',
+        kind: 'managed-file',
+        path: '/workspace/invalid.md'
+      }
+    ])
+  })
 })
 
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
@@ -139,6 +187,38 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('writes a canonical graph while retaining flat messages as the active projection', () => {
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Historical flat session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Persist me',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const written = createSessionFile(session)
+
+    expect(written.version).toBe(SESSION_FILE_VERSION)
+    expect(written.session.conversationGraph.schemaVersion).toBe(1)
+    expect(written.session.messages).toEqual(session.messages)
+    expect(written.session.conversationGraph.messages).toEqual([
+      expect.objectContaining({ id: 'message-1', content: 'Persist me' })
+    ])
+  })
+
   it('identifies message synchronization failures without exposing the raw graph error', () => {
     const session: PersistedChatSession = {
       id: 'session-1',
@@ -165,6 +245,44 @@ describe('conversation graph materialization diagnostics', () => {
         message: 'Conversation graph materialization failed.'
       })
     )
+  })
+})
+
+describe('session branch source persistence', () => {
+  it('restores a complete source snapshot without inferring one for historical sessions', () => {
+    const historical = createSessionWithActivity(undefined)
+    const restored = normalizeSessionFile({
+      ...historical,
+      activities: undefined,
+      branchSource: {
+        sessionId: 'source-session',
+        agentFrameId: 'source-frame',
+        messageBranchId: 'source-branch',
+        headMessageId: 'source-head'
+      }
+    })
+
+    expect(restored?.branchSource).toEqual({
+      sessionId: 'source-session',
+      agentFrameId: 'source-frame',
+      messageBranchId: 'source-branch',
+      headMessageId: 'source-head'
+    })
+    expect(normalizeSessionFile(historical)?.branchSource).toBeUndefined()
+  })
+
+  it('discards malformed or empty source snapshots', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+
+    expect(
+      normalizeSessionFile({ ...base, branchSource: { sessionId: '' } })?.branchSource
+    ).toBeUndefined()
+    expect(
+      normalizeSessionFile({
+        ...base,
+        branchSource: { sessionId: 'source-session', messageBranchId: 42 }
+      })?.branchSource
+    ).toBeUndefined()
   })
 })
 
@@ -229,6 +347,102 @@ describe('branch Plan history persistence', () => {
       'version-4',
       'version-5'
     ])
+  })
+})
+
+describe('message attribution persistence', () => {
+  it('recognizes only the closed Reviewer Correction attribution variant', () => {
+    expect(
+      isReviewerCorrectionAttribution({
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1'
+      })
+    ).toBe(true)
+    expect(
+      isReviewerCorrectionAttribution({
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1',
+        rendererClaim: true
+      })
+    ).toBe(false)
+    expect(isReviewerCorrectionAttribution(undefined)).toBe(false)
+  })
+
+  it('preserves a Reviewer Correction attribution through Session JSON and Conversation Graph projection', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'correction-1',
+          role: 'user',
+          content: '[Auditor] Correct the unsupported claim.',
+          status: 'complete',
+          eventIds: ['event-1'],
+          attribution: {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review-1'
+          },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.attribution).toEqual({
+      kind: 'application',
+      feature: 'reviewer',
+      purpose: 'correction',
+      causeReviewId: 'review-1'
+    })
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.attribution
+    ).toEqual({
+      kind: 'application',
+      feature: 'reviewer',
+      purpose: 'correction',
+      causeReviewId: 'review-1'
+    })
+  })
+
+  it('drops malformed or extended attribution without dropping the Message', () => {
+    expect(
+      sanitizeMessageAttribution({
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1',
+        rendererClaim: true
+      })
+    ).toBeUndefined()
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'legacy-message',
+          role: 'user',
+          content: '[Auditor] remains visible as human text',
+          status: 'complete',
+          eventIds: [],
+          attribution: { kind: 'unknown', feature: 'reviewer' },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]).toMatchObject({
+      id: 'legacy-message',
+      role: 'user',
+      content: '[Auditor] remains visible as human text'
+    })
+    expect(session?.messages[0]).not.toHaveProperty('attribution')
   })
 })
 
@@ -2632,6 +2846,19 @@ describe('normalizeSessionFile with activities', () => {
     expect(enabled?.autoReviewEnabled).toBe(true)
     expect(legacy?.autoReviewEnabled).toBe(false)
     expect(corrupt?.autoReviewEnabled).toBe(false)
+  })
+
+  it('round-trips delegation policy and defaults historical or malformed values to allow', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+    const denied = normalizeSessionFile({ ...base, delegationPolicy: 'deny' })
+    const allowed = normalizeSessionFile({ ...base, delegationPolicy: 'allow' })
+    const legacy = normalizeSessionFile({ ...base })
+    const malformed = normalizeSessionFile({ ...base, delegationPolicy: 'sometimes' })
+
+    expect(denied?.delegationPolicy).toBe('deny')
+    expect(allowed?.delegationPolicy).toBe('allow')
+    expect(legacy?.delegationPolicy).toBe('allow')
+    expect(malformed?.delegationPolicy).toBe('allow')
   })
 
   it('round-trips enabledComputeHosts and filters out invalid values', () => {

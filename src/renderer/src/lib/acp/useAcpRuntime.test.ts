@@ -327,7 +327,7 @@ describe('useAcpRuntime payload construction', () => {
     expect(acpApi.resumeSession).toHaveBeenCalledWith({
       sessionId: 'session-1',
       cwd: '/workspace/project',
-      projectName: 'Project',
+      projectId: 'Project',
       permissionProfile: 'ask',
       previousFrameworkId: 'opencode',
       previousBackendId: 'opencode:provider-a',
@@ -484,6 +484,21 @@ describe('useAcpRuntime state subscription', () => {
     })
 
     expect(result.current.state).toEqual(terminal)
+  })
+
+  it('reconciles a snapshot already accepted by another renderer ingress', async () => {
+    const { result } = await mountRuntime()
+    const pulled = createSnapshot({
+      revision: 2,
+      sessionIds: ['session-1'],
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    })
+
+    expect(acceptAcpRuntimeSnapshotRevision(pulled)).toBe(true)
+    act(() => result.current.reconcileSnapshot(pulled))
+
+    expect(result.current.state).toEqual(pulled)
   })
 })
 

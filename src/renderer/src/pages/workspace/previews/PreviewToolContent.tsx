@@ -1,4 +1,13 @@
-import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
+import { LoaderCircle } from 'lucide-react'
+import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/ui/button'
+import {
+  selectProjectSessionReviewLoadError,
+  selectProjectSessionReviewSnapshot,
+  useReviewStore
+} from '@/stores/review-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { type PreviewToolItem, usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -23,18 +32,71 @@ const SessionReviewerContent = ({
   item: PreviewToolItem
   projectId?: string
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const sessionId = item.reviewerSessionId ?? ''
   const reviews = useReviewStore((state) =>
-    selectProjectSessionReviews(state.reviewsBySession, projectId, sessionId)
+    selectProjectSessionReviewSnapshot(
+      state.reviewsBySession,
+      projectId,
+      sessionId,
+      state.loadedReviewSessions
+    )
   )
+  const loadError = useReviewStore((state) =>
+    selectProjectSessionReviewLoadError(state.loadErrorsBySession, projectId, sessionId)
+  )
+  const loadReviewsForSession = useReviewStore((state) => state.loadReviewsForSession)
+
+  useEffect(() => {
+    if (!sessionId || reviews !== undefined || loadError) return
+    void loadReviewsForSession(sessionId, projectId)
+  }, [loadError, loadReviewsForSession, projectId, reviews, sessionId])
+
+  if (sessionId && reviews === undefined) {
+    if (loadError) {
+      return (
+        <div className="flex size-full items-center justify-center px-6 py-8">
+          <div role="alert" className="text-center">
+            <p className="text-[12px] text-danger-000">{t('Could not load review history.')}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => void loadReviewsForSession(sessionId, projectId)}
+            >
+              {t('Retry')}
+            </Button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex size-full items-center justify-center gap-2 text-[12px] text-text-300"
+      >
+        <LoaderCircle
+          className="size-4 animate-spin motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+        {t('Loading review history…')}
+      </div>
+    )
+  }
+
+  const loadedReviews = reviews ?? []
   // Select the review the finding actually points at; fall back to the newest when the item carries
   // no reviewId (e.g. a session-level entry point) or that review is gone.
-  const review = reviews.find((r) => r.id === item.reviewerReviewId) ?? reviews[0]
+  const review =
+    loadedReviews.find((candidate) => candidate.id === item.reviewerReviewId) ?? loadedReviews[0]
 
   if (!review) {
     return (
       <div className="flex size-full items-center justify-center text-[12px] text-text-300">
-        No review available for this session.
+        {t('No review available for this session.')}
       </div>
     )
   }

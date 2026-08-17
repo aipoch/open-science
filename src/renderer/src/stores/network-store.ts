@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 
 // Real end-to-end reachability probed by the main process (the same HTTPS HEAD check the
-// onboarding environment step uses). 'unknown' means there is no fresh answer and surfaces
-// render it as "checking"; it never persists, because every probe eventually applies a result.
-export type NetworkConnectivity = 'unknown' | 'reachable' | 'unreachable'
+// onboarding environment step uses). 'unknown' means a probe is in flight and surfaces render it
+// as "checking"; 'probe-failed' is the terminal recovery state when no prior answer can be restored.
+export type NetworkConnectivity = 'unknown' | 'reachable' | 'unreachable' | 'probe-failed'
 
 type NetworkStore = {
   // Whether the browser believes the machine has a network connection. Seeded from
@@ -27,12 +27,25 @@ type NetworkStore = {
 // re-check reads as a deliberate check instead of a flash.
 const MIN_CHECKING_MS = 500
 
-export const useNetworkStore = create<NetworkStore>((set) => {
+export const useNetworkStore = create<NetworkStore>((set, get) => {
   let probeGeneration = 0
+  let lastKnownConnectivity: Extract<NetworkConnectivity, 'reachable' | 'unreachable'> | undefined
 
   const probeConnectivity = async ({ announce = false } = {}): Promise<void> => {
     const generation = ++probeGeneration
     const startedAt = Date.now()
+    const currentConnectivity = get().connectivity
+    if (currentConnectivity === 'reachable' || currentConnectivity === 'unreachable') {
+      lastKnownConnectivity = currentConnectivity
+    }
+
+    const holdAnnouncedState = async (): Promise<void> => {
+      if (!announce) return
+      const remaining = MIN_CHECKING_MS - (Date.now() - startedAt)
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining))
+      }
+    }
 
     if (announce) set({ connectivity: 'unknown' })
 
@@ -48,20 +61,28 @@ export const useNetworkStore = create<NetworkStore>((set) => {
         try {
           reachable = await checkConnectivity()
         } catch {
-          // Bridge failure keeps the last known state rather than crying wolf.
+          // Bridge failure keeps the last known reachability rather than crying wolf. When a cold
+          // start has no previous answer, settle to an explicit terminal failure so Checking… never
+          // becomes permanent and the user can retry.
+          await holdAnnouncedState()
+          const currentState = get()
+          if (
+            probeGeneration === generation &&
+            currentState.isOnline &&
+            currentState.connectivity === 'unknown'
+          ) {
+            set({ connectivity: lastKnownConnectivity ?? 'probe-failed' })
+          }
           return
         }
       }
     }
 
-    if (announce) {
-      const remaining = MIN_CHECKING_MS - (Date.now() - startedAt)
-      if (remaining > 0) {
-        await new Promise((resolve) => setTimeout(resolve, remaining))
-      }
-    }
-    if (probeGeneration === generation) {
-      set({ connectivity: reachable ? 'reachable' : 'unreachable' })
+    await holdAnnouncedState()
+    if (probeGeneration === generation && (get().isOnline || !reachable)) {
+      const connectivity = reachable ? 'reachable' : 'unreachable'
+      lastKnownConnectivity = connectivity
+      set({ connectivity })
     }
   }
 

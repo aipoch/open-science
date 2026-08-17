@@ -1,6 +1,7 @@
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ProjectFileSource } from '../../shared/project-files'
 import type {
+  DelegationPolicy,
   LoadAllSessionsResult,
   PersistedChatMessage,
   PersistedChatSession,
@@ -98,6 +99,7 @@ type SessionMutationRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
+  assertSessionIdentityOwnership(sessionId: string, expectedProjectId: string): Promise<void>
   saveSession(session: PersistedChatSession): Promise<void>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
@@ -149,6 +151,21 @@ const emitRecoverableDiagnostic = (
   } catch {
     // Diagnostics must never change Session durability or recovery behavior.
   }
+}
+
+const assertSessionIdentityOwnership = async (
+  repository: SessionMutationRepository,
+  stateOwner: Pick<SessionPersistenceStateOwner, 'metadataSnapshot'>,
+  session: Pick<PersistedChatSession, 'id' | 'projectId'>
+): Promise<void> => {
+  const metadata = stateOwner.metadataSnapshot()
+  const existingProjectId = metadata.sessions.find((item) => item.id === session.id)?.projectId
+  if (existingProjectId !== undefined && existingProjectId !== session.projectId) {
+    throw new Error('Cannot save a Session id that is already owned by another Project.')
+  }
+  if (metadata.isComplete) return
+
+  await repository.assertSessionIdentityOwnership(session.id, session.projectId)
 }
 
 // Serializes authoritative session JSON and derived file-index mutations through one queue. This is
@@ -680,7 +697,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
-    return this.enqueue(() => this.stateOwner.saveSession(session, options))
+    return this.enqueue(async () => {
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+      return this.stateOwner.saveSession(session, options)
+    })
   }
 
   // Specialist switching reads the latest durable Session and changes only this safe binding. Keep
@@ -689,12 +709,21 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     session: PersistedChatSession,
     specialistId: string | undefined
   ): Promise<PersistedChatSession> {
-    return this.enqueue(() =>
-      this.stateOwner.saveSession(
+    return this.enqueue(async () => {
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+      return this.stateOwner.saveSession(
         { ...session, specialistId },
         { conflictRebaseFields: ['specialistId'] }
       )
-    )
+    })
+  }
+
+  setSessionDelegationPolicy(
+    projectId: string,
+    sessionId: string,
+    policy: DelegationPolicy
+  ): Promise<PersistedChatSession> {
+    return this.enqueue(() => this.stateOwner.setDelegationPolicy(projectId, sessionId, policy))
   }
 
   setSessionEnabledComputeHosts(

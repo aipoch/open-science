@@ -3,7 +3,7 @@ import { copyFile, link, rm, stat } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import {
-  DEFAULT_UPLOAD_PROJECT_NAME,
+  DEFAULT_UPLOAD_PROJECT_ID,
   PENDING_UPLOAD_SESSION_ID,
   type UploadedAttachment
 } from '../../shared/uploads'
@@ -93,7 +93,7 @@ const getUploadRoot = (storageRoot: string): string => resolve(storageRoot, UPLO
 const getSessionUploadDir = (storageRoot: string, sessionId: string): string => {
   const safeSessionId =
     sessionId === STAGING_UPLOAD_SESSION_ID ? sessionId : assertSafeSessionId(sessionId)
-  return join(getUploadRoot(storageRoot), DEFAULT_UPLOAD_PROJECT_NAME, safeSessionId)
+  return join(getUploadRoot(storageRoot), DEFAULT_UPLOAD_PROJECT_ID, safeSessionId)
 }
 
 // Moves an already-staged file into a target directory while preserving unique filenames.

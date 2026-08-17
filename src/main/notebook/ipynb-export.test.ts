@@ -32,7 +32,6 @@ const makeDocument = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   notebookSessionRoot: '/data/notebooks/default-project/session-123',
   dataRoot: '/data/notebooks/default-project/session-123/data',
   kernel: {
-    language: 'python',
     kernelName: 'python3',
     runtimeRoot: '/data/runtime',
     lastKnownStatus: 'idle'
@@ -78,7 +77,7 @@ describe('runDocumentToIpynb', () => {
         kernelspec: { name: 'python3', language: 'python' },
         open_science: {
           sessionId: 'session-123',
-          projectName: 'default-project',
+          projectId: 'default-project',
           appVersion: '1.2.3',
           environment: 'default-python'
         }
@@ -222,7 +221,7 @@ describe('runDocumentToIpynb', () => {
       artifacts: [
         {
           id: 'artifact-1',
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-123',
           runId: 'run-1',
           name: 'saved.tiff',
@@ -305,13 +304,12 @@ describe('runDocumentToIpynbByKernel pre-data control run attribution', () => {
 
   const makeDocument = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
     version: 1,
-    projectName: 'default-project',
+    projectId: 'default-project',
     sessionId: 'session-123',
     workspaceCwd: '/workspace',
     notebookSessionRoot: '/data/notebooks/default-project/session-123',
     dataRoot: '/data/notebooks/default-project/session-123/data',
     kernel: {
-      language: 'python',
       kernelName: 'python3',
       runtimeRoot: '/data/runtime',
       lastKnownStatus: 'idle'

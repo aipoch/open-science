@@ -104,7 +104,7 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
   const service: NotebookRuntimeService = new NotebookRuntimeService({
     configRoot: storageRoot,
     dataRoot: storageRoot,
-    projectName: PROJECT,
+    projectId: PROJECT,
     repository: new NotebookRunRepository(storageRoot),
     // v4 seam: discovery surfaces the system python as a user-own runtime and enablement turns it on,
     // so the session can bind it below (no micromamba provisioning exists on this machine).
@@ -161,7 +161,7 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
     endpoint: conn.endpoint,
     socketPath: conn.socketPath,
     token: conn.token,
-    projectName: PROJECT,
+    projectId: PROJECT,
     sessionId: SESSION,
     workspaceCwd: storageRoot
   }

@@ -23,11 +23,15 @@ describe('project application command contracts', () => {
       { name: 'Project' }
     ])
     expect(
-      projectApplicationCommandContracts.update.args.parse([{ id: 'project-1', name: 'Renamed' }])
-    ).toEqual([{ id: 'project-1', name: 'Renamed' }])
+      projectApplicationCommandContracts.update.args.parse([
+        { id: 'project-1', name: 'Renamed', expectedUpdatedAt: 2 }
+      ])
+    ).toEqual([{ id: 'project-1', name: 'Renamed', expectedUpdatedAt: 2 }])
     expect(
-      projectApplicationCommandContracts.update.args.parse([{ id: 'project-1', pinned: true }])
-    ).toEqual([{ id: 'project-1', pinned: true }])
+      projectApplicationCommandContracts.update.args.parse([
+        { id: 'project-1', pinned: true, expectedUpdatedAt: 2 }
+      ])
+    ).toEqual([{ id: 'project-1', pinned: true, expectedUpdatedAt: 2 }])
     expect(
       projectApplicationCommandContracts.create.args.parse([
         { name: 'Project', agentContext: 'Always cite DOIs.' }
@@ -35,9 +39,9 @@ describe('project application command contracts', () => {
     ).toEqual([{ name: 'Project', agentContext: 'Always cite DOIs.' }])
     expect(
       projectApplicationCommandContracts.update.args.parse([
-        { id: 'project-1', agentContext: 'Always cite DOIs.' }
+        { id: 'project-1', agentContext: 'Always cite DOIs.', expectedUpdatedAt: 2 }
       ])
-    ).toEqual([{ id: 'project-1', agentContext: 'Always cite DOIs.' }])
+    ).toEqual([{ id: 'project-1', agentContext: 'Always cite DOIs.', expectedUpdatedAt: 2 }])
     expect(
       projectApplicationCommandContracts.get.result.parse({
         ...project,
@@ -75,5 +79,46 @@ describe('project application command contracts', () => {
         { name: 'Project', agentContext: oversized }
       ])
     ).toThrow()
+  })
+
+  it('requires an update baseline and enforces Project name and description limits', () => {
+    expect(() =>
+      projectApplicationCommandContracts.update.args.parse([{ id: 'project-1', name: 'Renamed' }])
+    ).toThrow()
+    expect(() =>
+      projectApplicationCommandContracts.create.args.parse([{ name: 'x'.repeat(201) }])
+    ).toThrow()
+    expect(() =>
+      projectApplicationCommandContracts.create.args.parse([
+        { name: 'Project', description: 'x'.repeat(1001) }
+      ])
+    ).toThrow()
+    expect(() =>
+      projectApplicationCommandContracts.update.args.parse([
+        { id: 'project-1', name: 'x'.repeat(201), expectedUpdatedAt: 2 }
+      ])
+    ).toThrow()
+    expect(() =>
+      projectApplicationCommandContracts.update.args.parse([
+        { id: 'project-1', description: 'x'.repeat(1001), expectedUpdatedAt: 2 }
+      ])
+    ).toThrow()
+    expect(
+      projectApplicationCommandContracts.create.args.parse([
+        { name: 'x'.repeat(200), description: 'x'.repeat(1000) }
+      ])
+    ).toEqual([{ name: 'x'.repeat(200), description: 'x'.repeat(1000) }])
+  })
+
+  it('keeps historical projects above the new write limits readable', () => {
+    const historicalProject = {
+      ...project,
+      name: 'x'.repeat(201),
+      description: 'x'.repeat(1001)
+    }
+
+    expect(projectApplicationCommandContracts.list.result.parse([historicalProject])).toEqual([
+      historicalProject
+    ])
   })
 })

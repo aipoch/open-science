@@ -1,4 +1,5 @@
 import { Download, RefreshCw } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { AppLogo } from '@/components/AppLogo'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,7 @@ import { SettingsRow, SettingsSection } from './SettingsLayout'
 // sync with the external capsule; the update button opens the shared dialog (version + notes +
 // download), so the download/confirm UX lives in one place.
 const AppVersionSection = (): React.JSX.Element => {
+  const { t } = useTranslation()
   const appInfo = useUpdateStore((state) => state.appInfo)
   const status = useUpdateStore((state) => state.status)
   const check = useUpdateStore((state) => state.check)
@@ -23,24 +25,25 @@ const AppVersionSection = (): React.JSX.Element => {
   const statusLine = ((): string => {
     switch (status.state) {
       case 'checking':
-        return 'Checking for updates…'
+        return t('Checking for updates…')
       case 'available':
-        return `New version ${status.latest} is available`
+        return t('New version {{version}} is available', { version: status.latest })
       case 'downloading':
-        return `Downloading… ${status.progress ?? 0}%`
+        return t('Downloading… {{percent}}%', { percent: status.progress ?? 0 })
       case 'ready':
-        return 'Update downloaded — open the installer to finish'
+        return t('Update downloaded — open the installer to finish')
       case 'up-to-date':
-        return 'You are on the latest version'
+        return t('You are on the latest version')
       case 'error':
-        return status.error ?? 'Update check failed'
+        // Backend-supplied failure text passes through verbatim in every locale.
+        return status.error ?? t('Update check failed')
       default:
         return ''
     }
   })()
 
   return (
-    <SettingsSection title="About" aria-label="App version">
+    <SettingsSection title={t('About')} aria-label={t('App version')}>
       <SettingsRow
         label={
           <div className="flex min-w-0 items-center gap-3">
@@ -67,17 +70,17 @@ const AppVersionSection = (): React.JSX.Element => {
               className={isChecking ? 'size-4 animate-spin' : 'size-4'}
               aria-hidden="true"
             />
-            {isChecking ? 'Checking…' : 'Check now'}
+            {isChecking ? t('Checking…') : t('Check now')}
           </Button>
 
           {hasUpdate ? (
             <Button type="button" onClick={() => openDialog()}>
               <Download className="size-4" aria-hidden="true" />
               {isDownloading
-                ? `Downloading ${status.progress ?? 0}%`
+                ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
                 : status.state === 'ready'
-                  ? 'Update ready'
-                  : `Update to ${status.latest}`}
+                  ? t('Update ready')
+                  : t('Update to {{version}}', { version: status.latest })}
             </Button>
           ) : null}
         </div>

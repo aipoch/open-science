@@ -17,6 +17,52 @@ const { fileURLToPath } = require('node:url')
 // Protocol output line. console is captured into strings during a run (see run()), so writing the
 // JSON here via process.stdout.write cannot be corrupted by user console output.
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
+const OUTPUT_LIMIT_BYTES =
+  Number(process.env.OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES) || 2 * 1024 * 1024
+const DIAGNOSTIC_LIMIT_BYTES = Math.min(16 * 1024, Math.max(0, OUTPUT_LIMIT_BYTES))
+
+const takeOutput = (budget, value) => {
+  value = String(value)
+  if (budget.remaining <= 0) {
+    if (value) budget.truncated = true
+    return ''
+  }
+  const candidate = value.length > budget.remaining ? value.slice(0, budget.remaining) : value
+  const encoded = Buffer.from(candidate, 'utf8')
+  if (encoded.byteLength <= budget.remaining) {
+    budget.remaining -= encoded.byteLength
+    if (candidate.length < value.length) budget.truncated = true
+    return encoded.toString('utf8')
+  }
+  let end = Math.min(budget.remaining, encoded.byteLength)
+  while (end > 0 && end < encoded.byteLength && (encoded[end] & 0xc0) === 0x80) end -= 1
+  const prefix = encoded.subarray(0, end).toString('utf8')
+  budget.remaining -= Buffer.byteLength(prefix, 'utf8')
+  budget.truncated = true
+  return prefix
+}
+
+const takeOutputTail = (budget, value) => {
+  value = String(value)
+  if (budget.remaining <= 0) {
+    if (value) budget.truncated = true
+    return ''
+  }
+  const candidate =
+    value.length > budget.remaining ? value.slice(value.length - budget.remaining) : value
+  const encoded = Buffer.from(candidate, 'utf8')
+  if (encoded.byteLength <= budget.remaining) {
+    budget.remaining -= encoded.byteLength
+    if (candidate.length < value.length) budget.truncated = true
+    return encoded.toString('utf8')
+  }
+  let start = encoded.byteLength - budget.remaining
+  while (start < encoded.byteLength && (encoded[start] & 0xc0) === 0x80) start += 1
+  const suffix = encoded.subarray(start).toString('utf8')
+  budget.remaining -= Buffer.byteLength(suffix, 'utf8')
+  budget.truncated = true
+  return suffix
+}
 
 // Capture the connector RPC credentials privately, then delete them from process.env BEFORE the
 // sandbox is built. The sandbox exposes `process` (for cwd() etc.), so leaving the token in
@@ -35,7 +81,7 @@ delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
 // enumerates process.env sees neither the token nor the routing identity. Absent -> host.compute call
 // payloads omit them and the approval broker falls back to 'once'-only semantics.
 const COMPUTE_SESSION_ID = process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
-const COMPUTE_PROJECT_NAME =
+const COMPUTE_PROJECT_ID =
   process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID || process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 delete process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
 delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID
@@ -969,7 +1015,7 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
         method,
         args: callArgs,
         sessionId: COMPUTE_SESSION_ID,
-        ...(COMPUTE_PROJECT_NAME ? { projectId: COMPUTE_PROJECT_NAME } : {})
+        ...(COMPUTE_PROJECT_ID ? { projectId: COMPUTE_PROJECT_ID } : {})
       }
     })
   })
@@ -979,7 +1025,13 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   return body.result
 }
 
-const HOST_CAPABILITY_NAMES = [
+const HOST_CAPABILITY_MAX_FIELDS = 64
+const HOST_CAPABILITY_MAX_KEY_LENGTH = 64
+const HOST_CAPABILITY_KEY_PATTERN = /^[a-z][a-zA-Z0-9]*$/
+const HOST_CAPABILITY_DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+// This is the JavaScript-side known catalog, intentionally mirrored by a contract test instead of
+// importing TypeScript into the bundled REPL resource.
+const HOST_CAPABILITY_KNOWN_KEYS = Object.freeze([
   'mcp',
   'compute',
   'agents',
@@ -987,9 +1039,42 @@ const HOST_CAPABILITY_NAMES = [
   'artifacts',
   'lineage',
   'frames',
+  'sessions',
   'llm',
-  'viewImage'
-]
+  'currentModel',
+  'listModels',
+  'viewImage',
+  'children',
+  'collect',
+  'delegate',
+  'messageReceipt',
+  'resolveMessage',
+  'sendFrameMessage',
+  'stopChild',
+  'submitOutput'
+])
+
+function isValidHostCapabilityProjection(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (Object.getPrototypeOf(value) !== Object.prototype) return false
+
+  const entries = Object.entries(value)
+  const knownEntries = HOST_CAPABILITY_KNOWN_KEYS.filter((name) => Object.hasOwn(value, name)).map(
+    (name) => [name, value[name]]
+  )
+  const unknownEntries = entries.filter(([name]) => !HOST_CAPABILITY_KNOWN_KEYS.includes(name))
+  return (
+    entries.length <= HOST_CAPABILITY_MAX_FIELDS &&
+    knownEntries.every(([, enabled]) => typeof enabled === 'boolean') &&
+    unknownEntries.every(
+      ([name, enabled]) =>
+        name.length <= HOST_CAPABILITY_MAX_KEY_LENGTH &&
+        HOST_CAPABILITY_KEY_PATTERN.test(name) &&
+        !HOST_CAPABILITY_DANGEROUS_KEYS.has(name) &&
+        typeof enabled === 'boolean'
+    )
+  )
+}
 
 async function hostCapabilities(...args) {
   if (args.length !== 0) throw new TypeError('host.capabilities accepts no arguments')
@@ -1004,18 +1089,46 @@ async function hostCapabilities(...args) {
     throw new Error(body.error || 'host.capabilities HTTP ' + res.status)
   }
   const result = body.result
-  if (
-    !result ||
-    typeof result !== 'object' ||
-    Array.isArray(result) ||
-    Object.keys(result).length !== HOST_CAPABILITY_NAMES.length ||
-    HOST_CAPABILITY_NAMES.some((name) => typeof result[name] !== 'boolean')
-  ) {
+  if (!isValidHostCapabilityProjection(result)) {
     throw new Error('host.capabilities returned an invalid capability projection')
   }
-  return Object.freeze(
-    Object.fromEntries(HOST_CAPABILITY_NAMES.map((name) => [name, result[name]]))
-  )
+  return Object.freeze(Object.fromEntries(Object.entries(result)))
+}
+
+async function hostModelIntrospectionRpc(method, label) {
+  if (!RPC_ENDPOINT) throw new Error(`${label} is unavailable: RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method, params: {} })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) throw new Error(body.error || `${label} HTTP ` + res.status)
+  return body.result
+}
+
+async function hostCurrentModel(...args) {
+  if (args.length !== 0) throw new TypeError('host.currentModel accepts no arguments')
+  const result = await hostModelIntrospectionRpc('currentModelCall', 'host.currentModel')
+  if (typeof result !== 'string' || !result.trim() || result === 'provider-default') {
+    throw new Error('host.currentModel returned an invalid model id')
+  }
+  return result
+}
+
+async function hostListModels(...args) {
+  if (args.length !== 0) throw new TypeError('host.listModels accepts no arguments')
+  const result = await hostModelIntrospectionRpc('listModelsCall', 'host.listModels')
+  if (
+    !Array.isArray(result) ||
+    result.length === 0 ||
+    result.some((model) => typeof model !== 'string' || !model.trim()) ||
+    new Set(result).size !== result.length ||
+    result.some((model, index) => index > 0 && result[index - 1] > model)
+  ) {
+    throw new Error('host.listModels returned an invalid model catalog')
+  }
+  return Object.freeze([...result])
 }
 
 const HOST_LLM_STOP_REASONS = new Set([
@@ -1030,8 +1143,8 @@ const validatedHostLlmUsage = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('host.llm returned invalid usage')
   }
-  const required = ['input_tokens', 'cache_tokens', 'output_tokens']
-  const optional = ['cached_read_tokens', 'cached_write_tokens', 'turn_count']
+  const required = ['inputTokens', 'cacheTokens', 'outputTokens']
+  const optional = ['cachedReadTokens', 'cachedWriteTokens', 'turnCount']
   const keys = Object.keys(value)
   if (
     required.some((key) => !keys.includes(key)) ||
@@ -1041,7 +1154,7 @@ const validatedHostLlmUsage = (value) => {
         value[key] !== undefined &&
         (typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || value[key] < 0)
     ) ||
-    (value.turn_count !== undefined && value.turn_count < 1)
+    (value.turnCount !== undefined && value.turnCount < 1)
   ) {
     throw new Error('host.llm returned invalid usage')
   }
@@ -1054,18 +1167,18 @@ const validatedHostLlmResult = (value) => {
   }
   const keys = Object.keys(value)
   if (
-    !['text', 'model', 'stop_reason'].every((key) => keys.includes(key)) ||
-    keys.some((key) => !['text', 'model', 'stop_reason', 'usage'].includes(key)) ||
+    !['text', 'model', 'stopReason'].every((key) => keys.includes(key)) ||
+    keys.some((key) => !['text', 'model', 'stopReason', 'usage'].includes(key)) ||
     typeof value.text !== 'string' ||
     typeof value.model !== 'string' ||
-    !HOST_LLM_STOP_REASONS.has(value.stop_reason)
+    !HOST_LLM_STOP_REASONS.has(value.stopReason)
   ) {
     throw new Error('host.llm returned an invalid result')
   }
   return Object.freeze({
     text: value.text,
     model: value.model,
-    stop_reason: value.stop_reason,
+    stopReason: value.stopReason,
     ...(value.usage === undefined ? {} : { usage: validatedHostLlmUsage(value.usage) })
   })
 }
@@ -1324,17 +1437,21 @@ async function hostViewImage(source, options = undefined) {
 const HOST_ARTIFACT_REQUIRED_KEYS = [
   'id',
   'filename',
-  'size_bytes',
-  'latest_version_id',
-  'session_id',
-  'root_frame_id',
-  'is_user_upload',
-  'latest_version_created_at'
+  'contentType',
+  'sizeBytes',
+  'latestVersionId',
+  'checksum',
+  'projectId',
+  'sessionId',
+  'rootFrameId',
+  'agentFrameId',
+  'isUserUpload',
+  'createdAt',
+  'latestVersionCreatedAt'
 ]
-const HOST_ARTIFACT_OPTIONAL_KEYS = ['content_type', 'checksum']
 const HOST_ARTIFACT_INPUT_KEYS = {
   versionId: 'version_id',
-  sessionId: 'session_id',
+  frameId: 'frame_id',
   filename: 'filename',
   exact: 'exact',
   search: 'search',
@@ -1345,37 +1462,34 @@ const HOST_ARTIFACT_INPUT_KEYS = {
   limit: 'limit'
 }
 
-const validatedHostArtifact = (value) => {
+const nullableHostArtifactString = (value) => value === null || typeof value === 'string'
+
+const validatedHostArtifact = (value, projectId) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('host.artifacts returned an invalid Artifact')
   }
   const keys = Object.keys(value)
   if (
     HOST_ARTIFACT_REQUIRED_KEYS.some((key) => !keys.includes(key)) ||
-    keys.some(
-      (key) =>
-        !HOST_ARTIFACT_REQUIRED_KEYS.includes(key) && !HOST_ARTIFACT_OPTIONAL_KEYS.includes(key)
-    ) ||
     typeof value.id !== 'string' ||
     typeof value.filename !== 'string' ||
-    typeof value.size_bytes !== 'number' ||
-    !Number.isSafeInteger(value.size_bytes) ||
-    typeof value.latest_version_id !== 'string' ||
-    typeof value.session_id !== 'string' ||
-    (value.root_frame_id !== null && typeof value.root_frame_id !== 'string') ||
-    typeof value.is_user_upload !== 'boolean' ||
-    typeof value.latest_version_created_at !== 'string' ||
-    (value.content_type !== undefined && typeof value.content_type !== 'string') ||
-    (value.checksum !== undefined && typeof value.checksum !== 'string')
+    !nullableHostArtifactString(value.contentType) ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    value.sizeBytes < 0 ||
+    typeof value.latestVersionId !== 'string' ||
+    !nullableHostArtifactString(value.checksum) ||
+    value.projectId !== projectId ||
+    typeof value.sessionId !== 'string' ||
+    !nullableHostArtifactString(value.rootFrameId) ||
+    !nullableHostArtifactString(value.agentFrameId) ||
+    typeof value.isUserUpload !== 'boolean' ||
+    typeof value.createdAt !== 'string' ||
+    typeof value.latestVersionCreatedAt !== 'string'
   ) {
     throw new Error('host.artifacts returned an invalid Artifact')
   }
   return Object.freeze(
-    Object.fromEntries(
-      [...HOST_ARTIFACT_REQUIRED_KEYS, ...HOST_ARTIFACT_OPTIONAL_KEYS]
-        .filter((key) => value[key] !== undefined)
-        .map((key) => [key, value[key]])
-    )
+    Object.fromEntries(HOST_ARTIFACT_REQUIRED_KEYS.map((key) => [key, value[key]]))
   )
 }
 
@@ -1389,24 +1503,24 @@ async function hostArtifacts(options = {}) {
     typeof result !== 'object' ||
     Array.isArray(result) ||
     !Number.isSafeInteger(result.count) ||
-    typeof result.project_id !== 'string' ||
+    result.count < 0 ||
+    typeof result.projectId !== 'string' ||
     typeof result.truncated !== 'boolean' ||
-    (result.next_cursor !== undefined && typeof result.next_cursor !== 'string') ||
+    (result.nextCursor !== undefined && typeof result.nextCursor !== 'string') ||
     !Array.isArray(result.artifacts) ||
-    result.count !== result.artifacts.length ||
-    result.truncated !== (result.next_cursor !== undefined) ||
-    Object.keys(result).some(
-      (key) => !['count', 'project_id', 'truncated', 'next_cursor', 'artifacts'].includes(key)
-    )
+    result.count < result.artifacts.length ||
+    result.truncated !== (result.nextCursor !== undefined)
   ) {
     throw new Error('host.artifacts returned an invalid result')
   }
-  const artifacts = Object.freeze(result.artifacts.map(validatedHostArtifact))
+  const artifacts = Object.freeze(
+    result.artifacts.map((artifact) => validatedHostArtifact(artifact, result.projectId))
+  )
   return Object.freeze({
     count: result.count,
-    project_id: result.project_id,
+    projectId: result.projectId,
     truncated: result.truncated,
-    ...(result.next_cursor !== undefined ? { next_cursor: result.next_cursor } : {}),
+    ...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
     artifacts
   })
 }
@@ -1631,6 +1745,131 @@ const validatedHostRuntimeSegment = (value) => {
     throw new Error('host.frames.get returned an invalid runtime segment')
   }
   return frozenProjection(value, [...required, ...optional])
+}
+
+const HOST_SESSION_CONNECTION_STATUSES = ['idle', 'connecting', 'connected', 'error', 'closed']
+const HOST_SESSION_OBSERVATION_KINDS = [
+  'system',
+  'message',
+  'thought',
+  'tool',
+  'plan',
+  'permission',
+  'artifact',
+  'compaction',
+  'error',
+  'stop',
+  'raw'
+]
+const HOST_SESSION_OBSERVATION_LEVELS = ['info', 'warning', 'error']
+
+const validatedHostSessionRuntime = (value) => {
+  const required = [
+    'attached',
+    'prompt_in_flight',
+    'agent_prompt_in_flight',
+    'permission_pending',
+    'user_input_pending'
+  ]
+  const optional = ['connection_status']
+  if (
+    !exactObject(value, required, optional) ||
+    required.some((key) => typeof value[key] !== 'boolean') ||
+    (value.connection_status !== undefined &&
+      !HOST_SESSION_CONNECTION_STATUSES.includes(value.connection_status))
+  ) {
+    throw new Error('host.sessions returned an invalid runtime projection')
+  }
+  return Object.freeze({
+    attached: value.attached,
+    ...(value.connection_status !== undefined ? { connectionStatus: value.connection_status } : {}),
+    promptInFlight: value.prompt_in_flight,
+    agentPromptInFlight: value.agent_prompt_in_flight,
+    permissionPending: value.permission_pending,
+    userInputPending: value.user_input_pending
+  })
+}
+
+const validatedHostSessionConversation = (value) => {
+  const keys = ['frame_id', 'branch_id', 'message_count']
+  if (
+    !exactObject(value, keys) ||
+    !hostFrameString(value.frame_id) ||
+    !hostFrameString(value.branch_id) ||
+    !hostFrameCount(value.message_count)
+  ) {
+    throw new Error('host.sessions returned an invalid active conversation')
+  }
+  return Object.freeze({
+    frameId: value.frame_id,
+    branchId: value.branch_id,
+    messageCount: value.message_count
+  })
+}
+
+const validatedHostSessionObservation = (value) => {
+  const required = ['timestamp', 'kind', 'level']
+  const optional = ['status', 'title']
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.timestamp) ||
+    !HOST_SESSION_OBSERVATION_KINDS.includes(value.kind) ||
+    !HOST_SESSION_OBSERVATION_LEVELS.includes(value.level) ||
+    !hostFrameOptionalString(value.status) ||
+    !hostFrameOptionalString(value.title)
+  ) {
+    throw new Error('host.sessions returned an invalid latest observation')
+  }
+  return Object.freeze({
+    timestamp: value.timestamp,
+    kind: value.kind,
+    level: value.level,
+    ...(value.status !== undefined ? { status: value.status } : {}),
+    ...(value.title !== undefined ? { title: value.title } : {})
+  })
+}
+
+const validatedHostSession = (value) => {
+  const required = ['session_id', 'title', 'status', 'created_at', 'updated_at', 'runtime']
+  const optional = [
+    'archived_at',
+    'active_run_started_at',
+    'active_conversation',
+    'latest_observation'
+  ]
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.session_id) ||
+    !hostFrameString(value.title) ||
+    !HOST_SESSION_STATUSES.includes(value.status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.updated_at) ||
+    !hostFrameOptionalString(value.archived_at) ||
+    !hostFrameOptionalString(value.active_run_started_at) ||
+    !value.runtime ||
+    typeof value.runtime !== 'object' ||
+    Array.isArray(value.runtime)
+  ) {
+    throw new Error('host.sessions returned an invalid Session')
+  }
+  return Object.freeze({
+    sessionId: value.session_id,
+    title: value.title,
+    status: value.status,
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+    ...(value.archived_at !== undefined ? { archivedAt: value.archived_at } : {}),
+    ...(value.active_run_started_at !== undefined
+      ? { activeRunStartedAt: value.active_run_started_at }
+      : {}),
+    runtime: validatedHostSessionRuntime(value.runtime),
+    ...(value.active_conversation !== undefined
+      ? { activeConversation: validatedHostSessionConversation(value.active_conversation) }
+      : {}),
+    ...(value.latest_observation !== undefined
+      ? { latestObservation: validatedHostSessionObservation(value.latest_observation) }
+      : {})
+  })
 }
 
 async function framesRpc(op, params) {
@@ -2400,6 +2639,63 @@ async function hostFramesGet(frameId, options = {}) {
 
 const hostFrames = Object.freeze({ list: hostFramesList, get: hostFramesGet })
 
+const sessionsRpc = async (op, params) => {
+  if (!RPC_ENDPOINT) throw new Error(`host.sessions.${op} is unavailable: RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'sessionsCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.sessions.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+async function hostSessionsList(options = {}) {
+  if (arguments.length > 1) {
+    throw new TypeError('host.sessions.list accepts at most one options object')
+  }
+  const result = await sessionsRpc('list', {
+    options: remappedHostObject(options, 'host.sessions.list options', {
+      archived: 'archived',
+      search: 'search',
+      limit: 'limit',
+      cursor: 'cursor'
+    })
+  })
+  const required = ['total_count', 'sessions']
+  const optional = ['next_cursor']
+  if (
+    !exactObject(result, required, optional) ||
+    !hostFrameCount(result.total_count) ||
+    !Array.isArray(result.sessions) ||
+    result.total_count < result.sessions.length ||
+    !hostFrameOptionalString(result.next_cursor)
+  ) {
+    throw new Error('host.sessions.list returned an invalid result')
+  }
+  return Object.freeze({
+    totalCount: result.total_count,
+    ...(result.next_cursor !== undefined ? { nextCursor: result.next_cursor } : {}),
+    sessions: Object.freeze(result.sessions.map(validatedHostSession))
+  })
+}
+
+async function hostSessionsInspect(sessionId) {
+  if (arguments.length !== 1) {
+    throw new TypeError('host.sessions.inspect accepts one sessionId')
+  }
+  return validatedHostSession(
+    await sessionsRpc('inspect', {
+      session_id: sessionId
+    })
+  )
+}
+
+const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessionsInspect })
+
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
@@ -2944,7 +3240,7 @@ const hostCompute = {
           login_shell: normalized.login_shell !== undefined ? normalized.login_shell : true,
           timeout_seconds: normalized.timeout_seconds,
           session_id: COMPUTE_SESSION_ID,
-          project_id: COMPUTE_PROJECT_NAME
+          project_id: COMPUTE_PROJECT_ID
         })
       },
 
@@ -2979,6 +3275,24 @@ const hostCompute = {
                 maxFileMb: 'max_file_mb',
                 maxTotalMb: 'max_total_mb'
               })
+        const assertHarvestLimit = (field, value, maximum) => {
+          if (
+            value !== undefined &&
+            (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > maximum)
+          ) {
+            throw new TypeError(
+              'host.compute.submitJob harvest.' +
+                field +
+                ' must be a finite number between 0 and ' +
+                maximum +
+                ' MiB.'
+            )
+          }
+        }
+        if (harvest !== undefined) {
+          assertHarvestLimit('maxFileMb', harvest.max_file_mb, 100)
+          assertHarvestLimit('maxTotalMb', harvest.max_total_mb, 500)
+        }
         return computeRpc({
           op: 'submit_job',
           provider_id: providerId,
@@ -2991,7 +3305,7 @@ const hostCompute = {
           timeout_seconds: normalized.timeout_seconds,
           harvest,
           session_id: COMPUTE_SESSION_ID,
-          project_id: COMPUTE_PROJECT_NAME,
+          project_id: COMPUTE_PROJECT_ID,
           workspace_cwd: process.cwd()
         })
       },
@@ -3073,12 +3387,15 @@ const sandbox = {
   host: {
     help: hostHelp,
     capabilities: hostCapabilities,
+    currentModel: hostCurrentModel,
+    listModels: hostListModels,
     llm: hostLlm,
     artifacts: hostArtifacts,
     artifactPath: hostArtifactPath,
     viewImage: hostViewImage,
     lineage: hostLineage,
     frames: hostFrames,
+    sessions: hostSessions,
     mcp: hostMcp,
     compute: hostCompute,
     agents: hostAgents,
@@ -3140,13 +3457,18 @@ function wrapForRun(code) {
 async function run(code) {
   let out = '',
     err = ''
+  const outputBudget = {
+    remaining: OUTPUT_LIMIT_BYTES - DIAGNOSTIC_LIMIT_BYTES,
+    truncated: false
+  }
+  const diagnosticBudget = { remaining: DIAGNOSTIC_LIMIT_BYTES, truncated: false }
   const origLog = console.log,
     origErr = console.error
   console.log = (...a) => {
-    out += a.map(String).join(' ') + '\n'
+    out += takeOutput(outputBudget, a.map(String).join(' ') + '\n')
   }
   console.error = (...a) => {
-    err += a.map(String).join(' ') + '\n'
+    err += takeOutput(outputBudget, a.map(String).join(' ') + '\n')
   }
   let error = null,
     result = null
@@ -3155,18 +3477,29 @@ async function run(code) {
     if (value !== undefined) {
       // Non-serializable (e.g. circular) echoes fall back to a string so a run never fails on output.
       try {
-        result = typeof value === 'string' ? value : JSON.stringify(value)
+        const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+        // JSON.stringify returns undefined (without throwing) for functions and Symbols. Keep the
+        // protocol's null result instead of fabricating the literal string "undefined".
+        if (serialized !== undefined) result = takeOutput(outputBudget, serialized)
       } catch {
-        result = String(value)
+        result = takeOutput(outputBudget, String(value))
       }
     }
   } catch (e) {
-    error = e && e.stack ? String(e.stack) : String(e)
+    error = takeOutputTail(diagnosticBudget, e && e.stack ? String(e.stack) : String(e))
   } finally {
     console.log = origLog
     console.error = origErr
   }
-  return { stdout: out, stderr: err, error, result, cwd: process.cwd(), figures: [] }
+  return {
+    stdout: out,
+    stderr: err,
+    error,
+    result,
+    cwd: process.cwd(),
+    figures: [],
+    output_truncated: outputBudget.truncated || diagnosticBudget.truncated
+  }
 }
 
 const rl = readline.createInterface({ input: process.stdin })

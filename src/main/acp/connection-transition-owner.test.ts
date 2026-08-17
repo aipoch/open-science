@@ -97,13 +97,15 @@ describe('AcpConnectionTransitionOwner', () => {
 
   it('recovers a failed deferred disconnect and always releases its barrier', async () => {
     let blocked = true
+    let connectionGeneration = 1
     const disconnectFailure = new Error('disconnect failed')
     const recoverFailedDeferredDisconnect = vi.fn(async () => undefined)
     const reportFailure = vi.fn()
     const owner = new AcpConnectionTransitionOwner({
       blockers: () => ({ reconnect: blocked, retirement: blocked }),
-      connectionGeneration: () => 1,
+      connectionGeneration: () => connectionGeneration,
       disconnect: vi.fn(async () => {
+        connectionGeneration += 1
         throw disconnectFailure
       }),
       onRetired: vi.fn(),
@@ -118,7 +120,7 @@ describe('AcpConnectionTransitionOwner', () => {
     await vi.waitFor(() => expect(owner.barrier).toBeUndefined())
 
     expect(recoverFailedDeferredDisconnect).toHaveBeenCalledOnce()
-    expect(recoverFailedDeferredDisconnect).toHaveBeenCalledWith(disconnectFailure)
+    expect(recoverFailedDeferredDisconnect).toHaveBeenCalledWith(disconnectFailure, 1)
     expect(reportFailure).toHaveBeenCalledWith(
       'deferred reconnect disconnect failed',
       disconnectFailure

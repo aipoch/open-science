@@ -1,21 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { ClaudeCodeSkillMaterializer, type SkillMaterializer } from '../skills/materializer'
-import { SkillRegistry, type BundledSkill } from '../skills/registry'
-
-// The app owns `<storageRoot>/claude` and provisions its settings and skills there. Isolated/API-key
-// providers use it as CLAUDE_CONFIG_DIR; shared auth keeps CLAUDE_CONFIG_DIR=~/.claude and loads this
-// directory as a session-local plugin/settings layer, so the user's profile is never modified.
-
-// Subdirs Claude loads app-scoped assets from.
-const APP_ASSET_SUBDIRS = ['skills', 'plugins', 'commands'] as const
-const APP_PLUGIN_MANIFEST_DIR = '.claude-plugin'
+// The app owns `<storageRoot>/claude` as a private Claude profile. Isolated/API-key providers use it
+// as CLAUDE_CONFIG_DIR; shared auth keeps CLAUDE_CONFIG_DIR=~/.claude and loads only this settings
+// file at session scope. Agent-readable Skills live in a separate runtime projection outside this
+// directory so the private profile can remain protected as one physical security boundary.
 
 // The agent's own file tools must not read (or search) the app config dir — it holds materialized
-// skill files, whose (bundled / MCP) contents must never be surfaced verbatim into the conversation.
-// Skill *loading* is internal to the agent and unaffected by these tool-level deny rules. The kernel
-// (bash/subprocess) is guarded separately; see the notebook audit hook and read-guard spec.
+// provider/auth settings and session state whose contents must never be surfaced into conversation.
+// Agent-readable Skill packages are deliberately projected outside this directory.
 const GUARDED_FILE_TOOLS = ['Read', 'Edit', 'Glob', 'Grep'] as const
 
 // Built-in agent tools disabled outright in this app. Empty by default: the model's open-web tools
@@ -62,7 +55,7 @@ export type ClaudeRuntimeModelConfig = Readonly<{
 const writeAppSettings = async (
   configDir: string,
   modelConfig?: ClaudeRuntimeModelConfig | null
-): Promise<void> => {
+): Promise<Readonly<Record<string, unknown>>> => {
   const settingsPath = join(configDir, 'settings.json')
 
   let settings: Record<string, unknown> = {}
@@ -98,51 +91,23 @@ const writeAppSettings = async (
     }
   }
   await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+  return settings
 }
 
-type ProvisionOptions = {
-  // The full skill catalog (featured + imported + personal). Defaults to bundled skills only.
-  skills?: BundledSkill[]
-  materializer?: SkillMaterializer
-  disabledSkillIds?: string[]
-  // `undefined` preserves the existing projection (validation probes must not perturb a live
-  // backend); `null` explicitly clears a catalog owned by a previously active provider.
-  modelConfig?: ClaudeRuntimeModelConfig | null
-}
-
-// Ensures the app config dir + asset subdirs exist, writes the file-tool deny rules, then materializes
-// the enabled skill set into `<configDir>/skills`. Idempotent and safe to call before each agent spawn.
-// Skill materialization failures are swallowed by the materializer so a bad skill never blocks the spawn.
-const provisionAppClaudeConfigDir = async (
+// Ensures the private app profile exists and merges the settings policy. It intentionally owns no
+// plugin or Skill directories; those are published by claude-runtime-provisioner under the separate,
+// Agent-readable runtime projection root.
+const provisionAppClaudePrivateProfile = async (
   configDir: string,
-  options: ProvisionOptions = {}
-): Promise<void> => {
+  modelConfig?: ClaudeRuntimeModelConfig | null
+): Promise<Readonly<Record<string, unknown>>> => {
   await mkdir(configDir, { recursive: true })
-  await Promise.all(
-    [...APP_ASSET_SUBDIRS, APP_PLUGIN_MANIFEST_DIR].map((sub) =>
-      mkdir(join(configDir, sub), { recursive: true })
-    )
-  )
-  await writeFile(
-    join(configDir, APP_PLUGIN_MANIFEST_DIR, 'plugin.json'),
-    `${JSON.stringify({ name: 'open-science' }, null, 2)}\n`,
-    'utf8'
-  )
-
-  await writeAppSettings(configDir, options.modelConfig)
-
-  const materializer = options.materializer ?? new ClaudeCodeSkillMaterializer()
-  const skills = options.skills ?? (await new SkillRegistry().list())
-  const disabled = new Set(options.disabledSkillIds ?? [])
-  const enabled = skills.filter((skill) => !disabled.has(skill.id))
-
-  await materializer.sync(configDir, enabled)
+  return writeAppSettings(configDir, modelConfig)
 }
 
 export {
-  APP_ASSET_SUBDIRS,
   DENIED_BUILTIN_TOOLS,
   MANAGED_BUILTIN_TOOLS,
   configDenyRules,
-  provisionAppClaudeConfigDir
+  provisionAppClaudePrivateProfile
 }

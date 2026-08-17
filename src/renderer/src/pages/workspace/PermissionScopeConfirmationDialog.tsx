@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -34,17 +35,20 @@ const PermissionScopeConfirmationDialog = ({
   onCancel,
   onConfirm
 }: PermissionScopeConfirmationDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const retainedConfirmation = useRetainedDialogValue(confirmation)
   const scope = retainedConfirmation?.scope ?? 'project'
   const subject = retainedConfirmation?.subject ?? 'this permission'
   const isProject = scope === 'project'
-  const scopePhrase = isProject ? 'for this project' : 'globally'
-  const coveragePhrase = isProject
-    ? 'for every session in this project'
-    : 'for every session in every project'
+  const scopePhrase = isProject ? t('for this project') : t('globally')
   const effect = retainedConfirmation?.codeExecution
-    ? `Code will run without preview ${coveragePhrase}.`
-    : `Matching actions can run without another approval ${coveragePhrase}.`
+    ? isProject
+      ? t('Code will run without preview for every session in this project.')
+      : t('Code will run without preview for every session in every project.')
+    : isProject
+      ? t('Matching actions can run without another approval for every session in this project.')
+      : t('Matching actions can run without another approval for every session in every project.')
 
   return (
     <AlertDialog.Root
@@ -64,7 +68,7 @@ const PermissionScopeConfirmationDialog = ({
               <AlertDialog.Title
                 className={`${dialogTitleClassName} min-w-0 [overflow-wrap:anywhere]`}
               >
-                Allow {subject} {scopePhrase}?
+                {t('Allow {{subject}} {{scope}}?', { subject, scope: scopePhrase })}
               </AlertDialog.Title>
             </div>
             <AlertDialog.Cancel asChild>
@@ -72,7 +76,7 @@ const PermissionScopeConfirmationDialog = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close"
+                aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
               >
                 <X className="size-4" aria-hidden="true" />
@@ -82,11 +86,13 @@ const PermissionScopeConfirmationDialog = ({
 
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              {effect} You can revoke it in{' '}
-              <strong className="font-semibold text-foreground">Settings → Permissions</strong>.
+              {effect} {t('You can revoke it in')}{' '}
+              <strong className="font-semibold text-foreground">
+                {t('Settings → Permissions')}
+              </strong>
+              .
             </AlertDialog.Description>
           </div>
-
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
               <Button
@@ -95,7 +101,7 @@ const PermissionScopeConfirmationDialog = ({
                 className={dialogCancelButtonClassName}
                 data-testid="permission-scope-cancel"
               >
-                Cancel
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
@@ -105,7 +111,7 @@ const PermissionScopeConfirmationDialog = ({
                 data-testid="permission-scope-confirm"
                 onClick={onConfirm}
               >
-                {isProject ? 'Allow for this project' : 'Allow globally'}
+                {isProject ? t('Allow for this project') : t('Allow globally')}
               </Button>
             </AlertDialog.Action>
           </div>

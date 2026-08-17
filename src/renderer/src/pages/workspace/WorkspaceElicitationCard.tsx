@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Bot, Check, ChevronLeft, ChevronRight, Eye, Pencil, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -19,11 +20,15 @@ import {
   type PendingElicitationRequest
 } from '../../../../shared/acp'
 
-const displayValue = (value: ElicitationValue, field?: ElicitationField): string => {
+const displayValue = (
+  value: ElicitationValue,
+  field?: ElicitationField,
+  t?: (key: string) => string
+): string => {
   const optionLabel = (candidate: string): string =>
     field?.options?.find((option) => option.value === candidate)?.label ?? candidate
   if (Array.isArray(value)) return value.map(optionLabel).join(', ')
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'boolean') return value ? (t?.('Yes') ?? 'Yes') : (t?.('No') ?? 'No')
   if (typeof value === 'string') return optionLabel(value)
   return String(value)
 }
@@ -145,6 +150,7 @@ const WorkspaceElicitationCard = ({
   onRespond,
   onDraftChange
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const choiceQuestions = request ? resolveAgentUserChoiceQuestions(request.fields) : undefined
   const restoredValues = initialValues(
     request?.fields ?? [],
@@ -172,9 +178,9 @@ const WorkspaceElicitationCard = ({
   const fieldsById = new Map(elicitation.fields.map((field) => [field.id, field]))
   const terminalLabel =
     elicitation.state === 'declined'
-      ? 'Skipped'
+      ? t('Skipped')
       : elicitation.state === 'cancelled'
-        ? 'Cancelled'
+        ? t('Cancelled')
         : undefined
   const isReviewingChoice =
     isReviewingAnswer && elicitation.state === 'answered' && Boolean(choiceQuestions)
@@ -315,7 +321,7 @@ const WorkspaceElicitationCard = ({
         <div className="mb-2 flex justify-end">
           <button
             type="button"
-            aria-label="Close answer review"
+            aria-label={t('Close answer review')}
             className="grid size-11 shrink-0 place-items-center rounded-lg text-text-100 hover:bg-bg-100 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             onClick={() => {
               setIsReviewingAnswer(false)
@@ -333,7 +339,10 @@ const WorkspaceElicitationCard = ({
           <span
             data-testid="elicitation-question-progress"
             role="status"
-            aria-label={`Question ${activeChoiceIndex + 1} of ${choiceQuestions.length}`}
+            aria-label={t('Question {{current}} of {{total}}', {
+              current: activeChoiceIndex + 1,
+              total: choiceQuestions.length
+            })}
             className="inline-flex shrink-0 items-center gap-3 bg-bg-000 pl-3 text-xs leading-5 text-text-300 tabular-nums"
           >
             <span aria-hidden="true" className="flex w-16 items-center gap-0.5">
@@ -350,7 +359,10 @@ const WorkspaceElicitationCard = ({
               ))}
             </span>
             <span aria-hidden="true">
-              {activeChoiceIndex + 1} of {choiceQuestions.length}
+              {t('{{current}} of {{total}}', {
+                current: activeChoiceIndex + 1,
+                total: choiceQuestions.length
+              })}
             </span>
           </span>
         </div>
@@ -372,7 +384,7 @@ const WorkspaceElicitationCard = ({
           data-testid="elicitation-pending-placeholder"
           className="mt-2 text-sm italic leading-5 text-text-300"
         >
-          Awaiting your answer…
+          {t('Awaiting your answer…')}
         </p>
       ) : isReviewingChoice && choiceQuestion ? (
         <div className="mt-3" data-testid="elicitation-choice-review">
@@ -396,7 +408,7 @@ const WorkspaceElicitationCard = ({
                     )}
                   >
                     {selected ? (
-                      <Check className="size-4" strokeWidth={2} aria-label="Selected" />
+                      <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
                     ) : (
                       index + 1
                     )}
@@ -430,17 +442,17 @@ const WorkspaceElicitationCard = ({
                 )}
               >
                 {agentDecidesSelected ? (
-                  <Check className="size-4" strokeWidth={2} aria-label="Selected" />
+                  <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
                 ) : (
                   <Bot className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 )}
               </span>
-              <span>Let the agent decide</span>
+              <span>{t('Let the agent decide')}</span>
             </div>
             <div
               data-testid="elicitation-custom-answer-review"
               data-selected={customAnswerSelected ? 'true' : 'false'}
-              aria-label="Custom answer"
+              aria-label={t('Custom answer')}
               className={cn(
                 'flex items-start gap-3 border-b border-border-200 px-3 py-3 text-sm',
                 customAnswerSelected && 'bg-bg-200'
@@ -455,7 +467,7 @@ const WorkspaceElicitationCard = ({
                 )}
               >
                 {customAnswerSelected ? (
-                  <Check className="size-4" strokeWidth={2} aria-label="Selected" />
+                  <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
                 ) : (
                   <Pencil className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 )}
@@ -464,7 +476,8 @@ const WorkspaceElicitationCard = ({
                 {customAnswerSelected
                   ? displayValue(
                       currentChoiceAnswer?.value ?? '',
-                      fieldsById.get(choiceQuestion.customField.id)
+                      fieldsById.get(choiceQuestion.customField.id),
+                      t
                     )
                   : null}
               </span>
@@ -475,7 +488,7 @@ const WorkspaceElicitationCard = ({
             <div className="mt-3 flex items-center justify-end gap-2 border-t border-border-200 pt-3">
               <button
                 type="button"
-                aria-label="Previous question"
+                aria-label={t('Previous question')}
                 disabled={activeChoiceIndex === 0}
                 className="grid size-11 place-items-center rounded-xl border border-border-200 bg-bg-000 text-text-100 hover:bg-bg-100 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 onClick={() => setActiveChoiceIndex((index) => Math.max(index - 1, 0))}
@@ -484,7 +497,7 @@ const WorkspaceElicitationCard = ({
               </button>
               <button
                 type="button"
-                aria-label="Next question"
+                aria-label={t('Next question')}
                 disabled={activeChoiceIndex === choiceQuestions.length - 1}
                 className="grid size-11 place-items-center rounded-xl border border-border-200 bg-bg-000 text-text-100 hover:bg-bg-100 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 onClick={() =>
@@ -525,7 +538,7 @@ const WorkspaceElicitationCard = ({
                     )}
                   >
                     {selected ? (
-                      <Check className="size-4" strokeWidth={2} aria-label="Selected" />
+                      <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
                     ) : (
                       index + 1
                     )}
@@ -572,12 +585,12 @@ const WorkspaceElicitationCard = ({
                 )}
               >
                 {agentDecidesSelected ? (
-                  <Check className="size-4" strokeWidth={2} aria-label="Selected" />
+                  <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
                 ) : (
                   <Bot className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 )}
               </span>
-              <span>Let the agent decide</span>
+              <span>{t('Let the agent decide')}</span>
             </button>
           </div>
 
@@ -587,8 +600,8 @@ const WorkspaceElicitationCard = ({
             </span>
             <Textarea
               ref={customAnswerRef}
-              aria-label="Type your own answer"
-              placeholder="Or type your own answer…"
+              aria-label={t('Type your own answer')}
+              placeholder={t('Or type your own answer…')}
               rows={1}
               value={typeof customChoiceValue === 'string' ? customChoiceValue : ''}
               disabled={isSubmitting}
@@ -618,38 +631,38 @@ const WorkspaceElicitationCard = ({
                 })
               }
             >
-              Skip
+              {t('Skip')}
             </Button>
           </div>
 
           {choiceQuestions ? (
             <div className="mt-3 flex items-center justify-between gap-3">
               <span className="truncate text-sm text-text-300">
-                {completedChoiceAnswers.length} selected
+                {t('{{count}} selected', { count: completedChoiceAnswers.length })}
               </span>
               <div className="flex shrink-0 items-center justify-end gap-2">
                 {activeChoiceIndex > 0 ? (
                   <Button
                     type="button"
                     variant="ghost"
-                    aria-label="Previous question"
+                    aria-label={t('Previous question')}
                     disabled={isSubmitting}
                     className="h-11 px-3"
                     onClick={() => setActiveChoiceIndex((index) => Math.max(index - 1, 0))}
                   >
                     <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
-                    Back
+                    {t('Back')}
                   </Button>
                 ) : null}
                 {isFinalChoiceQuestion ? (
                   canFinishChoiceSet ? (
                     <Button className="h-11 px-3" type="submit" disabled={isSubmitting}>
-                      Finish
+                      {t('Finish')}
                     </Button>
                   ) : null
                 ) : currentChoiceAnswer ? (
                   <Button className="h-11 px-3" type="submit" disabled={isSubmitting}>
-                    Next
+                    {t('Next')}
                     <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                   </Button>
                 ) : null}
@@ -658,12 +671,12 @@ const WorkspaceElicitationCard = ({
           ) : null}
 
           <p className="sr-only" aria-live="polite">
-            {isSubmitting ? 'Submitting response' : error ? 'Response submission failed' : ''}
+            {isSubmitting ? t('Submitting response') : error ? t('Response submission failed') : ''}
           </p>
 
           {error ? (
             <p role="alert" className="mt-2 text-sm text-destructive">
-              {error}
+              {t(error)}
             </p>
           ) : null}
         </form>
@@ -851,12 +864,12 @@ const WorkspaceElicitationCard = ({
           </div>
 
           <p className="sr-only" aria-live="polite">
-            {isSubmitting ? 'Submitting response' : error ? 'Response submission failed' : ''}
+            {isSubmitting ? t('Submitting response') : error ? t('Response submission failed') : ''}
           </p>
 
           {error ? (
             <p role="alert" className="text-sm text-destructive">
-              {error}
+              {t(error)}
             </p>
           ) : null}
 
@@ -867,10 +880,10 @@ const WorkspaceElicitationCard = ({
               disabled={isSubmitting}
               onClick={() => void respond({ requestId: request.requestId, action: 'decline' })}
             >
-              Skip
+              {t('Skip')}
             </Button>
             <Button type="submit" disabled={!canSubmit || isSubmitting}>
-              Continue
+              {t('Continue')}
             </Button>
           </div>
         </form>
@@ -902,7 +915,7 @@ const WorkspaceElicitationCard = ({
                   </span>
                 ) : null}
                 <span className="block whitespace-pre-wrap break-words">
-                  {displayValue(answer.value, fieldsById.get(answer.fieldId))}
+                  {displayValue(answer.value, fieldsById.get(answer.fieldId), t)}
                 </span>
               </span>
             ))}
@@ -919,7 +932,7 @@ const WorkspaceElicitationCard = ({
       ) : terminalLabel ? (
         <div className="mt-2 text-sm text-text-300">{terminalLabel}</div>
       ) : (
-        <div className="mt-2 text-sm text-text-300">Waiting for a response…</div>
+        <div className="mt-2 text-sm text-text-300">{t('Waiting for a response…')}</div>
       )}
     </div>
   )

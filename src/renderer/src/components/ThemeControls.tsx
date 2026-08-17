@@ -1,4 +1,5 @@
 import { Check, Monitor, Moon, Sun } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import {
   DropdownMenu,
@@ -11,34 +12,39 @@ import { cn } from '@/lib/utils'
 import type { ThemePreference } from '@/lib/theme'
 import { useThemeStore } from '@/stores/theme-store'
 
-type ThemeOption = {
-  value: ThemePreference
-  label: string
-  description: string
-  Icon: typeof Monitor
-}
-
 // Single source of truth for the three choices, shared by the settings segmented control and the
-// home-header menu so their labels, icons, and order never drift.
-const THEME_OPTIONS: ThemeOption[] = [
-  { value: 'system', label: 'System', description: 'Match your device', Icon: Monitor },
-  { value: 'light', label: 'Light', description: 'Always light', Icon: Sun },
-  { value: 'dark', label: 'Dark', description: 'Always dark', Icon: Moon }
-]
+// home-header menu so their labels, icons, and order never drift. Labels are catalog keys resolved at
+// render time — the list is module-level and cannot call a hook.
+const THEME_OPTIONS = [
+  {
+    value: 'system',
+    labelKey: 'System',
+    descriptionKey: 'Match your device',
+    Icon: Monitor
+  },
+  { value: 'light', labelKey: 'Light', descriptionKey: 'Always light', Icon: Sun },
+  { value: 'dark', labelKey: 'Dark', descriptionKey: 'Always dark', Icon: Moon }
+] as const satisfies readonly {
+  value: ThemePreference
+  labelKey: string
+  descriptionKey: string
+  Icon: typeof Monitor
+}[]
 
 // Three-way segmented control for the Settings > Appearance section. The selected segment carries a
 // raised surface; the whole group is a radiogroup so it reads correctly to assistive tech.
 export const ThemeSegmentedControl = (): React.JSX.Element => {
+  const { t } = useTranslation()
   const preference = useThemeStore((state) => state.preference)
   const setPreference = useThemeStore((state) => state.setPreference)
 
   return (
     <div
       role="radiogroup"
-      aria-label="Theme"
+      aria-label={t('Theme')}
       className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/50 p-1"
     >
-      {THEME_OPTIONS.map(({ value, label, Icon }) => {
+      {THEME_OPTIONS.map(({ value, labelKey, Icon }) => {
         const selected = preference === value
         return (
           <button
@@ -46,7 +52,7 @@ export const ThemeSegmentedControl = (): React.JSX.Element => {
             type="button"
             role="radio"
             aria-checked={selected}
-            aria-label={label}
+            aria-label={t(labelKey)}
             onClick={() => setPreference(value)}
             className={cn(
               'inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors duration-150 ease-out motion-reduce:transition-none',
@@ -56,7 +62,7 @@ export const ThemeSegmentedControl = (): React.JSX.Element => {
             )}
           >
             <Icon className="size-3.5" strokeWidth={2} aria-hidden="true" />
-            <span>{label}</span>
+            <span>{t(labelKey)}</span>
           </button>
         )
       })}
@@ -72,6 +78,7 @@ type ThemePreferenceMenuProps = {
 // The trigger shows the icon for the *current preference* (Monitor / Sun / Moon); the popover lists
 // all three choices with a check beside the active one.
 export const ThemePreferenceMenu = ({ className }: ThemePreferenceMenuProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const preference = useThemeStore((state) => state.preference)
   const setPreference = useThemeStore((state) => state.setPreference)
   const active = THEME_OPTIONS.find((option) => option.value === preference) ?? THEME_OPTIONS[0]
@@ -82,8 +89,8 @@ export const ThemePreferenceMenu = ({ className }: ThemePreferenceMenuProps): Re
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`Theme: ${active.label}`}
-          title={`Theme: ${active.label}`}
+          aria-label={t('Theme: {{theme}}', { theme: t(active.labelKey) })}
+          title={t('Theme: {{theme}}', { theme: t(active.labelKey) })}
           className={cn(
             'inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
             className
@@ -93,14 +100,14 @@ export const ThemePreferenceMenu = ({ className }: ThemePreferenceMenuProps): Re
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        {THEME_OPTIONS.map(({ value, label, description, Icon }) => (
+        <DropdownMenuLabel>{t('Theme')}</DropdownMenuLabel>
+        {THEME_OPTIONS.map(({ value, labelKey, descriptionKey, Icon }) => (
           <DropdownMenuItem key={value} onSelect={() => setPreference(value)} className="gap-2">
             <Icon className="size-4 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
             <span className="flex-1">
-              <span className="block leading-tight">{label}</span>
+              <span className="block leading-tight">{t(labelKey)}</span>
               <span className="block whitespace-nowrap text-xs leading-tight text-muted-foreground">
-                {description}
+                {t(descriptionKey)}
               </span>
             </span>
             {preference === value ? (

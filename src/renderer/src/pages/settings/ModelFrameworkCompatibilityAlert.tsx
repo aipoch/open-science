@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
@@ -12,6 +13,9 @@ import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 // Renders nothing while the pair is compatible or no provider is
 // active.
 const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  // incompatibilityReason's copy is shared with the composer picker, so it lives in `common`.
+  const { t: tCommon } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const activeModel = useSettingsStore((state) => state.activeModel)
@@ -34,11 +38,14 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
     agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
     agentFrameworkId
   const reason = modelUnsupportedByBridge
-    ? 'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.'
+    ? t(
+        'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.'
+      )
     : incompatibilityReason(
         { apiEndpoints: active.apiEndpoints, type: active.type, name: active.name },
         frameworkName,
-        frameworkEndpoints
+        frameworkEndpoints,
+        tCommon
       )
 
   return (
@@ -50,13 +57,15 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
       <div className="space-y-0.5">
         <p className="font-medium">
           {modelUnsupportedByBridge
-            ? 'Model not supported over the Codex bridge'
-            : `Active model isn't compatible with ${frameworkName}`}
+            ? t('Model not supported over the Codex bridge')
+            : t("Active model isn't compatible with {{framework}}", { framework: frameworkName })}
         </p>
         <p className="text-amber-700/90 dark:text-amber-400/80">
           {reason}{' '}
           {!modelUnsupportedByBridge
-            ? "Pick a compatible model below, or switch the agent framework above — otherwise conversations on this framework won't start."
+            ? t(
+                "Pick a compatible model below, or switch the agent framework above — otherwise conversations on this framework won't start."
+              )
             : null}
         </p>
       </div>

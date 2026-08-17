@@ -27,16 +27,57 @@ jobs:
     env:
       CURRENT_TAG: ${{ github.event.client_payload.tag || inputs.tag }}
     steps:
-      - name: Checkout released revision
+      - name: Checkout smoke harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-          ref: ${{ env.CURRENT_TAG }}
 
       - name: Resolve released revision
         id: current
         shell: pwsh
-        run: "'sha=' + (git rev-parse HEAD) >> $env:GITHUB_OUTPUT"
+        run: |
+          $releasedSha = git rev-parse "$($env:CURRENT_TAG)^{commit}"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releasedSha)) {
+            exit 1
+          }
+          git merge-base --is-ancestor $releasedSha $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Released revision $releasedSha is not an ancestor of smoke harness $env:GITHUB_SHA."
+            exit 1
+          }
+          $migrationFiles = @(
+            git ls-tree -r --name-only $releasedSha -- src/main/database/migrations
+          )
+          if ($LASTEXITCODE -ne 0 -or $migrationFiles.Count -eq 0) {
+            Write-Error "Released revision $releasedSha has no application migrations."
+            exit 1
+          }
+          $migrationPattern = '^src/main/database/migrations/(?<sequence>\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.ts$'
+          for ($index = 0; $index -lt $migrationFiles.Count; $index += 1) {
+            if ($migrationFiles[$index] -notmatch $migrationPattern) {
+              Write-Error "Unexpected released migration path: $($migrationFiles[$index])"
+              exit 1
+            }
+            $expectedSequence = $index + 1
+            if ([int]$Matches.sequence -ne $expectedSequence) {
+              Write-Error "Released migrations are not a continuous prefix at $($migrationFiles[$index])."
+              exit 1
+            }
+          }
+          $artifactReservationCommit = 'f12fd1f871022c7a9b771d193202d9ecf98aca96'
+          $artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
+            Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+            exit 1
+          }
+          if ($artifactReservationBase -eq $artifactReservationCommit) {
+            $artifactRpcContract = 'reservation'
+          } else {
+            $artifactRpcContract = 'legacy'
+          }
+          "sha=$releasedSha" >> $env:GITHUB_OUTPUT
+          "migration_count=$($migrationFiles.Count)" >> $env:GITHUB_OUTPUT
+          "artifact_rpc_contract=$artifactRpcContract" >> $env:GITHUB_OUTPUT
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -45,6 +86,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npx prisma generate
 
       - name: Download current Windows installer
         shell: pwsh
@@ -78,6 +122,8 @@ jobs:
 
       - name: Certify Windows electron-updater differential update
         id: updater
+        env:
+          OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-updater-certification
         if: steps.previous.outputs.available == 'true'
         continue-on-error: true
         shell: pwsh
@@ -91,13 +137,17 @@ jobs:
 
       - name: Drill Windows silent upgrade, process lock, rollback, and restart
         id: installer
+        env:
+          OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-installer-certification
         if: always() && steps.previous.outputs.available == 'true'
         continue-on-error: true
         shell: pwsh
         run: |
           node scripts/windows-installer-smoke.mjs `
             --installer-dir current `
-            --previous-installer-dir previous 2>&1 |
+            --previous-installer-dir previous `
+            --artifact-rpc-contract '${{ steps.current.outputs.artifact_rpc_contract }}' `
+            --expected-migration-count '${{ steps.current.outputs.migration_count }}' 2>&1 |
             Tee-Object -FilePath windows-installer-certification.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

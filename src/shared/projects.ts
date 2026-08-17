@@ -7,6 +7,9 @@ import { validationCodec, type ApplicationCommandContract } from './application-
 // The SQLite/Prisma layer owns Project rows (see src/main/projects). Timestamps are normalized to
 // epoch milliseconds at the repository boundary so the renderer treats them like session timestamps.
 
+export const PROJECT_NAME_MAX_LENGTH = 200
+export const PROJECT_DESCRIPTION_MAX_LENGTH = 1000
+
 export const projectSchema = z
   .object({
     id: z.string(),
@@ -29,8 +32,8 @@ export const projectSchema = z
 
 export const createProjectRequestSchema = z
   .object({
-    name: z.string(),
-    description: z.string().optional(),
+    name: z.string().max(PROJECT_NAME_MAX_LENGTH),
+    description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     agentContext: z.string().max(16000).optional()
   })
   .strict()
@@ -38,8 +41,9 @@ export const createProjectRequestSchema = z
 export const updateProjectRequestSchema = z
   .object({
     id: z.string(),
-    name: z.string().optional(),
-    description: z.string().optional(),
+    name: z.string().max(PROJECT_NAME_MAX_LENGTH).optional(),
+    description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
+    expectedUpdatedAt: z.number().int().positive(),
     agentContext: z.string().max(16000).optional(),
     pinned: z.boolean().optional()
   })

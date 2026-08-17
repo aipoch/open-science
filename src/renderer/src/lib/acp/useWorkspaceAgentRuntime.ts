@@ -45,7 +45,8 @@ import {
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
-  syncWorkspacePermissionState
+  syncWorkspacePermissionState,
+  useWorkspaceRuntimeEventDrain
 } from './workspace-runtime-event-owner'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
 import {
@@ -118,7 +119,6 @@ type WorkspaceAgentRuntime = {
   ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
-  deleteRuntimeSession: (sessionId: string) => Promise<boolean>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
@@ -126,7 +126,6 @@ type WorkspaceAgentRuntime = {
 
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
-
 const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
   const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
@@ -221,7 +220,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     },
     []
   )
-  const drainRuntimeEvents = drainWorkspaceRuntimeEventsForPersistence
+  const drainRuntimeEvents = useWorkspaceRuntimeEventDrain(runtime.reconcileSnapshot)
   const previousStatusRef = useRef(runtime.state.status)
   const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
   const previousDurablePermissionSessionIdsRef = useRef<ReadonlySet<string>>(new Set())
@@ -414,10 +413,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     (sessionId: string): Promise<void> => lifecycleOwner.cancel(runtime, sessionId),
     [lifecycleOwner, runtime]
   )
-  const deleteRuntimeSession = useCallback(
-    (sessionId: string): Promise<boolean> => lifecycleOwner.delete(runtime, sessionId),
-    [lifecycleOwner, runtime]
-  )
   const respondToPermission = useCallback(
     (requestId: string, optionId?: string): Promise<void> => {
       const existing = permissionResponseAttemptOwner.getPromise(requestId)
@@ -556,7 +551,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     resendEditedMessage,
     cancelRun,
     resumeInterruptedSession,
-    deleteRuntimeSession,
     respondToPermission,
     setPermissionProfile,
     revokePermissionGrant

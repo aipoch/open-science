@@ -11,6 +11,7 @@ This covers Sections 4 (Regulatory Path) and 5 (Key Trials).
 ## Actions
 
 **Step 1: FDA/EMA accepted endpoints**
+
 - WebSearch site:fda.gov for guidance documents specific to this indication
   (e.g., `"FDA guidance" "[indication]" clinical trial endpoints`)
 - Identify primary endpoints used in successful registrational trials
@@ -20,12 +21,14 @@ This covers Sections 4 (Regulatory Path) and 5 (Key Trials).
 - For indications without FDA guidance: note this — it means novel regulatory territory
 
 **Step 2: Regulatory precedents**
+
 - WebSearch site:fda.gov for approval packages related to this indication
 - What endpoints led to approval? What trial designs were accepted?
 - Any breakthrough therapy designations, fast track, or priority review precedents?
 - Relevant advisory committee discussions or Complete Response Letters
 
 **Step 3: Trial design parameters**
+
 - Use clinical-trials MCP to search for Phase 3 trials in this indication to identify patterns:
   `search_trials(condition="[indication]", phase="Phase 3")`
 - Typical trial sizes (enrollment targets)
@@ -34,6 +37,7 @@ This covers Sections 4 (Regulatory Path) and 5 (Key Trials).
 - Estimate per-patient costs if available from literature
 
 **Step 4: Landmark trials**
+
 - Identify the 3-5 most important trials that shaped current SOC
 - For each: NCT ID, drug, sponsor, phase, key results, impact on practice
 - Search clinical-trials MCP and pubmed MCP for these trials
@@ -42,6 +46,7 @@ This covers Sections 4 (Regulatory Path) and 5 (Key Trials).
   for figures (slide decks are figure-first)
 
 **Step 5: Notable failures**
+
 - Identify significant clinical trial failures in this indication
 - What mechanism/approach was tested? Why did it fail?
 - Lessons learned that inform future trial design

@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -26,7 +27,9 @@ type OnboardingWizardProps = {
 }
 
 const STEP_ORDER: WizardStep[] = ['environment', 'agent', 'provider', 'notebook', 'location']
-const STEP_LABELS: Record<WizardStep, string> = {
+
+// The step id is a runtime value, so it can't be interpolated into a natural-language key.
+const STEP_LABELS = {
   environment: 'Environment',
   agent: 'Agent runtime',
   provider: 'Model provider',
@@ -37,10 +40,11 @@ const loadStorageInfoFromBridge = (): Promise<StorageInfo> => window.api.storage
 
 // Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
 const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
+  const { t } = useTranslation()
   const currentIndex = STEP_ORDER.indexOf(step)
 
   return (
-    <ol aria-label="Setup progress" className="mt-7 space-y-3">
+    <ol aria-label={t('Setup progress')} className="mt-7 space-y-3">
       {STEP_ORDER.map((wizardStep, index) => {
         const state = index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'upcoming'
 
@@ -66,7 +70,7 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
             >
               {state === 'done' ? <Check className="size-3" strokeWidth={2.4} /> : index + 1}
             </span>
-            <span>{STEP_LABELS[wizardStep]}</span>
+            <span>{t(STEP_LABELS[wizardStep])}</span>
           </li>
         )
       })}
@@ -80,6 +84,7 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
 const OnboardingWizard = ({
   loadStorageInfo = loadStorageInfoFromBridge
 }: OnboardingWizardProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
@@ -159,7 +164,7 @@ const OnboardingWizard = ({
   if (isRelaunching) {
     return (
       <main className="flex h-svh items-center justify-center bg-bg-10 text-text-000">
-        <p className="text-sm text-text-100">Setting up your workspace…</p>
+        <p className="text-sm text-text-100">{t('Setting up your workspace…')}</p>
       </main>
     )
   }
@@ -181,16 +186,17 @@ const OnboardingWizard = ({
           className="mt-8 grid grid-cols-1 gap-6 md:mt-12 md:grid-cols-[240px_minmax(0,1fr)] md:gap-10"
         >
           <section aria-labelledby="onboarding-introduction-title" className="md:pt-2">
-            <p className="text-[11px] font-medium text-muted-foreground">FIRST-TIME SETUP</p>
+            <p className="text-[11px] font-medium text-muted-foreground">{t('FIRST-TIME SETUP')}</p>
             <h1
               id="onboarding-introduction-title"
               className="mt-2 font-serif text-[28px] leading-[1.15] font-medium text-text-000"
             >
-              Set up your research workspace.
+              {t('Set up your research workspace.')}
             </h1>
             <p className="mt-3 max-w-60 text-sm leading-5 text-muted-foreground">
-              A quick host check confirms this computer is ready, you connect the model you want to
-              use, then you choose where your data lives.
+              {t(
+                'A quick host check confirms this computer is ready, you connect the model you want to use, then you choose where your data lives.'
+              )}
             </p>
             <OnboardingProgress step={step} />
           </section>

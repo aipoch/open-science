@@ -41,7 +41,7 @@ const artifactVersion = (overrides: Partial<ArtifactFile> = {}): ArtifactFile =>
   mimeType: 'text/plain',
   size: 6,
   mtimeMs: 1,
-  projectName: 'project-1',
+  projectId: 'project-1',
   sessionId: 'artifact-session-1',
   runId: 'artifact-run-1',
   versionId: 'version-1',
@@ -242,12 +242,22 @@ describe('ArtifactTurnOwner', () => {
       expect.objectContaining({
         executionId: 'root-execution',
         artifactRunId: 'artifact-run-100-1',
-        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+        allowedMethods: [
+          'artifactReserveWrite',
+          'artifactReleaseWrite',
+          'artifactCreateVersion',
+          'artifactReplayVersion'
+        ]
       }),
       expect.objectContaining({
         executionId: 'parallel-execution',
         artifactRunId: 'artifact-run-100-2',
-        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+        allowedMethods: [
+          'artifactReserveWrite',
+          'artifactReleaseWrite',
+          'artifactCreateVersion',
+          'artifactReplayVersion'
+        ]
       })
     ])
     expect(owner.activeRunIds()).toEqual(['artifact-run-100-2'])
@@ -408,7 +418,12 @@ describe('ArtifactTurnOwner', () => {
         artifactStorageSessionId: 'artifact-session-1',
         artifactRunId: 'artifact-run-123-1',
         notebookSessionId: 'session-1',
-        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+        allowedMethods: [
+          'artifactReserveWrite',
+          'artifactReleaseWrite',
+          'artifactCreateVersion',
+          'artifactReplayVersion'
+        ]
       })
     ])
     expect(notebookContexts).toEqual([
@@ -994,7 +1009,7 @@ describe('ArtifactTurnOwner', () => {
     const repository = new ArtifactRepository(blockedRoot)
     const revoked: string[] = []
     await repository.writePendingFile({
-      projectName: 'seed',
+      projectId: 'seed',
       sessionId: 'seed',
       runId: 'seed',
       filename: 'seed.txt',

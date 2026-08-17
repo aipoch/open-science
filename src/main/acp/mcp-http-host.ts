@@ -22,6 +22,11 @@ import {
   type HostMessageMcpHandler
 } from '../side-chat/host-message-mcp-server'
 import { createLogger } from '../logger'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  ResourceBudgetExceededError,
+  readBoundedJsonBody
+} from '../resource-budget'
 
 const log = createLogger('mcp-http-host')
 
@@ -46,19 +51,6 @@ type SessionEntry = {
   hostMessage?: HostMessageMcpHandler
 }
 
-// Reads and JSON-parses a POST body so it can be handed to the transport as a pre-parsed payload.
-const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
-  const chunks: Buffer[] = []
-
-  for await (const chunk of request) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
-  }
-
-  if (chunks.length === 0) return undefined
-
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
-}
-
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.writeHead(statusCode, { 'content-type': 'application/json' })
   response.end(`${JSON.stringify(payload)}\n`)
@@ -72,14 +64,16 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
 class AgentMcpHttpHost {
   private readonly token: string
   private readonly host: string
+  private readonly requestBytes: number
   private server: Server | undefined
   private startPromise: Promise<HostConnection> | undefined
   private endpoint: string | undefined
   private readonly sessions = new Map<string, SessionEntry>()
 
-  constructor(options: { token?: string; host?: string } = {}) {
+  constructor(options: { token?: string; host?: string; requestBytes?: number } = {}) {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
+    this.requestBytes = options.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes
   }
 
   // Starts the HTTP server once on an ephemeral port and returns its connection details.
@@ -257,13 +251,23 @@ class AgentMcpHttpHost {
 
     try {
       await server.connect(transport)
-      const body = request.method === 'POST' ? await readJsonBody(request) : undefined
+      const body =
+        request.method === 'POST'
+          ? await readBoundedJsonBody<unknown>(request, this.requestBytes, {
+              emptyValue: undefined
+            })
+          : undefined
       await transport.handleRequest(request, response, body)
     } catch (error) {
       log.error('MCP host request failed', { kind, error })
 
       if (!response.headersSent) {
-        writeJson(response, 500, {
+        if (error instanceof ResourceBudgetExceededError) {
+          response.shouldKeepAlive = false
+          response.setHeader('connection', 'close')
+          response.once('finish', () => request.destroy())
+        }
+        writeJson(response, error instanceof ResourceBudgetExceededError ? 413 : 500, {
           error: error instanceof Error ? error.message : String(error)
         })
       }

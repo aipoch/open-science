@@ -345,16 +345,32 @@ export class ComputeJobRepository {
   }
 
   // Marks a batch of jobs as notification-consumed by setting notificationConsumedAt to now.
-  // Idempotent — already-consumed jobs are unaffected by the where clause.
-  async markNotificationsConsumed(jobIds: string[]): Promise<void> {
+  // Session ids are globally stable identities; reject a mixed, missing, or unnotified batch
+  // atomically so a caller cannot consume another Session's notification by job id.
+  async markNotificationsConsumed(sessionId: string, jobIds: readonly string[]): Promise<void> {
     if (jobIds.length === 0) return
     const client = await this.getClient()
-    await client.computeJob.updateMany({
-      where: {
-        id: { in: jobIds },
-        notificationConsumedAt: null
-      },
-      data: { notificationConsumedAt: new Date() }
+    const distinctJobIds = [...new Set(jobIds)]
+    await client.$transaction(async (transaction) => {
+      const rows = await transaction.computeJob.findMany({
+        where: { id: { in: distinctJobIds } },
+        select: { id: true, sessionId: true, notifiedAt: true }
+      })
+      const allOwnedNotifications =
+        rows.length === distinctJobIds.length &&
+        rows.every((row) => row.sessionId === sessionId && row.notifiedAt !== null)
+      if (!allOwnedNotifications) {
+        throw new Error('Cannot consume compute notifications outside the requested Session.')
+      }
+      await transaction.computeJob.updateMany({
+        where: {
+          sessionId,
+          id: { in: distinctJobIds },
+          notifiedAt: { not: null },
+          notificationConsumedAt: null
+        },
+        data: { notificationConsumedAt: new Date() }
+      })
     })
   }
 

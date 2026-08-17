@@ -66,6 +66,7 @@ import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './connectors/cust
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
+import { connectorSkillSourceDir } from './connectors/provision'
 import { ConnectorService } from './connectors/service'
 import { registerFileSaveHandlers } from './file-save'
 import { ImmutableInputAuthority } from './immutable-input-authority'
@@ -82,7 +83,6 @@ import {
 } from './lifecycle-shutdown'
 import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
 import { createLogsCommandOwner, registerLogsIpcHandlers } from './logs-ipc'
-import { registerNetworkIpcHandlers } from './network-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
 import { registerWindowFindIpcHandlers } from './window-find-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
@@ -136,12 +136,13 @@ import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
 import { HostFramesService } from './notebook/host-frames-service'
-import { HostLlmService } from './notebook/host-llm-service'
+import { HostSessionsService } from './notebook/host-sessions-service'
+import { HostModelService } from './notebook/host-model-service'
 import { HostViewImageService } from './notebook/host-view-image-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../shared/uploads'
-import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../shared/artifacts'
+import { DEFAULT_ARTIFACT_PROJECT_ID } from '../shared/artifacts'
 import type { NotebookLanguage } from '../shared/notebook'
 import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
 import { OFFICE_PREVIEW_STATE_CHANNEL } from '../shared/office-preview'
@@ -158,10 +159,11 @@ import {
   type ReviewerCommandOwner
 } from './reviewer/ipc'
 import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
+import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
 import {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
-  createSessionPersistenceHandlers,
+  createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers
@@ -181,6 +183,7 @@ import {
   ProjectDeletionCoordinator,
   ProjectDeletionRecoveryLoop
 } from './projects/deletion-coordinator'
+import { ProjectRuntimeQuiescenceOwner } from './projects/project-runtime-quiescence-owner'
 import { getProjectDbClient } from './projects/prisma-client'
 import { seedDefaultPermissionGrants } from './permission-grants/defaults'
 import { createPermissionGrantRegistry } from './permission-grants/registry'
@@ -196,12 +199,13 @@ import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
 import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
+import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
+import { SessionDeletionOwner } from './session-deletion/owner'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
 import { registerLocalFsIpcHandlers } from './local-fs/ipc'
 import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
 import { LocalFsService } from './local-fs/service'
-import { getAppClaudeConfigDir } from './settings/provider-env'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
@@ -293,6 +297,7 @@ import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/c
 import { HostSkillsService, type HostSkillsCatalog } from './skills/host-skills-service'
 import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
+import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 
 const permissionGrantsLog = createLogger('permission-grants')
@@ -326,6 +331,7 @@ export type ApplicationRuntimeInterfaces = {
   >
   settingsService: WindowSettingsCapabilities
   taskAgent: TaskAgentPort
+  taskControls: TaskControlPorts
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
@@ -394,6 +400,7 @@ const createApplicationModules = async (
   const settingsService = await modules.add(undefined, () => ({
     capability: new SettingsService({
       repository: settingsRepository,
+      skillRuntimeMcpEntryPath: mainEntryPath,
       applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined),
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
@@ -457,7 +464,7 @@ const createApplicationModules = async (
   }
   const sessionRepository = createDefaultSessionRepository((projectId, sessionId) =>
     (runtimeRef.current?.getActivePromptSessions() ?? []).some(
-      (session) => session.projectName === projectId && session.sessionId === sessionId
+      (session) => session.projectId === projectId && session.sessionId === sessionId
     )
   )
   const projectRepository = createDefaultProjectRepository()
@@ -570,11 +577,11 @@ const createApplicationModules = async (
     return Promise.reject(new Error(`Unsupported managed preview source: ${String(unhandled)}`))
   }
   const resolveSessionArtifactFilePath = createSessionArtifactFileResolver({
-    compatibilityProjectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+    compatibilityProjectId: DEFAULT_ARTIFACT_PROJECT_ID,
     resolveVersionContent: (identity) =>
       artifactProvenanceRepository.resolveVersionContent(identity),
-    resolveLegacyArtifactPath: (projectName, sessionId, path) =>
-      artifactRepository.resolveSessionArtifactFilePath(projectName, sessionId, path)
+    resolveLegacyArtifactPath: (projectId, sessionId, path) =>
+      artifactRepository.resolveSessionArtifactFilePath(projectId, sessionId, path)
   })
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
@@ -591,6 +598,8 @@ const createApplicationModules = async (
   const reviewerCommandOwnerRef: { current: ReviewerCommandOwner | undefined } = {
     current: undefined
   }
+  const reviewerProjectRuntime = new ReviewerProjectRuntimeOwner()
+  const messageAttributionAuthority = new MainMessageAttributionAuthority()
   const notebookActivityRef: {
     current: { getActiveNotebookSessions(): { projectId: string; sessionId: string }[] } | undefined
   } = { current: undefined }
@@ -635,6 +644,7 @@ const createApplicationModules = async (
       ): Promise<void>
     }
   } = {}
+  const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
       if (!computeJobDeletionRef.current) {
@@ -684,7 +694,7 @@ const createApplicationModules = async (
   // close/quit and storage-migration safety gates. The selector deliberately ignores active routes:
   // inactive-branch work still owns processes/files and must block disruptive operations.
   const delegatedActivity = createDelegatedActivityProjection()
-  const getActiveDelegatedSessions = (): { projectName: string; sessionId: string }[] =>
+  const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
     delegatedActivity.getActiveDelegatedSessions()
 
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
@@ -751,19 +761,41 @@ const createApplicationModules = async (
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
-    previewStateRepository,
     reviewRepository,
     artifactProvenanceRepository,
     permissionGrantRegistry,
     {
       beforeProjectDelete: async (projectId) => {
-        await sideChatOwnerRef.current?.invalidateProject(projectId)
-        const deletionOwner = computeJobDeletionRef.current
-        if (!deletionOwner) throw new Error('Compute Job deletion is not initialized.')
-        await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
+        const owner = projectRuntimeQuiescenceRef.current
+        if (!owner) throw new Error('Project runtime cleanup is not initialized.')
+        await archiveCoordinator.withProjectDeletion(projectId, async () => {
+          notebookService.beginProjectDeletion(projectId)
+          await owner.quiesceProject(projectId)
+        })
       },
-      restoreProjectDeletion: (projectId) =>
-        computeJobDeletionPort.restoreProjectJobDeletion(projectId)
+      restoreProjectDeletion: async (projectId) => {
+        archiveCoordinator.restoreProjectDeletion(projectId)
+        notebookService.beginProjectDeletion(projectId)
+        reviewerProjectRuntime.restoreProjectDeletion(projectId)
+        await computeJobDeletionPort.restoreProjectJobDeletion(projectId)
+      },
+      finalizeProjectDeletion: async (projectId) => {
+        const owner = sideChatOwnerRef.current
+        if (!owner) throw new Error('Side chat runtime cleanup is not initialized.')
+        await owner.completeProjectDeletion(projectId)
+      },
+      completeProjectDeletion: (projectId) => {
+        archiveCoordinator.releaseProjectDeletion(projectId)
+        notebookService.releaseProjectDeletion(projectId)
+        reviewerProjectRuntime.releaseProjectDeletion(projectId)
+      },
+      abortProjectDeletion: async (projectId) => {
+        archiveCoordinator.releaseProjectDeletion(projectId)
+        notebookService.releaseProjectDeletion(projectId)
+        reviewerProjectRuntime.releaseProjectDeletion(projectId)
+        sideChatOwnerRef.current?.restoreProject(projectId)
+        await computeJobDeletionPort.abortProjectJobDeletion(projectId)
+      }
     }
   )
   const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
@@ -869,6 +901,10 @@ const createApplicationModules = async (
       }
       return { created, session: durableSession }
     },
+    setDelegationPolicy: async (projectId, sessionId, policy) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.setSessionDelegationPolicy(projectId, sessionId, policy)
+    },
     updateArchive: async (request) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
       return archiveCoordinator.updateSessionArchive(request)
@@ -914,7 +950,7 @@ const createApplicationModules = async (
     {
       configRoot: resolveConfigRoot(),
       dataRoot: resolveDataRoot(),
-      projectId: DEFAULT_ARTIFACT_PROJECT_NAME,
+      projectId: DEFAULT_ARTIFACT_PROJECT_ID,
       repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
       notebookRuntimeSettings,
@@ -1126,7 +1162,7 @@ const createApplicationModules = async (
   })
   const connectorRuntimeSettings = new ConnectorRuntimeSettingsProjection({
     readConnectors: () => settingsService.getConnectors(),
-    skillsDir: join(getAppClaudeConfigDir(resolveStorageRoot()), 'skills'),
+    skillsDir: connectorSkillSourceDir(resolveStorageRoot()),
     mcpClientManager,
     notifyStatusChanged: () => broadcastToRenderers('settings:connector-runtime-changed', undefined)
   })
@@ -1236,6 +1272,8 @@ const createApplicationModules = async (
     permissionGrantRegistry,
     settingsRepository,
     {
+      requestSkillRuntimeReload: () =>
+        void runtimeRef.current?.requestSkillsReloadForFramework('claude-code'),
       pruneSessionEnabledHosts: async (providerId, afterPrune) => {
         if (!sessionEnabledComputeHostsOwnerRef.current) {
           throw new Error('Session enabled Compute Host ownership is not initialized.')
@@ -1323,26 +1361,6 @@ const createApplicationModules = async (
       }
     }
   )
-  const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
-    async () => {
-      // A retained child Session plan must finish before its parent Project intent can prepare.
-      await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
-      await projectDeletionCoordinator.recoverPendingDeletions()
-    },
-    {
-      onError: (error) =>
-        createLogger('compute-job-deletion').error(
-          'background deletion recovery failed; retry scheduled',
-          diagnosticErrorFields(error)
-        )
-    }
-  )
-  await modules.add(projectDeletionRecovery, (recovery) => ({
-    name: 'project-deletion-recovery',
-    capability: undefined,
-    start: () => recovery.start(),
-    dispose: () => recovery.stop()
-  }))
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
   // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
   const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
@@ -1522,7 +1540,7 @@ const createApplicationModules = async (
       project: (scope) =>
         scope.terminalMessageId
           ? artifactRepository.listMessageFiles({
-              projectName: scope.session.projectId,
+              projectId: scope.session.projectId,
               sessionId: scope.session.sessionId,
               messageId: scope.terminalMessageId
             })
@@ -1546,89 +1564,98 @@ const createApplicationModules = async (
     },
     parentMessages: {
       async deliver(delivery) {
-        const runtime = runtimeRef.current
-        if (!runtime) throw new Error('ACP runtime is not available.')
-        const session = await sessionRepository.loadSession(
+        return archiveCoordinator.withProjectDeletionAdmission(
           delivery.session.projectId,
-          delivery.session.sessionId
-        )
-        const graph = session?.conversationGraph
-        const rootFrame = graph?.frames.find((frame) => frame.id === delivery.targetFrameId)
-        const rootBranch = graph?.branches.find((branch) => branch.id === rootFrame?.activeBranchId)
-        if (
-          !session ||
-          session.id !== delivery.session.sessionId ||
-          session.projectId !== delivery.session.projectId ||
-          graph?.rootFrameId !== delivery.targetFrameId ||
-          !rootBranch ||
-          !graph.messages.some((message) => message.id === delivery.originMessageId)
-        ) {
-          throw new Error('Parent message durable root provenance is unavailable.')
-        }
-        return runtime.startContinuationWhen(
-          {
-            sessionId: delivery.session.sessionId,
-            text:
-              `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
-              `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
-            suppressUserMessage: true,
-            provenanceContext: {
-              promptMessageId: delivery.rootPromptMessageId,
-              originMessageId: delivery.originMessageId,
-              rootFrameId: graph.rootFrameId,
-              agentFrameId: graph.rootFrameId,
-              messageBranchId: delivery.rootBranchId,
-              messageBranchAncestry: [delivery.rootBranchId],
-              messageAncestry: [delivery.originMessageId],
-              runtimeSegmentId: `delegated-message-${delivery.messageId}`
-            }
-          },
           async () => {
-            const latest = await sessionRepository.loadSession(
+            const runtime = runtimeRef.current
+            if (!runtime) throw new Error('ACP runtime is not available.')
+            const session = await sessionRepository.loadSession(
               delivery.session.projectId,
               delivery.session.sessionId
             )
-            const latestGraph = latest?.conversationGraph
-            const latestRoot = latestGraph?.frames.find(({ id }) => id === delivery.targetFrameId)
-            const latestBranch = latestGraph?.branches.find(
-              ({ id }) => id === latestRoot?.activeBranchId
+            const graph = session?.conversationGraph
+            const rootFrame = graph?.frames.find((frame) => frame.id === delivery.targetFrameId)
+            const rootBranch = graph?.branches.find(
+              (branch) => branch.id === rootFrame?.activeBranchId
             )
             if (
-              !latest ||
-              latestBranch?.id !== delivery.rootBranchId ||
-              `${latestBranch.id}:${latestBranch.createdAt}` !== delivery.rootBranchRevision
+              !session ||
+              session.id !== delivery.session.sessionId ||
+              session.projectId !== delivery.session.projectId ||
+              graph?.rootFrameId !== delivery.targetFrameId ||
+              !rootBranch ||
+              !graph.messages.some((message) => message.id === delivery.originMessageId)
             ) {
-              throw new DelegateMessageParkedError(
-                'Parent message root Branch changed before dispatch.'
-              )
+              throw new Error('Parent message durable root provenance is unavailable.')
             }
-            const started = await delivery.startDispatch()
-            if (started !== 'started') {
-              throw new DelegateMessageParkedError(
-                'Parent message dispatch fence was not acquired.'
-              )
-            }
-            if (!runtime.hasLiveSession(latest.projectId, latest.id)) {
-              await runtime.resumeSession({
-                sessionId: latest.id,
-                cwd: latest.cwd,
-                projectName: latest.projectId,
-                ...(latest.permissionProfile
-                  ? { permissionProfile: latest.permissionProfile }
-                  : {}),
-                ...(latest.agentFrameworkId
-                  ? { previousFrameworkId: latest.agentFrameworkId }
-                  : {}),
-                ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
-                ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
-                ...(latest.providerSessionId
-                  ? { providerSessionId: latest.providerSessionId }
-                  : {}),
-                ...(latest.providerContinuityToken
-                  ? { providerContinuityToken: latest.providerContinuityToken }
-                  : {})
-              })
-            }
+            return runtime.startContinuationWhenDispatchAdmitted(
+              {
+                sessionId: delivery.session.sessionId,
+                text:
+                  `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
+                  `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
+                suppressUserMessage: true,
+                provenanceContext: {
+                  promptMessageId: delivery.rootPromptMessageId,
+                  originMessageId: delivery.originMessageId,
+                  rootFrameId: graph.rootFrameId,
+                  agentFrameId: graph.rootFrameId,
+                  messageBranchId: delivery.rootBranchId,
+                  messageBranchAncestry: [delivery.rootBranchId],
+                  messageAncestry: [delivery.originMessageId],
+                  runtimeSegmentId: `delegated-message-${delivery.messageId}`
+                }
+              },
+              async () => {
+                const latest = await sessionRepository.loadSession(
+                  delivery.session.projectId,
+                  delivery.session.sessionId
+                )
+                const latestGraph = latest?.conversationGraph
+                const latestRoot = latestGraph?.frames.find(
+                  ({ id }) => id === delivery.targetFrameId
+                )
+                const latestBranch = latestGraph?.branches.find(
+                  ({ id }) => id === latestRoot?.activeBranchId
+                )
+                if (
+                  !latest ||
+                  latestBranch?.id !== delivery.rootBranchId ||
+                  `${latestBranch.id}:${latestBranch.createdAt}` !== delivery.rootBranchRevision
+                ) {
+                  throw new DelegateMessageParkedError(
+                    'Parent message root Branch changed before dispatch.'
+                  )
+                }
+                const started = await delivery.startDispatch()
+                if (started !== 'started') {
+                  throw new DelegateMessageParkedError(
+                    'Parent message dispatch fence was not acquired.'
+                  )
+                }
+                if (!runtime.hasLiveSession(latest.projectId, latest.id)) {
+                  await runtime.resumeSession({
+                    sessionId: latest.id,
+                    cwd: latest.cwd,
+                    projectId: latest.projectId,
+                    ...(latest.permissionProfile
+                      ? { permissionProfile: latest.permissionProfile }
+                      : {}),
+                    ...(latest.agentFrameworkId
+                      ? { previousFrameworkId: latest.agentFrameworkId }
+                      : {}),
+                    ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
+                    ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
+                    ...(latest.providerSessionId
+                      ? { providerSessionId: latest.providerSessionId }
+                      : {}),
+                    ...(latest.providerContinuityToken
+                      ? { providerContinuityToken: latest.providerContinuityToken }
+                      : {})
+                  })
+                }
+              }
+            )
           }
         )
       }
@@ -1659,8 +1686,16 @@ const createApplicationModules = async (
     onPublishedSkillsChanged: requestSkillCatalogRefresh
   })
   const hostLlmLog = createLogger('notebook:host-llm')
-  const hostLlmService = new HostLlmService({
+  const hostModelService = new HostModelService({
     captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+    captureSessionModel: (sessionId) => runtimeRef.current?.captureSessionModel(sessionId),
+    captureModelCatalog: async () => {
+      const settings = await settingsService.getSettingsView()
+      return {
+        providers: settings.providers,
+        claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId
+      }
+    },
     runner: new RestrictedInferenceRunner({
       appVersion: app.getVersion(),
       configRoot,
@@ -1708,11 +1743,18 @@ const createApplicationModules = async (
         return runtime.requestUserInput(request)
       },
       artifactProvenance: {
-        createVersion: (request) =>
+        reserveWrite: (request) => artifactProvenanceRepository.reserveWrite(request),
+        releaseWriteReservation: (request) =>
+          artifactProvenanceRepository.releaseWriteReservation(request),
+        releaseRunWriteReservations: (request) =>
+          artifactProvenanceRepository.releaseRunWriteReservations(request),
+        releaseAllWriteReservations: () =>
+          artifactProvenanceRepository.releaseAllWriteReservations(),
+        createVersion: (request, signal) =>
           sessionPersistenceCoordinator.runSessionMutation(
             request.projectId,
             request.appSessionId,
-            () => artifactProvenanceRepository.createVersion(request)
+            () => artifactProvenanceRepository.createVersion(request, signal)
           ),
         replayVersion: (request) =>
           sessionPersistenceCoordinator.runSessionMutation(
@@ -1737,22 +1779,33 @@ const createApplicationModules = async (
             mode: 'read-only'
           })
       }),
+      hostSessions: new HostSessionsService(
+        {
+          readProject: (projectId) =>
+            sessionRepository.loadProjectWithDiagnostics(projectId, { mode: 'read-only' }),
+          readSession: (projectId, sessionId) =>
+            sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+              mode: 'read-only'
+            })
+        },
+        { getSnapshot: () => runtimeRef.current?.getSnapshot() }
+      ),
       inputRegistry: notebookInputRegistry,
       agentsService,
       delegatedWorkService: delegatedWork.host,
       skillsService: hostSkillsService,
-      hostLlm: hostLlmService,
+      hostModel: hostModelService,
       hostViewImage: hostViewImageService
     }),
     createNotebookLocalRpcModule
   )
   // Reverse module disposal cancels active inference before the RPC server waits for its handlers.
-  await modules.add(hostLlmService, (service) => ({
-    name: 'host-llm-service',
+  await modules.add(hostModelService, (service) => ({
+    name: 'host-model-service',
     capability: service,
     dispose: () => service.shutdown()
   }))
-  void hostLlmService
+  void hostModelService
     .sweepStaleProfiles()
     .catch((error) =>
       hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
@@ -1765,13 +1818,13 @@ const createApplicationModules = async (
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
   notebookService.setMcpRpcConnectionResolver(
-    ({ sessionId, projectId, agentFrameId, attemptId, workspaceCwd }) =>
+    ({ sessionId, projectId, agentFrameId, attemptId, executionCwd }) =>
       notebookRpcServer.issueControlConnection(
         sessionId,
         projectId,
         agentFrameId,
         attemptId ? { role: 'delegate', attemptId } : { role: 'main' },
-        workspaceCwd
+        executionCwd
       )
   )
   // The renderer's approval card responds here; the broker resolves the held connector call.
@@ -1856,7 +1909,6 @@ const createApplicationModules = async (
     })
     registerLogsIpcHandlers(logsCommandOwner)
     registerGithubIpcHandlers({}, githubCommandOwner)
-    registerNetworkIpcHandlers()
     registerCliInstallIpcHandlers(cliCommandOwner)
     registerWindowIpcHandlers()
     registerWindowFindIpcHandlers()
@@ -1886,6 +1938,8 @@ const createApplicationModules = async (
         skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
       onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
         skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
+      onTrustedMessageAttribution: (projectId, event) =>
+        messageAttributionAuthority.recordRuntimeEvent(projectId, event),
       onSessionCancellationRequested: (sessionId) =>
         skillImportApprovalBroker.cancelSession(sessionId),
       onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
@@ -1980,6 +2034,28 @@ const createApplicationModules = async (
     }
   )
   sideChatOwnerRef.current = sideChatRuntime
+  projectRuntimeQuiescenceRef.current = new ProjectRuntimeQuiescenceOwner({
+    acp: {
+      listSessionIds: () => runtime.getOwnedSessionIds(),
+      liveSessionProjectId: (sessionId) => runtime.liveSessionProjectId(sessionId),
+      deleteSession: (sessionId) => runtime.deleteSession({ sessionId })
+    },
+    delegation: {
+      deleteProject: (projectId) => delegatedWork.root.deleteProject(projectId)
+    },
+    notebook: {
+      shutdownProject: (projectId) => notebookService.shutdownProject(projectId)
+    },
+    reviewer: reviewerProjectRuntime,
+    sideChat: sideChatRuntime,
+    compute: {
+      reconcileProject: async (projectId) => {
+        const deletionOwner = computeJobDeletionRef.current
+        if (!deletionOwner) throw new Error('Compute Job deletion is not initialized.')
+        await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
+      }
+    }
+  })
   try {
     const persistedSideChats = await sessionPersistenceCoordinator.loadPersistedSideChats()
     sideChatRuntime.hydrate(persistedSideChats.sideChats)
@@ -1991,6 +2067,29 @@ const createApplicationModules = async (
   } catch (error) {
     sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
   }
+  // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
+  // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
+  // durable barrier restoration above still runs early enough to block admission during startup.
+  const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
+    async () => {
+      // A retained child Session plan must finish before its parent Project intent can prepare.
+      await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
+      await projectDeletionCoordinator.recoverPendingDeletions()
+    },
+    {
+      onError: (error) =>
+        createLogger('compute-job-deletion').error(
+          'background deletion recovery failed; retry scheduled',
+          diagnosticErrorFields(error)
+        )
+    }
+  )
+  await modules.add(projectDeletionRecovery, (recovery) => ({
+    name: 'project-deletion-recovery',
+    capability: undefined,
+    start: () => recovery.start(),
+    dispose: () => recovery.stop()
+  }))
   declareElectronAdapter('side-chat', () =>
     registerSideChatIpcHandlers(sideChatRuntime, {
       loadParentSession: (projectId, sessionId) =>
@@ -2008,6 +2107,9 @@ const createApplicationModules = async (
       throw new Error('Close Side chat before sending a message to Main.')
     }
   })
+  runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch) =>
+    archiveCoordinator.withSessionDeletionAdmissionById(sessionId, dispatch)
+  )
   const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
   const codeReconstructionRunner = await modules.add(
     {
@@ -2039,7 +2141,8 @@ const createApplicationModules = async (
     runner: codeReconstructionRunner
   })
   const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime, {
-    assertProjectAvailable: (projectId) => archiveCoordinator.assertProjectAvailable(projectId)
+    withProjectAvailable: (projectId, operation) =>
+      archiveCoordinator.withProjectAvailable(projectId, operation)
   })
   const acpHandlerWorkflows = createAcpHandlerWorkflows(
     runtime,
@@ -2316,9 +2419,10 @@ const createApplicationModules = async (
     await originalDeleteSession(projectId, sessionId)
     sessionBindingService.clearSession(sessionId)
   }
-  const sessionPersistenceHandlers = createSessionPersistenceHandlers(
+  const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
-    reviewRepository
+    reviewRepository,
+    messageAttributionAuthority
   )
   const specialistPersistLog = createLogger('specialist:persist')
   declareElectronAdapter('specialist', () =>
@@ -2629,6 +2733,15 @@ const createApplicationModules = async (
       notebookInputRegistry.readPreview(request)
     )
   })
+  const sessionDeletionOwner = new SessionDeletionOwner({
+    runtime,
+    persistence: {
+      deleteSession: (request) =>
+        withDataRootWrite(() =>
+          sessionPersistenceBackend.deleteSession(request.projectId, request.sessionId)
+        )
+    }
+  })
   declareElectronAdapter('session-persistence', () =>
     registerSessionPersistenceIpcHandlers(
       sessionPersistenceBackend,
@@ -2653,7 +2766,7 @@ const createApplicationModules = async (
         .getActivePromptSessions()
         .some(
           (activeSession) =>
-            activeSession.projectName === projectId && activeSession.sessionId === sessionId
+            activeSession.projectId === projectId && activeSession.sessionId === sessionId
         )
   })
   declareElectronAdapter('conversation-export', () =>
@@ -2714,6 +2827,7 @@ const createApplicationModules = async (
   const reviewerOptions = {
     acpRuntime: runtime,
     modelRuntime: reviewerModelRuntime,
+    projectRuntime: reviewerProjectRuntime,
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     withSessionMutation: <Result>(
@@ -2812,7 +2926,10 @@ const createApplicationModules = async (
       },
       projectFiles: projectFilesHandlers,
       projects: projectHandlers,
-      sessions: sessionPersistenceHandlers,
+      sessions: {
+        ...sessionPersistenceHandlers,
+        deleteSession: (request) => sessionDeletionOwner.delete(request)
+      },
       uploads: uploadCommandOwner,
       withDataRootWrite
     },
@@ -2873,6 +2990,11 @@ const createApplicationModules = async (
     notificationInbox,
     settingsService,
     taskAgent,
+    taskControls: {
+      specialists: {
+        resolve: (reference) => profileService.resolveRunnableByReference(reference)
+      }
+    },
     sessionDeletionCapability: sessionPersistenceCoordinator,
     archiveCapability: archiveCoordinator,
     detectActiveSessions: () =>
@@ -2892,6 +3014,10 @@ const createApplicationModules = async (
       acp: {
         runtime,
         workflows: acpHandlerWorkflows,
+        sessionAdmission: {
+          withSessionAvailableById: (sessionId, operation) =>
+            archiveCoordinator.withSessionAvailableById(sessionId, operation)
+        },
         respondDelegatedQuestion: (input) => {
           if (!delegatedWork.root.respondQuestion) {
             throw new Error('Delegated question response owner is unavailable.')

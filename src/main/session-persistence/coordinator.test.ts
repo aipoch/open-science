@@ -247,7 +247,7 @@ const createRecoveredArtifact = (
   versionNumber: 1,
   checksum: 'a'.repeat(64),
   createdAt: '2026-07-29T00:00:00.000Z',
-  projectName: 'project-1',
+  projectId: 'project-1',
   sessionId: 'session-1',
   runId: 'artifact-run-1',
   name: 'result.csv',
@@ -922,6 +922,85 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
   })
 
+  it('rejects saving a globally identified Session under another Project', async () => {
+    const existing = createSession({ id: 'session-1', projectId: 'project-a' })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [existing], manifest: { version: 1 } },
+        isComplete: true
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await coordinator.loadAll()
+    vi.mocked(repository.saveSession).mockClear()
+
+    await expect(
+      coordinator.saveSession(createSession({ id: existing.id, projectId: 'project-b' }))
+    ).rejects.toThrow(/Session id.*another Project/)
+    expect(repository.loadSessionWithDiagnostics).not.toHaveBeenCalled()
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('delegates durable ownership verification when an incomplete catalog omitted a Session', async () => {
+    const assertSessionIdentityOwnership = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('Cannot save a Session id that is already owned by another Project.')
+      )
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [], manifest: { version: 1 } },
+        isComplete: false,
+        warnings: []
+      }),
+      assertSessionIdentityOwnership
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await coordinator.loadAll()
+
+    await expect(
+      coordinator.saveSession(createSession({ id: 'session-1', projectId: 'project-c' }))
+    ).rejects.toThrow(/Session id.*another Project/)
+    expect(assertSessionIdentityOwnership).toHaveBeenCalledWith('session-1', 'project-c')
+    expect(repository.loadSessionWithDiagnostics).not.toHaveBeenCalled()
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps branch source immutable and does not backfill historical Sessions', async () => {
+    const originalBranchSource = {
+      sessionId: 'source-session',
+      agentFrameId: 'source-frame',
+      messageBranchId: 'source-branch',
+      headMessageId: 'source-head'
+    }
+    let durable = createSession({ branchSource: originalBranchSource })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.saveSession(
+        createSession({
+          branchSource: { sessionId: 'replacement-source' }
+        })
+      )
+    ).resolves.toMatchObject({ branchSource: originalBranchSource })
+
+    durable = createSession()
+    const historical = await coordinator.saveSession(
+      createSession({ branchSource: { sessionId: 'retroactive-source' } })
+    )
+    expect(historical.branchSource).toBeUndefined()
+    expect(durable.branchSource).toBeUndefined()
+  })
+
   it('preserves authoritative permission context and waiting status on a stale renderer save', async () => {
     let durable = createSession({
       status: 'waiting-permission',
@@ -1076,6 +1155,49 @@ describe('SessionPersistenceCoordinator', () => {
     await coordinator.saveSession(createSession({ title: 'Renderer rename' }))
 
     expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
+  })
+
+  it('updates delegation policy through its dedicated durable Session owner', async () => {
+    const previousUpdatedAt = Date.now() + 10_000
+    let durable = createSession({ delegationPolicy: 'allow', updatedAt: previousUpdatedAt })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.setSessionDelegationPolicy('project-1', 'session-1', 'deny')
+    ).resolves.toMatchObject({ delegationPolicy: 'deny' })
+
+    expect(durable.delegationPolicy).toBe('deny')
+    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+  })
+
+  it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {
+    let durable = createSession({ delegationPolicy: 'deny' })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.saveSession(
+        createSession({ title: 'Renderer rename', delegationPolicy: 'allow' })
+      )
+    ).resolves.toMatchObject({ title: 'Renderer rename', delegationPolicy: 'deny' })
+    expect(durable.delegationPolicy).toBe('deny')
   })
 
   it('updates enabled Compute Hosts through the durable Session owner', async () => {
@@ -1672,8 +1794,7 @@ describe('SessionPersistenceCoordinator', () => {
 
     const save = coordinator.saveSession(createSession())
     const deletion = coordinator.deleteSession('project-1', 'session-1')
-    await flushMicrotasks()
-    expect(order).toEqual(['json-save:start'])
+    await vi.waitFor(() => expect(order).toEqual(['json-save:start']))
 
     saveGate.resolve()
     await Promise.all([save, deletion])
@@ -5009,6 +5130,7 @@ const createSessionRepository = (
     isComplete: true
   }),
   loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'missing' }),
+  assertSessionIdentityOwnership: vi.fn().mockResolvedValue(undefined),
   saveSession: vi.fn().mockResolvedValue(undefined),
   saveCommittedProjectSession: vi.fn().mockResolvedValue(undefined),
   deleteSession: vi.fn().mockResolvedValue(undefined),
@@ -5072,8 +5194,3 @@ const createTestLogger = (): TestLogger =>
     warn: vi.fn<Logger['warn']>(),
     error: vi.fn<Logger['error']>()
   }) satisfies Logger
-
-const flushMicrotasks = async (): Promise<void> => {
-  await Promise.resolve()
-  await Promise.resolve()
-}

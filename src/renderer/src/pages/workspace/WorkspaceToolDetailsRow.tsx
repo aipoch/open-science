@@ -1,5 +1,6 @@
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { useTranslation } from 'react-i18next'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { formatNotebookRunFigureMeta } from './notebook-run-figures'
@@ -33,11 +34,39 @@ type WorkspaceToolDetailsRowProps = {
 // Section label styling shared by static headers and collapsible toggles.
 const sectionLabelClassName = 'text-[11px] font-medium uppercase tracking-wide text-text-300'
 
+const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
+  'Agent SDK',
+  'Code',
+  'Command',
+  'Content',
+  'Error',
+  'File',
+  'Input',
+  'Log',
+  'Manage packages',
+  'Notebook run',
+  'Output',
+  'Packages',
+  'Prompt',
+  'Request',
+  'Result',
+  'Shell',
+  'Tool search',
+  'Tools found',
+  'Web Fetch',
+  'Write file'
+])
+
 // Renders a code block plus its optional truncation note.
-const renderCodeBody = (section: ToolCodeSection): React.JSX.Element => (
+const renderCodeBody = (
+  section: ToolCodeSection,
+  t: (key: string) => string
+): React.JSX.Element => (
   <>
     <WorkspaceToolCodeBlock code={section.text} language={section.language} />
-    {section.truncated ? <div className="text-[11px] text-text-300">Output truncated</div> : null}
+    {section.truncated ? (
+      <div className="text-[11px] text-text-300">{t('Output truncated')}</div>
+    ) : null}
   </>
 )
 
@@ -48,6 +77,7 @@ const WorkspaceToolImageOutput = ({
 }: {
   section: ToolImageSection
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent({
     path: section.path,
     maxBytes: PREVIEW_PANEL_IMAGE_MAX_BYTES,
@@ -59,7 +89,7 @@ const WorkspaceToolImageOutput = ({
         <img
           data-testid="tool-output-image"
           src={`data:${section.mimeType};base64,${state.preview.content}`}
-          alt={section.name ?? 'Tool output image'}
+          alt={section.name ?? t('Tool output image')}
           className="max-h-64 max-w-full rounded-md border border-border-200 object-contain"
           draggable={false}
         />
@@ -76,7 +106,7 @@ const WorkspaceToolImageOutput = ({
 
   const fallbackText =
     state.status === 'loading'
-      ? 'Loading preview…'
+      ? t('Loading preview…')
       : (section.name ?? (section.path.split(/[\\/]/u).at(-1) || section.path))
 
   return (
@@ -90,47 +120,6 @@ const WorkspaceToolImageOutput = ({
   )
 }
 
-// Renders one detail section as a diff, an image preview, a collapsible code panel, or a plain
-// code block.
-const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
-  if (section.kind === 'diff') {
-    return (
-      <div key={index} className="space-y-1">
-        <div className={sectionLabelClassName}>{section.label}</div>
-        <WorkspaceToolDiffBlock section={section} />
-      </div>
-    )
-  }
-
-  if (section.kind === 'image') {
-    return (
-      <div key={index} className="space-y-1">
-        <div className={sectionLabelClassName}>{section.label}</div>
-        <WorkspaceToolImageOutput section={section} />
-      </div>
-    )
-  }
-
-  // Collapsible sections (e.g. notebook output) start closed so the code stays the focus.
-  if (section.collapsible) {
-    return (
-      <details key={index} className="space-y-1">
-        <summary className={`${sectionLabelClassName} cursor-pointer select-none`}>
-          {section.label}
-        </summary>
-        <div className="mt-1">{renderCodeBody(section)}</div>
-      </details>
-    )
-  }
-
-  return (
-    <div key={index} className="space-y-1">
-      <div className={sectionLabelClassName}>{section.label}</div>
-      {renderCodeBody(section)}
-    </div>
-  )
-}
-
 // Renders a non-search tool call with an expandable panel showing input, output, or diffs.
 const WorkspaceToolDetailsRow = ({
   activity,
@@ -140,14 +129,57 @@ const WorkspaceToolDetailsRow = ({
   isExpanded,
   onToggle
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
-  const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun) : undefined
-  const notebookRunMeta = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
+  const { t } = useTranslation()
+  const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun, t) : undefined
+  const notebookRunStatus = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
+  const notebookRunMeta = notebookRunStatus ? t(notebookRunStatus) : undefined
+  const translateKnownCopy = (value: string): string =>
+    TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
+
+  const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
+    if (section.kind === 'diff') {
+      return (
+        <div key={index} className="space-y-1">
+          <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
+          <WorkspaceToolDiffBlock section={section} />
+        </div>
+      )
+    }
+
+    if (section.kind === 'image') {
+      return (
+        <div key={index} className="space-y-1">
+          <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
+          <WorkspaceToolImageOutput section={section} />
+        </div>
+      )
+    }
+
+    // Collapsible sections (e.g. notebook output) start closed so the code stays the focus.
+    if (section.collapsible) {
+      return (
+        <details key={index} className="space-y-1">
+          <summary className={`${sectionLabelClassName} cursor-pointer select-none`}>
+            {translateKnownCopy(section.label)}
+          </summary>
+          <div className="mt-1">{renderCodeBody(section, t)}</div>
+        </details>
+      )
+    }
+
+    return (
+      <div key={index} className="space-y-1">
+        <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
+        {renderCodeBody(section, t)}
+      </div>
+    )
+  }
 
   return (
     <WorkspaceToolActivityRowButton
       activity={activity}
       phase={phase}
-      label={details.displayName}
+      label={translateKnownCopy(details.displayName)}
       subtitle={
         details.displayName === 'Write file' && details.subtitle ? (
           <ExtensionPreservingFileName name={details.subtitle} />
@@ -157,13 +189,13 @@ const WorkspaceToolDetailsRow = ({
       }
       metaLabel={
         phase === 'prepared'
-          ? 'code shown'
+          ? t('code shown')
           : phase === 'awaiting-approval'
-            ? 'waiting for your approval'
+            ? t('waiting for your approval')
             : phase === 'declined'
-              ? 'declined by you'
+              ? t('declined by you')
               : phase === 'closed'
-                ? 'request ended'
+                ? t('request ended')
                 : (notebookRunMeta ?? notebookFigureMeta ?? details.metaLabel)
       }
       isExpanded={isExpanded}

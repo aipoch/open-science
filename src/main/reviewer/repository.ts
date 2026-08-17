@@ -2,16 +2,15 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
 
-import type { Finding as PrismaFinding, PrismaClient, Review as PrismaReview } from '@prisma/client'
+import type { PrismaClient, Review as PrismaReview } from '@prisma/client'
 
 import type {
   CheckStatus,
   CreateReviewInput,
-  FindingLocator,
   FindingResolution,
   NewCheck,
   Review,
-  ReviewCheck,
+  ReviewCheckAssessment,
   ReviewFindingDisposition,
   ReviewFindingDispositionOutcome,
   ReviewFindingDispositionTrigger,
@@ -22,6 +21,11 @@ import type {
   TurnScope,
   UpdateReviewPatch
 } from '../../shared/reviewer'
+import { loadReviewSubmissionProjection, toReviewCheck } from './review-submission-read-model'
+import { assertReviewSubmissionWithinLimits } from './submission-limits'
+
+const REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE =
+  'Review was interrupted because Open Science exited before it completed.'
 
 // Legacy alias for callers still using FindingSeverity (now CheckStatus).
 type FindingSeverity = CheckStatus
@@ -133,36 +137,20 @@ const toReview = (row: PrismaReview): Review => ({
   updatedAt: row.updatedAt.getTime()
 })
 
-// Maps a Prisma Finding row to the unified ReviewCheck domain type.
-// v2: `status` replaces `severity`; locator is optional (pass checks may have empty JSON = {}).
-const asCheckStatus = (value: string): CheckStatus => {
-  if (value === 'fail' || value === 'warn' || value === 'pass') return value
-  // Legacy migration: old 'severity' values were only warn/fail, default to 'warn' if unknown.
-  if (value === 'inconclusive') return 'warn'
-  return 'warn'
-}
+type PersistedReviewCheckAssessment = ReviewCheckAssessment & { schemaVersion: 1 }
 
-const toCheck = (row: PrismaFinding): ReviewCheck => {
-  const locatorRaw = parseJson<FindingLocator | Record<string, never>>(row.locator, {})
-  // A locator is meaningful only when it has a blockRef (pass checks may store '{}').
-  const hasLocator = 'blockRef' in locatorRaw && locatorRaw.blockRef !== undefined
-  return {
-    id: row.id,
-    reviewId: row.reviewId,
-    status: asCheckStatus(row.status),
-    resolution:
-      row.resolution === 'resolved' || row.resolution === 'unaddressed' ? row.resolution : 'open',
-    claim: row.claim,
-    evidence: row.evidence,
-    locator: hasLocator ? (locatorRaw as FindingLocator) : undefined,
-    artifactVersionId: row.artifactVersionId ?? undefined,
-    artifactBindingState:
-      row.artifactBindingState === 'scope_validated' ? 'scope_validated' : 'legacy_unverified',
-    sortIndex: row.sortIndex,
-    // Default to 0 for rows written before the reflagCount column was added (issue 15 migration guard).
-    reflagCount: row.reflagCount ?? 0
-  }
-}
+const normalizeAssessmentSnapshot = (
+  check: NewCheck,
+  submissionIndex: number
+): PersistedReviewCheckAssessment => ({
+  schemaVersion: 1,
+  status: check.status,
+  claim: check.claim,
+  evidence: check.evidence,
+  ...(check.locator ? { locator: check.locator } : {}),
+  ...(check.artifactVersionId ? { artifactVersionId: check.artifactVersionId } : {}),
+  sortIndex: submissionIndex
+})
 
 const toFindingDisposition = (row: {
   id: string
@@ -194,6 +182,19 @@ class ReviewRepository {
     private readonly getClient: ReviewClientProvider,
     private readonly options: ReviewRepositoryOptions = {}
   ) {}
+
+  async recoverInterruptedReviews(): Promise<number> {
+    const client = await this.getClient()
+    const result = await client.review.updateMany({
+      where: { lifecycle: 'running' },
+      data: {
+        lifecycle: 'error',
+        outcome: null,
+        errorMessage: REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE
+      }
+    })
+    return result.count
+  }
 
   // Inserts a new review, defaulting a fresh audit to the 'running' lifecycle with no outcome yet.
   async createReview(input: CreateReviewInput): Promise<Review> {
@@ -320,6 +321,7 @@ class ReviewRepository {
   // Appends checks under a review, defaulting resolution to 'open' and preserving caller sort order.
   async addChecks(reviewId: string, checks: NewCheck[]): Promise<void> {
     if (checks.length === 0) return
+    assertReviewSubmissionWithinLimits(checks)
 
     const client = await this.getClient()
 
@@ -368,6 +370,7 @@ class ReviewRepository {
     if (input.checks.length === 0) {
       throw new Error('A completed Review submission requires at least one explicit check.')
     }
+    assertReviewSubmissionWithinLimits(input.checks, input.expectedSourceFindingIds.length)
     const trackedFindingIds = input.checks.flatMap((check) =>
       check.sourceFindingId ? [check.sourceFindingId] : []
     )
@@ -409,10 +412,14 @@ class ReviewRepository {
         }
       }
 
-      const newChecks = input.checks.filter((check) => !check.sourceFindingId)
+      const indexedChecks = input.checks.map((check, submissionIndex) => ({
+        check,
+        submissionIndex
+      }))
+      const newChecks = indexedChecks.filter(({ check }) => !check.sourceFindingId)
       if (newChecks.length > 0) {
         await tx.finding.createMany({
-          data: newChecks.map((check, index) => ({
+          data: newChecks.map(({ check, submissionIndex }) => ({
             reviewId: input.reviewId,
             status: check.status,
             resolution: check.resolution ?? 'open',
@@ -421,13 +428,13 @@ class ReviewRepository {
             locator: JSON.stringify(check.locator ?? {}),
             artifactVersionId: check.artifactVersionId ?? null,
             artifactBindingState: check.artifactVersionId ? 'scope_validated' : 'legacy_unverified',
-            sortIndex: check.sortIndex ?? index
+            sortIndex: submissionIndex
           }))
         })
       }
 
       const touchedSourceReviewIds = new Set<string>()
-      for (const check of input.checks) {
+      for (const [submissionIndex, check] of input.checks.entries()) {
         if (!check.sourceFindingId) continue
         const finding = await tx.finding.findUnique({ where: { id: check.sourceFindingId } })
         if (
@@ -455,6 +462,7 @@ class ReviewRepository {
             trigger: 'review_submission'
           })
         )}`
+        const assessmentSnapshot = stableJson(normalizeAssessmentSnapshot(check, submissionIndex))
         const existing = await tx.reviewFindingDisposition.findUnique({ where: { id: eventId } })
         if (existing) {
           if (
@@ -462,7 +470,8 @@ class ReviewRepository {
             existing.causeReviewId !== assessmentReview.id ||
             existing.trigger !== 'review_submission' ||
             existing.outcome !== dispositionOutcome ||
-            existing.assessedArtifactVersionId !== (check.artifactVersionId ?? null)
+            existing.assessedArtifactVersionId !== (check.artifactVersionId ?? null) ||
+            existing.assessmentSnapshot !== assessmentSnapshot
           ) {
             throw new Error(`Finding disposition event was reused with different data: ${eventId}`)
           }
@@ -488,7 +497,8 @@ class ReviewRepository {
             sequence: (latest?.sequence ?? 0) + 1,
             trigger: 'review_submission',
             outcome: dispositionOutcome,
-            assessedArtifactVersionId: check.artifactVersionId ?? null
+            assessedArtifactVersionId: check.artifactVersionId ?? null,
+            assessmentSnapshot
           }
         })
         touchedSourceReviewIds.add(sourceReview.id)
@@ -547,15 +557,11 @@ class ReviewRepository {
 
     return Promise.all(
       rows.map(async (row) => {
-        const checkRows = await client.finding.findMany({
-          where: { reviewId: row.id },
-          orderBy: { sortIndex: 'asc' }
-        })
-
-        const checks = checkRows.map(toCheck)
+        const { checks, submittedChecks } = await loadReviewSubmissionProjection(client, row.id)
         return {
           ...toReview(row),
           checks,
+          submittedChecks,
           // Legacy: expose findings as alias for checks (same data).
           get findings() {
             return checks
@@ -754,13 +760,16 @@ class ReviewRepository {
             )
           }
         }
+        const causeReviewId =
+          input.causeReviewId ??
+          (input.trigger === 'review_submission' ? assessmentReview.id : null)
         const eventId =
           input.eventId ??
           `review-disposition-${sha256(
             stableJson({
               reviewId: input.reviewId,
               sourceFindingId: input.sourceFindingId,
-              causeReviewId: input.causeReviewId ?? null,
+              causeReviewId,
               trigger: input.trigger
             })
           )}`
@@ -770,7 +779,7 @@ class ReviewRepository {
         if (existing) {
           if (
             existing.sourceFindingId !== finding.id ||
-            existing.causeReviewId !== (input.causeReviewId ?? null) ||
+            existing.causeReviewId !== causeReviewId ||
             existing.trigger !== input.trigger ||
             existing.outcome !== input.outcome ||
             existing.note !== (input.note ?? null) ||
@@ -798,7 +807,7 @@ class ReviewRepository {
             data: {
               id: eventId,
               sourceFindingId: finding.id,
-              causeReviewId: input.causeReviewId ?? null,
+              causeReviewId,
               sequence: (latest?.sequence ?? 0) + 1,
               trigger: input.trigger,
               outcome: input.outcome,
@@ -848,8 +857,9 @@ class ReviewRepository {
   }
 }
 
-export { ReviewRepository, toCheck, toReview }
+export { REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE, ReviewRepository, toReview }
 export type { ReviewClient, ReviewClientProvider, ReviewRepositoryOptions, FindingSeverity }
 
 // Legacy exports kept for callers that still reference toFinding.
-export const toFinding = toCheck
+export const toCheck = toReviewCheck
+export const toFinding = toReviewCheck

@@ -30,6 +30,7 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   permissionGrants PermissionGrant[]
+  previewState     ProjectPreviewState?
 }
 
 model PermissionGrant {
@@ -65,6 +66,7 @@ model ProjectPreviewState {
   activeItemId String?
   items        String   @default("[]")
   updatedAt    DateTime @updatedAt
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 // Legacy unread-task rows retained only as the source for the message-center startup migration.
@@ -83,6 +85,7 @@ model NotificationInboxItem {
   dedupeKey   String    @unique
   kind        String
   source      String?
+  attentionReason String?
   projectId   String?
   sessionId   String?
   originId    String
@@ -92,6 +95,7 @@ model NotificationInboxItem {
   readAt      DateTime?
   actionState String?
   settledAt   DateTime?
+  targetInvalidatedAt DateTime?
 
   @@index([readAt, sequence])
   @@index([sessionId])
@@ -424,6 +428,7 @@ model ReviewFindingDisposition {
   outcome                   String
   note                      String?
   assessedArtifactVersionId String?
+  assessmentSnapshot        String?
   createdAt                 DateTime @default(now())
   sourceFinding             Finding  @relation(fields: [sourceFindingId], references: [id], onDelete: Cascade)
   causeReview               Review?  @relation(fields: [causeReviewId], references: [id], onDelete: Restrict)

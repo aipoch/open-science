@@ -273,7 +273,7 @@ class ArtifactProvenanceUnindexedRecovery {
       messageBranchId
     })
     const pendingRoute = await this.options.compatibilityRepository.findPendingVersionRouting({
-      projectName: input.projectId,
+      projectId: input.projectId,
       artifactId: input.artifactId,
       versionId: input.versionId
     })

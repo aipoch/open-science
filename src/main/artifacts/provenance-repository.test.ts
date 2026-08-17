@@ -28,6 +28,7 @@ import {
 } from './provenance-repository'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { ArtifactRepository } from './repository'
+import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
@@ -300,6 +301,181 @@ describe('artifact provenance repository', () => {
     await expect(stat(stagingDirectory)).resolves.toBeDefined()
   })
 
+  it('serializes same-session writes so concurrent calls cannot exceed the turn budget', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-turn-budget-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const content = createPngBytes('budgeted')
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository,
+      resourceBudgets: {
+        artifactTurnBytes: content.byteLength,
+        artifactSessionBytes: content.byteLength * 10
+      }
+    })
+    const common = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'Codex',
+      contentType: 'image/png'
+    } as const
+    for (const filename of ['a.png', 'b.png']) {
+      await compatibilityRepository.writePendingFile({
+        projectId: common.projectId,
+        sessionId: common.artifactStorageSessionId,
+        runId: common.artifactRunId,
+        filename,
+        mimeType: common.contentType,
+        source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+      })
+    }
+
+    const results = await Promise.allSettled(
+      ['a.png', 'b.png'].map((filename, index) =>
+        repository.createVersion({
+          ...common,
+          filename,
+          writeOperationId: `write-${index}`,
+          writeRequestChecksum: String(index).repeat(64)
+        })
+      )
+    )
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: { dimension: 'turn' }
+    })
+  })
+
+  it('counts durable bytes across runs in the same Session', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-session-budget-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const content = createPngBytes('session-budgeted')
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository,
+      resourceBudgets: {
+        artifactTurnBytes: content.byteLength * 10,
+        artifactSessionBytes: content.byteLength
+      }
+    })
+    const common = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'Codex',
+      contentType: 'image/png'
+    } as const
+
+    for (const [filename, artifactRunId] of [
+      ['first.png', 'artifact-run-1'],
+      ['second.png', 'artifact-run-2']
+    ] as const) {
+      await compatibilityRepository.writePendingFile({
+        projectId: common.projectId,
+        sessionId: common.artifactStorageSessionId,
+        runId: artifactRunId,
+        filename,
+        mimeType: common.contentType,
+        source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+      })
+    }
+    await repository.createVersion({
+      ...common,
+      artifactRunId: 'artifact-run-1',
+      filename: 'first.png',
+      writeOperationId: 'write-first',
+      writeRequestChecksum: 'a'.repeat(64)
+    })
+
+    await expect(
+      repository.createVersion({
+        ...common,
+        artifactRunId: 'artifact-run-2',
+        filename: 'second.png',
+        writeOperationId: 'write-second',
+        writeRequestChecksum: 'b'.repeat(64)
+      })
+    ).rejects.toMatchObject({ dimension: 'session' })
+  })
+
+  it('releases a write reservation after a successful Version write', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reservation-success-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    const content = createPngBytes('reserved success')
+    const reservationRequest = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      writeOperationId: 'write-reserved-success',
+      filename: 'reserved.png',
+      fileBytes: content.byteLength
+    } as const
+    const reservation = await repository.reserveWrite(reservationRequest)
+    await compatibilityRepository.writePendingFile({
+      projectId: reservationRequest.projectId,
+      sessionId: reservationRequest.artifactStorageSessionId,
+      runId: reservationRequest.artifactRunId,
+      filename: reservationRequest.filename,
+      mimeType: 'image/png',
+      source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+    })
+
+    await repository.createVersion({
+      ...reservationRequest,
+      writeRequestChecksum: 'a'.repeat(64),
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      contentType: 'image/png',
+      resourceReservationId: reservation.id,
+      resourceSizeBytes: content.byteLength,
+      resourceChecksum: createHash('sha256').update(content).digest('hex')
+    })
+
+    const replacement = await repository.reserveWrite(reservationRequest)
+    expect(replacement.id).not.toBe(reservation.id)
+    await repository.releaseWriteReservation({
+      projectId: reservationRequest.projectId,
+      appSessionId: reservationRequest.appSessionId,
+      artifactStorageSessionId: reservationRequest.artifactStorageSessionId,
+      artifactRunId: reservationRequest.artifactRunId,
+      reservationId: replacement.id
+    })
+  })
+
   it('keeps immutable bytes while same-session same-name saves advance one lineage', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-versions-'))
     const client = createProjectDbClient(storageRoot)
@@ -330,7 +506,7 @@ describe('artifact provenance repository', () => {
     } as const
 
     await compatibilityRepository.writePendingFile({
-      projectName: common.projectId,
+      projectId: common.projectId,
       sessionId: common.artifactStorageSessionId,
       runId: common.artifactRunId,
       filename: common.filename,
@@ -345,7 +521,7 @@ describe('artifact provenance repository', () => {
 
     const replacementFilename = 'SIN.PNG'
     await compatibilityRepository.writePendingFile({
-      projectName: common.projectId,
+      projectId: common.projectId,
       sessionId: common.artifactStorageSessionId,
       runId: common.artifactRunId,
       filename: replacementFilename,
@@ -372,7 +548,7 @@ describe('artifact provenance repository', () => {
       artifactRunId: 'artifact-run-2'
     }
     await compatibilityRepository.writePendingFile({
-      projectName: otherSession.projectId,
+      projectId: otherSession.projectId,
       sessionId: otherSession.artifactStorageSessionId,
       runId: otherSession.artifactRunId,
       filename: otherSession.filename,
@@ -443,7 +619,7 @@ describe('artifact provenance repository', () => {
       compatibilityRepository
     })
     const oldCandidate = await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'old-candidate.png',
@@ -451,7 +627,7 @@ describe('artifact provenance repository', () => {
       source: createPngInlineSource('old bytes')
     })
     const exactCandidate = await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'exact-candidate.png',
@@ -498,7 +674,7 @@ describe('artifact provenance repository', () => {
       compatibilityRepository
     })
     const firstCandidate = await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'first-candidate.png',
@@ -506,7 +682,7 @@ describe('artifact provenance repository', () => {
       source: createPngInlineSource('first bytes')
     })
     const secondCandidate = await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'second-candidate.png',
@@ -643,7 +819,7 @@ describe('artifact provenance repository', () => {
         versionId: second.versionId,
         artifactId: second.artifactId,
         versionNumber: 1,
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'source-session-1',
         name: 'second.txt',
         mimeType: 'text/plain',
@@ -714,7 +890,7 @@ describe('artifact provenance repository', () => {
     } as const
 
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -745,7 +921,7 @@ describe('artifact provenance repository', () => {
     ).rejects.toThrow(/write operation.*different request/i)
 
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -795,18 +971,55 @@ describe('artifact provenance repository', () => {
       filename: 'sin.png',
       contentType: 'image/png'
     } as const
+    const content = createPngBytes('durable file failure')
+    const reservationRequest = {
+      projectId: request.projectId,
+      appSessionId: request.appSessionId,
+      artifactStorageSessionId: request.artifactStorageSessionId,
+      artifactRunId: request.artifactRunId,
+      writeOperationId: request.writeOperationId,
+      filename: request.filename,
+      fileBytes: content.byteLength
+    }
+    const reservation = await repository.reserveWrite(reservationRequest)
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
       mimeType: request.contentType,
-      source: createPngInlineSource('durable file failure')
+      source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
     })
 
-    await expect(repository.createVersion(request)).rejects.toThrow(
-      'simulated durable file failure'
-    )
+    const originalRelease = ArtifactWriteBudgetOwner.prototype.release
+    const release = vi
+      .spyOn(ArtifactWriteBudgetOwner.prototype, 'release')
+      .mockImplementationOnce(async function (this: ArtifactWriteBudgetOwner, releaseRequest) {
+        await originalRelease.call(this, releaseRequest)
+        throw new Error('simulated reservation release failure')
+      })
+    try {
+      await expect(
+        repository.createVersion({
+          ...request,
+          resourceReservationId: reservation.id,
+          resourceSizeBytes: content.byteLength,
+          resourceChecksum: createHash('sha256').update(content).digest('hex')
+        })
+      ).rejects.toThrow('simulated durable file failure')
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      release.mockRestore()
+    }
+    const replacement = await repository.reserveWrite(reservationRequest)
+    expect(replacement.id).not.toBe(reservation.id)
+    await repository.releaseWriteReservation({
+      projectId: request.projectId,
+      appSessionId: request.appSessionId,
+      artifactStorageSessionId: request.artifactStorageSessionId,
+      artifactRunId: request.artifactRunId,
+      reservationId: replacement.id
+    })
 
     const row = await client.artifactVersion.findUniqueOrThrow({
       where: { writeOperationId: request.writeOperationId }
@@ -843,7 +1056,7 @@ describe('artifact provenance repository', () => {
       contentType: 'image/png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -913,7 +1126,7 @@ describe('artifact provenance repository', () => {
       contentType: 'image/png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -958,11 +1171,12 @@ describe('artifact provenance repository', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         state: 'deleting',
-        deletionOperationId: 'delete-1'
+        deletionOperationId: 'delete-1',
+        retainedReviewIdsJson: '[]'
       }
     })
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'sin.png',
@@ -1306,7 +1520,7 @@ describe('artifact provenance repository', () => {
       storageKey: inputStorageKey
     }
     const notebookDocument = await notebookRepository.loadOrCreate({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
@@ -1316,7 +1530,7 @@ describe('artifact provenance repository', () => {
     await writeFile(producerSourcePath, createPngBytes('plot bytes'))
     const producerSourceStat = await stat(producerSourcePath)
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -1329,7 +1543,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -1343,7 +1557,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -1357,7 +1571,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -1394,7 +1608,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'sin.png',
@@ -1629,7 +1843,7 @@ describe('artifact provenance repository', () => {
     // An omitted producerRunId never infers a Notebook execution, even when only one run belongs to
     // the active turn. Provenance must distinguish an explicit producer association from a guess.
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-inferred',
       filename: 'inferred.png',
@@ -1659,7 +1873,7 @@ describe('artifact provenance repository', () => {
     })
 
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -1671,7 +1885,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-ambiguous',
       filename: 'ambiguous.png',
@@ -1741,15 +1955,45 @@ describe('artifact provenance repository', () => {
         }
       ]
     })
-    await client.finding.create({
+    await client.finding.createMany({
+      data: [
+        {
+          id: 'finding-direct-flagged',
+          reviewId: 'review-direct-flagged',
+          status: 'fail',
+          claim: 'Artifact row count does not match.',
+          evidence: 'The first assessment observed 12 rows.',
+          artifactVersionId: version.versionId,
+          artifactBindingState: 'scope_validated'
+        },
+        {
+          id: 'finding-direct-pass',
+          reviewId: 'review-direct-pass',
+          status: 'pass',
+          claim: 'Artifact values match the execution output.',
+          evidence: 'Recomputed from the immutable Artifact Version.',
+          artifactVersionId: version.versionId,
+          artifactBindingState: 'scope_validated'
+        }
+      ]
+    })
+    await client.reviewFindingDisposition.create({
       data: {
-        id: 'finding-direct-pass',
-        reviewId: 'review-direct-pass',
-        status: 'pass',
-        claim: 'Artifact values match the execution output.',
-        evidence: 'Recomputed from the immutable Artifact Version.',
-        artifactVersionId: version.versionId,
-        artifactBindingState: 'scope_validated'
+        id: 'disposition-direct-pass',
+        sourceFindingId: 'finding-direct-flagged',
+        causeReviewId: 'review-direct-pass',
+        sequence: 1,
+        trigger: 'review_submission',
+        outcome: 'resolved',
+        assessedArtifactVersionId: version.versionId,
+        assessmentSnapshot: JSON.stringify({
+          schemaVersion: 1,
+          status: 'pass',
+          claim: 'Round 2 row count is corrected.',
+          evidence: 'Round 2 observed all 33 rows.',
+          artifactVersionId: version.versionId,
+          sortIndex: 1
+        })
       }
     })
     await expect(
@@ -1767,9 +2011,68 @@ describe('artifact provenance repository', () => {
         state: 'available',
         value: {
           binding: 'version',
-          currentDirectAssessment: { id: 'review-direct-pass', outcome: 'pass' },
+          selectedVersionAssessment: {
+            id: 'review-direct-pass',
+            submittedChecks: [
+              { kind: 'new', check: { id: 'finding-direct-pass' } },
+              {
+                kind: 'tracked',
+                sourceFindingId: 'finding-direct-flagged',
+                assessedArtifactVersionId: version.versionId
+              }
+            ]
+          },
+          currentDirectAssessment: {
+            id: 'review-direct-pass',
+            outcome: 'pass',
+            submittedChecks: [
+              { kind: 'new', check: { id: 'finding-direct-pass' } },
+              {
+                kind: 'tracked',
+                sourceFindingId: 'finding-direct-flagged',
+                dispositionOutcome: 'resolved',
+                assessment: {
+                  status: 'pass',
+                  claim: 'Round 2 row count is corrected.',
+                  evidence: 'Round 2 observed all 33 rows.',
+                  artifactVersionId: version.versionId,
+                  sortIndex: 1
+                }
+              }
+            ]
+          },
           latestChainReview: { id: 'review-direct-pass', outcome: 'pass' },
-          selectedVersionChecks: [{ artifactBindingState: 'scope_validated' }]
+          selectedVersionChecks: [{ artifactBindingState: 'scope_validated' }],
+          history: expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'review',
+              review: expect.objectContaining({
+                id: 'review-direct-flagged',
+                submittedChecks: expect.arrayContaining([
+                  expect.objectContaining({
+                    kind: 'new',
+                    check: expect.objectContaining({
+                      claim: 'Artifact row count does not match.'
+                    })
+                  })
+                ])
+              })
+            }),
+            expect.objectContaining({
+              kind: 'review',
+              review: expect.objectContaining({
+                id: 'review-direct-pass',
+                submittedChecks: expect.arrayContaining([
+                  expect.objectContaining({
+                    kind: 'tracked',
+                    assessment: expect.objectContaining({
+                      claim: 'Round 2 row count is corrected.'
+                    })
+                  })
+                ])
+              })
+            })
+          ])
         }
       }
     })
@@ -1871,7 +2174,7 @@ describe('artifact provenance repository', () => {
       promptMessageId: 'prompt-1'
     }
     const document = await notebookRepository.loadOrCreate({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
@@ -1895,7 +2198,7 @@ describe('artifact provenance repository', () => {
       ...graph
     }
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -1907,7 +2210,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -1920,7 +2223,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'sin.png',
@@ -1991,7 +2294,7 @@ describe('artifact provenance repository', () => {
       promptMessageId: 'prompt-1'
     }
     const document = await notebookRepository.loadOrCreate({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
@@ -2006,7 +2309,7 @@ describe('artifact provenance repository', () => {
     for (let index = 0; index < 130; index += 1) {
       const runId = `notebook-run-${index}`
       await notebookRepository.appendRun({
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'session-1',
         lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
         run: {
@@ -2044,7 +2347,7 @@ describe('artifact provenance repository', () => {
       })
     }
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'bounded.png',
@@ -2121,7 +2424,7 @@ describe('artifact provenance repository', () => {
       promptMessageId: 'prompt-1'
     }
     const document = await notebookRepository.loadOrCreate({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
@@ -2143,7 +2446,7 @@ describe('artifact provenance repository', () => {
       ...graph
     }
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -2164,7 +2467,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
@@ -2176,7 +2479,7 @@ describe('artifact provenance repository', () => {
       }
     })
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'plot.png',
@@ -2235,7 +2538,7 @@ describe('artifact provenance repository', () => {
     await expect(client.artifactVersion.count()).resolves.toBe(1)
 
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'cross-frame.png',
@@ -2262,7 +2565,7 @@ describe('artifact provenance repository', () => {
     )
 
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'spoof.png',
@@ -2293,7 +2596,7 @@ describe('artifact provenance repository', () => {
     })
 
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'inline.png',
@@ -2330,7 +2633,7 @@ describe('artifact provenance repository', () => {
     })
 
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'unobserved-local.png',
@@ -2418,7 +2721,7 @@ describe('artifact provenance repository', () => {
       promptMessageId: prompt.id
     }
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'sin.png',
@@ -2591,7 +2894,7 @@ describe('artifact provenance repository', () => {
 
     for (const [index, content] of ['first', 'second', 'interrupted'].entries()) {
       await compatibilityRepository.writePendingFile({
-        projectName: common.projectId,
+        projectId: common.projectId,
         sessionId: common.artifactStorageSessionId,
         runId: common.artifactRunId,
         filename: common.filename,
@@ -2724,6 +3027,7 @@ describe('artifact provenance repository', () => {
       data: {
         executionSnapshotJson: invalidExecution,
         executionSnapshotChecksum: createHash('sha256').update(invalidExecution).digest('hex'),
+        executionSnapshotStorageKey: 'invalid-execution.json',
         executionSnapshotSchemaVersion: 2
       }
     })
@@ -2735,6 +3039,7 @@ describe('artifact provenance repository', () => {
       data: {
         executionSnapshotJson: ancestryProbe.executionSnapshotJson,
         executionSnapshotChecksum: ancestryProbe.executionSnapshotChecksum,
+        executionSnapshotStorageKey: ancestryProbe.executionSnapshotStorageKey,
         executionSnapshotSchemaVersion: ancestryProbe.executionSnapshotSchemaVersion
       }
     })
@@ -2782,6 +3087,7 @@ describe('artifact provenance repository', () => {
         producerRunIndex: 0,
         executionSnapshotJson: forgedExecution,
         executionSnapshotChecksum: forgedExecutionChecksum,
+        executionSnapshotStorageKey: 'forged-execution.json',
         executionSnapshotSchemaVersion: 2,
         evidenceJson: forgedEvidence,
         evidenceChecksum: createHash('sha256').update(forgedEvidence).digest('hex')
@@ -2798,6 +3104,7 @@ describe('artifact provenance repository', () => {
         producerRunIndex: ancestryProbe.producerRunIndex,
         executionSnapshotJson: ancestryProbe.executionSnapshotJson,
         executionSnapshotChecksum: ancestryProbe.executionSnapshotChecksum,
+        executionSnapshotStorageKey: ancestryProbe.executionSnapshotStorageKey,
         executionSnapshotSchemaVersion: ancestryProbe.executionSnapshotSchemaVersion,
         evidenceJson: ancestryProbe.evidenceJson,
         evidenceChecksum: ancestryProbe.evidenceChecksum
@@ -2971,7 +3278,7 @@ describe('artifact provenance repository', () => {
       filename: 'crash.png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -2981,7 +3288,7 @@ describe('artifact provenance repository', () => {
     // Simulate process exit after compatibility finalize wrote its marker/moved bytes but before the
     // Provenance transaction advanced pending -> finalized.
     await compatibilityRepository.finalizeRunArtifacts({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sourceSessionId: request.artifactStorageSessionId,
       sessionId: request.appSessionId,
       runId: request.artifactRunId,
@@ -3092,7 +3399,7 @@ describe('artifact provenance repository', () => {
       filename: 'prepared.png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -3120,7 +3427,7 @@ describe('artifact provenance repository', () => {
     // Simulate exit after the runtime durably prepared the handoff but before the renderer finalized it.
     // The witness proves turn termination; the renderer-owned message status is allowed to lag.
     await compatibilityRepository.prepareRunFinalization({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sourceSessionId: request.artifactStorageSessionId,
       sessionId: request.appSessionId,
       runId: request.artifactRunId,
@@ -3323,7 +3630,7 @@ describe('artifact provenance repository', () => {
       filename: 'sin.png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: common.projectId,
+      projectId: common.projectId,
       sessionId: common.artifactStorageSessionId,
       runId: common.artifactRunId,
       filename: common.filename,
@@ -3418,7 +3725,7 @@ describe('artifact provenance repository', () => {
     } as const
     for (const filename of ['Straße.png', 'STRASSE.PNG']) {
       await compatibilityRepository.writePendingFile({
-        projectName: common.projectId,
+        projectId: common.projectId,
         sessionId: common.artifactStorageSessionId,
         runId: common.artifactRunId,
         filename,
@@ -3471,7 +3778,7 @@ describe('artifact provenance repository', () => {
       filename: 'sin.png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -3564,7 +3871,7 @@ describe('artifact provenance repository', () => {
       filename: 'recover.png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -3584,7 +3891,7 @@ describe('artifact provenance repository', () => {
       messageId: 'message-1'
     })
     await compatibilityRepository.finalizeRunArtifacts({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.appSessionId,
       sourceSessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
@@ -3693,7 +4000,7 @@ describe('artifact provenance repository', () => {
       contentType: 'image/png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -3765,7 +4072,7 @@ describe('artifact provenance repository', () => {
       contentType: 'image/png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -3776,7 +4083,7 @@ describe('artifact provenance repository', () => {
     await client.artifactVersion.delete({ where: { id: version.versionId } })
 
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: 'artifact-session-corrupt',
       runId: 'artifact-run-corrupt',
       filename: 'unrelated.txt',
@@ -3843,7 +4150,7 @@ describe('artifact provenance repository', () => {
       filename: 'unlinked.png'
     } as const
     await compatibilityRepository.writePendingFile({
-      projectName: request.projectId,
+      projectId: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
@@ -3944,7 +4251,7 @@ describe('artifact provenance repository', () => {
       operation: string
     ): Promise<ArtifactVersionFile> => {
       await compatibilityRepository.writePendingFile({
-        projectName: projectId,
+        projectId: projectId,
         sessionId: `${projectId}-artifact-session`,
         runId: `${projectId}-artifact-run`,
         filename: 'sin.png',

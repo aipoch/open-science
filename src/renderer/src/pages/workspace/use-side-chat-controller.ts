@@ -34,6 +34,7 @@ type SideChatController = Readonly<{
   unavailableReason?: string
   start: (text: string) => Promise<boolean>
   send: (text: string) => Promise<boolean>
+  retryHydration?: () => void
   setDraft: (value: SetStateAction<string>) => void
   cancel: () => void
   close: () => void
@@ -44,6 +45,7 @@ type SideChatRuntimeController = Readonly<{
   closingParentSessionIds: ReadonlySet<string>
   hydrated: boolean
   hydrationError?: string
+  retryHydration: () => void
   start: (
     parent: Readonly<{ sessionId: string; projectId: string }>,
     text: string
@@ -75,6 +77,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
   )
   const closingParentSessionIdsRef = useRef<ReadonlySet<string>>(closingParentSessionIds)
   const revisionByParentRef = useRef(new Map<string, number>())
+  const hydrationGenerationRef = useRef(0)
   const sequenceRef = useRef(0)
 
   const update = useCallback(
@@ -113,13 +116,63 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
     []
   )
 
+  const hydrate = useCallback(
+    (retryOnce: boolean): void => {
+      const list = window.api?.sideChat?.list
+      if (!list) {
+        setHydrationError(undefined)
+        setHydrated(true)
+        return
+      }
+
+      const generation = ++hydrationGenerationRef.current
+      setHydrationError(undefined)
+      setHydrated(false)
+      const read = (): ReturnType<typeof list> => Promise.resolve().then(() => list())
+      const restoredList = retryOnce ? read().catch(() => read()) : read()
+      void restoredList.then(
+        (snapshotList) => {
+          if (hydrationGenerationRef.current !== generation) return
+          const next = new Map(viewsRef.current)
+          const liveParents = new Set(snapshotList.chats.map((chat) => chat.parentSessionId))
+          for (const [parentSessionId, view] of next) {
+            if (
+              !liveParents.has(parentSessionId) &&
+              (view.revision ?? 0) <= snapshotList.revision
+            ) {
+              next.delete(parentSessionId)
+            }
+          }
+          for (const snapshot of snapshotList.chats) {
+            const lastRevision = revisionByParentRef.current.get(snapshot.parentSessionId) ?? 0
+            if (snapshot.revision < lastRevision) continue
+            revisionByParentRef.current.set(snapshot.parentSessionId, snapshot.revision)
+            next.set(
+              snapshot.parentSessionId,
+              viewFromSnapshot(snapshot, next.get(snapshot.parentSessionId))
+            )
+          }
+          viewsRef.current = next
+          setViews(next)
+          setHydrationError(undefined)
+          setHydrated(true)
+        },
+        (error) => {
+          if (hydrationGenerationRef.current !== generation) return
+          setHydrationError(`Could not restore Side chats: ${errorText(error)}`)
+          setHydrated(false)
+        }
+      )
+    },
+    [viewFromSnapshot]
+  )
+
   useEffect(() => {
     const api = window.api?.sideChat
     if (!api?.onEvent) {
       setHydrated(true)
       return
     }
-    let disposed = false
     const removeListener = api.onEvent((envelope) => {
       const lastRevision = revisionByParentRef.current.get(envelope.parentSessionId) ?? 0
       const revision = envelope.revision ?? lastRevision + 1
@@ -210,41 +263,14 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       setHydrated(true)
       return removeListener
     }
-    void api.list().then(
-      (snapshotList) => {
-        if (disposed) return
-        const next = new Map(viewsRef.current)
-        const liveParents = new Set(snapshotList.chats.map((chat) => chat.parentSessionId))
-        for (const [parentSessionId, view] of next) {
-          if (!liveParents.has(parentSessionId) && (view.revision ?? 0) <= snapshotList.revision) {
-            next.delete(parentSessionId)
-          }
-        }
-        for (const snapshot of snapshotList.chats) {
-          const lastRevision = revisionByParentRef.current.get(snapshot.parentSessionId) ?? 0
-          if (snapshot.revision < lastRevision) continue
-          revisionByParentRef.current.set(snapshot.parentSessionId, snapshot.revision)
-          next.set(
-            snapshot.parentSessionId,
-            viewFromSnapshot(snapshot, next.get(snapshot.parentSessionId))
-          )
-        }
-        viewsRef.current = next
-        setViews(next)
-        setHydrationError(undefined)
-        setHydrated(true)
-      },
-      (error) => {
-        if (disposed) return
-        setHydrationError(`Could not restore Side chats: ${errorText(error)}`)
-        setHydrated(false)
-      }
-    )
+    hydrate(true)
     return () => {
-      disposed = true
+      hydrationGenerationRef.current += 1
       removeListener()
     }
-  }, [update, viewFromSnapshot])
+  }, [hydrate, update])
+
+  const retryHydration = useCallback((): void => hydrate(false), [hydrate])
 
   const start = useCallback(
     async (
@@ -404,13 +430,25 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       closingParentSessionIds,
       hydrated,
       hydrationError,
+      retryHydration,
       start,
       send,
       setDraft,
       cancel,
       close
     }),
-    [cancel, close, closingParentSessionIds, hydrated, hydrationError, send, setDraft, start, views]
+    [
+      cancel,
+      close,
+      closingParentSessionIds,
+      hydrated,
+      hydrationError,
+      retryHydration,
+      send,
+      setDraft,
+      start,
+      views
+    ]
   )
 }
 
@@ -437,6 +475,7 @@ const useSideChatController = (
     start: (text) => (runtime && parent ? runtime.start(parent, text) : Promise.resolve(false)),
     send: (text) =>
       runtime && parent ? runtime.send(parent.sessionId, text) : Promise.resolve(false),
+    retryHydration: runtime?.hydrationError ? runtime.retryHydration : undefined,
     setDraft: (text) => {
       if (runtime && parent) runtime.setDraft(parent.sessionId, text)
     },

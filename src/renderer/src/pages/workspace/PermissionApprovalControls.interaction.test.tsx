@@ -948,6 +948,64 @@ describe('PermissionApprovalControls interactions', () => {
     }
   })
 
+  it('uses the latest durable environment when it is outside the bounded run window', async () => {
+    const notebookRequest: AcpPermissionRequest = {
+      requestId: 'req-historical-env',
+      sessionId: 'session-historical-env',
+      toolCallId: 'tool-historical-env',
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
+      rawInput: { kernelKind: 'python', code: 'print(1)' },
+      options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    ;(window as { api?: unknown }).api = {
+      notebook: {
+        state: async () => ({
+          environments: [],
+          latestRunEnvironments: { python: 'historical-python' },
+          runs: []
+        })
+      },
+      runtime: {
+        listEnvironments: async () => ({
+          python: [
+            {
+              language: 'python',
+              provenance: 'app-managed',
+              envId: '/envs/default-python',
+              interpreterPath: '/envs/default-python/bin/python',
+              label: 'default-python',
+              runnable: true
+            }
+          ],
+          r: []
+        }),
+        getEnablement: async () => ({ enabled: {}, installAuthorized: {} })
+      }
+    }
+    try {
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[notebookRequest]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-historical-env', workspaceCwd: '' }}
+          />
+        )
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'historical-python'
+      )
+    } finally {
+      delete (window as { api?: unknown }).api
+    }
+  })
+
   it('does not use a live Python environment for an R permission request', async () => {
     const rNotebookRequest: AcpPermissionRequest = {
       requestId: 'req-r-env',

@@ -5,9 +5,15 @@ import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import { terminateProcessTree } from '../process-tree'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
+import {
+  NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES,
+  NOTEBOOK_TEXT_LIMIT_BYTES,
+  limitUtf8
+} from './content-limits'
 
 // Grace between the POSIX process group's polite termination and an uncatchable group kill.
 const SHELL_KILL_GRACE_MS = 2_000
+const SHELL_TIMEOUT_MESSAGE_RESERVE_BYTES = 256
 
 // Result of one stateless bash_execute run. No status/traceback classification: the shell is
 // expected to fail non-zero sometimes, so the caller inspects exitCode directly instead of a
@@ -16,6 +22,8 @@ type NotebookShellResult = {
   stdout: string
   stderr: string
   exitCode: number | null
+  truncated?: boolean
+  cancelled?: boolean
 }
 
 type NotebookShellProcessRequest = {
@@ -24,6 +32,7 @@ type NotebookShellProcessRequest = {
   handoffDir: string
   runtimeRoot: string
   timeoutMs?: number
+  signal?: AbortSignal
 }
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
@@ -254,6 +263,16 @@ const runShellCommand = (
   }
 ): Promise<NotebookShellResult> =>
   new Promise((resolve) => {
+    if (options.signal?.aborted) {
+      resolve({
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null,
+        cancelled: true
+      })
+      return
+    }
+
     const timeoutMs = options.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
     const platform = options.platform ?? process.platform
     const invocation = protectManagedRuntimeWrites(
@@ -271,54 +290,112 @@ const runShellCommand = (
 
     let stdout = ''
     let stderr = ''
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    let truncated = false
     let settled = false
     // Timeout owns settlement even if Windows taskkill emits exit before its promise resolves.
     let timedOut = false
+    let cancelled = false
 
     const finish = (result: NotebookShellResult): void => {
       if (settled) return
       settled = true
       clearTimeout(timeoutTimer)
+      options.signal?.removeEventListener('abort', abort)
       resolve({ ...result, stderr: normalizePowerShellStderr(result.stderr) })
     }
 
+    const terminateAndFinish = (result: NotebookShellResult): void => {
+      void terminateShellOnTimeout(child, platform).then((usedWindowsTerminator) => {
+        if (usedWindowsTerminator) {
+          // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
+          // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
+          finish(result)
+          return
+        }
+
+        // POSIX group teardown continues in the background so a wedged command tree cannot delay the
+        // result. Its SIGKILL timer intentionally survives the shell leader's exit.
+        finish(result)
+      })
+    }
+
+    const abort = (): void => {
+      if (settled || timedOut || cancelled) return
+      cancelled = true
+      clearTimeout(timeoutTimer)
+      terminateAndFinish({
+        stdout,
+        stderr:
+          stderr + `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command was cancelled.`,
+        exitCode: null,
+        cancelled: true
+      })
+    }
+
     const timeoutTimer = setTimeout(() => {
+      if (settled || cancelled) return
       timedOut = true
       const timeoutResult: NotebookShellResult = {
         stdout,
         stderr:
           stderr +
           `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
-        exitCode: null
+        exitCode: null,
+        ...(truncated ? { truncated: true } : {})
       }
-
-      void terminateShellOnTimeout(child, platform).then((usedWindowsTerminator) => {
-        if (usedWindowsTerminator) {
-          // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
-          // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
-          finish(timeoutResult)
-          return
-        }
-
-        // POSIX group teardown continues in the background so a wedged command tree cannot delay the
-        // timeout result. Its SIGKILL timer intentionally survives the shell leader's exit.
-        finish(timeoutResult)
-      })
+      terminateAndFinish(timeoutResult)
     }, timeoutMs)
+
+    options.signal?.addEventListener('abort', abort, { once: true })
+    if (options.signal?.aborted) abort()
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
+    const appendOutput = (
+      current: string,
+      chunk: string,
+      remainingBytes: number,
+      updateBytes: (captured: number) => void
+    ): string => {
+      const limited = limitUtf8(chunk, remainingBytes)
+      updateBytes(Buffer.byteLength(limited.text, 'utf8'))
+      truncated ||= limited.truncated
+      return current + limited.text
+    }
     child.stdout.on('data', (chunk: string) => {
-      stdout += chunk
+      stdout = appendOutput(
+        stdout,
+        chunk,
+        NOTEBOOK_TEXT_LIMIT_BYTES - NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - stdoutBytes,
+        (captured) => {
+          stdoutBytes += captured
+        }
+      )
     })
     child.stderr.on('data', (chunk: string) => {
-      stderr += chunk
+      stderr = appendOutput(
+        stderr,
+        chunk,
+        NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - SHELL_TIMEOUT_MESSAGE_RESERVE_BYTES - stderrBytes,
+        (captured) => {
+          stderrBytes += captured
+        }
+      )
     })
     child.once('error', (error) => {
-      if (!timedOut) finish({ stdout, stderr: stderr || error.message, exitCode: null })
+      if (!timedOut && !cancelled)
+        finish({
+          stdout,
+          stderr: stderr || error.message,
+          exitCode: null,
+          ...(truncated ? { truncated: true } : {})
+        })
     })
     child.once('exit', (code) => {
-      if (!timedOut) finish({ stdout, stderr, exitCode: code })
+      if (!timedOut && !cancelled)
+        finish({ stdout, stderr, exitCode: code, ...(truncated ? { truncated: true } : {}) })
     })
   })
 

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -111,6 +112,7 @@ const NotebookRunCell = ({
   run: NotebookRunRecord
   index: number
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
   const statusLabel = notebookRunStatusLabel(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
@@ -124,18 +126,22 @@ const NotebookRunCell = ({
           <span className="font-mono text-text-300">[{index}]</span>
           <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
           {run.source === 'user' ? (
-            <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">you</span>
+            <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">
+              {t('you')}
+            </span>
           ) : null}
           {isProblem ? (
             errorLine ? (
               <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
-                error (line {errorLine})
+                {t('error (line {{line}})', { line: errorLine })}
               </span>
             ) : (
-              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
+              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">
+                {t('error')}
+              </span>
             )
           ) : statusLabel ? (
-            <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{statusLabel}</span>
+            <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{t(statusLabel)}</span>
           ) : null}
         </div>
         {originLabel ? (
@@ -194,6 +200,7 @@ const TerminalInput = ({
   onChange: (value: string) => void
   onSubmit: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   // Match Python REPL ergonomics while avoiding submit during IME composition.
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
@@ -209,7 +216,7 @@ const TerminalInput = ({
         rows={1}
         value={code}
         disabled={disabled}
-        placeholder="run code in this kernel..."
+        placeholder={t('run code in this kernel...')}
         spellCheck={false}
         autoCapitalize="off"
         autoComplete="off"
@@ -224,6 +231,7 @@ const TerminalInput = ({
 
 // Renders the notebook preview and keeps it synchronized with main-process runtime events.
 const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const kernelScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const environmentScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
@@ -240,6 +248,15 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Selected environment within the active python/r pane; undefined lets the effective-env
   // computation below default to the first (canonical-default-first) environment.
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
+  const stateLoadInFlight = useRef(false)
+  const stateReloadQueued = useRef(false)
+  const notebookRequest = createNotebookRequest(item.notebook)
+  const notebookRequestKey = JSON.stringify(notebookRequest)
+  const latestNotebookRequest = useRef({ request: notebookRequest, key: notebookRequestKey })
+
+  useEffect(() => {
+    latestNotebookRequest.current = { request: notebookRequest, key: notebookRequestKey }
+  }, [notebookRequest, notebookRequestKey])
 
   // Greys the pane while python is unavailable or an upgrade is running (spec §6.5).
   const envStatus = useNotebookEnvStore((s) => s.status)
@@ -263,21 +280,38 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     setNotebookState(nextState)
   }, [])
 
-  // Reads the latest notebook state from main, including full run history from run.json.
+  // Reads the latest notebook state from main, including its bounded recent run window.
   const loadNotebookState = useCallback(async (): Promise<void> => {
+    if (stateLoadInFlight.current) {
+      stateReloadQueued.current = true
+      return
+    }
+    stateLoadInFlight.current = true
     setIsLoading(true)
 
-    try {
-      const nextState = await window.api.notebook.state(createNotebookRequest(item.notebook))
+    do {
+      stateReloadQueued.current = false
+      const requested = latestNotebookRequest.current
+      try {
+        const nextState = await window.api.notebook.state(requested.request)
 
-      applyNotebookState(nextState)
-      setActionError(null)
-    } catch (error) {
-      setActionError(getErrorMessage(error))
-    } finally {
-      setIsLoading(false)
-    }
-  }, [applyNotebookState, item.notebook])
+        if (latestNotebookRequest.current.key === requested.key) {
+          applyNotebookState(nextState)
+          setActionError(null)
+        } else {
+          stateReloadQueued.current = true
+        }
+      } catch (error) {
+        if (latestNotebookRequest.current.key === requested.key) {
+          setActionError(getErrorMessage(error))
+        } else {
+          stateReloadQueued.current = true
+        }
+      }
+    } while (stateReloadQueued.current)
+    stateLoadInFlight.current = false
+    setIsLoading(false)
+  }, [applyNotebookState])
 
   // Defer the initial state load until after the component has mounted.
   useEffect(() => {
@@ -288,7 +322,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     return () => {
       window.clearTimeout(timeoutId)
     }
-  }, [loadNotebookState])
+  }, [loadNotebookState, notebookRequestKey])
 
   // Reload whenever the shared runtime publishes a change for this notebook session.
   useEffect(() => {
@@ -337,7 +371,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
   const frameOptions = createNotebookFrameFilterOptions(
     runs,
-    session ? notebookFrameLabels(session) : {}
+    session ? notebookFrameLabels(session, t) : {}
   )
   const effectiveFrameFilter = frameOptions.some((option) => option.value === frameFilter)
     ? frameFilter
@@ -433,7 +467,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             htmlFor={`notebook-preview-frame-filter-${item.notebook.sessionId}`}
             className="shrink-0 text-xs text-text-300"
           >
-            Agent
+            {t('Agent')}
           </label>
           <Select
             value={effectiveFrameFilter ?? ''}
@@ -441,7 +475,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           >
             <SelectTrigger
               id={`notebook-preview-frame-filter-${item.notebook.sessionId}`}
-              aria-label="Filter notebook runs by Agent"
+              aria-label={t('Filter notebook runs by Agent')}
               title={frameOptions.find(({ value }) => value === effectiveFrameFilter)?.label}
               className="min-w-0 max-w-full flex-1 text-xs"
             >
@@ -450,7 +484,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             <SelectContent>
               {frameOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
-                  {option.label} · {option.count} {option.count === 1 ? 'run' : 'runs'}
+                  {option.label} ·{' '}
+                  {t('{{count}} runs', {
+                    defaultValue_one: '{{count}} run',
+                    count: option.count
+                  })}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -483,7 +521,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                     : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
                 )}
               >
-                {isPreparingR ? 'R (preparing…)' : 'R'}
+                {isPreparingR ? t('R (preparing…)') : 'R'}
               </button>
             ) : (
               <button
@@ -542,7 +580,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           className="flex shrink-0 items-center justify-between gap-2 border-b border-border-100 bg-bg-300 px-3 py-1.5 text-[11px] text-text-100"
           data-testid="r-restart-banner"
         >
-          <span>Installed R packages need a kernel restart to load.</span>
+          <span>{t('Installed R packages need a kernel restart to load.')}</span>
           <button
             type="button"
             disabled={isRestarting}
@@ -550,7 +588,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
             data-testid="r-restart-button"
           >
-            {isRestarting ? 'Restarting…' : 'Restart R kernel'}
+            {isRestarting ? t('Restarting…') : t('Restart R kernel')}
           </button>
         </div>
       ) : null}
@@ -575,7 +613,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </ResizablePanel>
 
         <ResizableHandle
-          aria-label="Resize notebook and terminal"
+          aria-label={t('Resize notebook and terminal')}
           className="shrink-0 bg-border-200"
         />
 
@@ -590,8 +628,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               className="flex shrink-0 items-center justify-between gap-2 border-b border-border-200 bg-bg-200/70 px-3 py-1 text-[11px] text-text-300"
               data-testid="notebook-terminal-header"
             >
-              <span>Python kernel · shared with the agent</span>
-              <span>{isNotebookBusy ? 'running' : 'idle'}</span>
+              <span>{t('Python kernel · shared with the agent')}</span>
+              <span>{isNotebookBusy ? t('running') : t('idle')}</span>
             </div>
             {actionError ? (
               <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">

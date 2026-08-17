@@ -2,6 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, Download, FileJson } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ConnectorTemplateExportPreview } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,8 @@ type ConnectorExportViewProps = {
 }
 
 export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): React.JSX.Element {
+  const { t } = useTranslation()
+
   const [preview, setPreview] = useState<ConnectorTemplateExportPreview>()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -65,14 +68,19 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
     <div className="p-5">
       <div className="flex w-full flex-col gap-5">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">Export Connector configuration</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {t('Export Connector configuration')}
+          </h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Review the portable configuration before saving it. Secret values, OAuth tokens, local
-            permissions, and trust state are excluded.
+            {t(
+              'Review the portable configuration before saving it. Secret values, OAuth tokens, local permissions, and trust state are excluded.'
+            )}
           </p>
         </div>
 
-        {loading ? <p className="text-xs text-muted-foreground">Preparing preview…</p> : null}
+        {loading ? (
+          <p className="text-xs text-muted-foreground">{t('Preparing preview…')}</p>
+        ) : null}
 
         {error ? (
           <div
@@ -80,7 +88,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
             className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
+            <span>{t(error)}</span>
           </div>
         ) : null}
 
@@ -88,20 +96,20 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
           <div>
             <div className="mb-2 flex items-center gap-2">
               <FileJson className="size-4 text-muted-foreground" aria-hidden="true" />
-              <h4 className="text-sm font-medium text-foreground">Configuration preview</h4>
+              <h4 className="text-sm font-medium text-foreground">{t('Configuration preview')}</h4>
             </div>
             <dl className="divide-y divide-border border-y border-border text-sm">
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Name</dt>
+                <dt className="text-muted-foreground">{t('Name')}</dt>
                 <dd className="min-w-0 break-words text-foreground">{definition.name}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Transport</dt>
+                <dt className="text-muted-foreground">{t('Transport')}</dt>
                 <dd className="text-foreground">{definition.transport}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
                 <dt className="text-muted-foreground">
-                  {definition.transport === 'stdio' ? 'Command' : 'Server URL'}
+                  {definition.transport === 'stdio' ? t('Command') : t('Server URL')}
                 </dt>
                 <dd className="min-w-0 break-all font-mono text-xs text-foreground">
                   {definition.transport === 'stdio'
@@ -110,13 +118,13 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
                 </dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Credentials</dt>
+                <dt className="text-muted-foreground">{t('Credentials')}</dt>
                 <dd className="text-foreground">
                   {definition.oauth
-                    ? 'OAuth configuration only; tokens excluded'
+                    ? t('OAuth configuration only; tokens excluded')
                     : secretNames.length
-                      ? `Names only: ${secretNames.join(', ')}`
-                      : 'None declared'}
+                      ? t('Names only: {{names}}', { names: secretNames.join(', ') })
+                      : t('None declared')}
                 </dd>
               </div>
             </dl>
@@ -124,7 +132,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
         ) : null}
 
         {preview?.diagnostics.length ? (
-          <div className="space-y-2" aria-label="Configuration diagnostics">
+          <div className="space-y-2" aria-label={t('Configuration diagnostics')}>
             {preview.diagnostics.map((item) => (
               <div
                 key={`${item.code}:${item.path ?? ''}`}
@@ -144,13 +152,13 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
         {saved ? (
           <p className="flex items-center gap-2 text-xs text-foreground" role="status">
             <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
-            Configuration saved.
+            {t('Configuration saved.')}
           </p>
         ) : null}
 
         <div className="flex items-center justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onDone}>
-            {saved ? 'Done' : 'Cancel'}
+            {saved ? t('Done') : t('Cancel')}
           </Button>
           <Button
             type="button"
@@ -158,7 +166,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
             onClick={() => void save()}
           >
             <Download data-icon="inline-start" aria-hidden="true" />
-            {saving ? 'Saving…' : 'Save configuration'}
+            {saving ? t('Saving…') : t('Save configuration')}
           </Button>
         </div>
       </div>

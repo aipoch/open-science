@@ -1,6 +1,7 @@
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { MessageAttribution } from '../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import {
@@ -34,6 +35,11 @@ const log = createLogger('acp-prompt-turn-workflow')
 
 type AcpPromptTurnMode =
   | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+  | Readonly<{
+      kind: 'application'
+      attribution: MessageAttribution
+      promptAttemptId?: string
+    }>
   | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
 
 type AcpPromptTurnPlanContext = Readonly<{
@@ -44,6 +50,7 @@ type AcpPromptTurnPlanContext = Readonly<{
 
 type AcpActivatedPromptTurn = Readonly<{
   request: AcpPromptRequest
+  connectionGeneration: number
   mode: AcpPromptTurnMode
   session: ActiveSession
   interaction: AcpPromptSessionInteractionScope
@@ -52,6 +59,7 @@ type AcpActivatedPromptTurn = Readonly<{
 }>
 
 type AcpPromptTurnEnvironment = Readonly<{
+  connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
   bridgeSkillsAvailable: () => boolean
@@ -77,7 +85,12 @@ type AcpPromptTurnEnvironment = Readonly<{
   }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
   diagnosticContext: () => Record<string, unknown>
-  pushUserMessage: (input: { sessionId: string; promptMessageId?: string; text: string }) => void
+  pushUserMessage: (input: {
+    sessionId: string
+    promptMessageId?: string
+    text: string
+    attribution?: MessageAttribution
+  }) => void
 }>
 
 type AcpPromptTurnArtifacts = Readonly<{
@@ -145,12 +158,12 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
-  resolveProjectName: (sessionId: string) => string
+  resolveProjectId: (sessionId: string) => string
   disconnectForReload: () => Promise<unknown>
   resumeAfterReload: (input: {
     sessionId: string
     cwd: string
-    projectName: string
+    projectId: string
     permissionProfile: PermissionProfileId
   }) => Promise<{ contextReset?: boolean }>
   recordAdmittedPrompt: (request: AcpPromptRequest) => void
@@ -189,12 +202,12 @@ class AcpPromptTurnWorkflow {
       if (skill.reloadDecision.kind === 'reload') {
         this.assertSessionIdle(request.sessionId)
         const snapshot = this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
-        const projectName = this.options.resolveProjectName(request.sessionId)
+        const projectId = this.options.resolveProjectId(request.sessionId)
         await this.options.disconnectForReload()
         const resumed = await this.options.resumeAfterReload({
           sessionId: request.sessionId,
           cwd: snapshot?.cwd ?? this.options.currentCwd(),
-          projectName,
+          projectId,
           permissionProfile:
             snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE
         })
@@ -251,6 +264,7 @@ class AcpPromptTurnWorkflow {
     })
     return this.executeTurn({
       request,
+      connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
       mode,
       session: activeSession,
       interaction,
@@ -290,7 +304,7 @@ class AcpPromptTurnWorkflow {
     let sideChatRelaySettled = false
     const emitUserMessage = (): void => {
       if (
-        turn.mode.kind !== 'user' ||
+        (turn.mode.kind !== 'user' && turn.mode.kind !== 'application') ||
         request.continuation ||
         request.suppressUserMessage ||
         userMessageEmitted
@@ -300,7 +314,8 @@ class AcpPromptTurnWorkflow {
       env.pushUserMessage({
         sessionId,
         ...eventIdentity,
-        text: request.text
+        text: request.text,
+        ...(turn.mode.kind === 'application' ? { attribution: turn.mode.attribution } : {})
       })
     }
     const execute = async (): Promise<ProviderPromptOutcome> => {
@@ -325,11 +340,12 @@ class AcpPromptTurnWorkflow {
         turn.plan.authorized ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       prepared = await preparation.prepare({
         request: preparationRequest,
+        connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),
         specialistPrefix: snapshot?.specialistPrefix,
         sessionSetupPromptPrefix: snapshot?.sessionSetupPromptPrefix,
-        projectId: this.options.resolveProjectName(sessionId),
+        projectId: this.options.resolveProjectId(sessionId),
         fallbackPromptMessageId: artifacts.promptMessageIdFor(artifact),
         bridgeSkillsAvailable: env.bridgeSkillsAvailable(),
         skillImportEnabled: env.skillImportEnabled(),
@@ -402,7 +418,9 @@ class AcpPromptTurnWorkflow {
             skillFinalized = true
           }
         },
-        routeNotification: (notification) => env.routeNotification(notification, sessionId),
+        routeNotification: (notification) => {
+          if (turn.mode.kind !== 'application') env.routeNotification(notification, sessionId)
+        },
         reportBestEffortFailure: (stage, error) =>
           log.warn('provider prompt observation failed', {
             sessionId,

@@ -31,7 +31,8 @@ const createMockHostRepo = (): ComputeHostRepository =>
     get: vi.fn(),
     list: vi.fn(),
     create: vi.fn(),
-    delete: vi.fn()
+    delete: vi.fn(),
+    updateConcurrencyLimit: vi.fn()
   }) as unknown as ComputeHostRepository
 
 const createMockDispatchJob = (): Mock<
@@ -61,20 +62,78 @@ describe('ConcurrencyManager', () => {
           submitted_at: updates.submittedAt?.getTime()
         }) as ComputeJob
     )
+    vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([])
     manager = new ConcurrencyManager(jobRepo, hostRepo, dispatchJob, onJobUpdated)
   })
 
   describe('setSessionLimit', () => {
-    it('stores session limit in memory', () => {
-      manager.setSessionLimit('session-1', 5)
+    it('stores session limit in memory', async () => {
+      await manager.setSessionLimit('session-1', 5)
       // Verify via getStatus
       expect(manager['sessionLimits'].get('session-1')).toBe(5)
     })
 
-    it('updates existing session limit', () => {
-      manager.setSessionLimit('session-1', 3)
-      manager.setSessionLimit('session-1', 7)
+    it('updates existing session limit', async () => {
+      await manager.setSessionLimit('session-1', 3)
+      await manager.setSessionLimit('session-1', 7)
       expect(manager['sessionLimits'].get('session-1')).toBe(7)
+    })
+  })
+
+  describe('setProviderLimit', () => {
+    it('serializes a decrease ahead of a concurrent admission', async () => {
+      let storedLimit = 2
+      let releaseUpdate: (() => void) | undefined
+      let updateStarted: (() => void) | undefined
+      const updateEntered = new Promise<void>((resolve) => {
+        updateStarted = resolve
+      })
+
+      vi.mocked(hostRepo.get).mockImplementation(
+        async () =>
+          ({
+            providerId: 'ssh:cluster-a',
+            concurrencyLimit: storedLimit
+          }) as ComputeHost
+      )
+      vi.mocked(hostRepo.updateConcurrencyLimit).mockImplementation(async (_providerId, limit) => {
+        updateStarted?.()
+        await new Promise<void>((resolve) => {
+          releaseUpdate = resolve
+        })
+        storedLimit = limit
+      })
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
+
+      const changingLimit = manager.setProviderLimit('ssh:cluster-a', 1)
+      await updateEntered
+      const commit = vi.fn().mockResolvedValue(undefined)
+      const admitting = manager.admit(
+        { sessionId: 'session-1', providerId: 'ssh:cluster-a' },
+        commit
+      )
+      releaseUpdate?.()
+
+      await changingLimit
+      await expect(admitting).resolves.toBe('queued')
+      expect(commit).toHaveBeenCalledWith('queued')
+    })
+
+    it('rejects invalid limits before persistence', async () => {
+      await expect(manager.setProviderLimit('ssh:cluster-a', 0)).rejects.toThrow(
+        /integer in the range 1\.\.500/
+      )
+      expect(hostRepo.updateConcurrencyLimit).not.toHaveBeenCalled()
+    })
+
+    it('rejects a missing provider before persistence', async () => {
+      vi.mocked(hostRepo.get).mockResolvedValue(null)
+
+      await expect(manager.setProviderLimit('ssh:missing', 10)).rejects.toThrow(
+        /No compute host found/
+      )
+      expect(hostRepo.updateConcurrencyLimit).not.toHaveBeenCalled()
     })
   })
 
@@ -107,7 +166,7 @@ describe('ConcurrencyManager', () => {
 
   describe('enqueue - session limit check', () => {
     it('returns should_queue when session limit reached', async () => {
-      manager.setSessionLimit('session-1', 2)
+      await manager.setSessionLimit('session-1', 2)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
@@ -126,7 +185,7 @@ describe('ConcurrencyManager', () => {
     })
 
     it('returns can_dispatch when under session limit', async () => {
-      manager.setSessionLimit('session-1', 5)
+      await manager.setSessionLimit('session-1', 5)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(2)
@@ -217,7 +276,7 @@ describe('ConcurrencyManager', () => {
 
   describe('enqueue - combined limits', () => {
     it('requires both session limit and provider ceiling to be satisfied', async () => {
-      manager.setSessionLimit('session-1', 5)
+      await manager.setSessionLimit('session-1', 5)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2) // under session limit
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(10) // at provider ceiling
@@ -318,7 +377,7 @@ describe('ConcurrencyManager', () => {
     })
 
     it('re-checks both session limit and provider ceiling', async () => {
-      manager.setSessionLimit('session-1', 2)
+      await manager.setSessionLimit('session-1', 2)
       const queuedJobs: ComputeJob[] = [
         {
           job_id: 'job-1',
@@ -343,7 +402,7 @@ describe('ConcurrencyManager', () => {
     })
 
     it('skips jobs that still violate session limit', async () => {
-      manager.setSessionLimit('session-1', 2)
+      await manager.setSessionLimit('session-1', 2)
       const queuedJobs: ComputeJob[] = [
         {
           job_id: 'job-1',
@@ -392,7 +451,7 @@ describe('ConcurrencyManager', () => {
     })
 
     it('dispatches multiple jobs if both limits allow', async () => {
-      manager.setSessionLimit('session-1', 10)
+      await manager.setSessionLimit('session-1', 10)
       const queuedJobs: ComputeJob[] = [
         {
           job_id: 'job-1',
@@ -448,7 +507,7 @@ describe('ConcurrencyManager', () => {
 
   describe('getStatus', () => {
     it('returns accurate session status', async () => {
-      manager.setSessionLimit('session-1', 5)
+      await manager.setSessionLimit('session-1', 5)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
       vi.mocked(jobRepo.findBySession).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'queued' } as ComputeJob,
@@ -499,8 +558,8 @@ describe('ConcurrencyManager', () => {
 
   describe('multi-session scenarios', () => {
     it('enforces session limits independently', async () => {
-      manager.setSessionLimit('session-1', 2)
-      manager.setSessionLimit('session-2', 3)
+      await manager.setSessionLimit('session-1', 2)
+      await manager.setSessionLimit('session-2', 3)
 
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
@@ -606,7 +665,7 @@ describe('ConcurrencyManager', () => {
         } as ComputeJob
       ]
 
-      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValueOnce(queuedJobs).mockResolvedValue([])
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({
@@ -649,7 +708,7 @@ describe('ConcurrencyManager', () => {
         } as ComputeJob
       ]
 
-      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValueOnce(queuedJobs).mockResolvedValue([])
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({
@@ -674,7 +733,7 @@ describe('ConcurrencyManager', () => {
       expect(dispatchJob).toHaveBeenCalledWith('job-2', expect.any(Function))
     })
 
-    it('prevents concurrent tryDispatchNext execution', async () => {
+    it('coalesces concurrent reconciliation without dispatching the same job twice', async () => {
       const queuedJobs: ComputeJob[] = [
         {
           job_id: 'job-1',
@@ -685,7 +744,7 @@ describe('ConcurrencyManager', () => {
         } as ComputeJob
       ]
 
-      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValueOnce(queuedJobs).mockResolvedValue([])
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({
@@ -703,9 +762,8 @@ describe('ConcurrencyManager', () => {
       // Fire two concurrent onJobCompleted calls
       await Promise.all([manager.onJobCompleted(), manager.onJobCompleted()])
 
-      // findQueuedJobs should only be called once (second call returns early)
-      expect(jobRepo.findQueuedJobs).toHaveBeenCalledOnce()
-      // dispatchJob should only be called once
+      // The concurrent request is retained as one follow-up scan, without a second dispatch.
+      expect(jobRepo.findQueuedJobs).toHaveBeenCalledTimes(2)
       expect(dispatchStarted).toBe(1)
     })
   })
@@ -725,7 +783,7 @@ describe('ConcurrencyManager', () => {
     })
 
     it('calls commit with queued when session limit is reached', async () => {
-      manager.setSessionLimit('s1', 2)
+      await manager.setSessionLimit('s1', 2)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
@@ -751,7 +809,7 @@ describe('ConcurrencyManager', () => {
     it('serializes concurrent admits so both cannot pass the same slot', async () => {
       // Two concurrent calls see activeByProvider=0 individually, but admit serializes them so
       // the second sees activeByProvider=1 (as committed by the first).
-      manager.setSessionLimit('s1', 10)
+      await manager.setSessionLimit('s1', 10)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
 

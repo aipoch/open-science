@@ -21,7 +21,6 @@ import {
   type EnvironmentCaptureTarget
 } from './environment-state-tracker'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import type { NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import { notebookLaneScope } from './lane-identity'
 import type {
@@ -41,7 +40,7 @@ import type { TransientViewImage } from './host-view-image-service'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
-  'status' | 'stdout' | 'stderr' | 'traceback' | 'outputs' | 'workingFiles'
+  'status' | 'stdout' | 'stderr' | 'traceback' | 'outputs' | 'truncated' | 'workingFiles'
 > & { viewImages?: readonly TransientViewImage[] }
 
 type NotebookControlCompletionInterceptor = {
@@ -72,7 +71,7 @@ type McpRpcConnectionBinding = {
   projectId: string
   agentFrameId: string
   attemptId?: string
-  workspaceCwd: string
+  executionCwd: string
 }
 type McpRpcConnectionResolver = (
   binding: McpRpcConnectionBinding
@@ -80,7 +79,6 @@ type McpRpcConnectionResolver = (
 
 type NotebookExecutionOwnerOptions = {
   configRoot: string
-  repository: Pick<NotebookRunRepository, 'updateKernelStatus'>
   runTerminalization: NotebookRunTerminalizationOwner
   dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   environmentStateTracker: Pick<EnvironmentStateTracker, 'prepareRun' | 'captureCompletedRun'>
@@ -91,9 +89,13 @@ type NotebookExecutionOwnerOptions = {
     resolvedInterpreter: NotebookSessionResolvedInterpreter | undefined,
     runtimeRoot: string
   ) => EnvironmentCaptureTarget
-  persistKernelStatus: (
+  setKernelStatus: (
     session: NotebookSessionAggregate,
     status: 'running' | 'idle',
+    processKey: string
+  ) => void
+  persistRecoveredKernelIdle: (
+    session: NotebookSessionAggregate,
     processKey: string
   ) => Promise<void>
   getMcpRpcConnectionResolver: () => McpRpcConnectionResolver | undefined
@@ -194,9 +196,13 @@ class NotebookExecutionOwner {
       )
     }
     const kernelMarkedRunning = admission.rejection === undefined
+    const kernelWasTerminated =
+      session.isKernelTerminated(processKey) ||
+      session.kernelStatus(processKey) === 'terminated' ||
+      session.hasDurableKernelTermination(processKey)
     if (kernelMarkedRunning) {
       session.clearKernelTerminated(processKey)
-      await this.options.persistKernelStatus(session, 'running', processKey)
+      this.options.setKernelStatus(session, 'running', processKey)
     }
     let executedOnLiveKernel = true
     let reachedExecutor = false
@@ -285,13 +291,17 @@ class NotebookExecutionOwner {
       !session.isKernelTerminated(processKey) &&
       (executedOnLiveKernel || (kernelMarkedRunning && !reachedExecutor))
     ) {
-      await this.options.persistKernelStatus(session, 'idle', processKey)
+      this.options.setKernelStatus(session, 'idle', processKey)
+      if (kernelWasTerminated) {
+        await this.options.persistRecoveredKernelIdle(session, processKey)
+      }
     }
     return run
   }
   async executeControl(
     session: NotebookSessionAggregate,
-    request: ExecuteNotebookControlRequest
+    request: ExecuteNotebookControlRequest,
+    signal?: AbortSignal
   ): Promise<NotebookControlResult> {
     const { runId: controlInvocationId, sequence: controlInvocationGeneration } =
       this.options.runTerminalization.allocateRunIdentity()
@@ -300,7 +310,8 @@ class NotebookExecutionOwner {
         session,
         request,
         controlInvocationId,
-        controlInvocationGeneration
+        controlInvocationGeneration,
+        signal
       )
     )
 
@@ -356,7 +367,8 @@ class NotebookExecutionOwner {
     session: NotebookSessionAggregate,
     request: ExecuteNotebookControlRequest,
     runId: string,
-    controlInvocationGeneration: number
+    controlInvocationGeneration: number,
+    signal?: AbortSignal
   ): Promise<NotebookControlResult> {
     this.options.notifyAvailable(session, 'agent')
     const runningRun: NotebookRunRecord = {
@@ -390,9 +402,12 @@ class NotebookExecutionOwner {
       runtimeRoot: session.runtimeRoot,
       cwd: session.cwd
     })
+    const replWasTerminated =
+      !blockedMutation &&
+      (session.kernelStatus('repl') === 'terminated' || session.hasDurableKernelTermination('repl'))
     if (!blockedMutation) {
       session.clearKernelTerminated('repl')
-      await this.persistReplStatus(session, 'running')
+      this.setReplStatus(session, 'running')
     }
 
     let executedOnLiveKernel = !blockedMutation
@@ -439,6 +454,7 @@ class NotebookExecutionOwner {
                   runtimeRoot: session.runtimeRoot,
                   protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
                   timeoutMs: request.timeoutMs,
+                  signal,
                   mcpRpcEndpoint: mcpRpc?.endpoint,
                   mcpRpcSocketPath: mcpRpc?.socketPath,
                   mcpRpcToken: mcpRpc?.token,
@@ -456,7 +472,12 @@ class NotebookExecutionOwner {
     })
 
     if (executedOnLiveKernel && !session.isKernelTerminated('repl')) {
-      await this.persistReplStatus(session, 'idle')
+      this.setReplStatus(session, 'idle')
+      // A terminated status is durable; clear it once, while ordinary running/idle transitions stay
+      // in memory and do not rewrite the whole run.json document.
+      if (replWasTerminated) {
+        await this.options.persistRecoveredKernelIdle(session, 'repl')
+      }
     }
 
     return {
@@ -465,13 +486,15 @@ class NotebookExecutionOwner {
       stderr: result.stderr,
       traceback: result.traceback,
       outputs: result.outputs,
+      ...(result.truncated ? { truncated: true } : {}),
       workingFiles: result.workingFiles
     }
   }
 
   async executeShell(
     session: NotebookSessionAggregate,
-    request: ExecuteShellRequest
+    request: ExecuteShellRequest,
+    signal?: AbortSignal
   ): Promise<NotebookShellResult> {
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
     const runningRun: NotebookRunRecord = {
@@ -521,13 +544,15 @@ class NotebookExecutionOwner {
                 cwd: session.cwd,
                 handoffDir: join(session.notebookSessionRoot, 'handoff'),
                 runtimeRoot: session.runtimeRoot,
-                timeoutMs: request.timeoutMs
+                timeoutMs: request.timeoutMs,
+                signal
               })
         ).finally(async () => {
           workingFiles = await workingFileObservation.finish()
         })
-        const status: NotebookRunStatus =
-          shellResult.exitCode === 0
+        const status: NotebookRunStatus = shellResult.cancelled
+          ? 'cancelled'
+          : shellResult.exitCode === 0
             ? 'completed'
             : shellResult.exitCode === null
               ? 'timeout'
@@ -548,30 +573,23 @@ class NotebookExecutionOwner {
           traceback: '',
           cwdAfter: session.cwd,
           outputs,
+          truncated: shellResult.truncated,
           workingFiles,
           exitCode: shellResult.exitCode
         }
       }
     })
 
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode }
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      ...(result.truncated ? { truncated: true } : {})
+    }
   }
 
-  private async persistReplStatus(
-    session: NotebookSessionAggregate,
-    status: 'running' | 'idle'
-  ): Promise<void> {
+  private setReplStatus(session: NotebookSessionAggregate, status: 'running' | 'idle'): void {
     session.setKernelStatus('repl', status)
-    try {
-      await this.options.repository.updateKernelStatus({
-        projectName: session.projectId,
-        sessionId: session.sessionId,
-        lane: session.lane,
-        status
-      })
-    } catch {
-      // Best effort: status persistence must not replace an execution result.
-    }
   }
 }
 

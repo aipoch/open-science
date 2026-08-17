@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 import type { StorageInfo } from '../../shared/storage'
@@ -12,9 +13,11 @@ import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
+import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
+import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { Button } from '@/components/ui/button'
 import { resolveAppShellPresentation } from '@/app-shell-presentation-owner'
 import { HomePage } from '@/pages/home/HomePage'
@@ -27,6 +30,10 @@ import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/Settings
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import {
+  WorkspaceMessageQueueProvider,
+  WorkspaceMessageQueueRuntimeBridge
+} from '@/pages/workspace/workspace-message-queue-controller'
+import {
   SideChatProvider,
   useOpenSideChatParentSessionIds
 } from '@/pages/workspace/use-side-chat-controller'
@@ -38,6 +45,7 @@ import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
+import { useWebEventConnection } from '@/hooks/useWebEventConnection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -57,6 +65,7 @@ type NotificationOpenIntent = {
 }
 
 const AppContent = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
@@ -183,6 +192,9 @@ const AppContent = (): React.JSX.Element | null => {
   const startupView = isSettingsLoaded
     ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
     : undefined
+  const webEventConnectionPhase = useWebEventConnection(
+    startupView === 'app' && isSessionPersistenceHydrated
+  )
   const appShellPresentation = useMemo(
     () =>
       resolveAppShellPresentation({
@@ -192,6 +204,7 @@ const AppContent = (): React.JSX.Element | null => {
         view,
         presentations: {
           closeConfirmation: isCloseConfirmOpen,
+          webEventRecovery: webEventConnectionPhase !== 'live',
           dataRootRecovery: missingDataRoot !== undefined,
           legacyDataMove: legacyMove !== undefined,
           update: isUpdateDialogOpen,
@@ -217,6 +230,7 @@ const AppContent = (): React.JSX.Element | null => {
       legacyMove,
       missingDataRoot,
       startupView,
+      webEventConnectionPhase,
       view
     ]
   )
@@ -494,7 +508,7 @@ const AppContent = (): React.JSX.Element | null => {
         >
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm">
             <h1 className="text-base font-semibold text-foreground">
-              Settings could not be loaded
+              {t('Settings could not be loaded')}
             </h1>
             <p className="mt-2 break-words text-sm text-muted-foreground">{settingsLoadError}</p>
             <Button
@@ -505,7 +519,7 @@ const AppContent = (): React.JSX.Element | null => {
               onClick={() => void retrySettingsInitialization()}
               className="mt-4"
             >
-              {isSettingsLoading ? 'Retrying…' : 'Retry'}
+              {isSettingsLoading ? t('Retrying…') : t('Retry')}
             </Button>
           </div>
         </main>
@@ -520,14 +534,19 @@ const AppContent = (): React.JSX.Element | null => {
       >
         <div className="flex flex-col items-center gap-14">
           <OpenScienceLogoLoader />
-          <span className="text-sm text-muted-foreground">Loading settings…</span>
+          <span className="text-sm text-muted-foreground">{t('Loading settings…')}</span>
         </div>
       </main>
     )
   }
 
   if (startupView === 'onboarding') {
-    return <OnboardingWizard loadStorageInfo={loadStorageInfo} />
+    return (
+      <>
+        <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
+        <OnboardingWizard loadStorageInfo={loadStorageInfo} />
+      </>
+    )
   }
 
   if (!isSessionPersistenceHydrated && isSessionPersistenceLoading) {
@@ -539,7 +558,7 @@ const AppContent = (): React.JSX.Element | null => {
       >
         <div className="flex flex-col items-center gap-14">
           <OpenScienceLogoLoader />
-          <span className="text-sm text-muted-foreground">Loading saved conversations…</span>
+          <span className="text-sm text-muted-foreground">{t('Loading saved conversations…')}</span>
         </div>
       </main>
     )
@@ -554,7 +573,7 @@ const AppContent = (): React.JSX.Element | null => {
         className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
       >
         <SessionPersistenceAlert
-          title="Saved conversations could not be loaded"
+          title={t('Saved conversations could not be loaded')}
           message={sessionPersistence.loadError}
           inline
           onRetry={sessionPersistence.retryLoad}
@@ -565,6 +584,13 @@ const AppContent = (): React.JSX.Element | null => {
 
   const activePresentation = appShellPresentation.active
   const isBasePresentationActive = activePresentation === 'base' || activePresentation === 'preview'
+  const writeErrorAlert = sessionPersistence.writeError ? (
+    <SessionPersistenceAlert
+      title={t('Conversation storage needs attention')}
+      message={sessionPersistence.writeError}
+      onRetry={sessionPersistence.retryWrites}
+    />
+  ) : null
 
   return (
     <>
@@ -574,45 +600,51 @@ const AppContent = (): React.JSX.Element | null => {
         aria-hidden={isBasePresentationActive ? undefined : true}
       >
         <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
-        {sessionPersistence.loadError ? (
+        {sessionPersistence.catalogRecovery.kind !== 'ready' ? (
+          <SessionCatalogRecoveryAlert
+            recovery={sessionPersistence.catalogRecovery}
+            onRetry={sessionPersistence.retryLoad}
+          />
+        ) : sessionPersistence.loadError ? (
           <SessionPersistenceAlert
-            title="Saved conversations could not be loaded"
+            title={t('Saved conversations could not be loaded')}
             message={sessionPersistence.loadError}
             onRetry={sessionPersistence.retryLoad}
           />
-        ) : sessionPersistence.writeError ? (
-          <SessionPersistenceAlert
-            title="Conversation storage needs attention"
-            message={sessionPersistence.writeError}
-            onRetry={sessionPersistence.retryWrites}
-          />
+        ) : writeErrorAlert ? (
+          writeErrorAlert
         ) : sessionPersistence.loadWarning ? (
           <SessionPersistenceAlert
-            title="Saved conversation data was damaged"
+            title={t('Saved conversation data was damaged')}
             message={sessionPersistence.loadWarning}
             variant="warning"
             onDismiss={sessionPersistence.dismissLoadWarning}
           />
         ) : null}
+        {sessionPersistence.catalogRecovery.kind !== 'ready' ? writeErrorAlert : null}
         <WorkspaceAgentRuntimeProvider>
-          {view === 'home' ? (
-            <HomePage
-              canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
-              hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
-              onOpenGlobalSearch={() => {
-                if (appShellPresentation.allowsShortcut('globalSearch')) {
-                  setIsGlobalSearchOpen(true)
-                }
-              }}
-            />
-          ) : (
-            <WorkspacePage
-              isSessionPersistenceHydrated={isSessionPersistenceHydrated}
-              isSessionPersistenceReady={isSessionPersistenceReady}
-              canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
-              isPreviewPresentationActive={isBasePresentationActive}
-            />
-          )}
+          <WorkspaceMessageQueueProvider>
+            <WorkspaceMessageQueueRuntimeBridge />
+            {view === 'home' ? (
+              <HomePage
+                canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
+                hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+                catalogRecovery={sessionPersistence.catalogRecovery}
+                onOpenGlobalSearch={() => {
+                  if (appShellPresentation.allowsShortcut('globalSearch')) {
+                    setIsGlobalSearchOpen(true)
+                  }
+                }}
+              />
+            ) : (
+              <WorkspacePage
+                isSessionPersistenceHydrated={isSessionPersistenceHydrated}
+                isSessionPersistenceReady={isSessionPersistenceReady}
+                canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
+                isPreviewPresentationActive={isBasePresentationActive}
+              />
+            )}
+          </WorkspaceMessageQueueProvider>
         </WorkspaceAgentRuntimeProvider>
         <LifecycleToast
           notice={lifecycleSync.notice}
@@ -621,11 +653,19 @@ const AppContent = (): React.JSX.Element | null => {
         />
         <PermissionUndoSnackbar />
       </div>
+      <WebEventRecoveryDialog
+        active={activePresentation === 'webEventRecovery'}
+        phase={webEventConnectionPhase}
+      />
       <SettingsPage
         ref={settingsPageRef}
         open={activePresentation === 'settings'}
         onClose={closeSettings}
         onOpenSession={openPermissionSession}
+        canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
+        hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+        catalogRecovery={sessionPersistence.catalogRecovery}
+        onRetryCatalogRecovery={sessionPersistence.retryLoad}
       />
       <ConnectorApprovalDialog
         active={activePresentation === 'connectorApproval'}

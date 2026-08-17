@@ -290,6 +290,7 @@ describe('post-merge Windows validation', () => {
     const commands = build.run?.split('\n').map((line) => line.trim()) ?? []
 
     expect(verifyTypecheck.run).toBe('npm run typecheck')
+    expect(verifyTypecheck.env).toEqual({ NODE_OPTIONS: '--max-old-space-size=4096' })
     expect(commands).toContain('npm run build:e2e')
     expect(commands).toContain('npm run build:web')
     expect(commands).not.toContain('npm run build')
@@ -311,6 +312,61 @@ describe('post-merge Windows validation', () => {
     expect(findStep(upgrade, 'Install dependencies').run).toBe(
       'npm ci --ignore-scripts --no-audit --no-fund'
     )
+    expect(findStep(upgrade, 'Generate Prisma client').run).toBe('npx prisma generate')
+    const checkout = findStep(upgrade, 'Checkout smoke harness')
+    expect(checkout).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: { 'fetch-depth': 0 }
+    })
+    expect(checkout.with).not.toHaveProperty('ref')
+
+    const released = findStep(upgrade, 'Resolve released revision')
+    expect(released.run).toContain('git rev-parse "$($env:CURRENT_TAG)^{commit}"')
+    expect(released.run).toContain('git merge-base --is-ancestor $releasedSha $env:GITHUB_SHA')
+    expect(released.run).toContain(
+      'git ls-tree -r --name-only $releasedSha -- src/main/database/migrations'
+    )
+    expect(released.run).toContain('$migrationPattern')
+    expect(released.run).toContain('Unexpected released migration path')
+    expect(released.run).toContain('Released migrations are not a continuous prefix')
+    expect(released.run).toContain('"sha=$releasedSha"')
+    expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
+    expect(released.run).toContain('f12fd1f871022c7a9b771d193202d9ecf98aca96')
+    expect(released.run)
+      .toContain(`$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
+  Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+  exit 1
+}
+if ($artifactReservationBase -eq $artifactReservationCommit) {
+  $artifactRpcContract = 'reservation'
+} else {
+  $artifactRpcContract = 'legacy'
+}`)
+    expect(released.run).toContain('"artifact_rpc_contract=$artifactRpcContract"')
+
+    const updaterStep = findStep(upgrade, 'Certify Windows electron-updater differential update')
+    const installerStep = findStep(
+      upgrade,
+      'Drill Windows silent upgrade, process lock, rollback, and restart'
+    )
+    expect(updaterStep).toMatchObject({
+      env: {
+        OPEN_SCIENCE_E2E_STORAGE_ROOT: '${{ runner.temp }}\\open-science-updater-certification'
+      }
+    })
+    expect(installerStep).toMatchObject({
+      env: {
+        OPEN_SCIENCE_E2E_STORAGE_ROOT: '${{ runner.temp }}\\open-science-installer-certification'
+      }
+    })
+    expect(updaterStep.env?.OPEN_SCIENCE_E2E_STORAGE_ROOT).not.toBe(
+      installerStep.env?.OPEN_SCIENCE_E2E_STORAGE_ROOT
+    )
+    expect(findStep(upgrade, 'Record Windows update-drill evidence')).toMatchObject({
+      env: { GITHUB_SHA: '${{ steps.current.outputs.sha }}' }
+    })
+
     const current = findStep(upgrade, 'Download current Windows installer')
     expect(current.run).toContain('gh release download $env:CURRENT_TAG')
     expect(current.run).toContain("--pattern 'latest.yml'")
@@ -331,6 +387,12 @@ describe('post-merge Windows validation', () => {
     expect(
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
     ).toContain('--previous-installer-dir previous')
+    expect(
+      findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
+    ).toContain("--expected-migration-count '${{ steps.current.outputs.migration_count }}'")
+    expect(
+      findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
+    ).toContain("--artifact-rpc-contract '${{ steps.current.outputs.artifact_rpc_contract }}'")
     expect(
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart')
     ).toMatchObject({ id: 'installer', 'continue-on-error': true })

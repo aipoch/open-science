@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
 import { Check, Copy, Loader2, X } from 'lucide-react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -72,6 +73,7 @@ const ClaudeIsolatedSignInModalBody = ({
   ClaudeIsolatedSignInModalProps,
   'onOpenChange' | 'onSubmit' | 'browserSignInPending'
 >): React.JSX.Element => {
+  const { t } = useTranslation()
   const [token, setToken] = useState('')
   const [copied, setCopied] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -113,7 +115,7 @@ const ClaudeIsolatedSignInModalBody = ({
       } else if (result) {
         // The controller's failure message is the actionable one (e.g. "unlock the keychain"),
         // so we surface it inline rather than swapping in describeValidation's mapped text.
-        setSubmitError(result.message ?? 'Could not save the Claude token.')
+        setSubmitError(result.message ?? t('Could not save the Claude token.'))
       }
     } finally {
       setIsSubmitting(false)
@@ -126,14 +128,14 @@ const ClaudeIsolatedSignInModalBody = ({
       <AlertDialog.Content className={dialogPanelClassName('w-[min(560px,92vw)] p-0')}>
         <div className={dialogHeaderClassName}>
           <AlertDialog.Title className={dialogTitleClassName}>
-            Sign in with Anthropic
+            {t('Sign in with Anthropic')}
           </AlertDialog.Title>
           <AlertDialog.Cancel asChild>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               disabled={isSubmitting}
             >
@@ -144,18 +146,20 @@ const ClaudeIsolatedSignInModalBody = ({
 
         <div className={dialogBodyClassName}>
           <AlertDialog.Description className={dialogDescriptionClassName}>
-            Use a long-lived OAuth token from <code className="font-mono">claude setup-token</code>.
-            The token is encrypted in Open Science app storage and never read from or written to{' '}
-            <code className="font-mono">~/.claude</code>. See{' '}
-            <a
-              href={SETUP_TOKEN_DOCS_URL}
-              className="text-primary underline underline-offset-2"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Anthropic&apos;s setup-token guide
-            </a>{' '}
-            for the full flow.
+            <Trans
+              i18nKey="Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow."
+              components={{
+                code: <code className="font-mono" />,
+                docsLink: (
+                  <a
+                    href={SETUP_TOKEN_DOCS_URL}
+                    className="text-primary underline underline-offset-2"
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                )
+              }}
+            />
           </AlertDialog.Description>
 
           {browserSignInPending ? (
@@ -167,8 +171,9 @@ const ClaudeIsolatedSignInModalBody = ({
             >
               <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
               <span>
-                Opening your browser to sign in… finish there and this closes automatically.
-                Didn&apos;t open, or prefer a token? Paste one below.
+                {t(
+                  "Opening your browser to sign in… finish there and this closes automatically. Didn't open, or prefer a token? Paste one below."
+                )}
               </span>
             </div>
           ) : null}
@@ -179,7 +184,7 @@ const ClaudeIsolatedSignInModalBody = ({
                 they must run would be misleading — hide it and drop the now-orphaned "Step" numbering. */}
             {browserSignInPending ? null : (
               <div className="space-y-1.5">
-                <span className={dialogFormLabelClassName}>Step 1 · Run</span>
+                <span className={dialogFormLabelClassName}>{t('Step 1 · Run')}</span>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 truncate rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-xs">
                     {SETUP_TOKEN_COMMAND}
@@ -189,17 +194,17 @@ const ClaudeIsolatedSignInModalBody = ({
                     variant="outline"
                     size="sm"
                     onClick={() => void copyCommand()}
-                    aria-label="Copy command"
+                    aria-label={t('Copy command')}
                   >
                     {copied ? (
                       <>
                         <Check className="size-3.5" aria-hidden="true" />
-                        Copied
+                        {t('Copied')}
                       </>
                     ) : (
                       <>
                         <Copy className="size-3.5" aria-hidden="true" />
-                        Copy
+                        {t('Copy')}
                       </>
                     )}
                   </Button>
@@ -210,12 +215,12 @@ const ClaudeIsolatedSignInModalBody = ({
             <div className="space-y-1.5">
               <label className={dialogFormLabelClassName} htmlFor="claude-setup-token-input">
                 {browserSignInPending
-                  ? 'Paste the token printed by setup-token'
-                  : 'Step 2 · Paste the token printed by setup-token'}
+                  ? t('Paste the token printed by setup-token')
+                  : t('Step 2 · Paste the token printed by setup-token')}
               </label>
               <Input
                 id="claude-setup-token-input"
-                aria-label="Claude setup token"
+                aria-label={t('Claude setup token')}
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
                 placeholder="sk-ant-..."
@@ -241,7 +246,7 @@ const ClaudeIsolatedSignInModalBody = ({
               className={dialogCancelButtonClassName}
               disabled={isSubmitting}
             >
-              Cancel
+              {t('Cancel')}
             </Button>
           </AlertDialog.Cancel>
           <Button
@@ -249,7 +254,7 @@ const ClaudeIsolatedSignInModalBody = ({
             onClick={() => void submit()}
             disabled={isSubmitting || token.trim().length === 0}
           >
-            {isSubmitting ? 'Signing in…' : 'Sign in'}
+            {isSubmitting ? t('Signing in…') : t('Sign in')}
           </Button>
         </div>
       </AlertDialog.Content>

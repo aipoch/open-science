@@ -40,7 +40,7 @@ const session = (
 ): NotebookSessionAggregate => {
   const value = new NotebookSessionAggregate({
     sessionId,
-    projectName: 'project',
+    projectId: 'project',
     lane: createRootNotebookLane('project', sessionId, 'root-frame-' + sessionId),
     cwd: '/workspace',
     notebookSessionRoot: '/workspace',

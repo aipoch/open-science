@@ -18,6 +18,7 @@ import {
   type ReactNode,
   type SetStateAction
 } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
@@ -93,6 +94,7 @@ const SideChatPanel = ({
   onClose,
   controls
 }: SideChatPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const messageScrollRef = useRef<HTMLDivElement>(null)
   const followUpRef = useRef<HTMLTextAreaElement>(null)
   const [presentationState, setPresentationState] = useState<SideChatPresentationState>(() => ({
@@ -170,7 +172,7 @@ const SideChatPanel = ({
 
   return (
     <ResizableBottomPanel
-      ariaLabel="Resize Side chat panel"
+      ariaLabel={t('Resize Side chat panel')}
       testId="side-chat-panel"
       scrollTestId="side-chat-panel-scroll"
       variant="integrated"
@@ -181,7 +183,7 @@ const SideChatPanel = ({
           className="relative z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border-200 bg-bg-000 px-4 pt-1"
         >
           <MessageCircleMore className="size-4 text-text-300" aria-hidden="true" />
-          <span className="text-[13px] font-medium text-text-100">Side chat</span>
+          <span className="text-[13px] font-medium text-text-100">{t('Side chat')}</span>
           <div className="flex-1" />
           <TooltipProvider delayDuration={200}>
             <Tooltip>
@@ -189,13 +191,13 @@ const SideChatPanel = ({
                 <button
                   type="button"
                   className="grid size-7 place-items-center rounded-md text-text-300 transition-colors duration-150 hover:bg-bg-200 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
-                  aria-label="Close Side chat"
+                  aria-label={t('Close Side chat')}
                   onClick={onClose}
                 >
                   <X className="size-4" aria-hidden="true" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">Close Side chat</TooltipContent>
+              <TooltipContent side="top">{t('Close Side chat')}</TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>
@@ -265,7 +267,7 @@ const SideChatPanel = ({
                 )
               })}
               {view.running && presentationBarrierIndex < 0 ? (
-                <div className="py-2 text-text-300">Thinking…</div>
+                <div className="py-2 text-text-300">{t('Thinking…')}</div>
               ) : null}
               {view.error && presentationBarrierIndex < 0 ? (
                 <div role="alert" className="py-2 text-[12px] text-danger-000">
@@ -293,8 +295,8 @@ const SideChatPanel = ({
             ref={followUpRef}
             rows={1}
             value={view.draft}
-            placeholder="Follow up…"
-            aria-label="Side chat follow up"
+            placeholder={t('Follow up…')}
+            aria-label={t('Side chat follow up')}
             className="max-h-28 min-h-8 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1 text-[15px] leading-6 text-text-000 shadow-none placeholder:text-text-300 focus-visible:border-transparent"
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={handleKeyDown}
@@ -306,7 +308,7 @@ const SideChatPanel = ({
                   <button
                     type="button"
                     aria-disabled="true"
-                    aria-label="Add to Side chat"
+                    aria-label={t('Add to Side chat')}
                     data-testid="side-chat-plus-button"
                     className="grid size-8 shrink-0 cursor-not-allowed place-items-center rounded-md text-text-300 opacity-50 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                     onClick={(event) => event.preventDefault()}
@@ -314,7 +316,9 @@ const SideChatPanel = ({
                     <Plus className="size-4" aria-hidden="true" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="top">Attachments are unavailable in Side chat</TooltipContent>
+                <TooltipContent side="top">
+                  {t('Attachments are unavailable in Side chat')}
+                </TooltipContent>
               </Tooltip>
             </TooltipProvider>
             {controls}
@@ -330,7 +334,7 @@ const SideChatPanel = ({
                       view.running ? !view.sideSessionId : !view.draft.trim() || !view.sideSessionId
                     }
                     aria-label={
-                      view.running ? 'Cancel Side chat response' : 'Send Side chat follow up'
+                      view.running ? t('Cancel Side chat response') : t('Send Side chat follow up')
                     }
                     onClick={view.running ? onCancel : submit}
                   >
@@ -342,7 +346,7 @@ const SideChatPanel = ({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
-                  {view.running ? 'Cancel response' : 'Send follow up'}
+                  {view.running ? t('Cancel response') : t('Send follow up')}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

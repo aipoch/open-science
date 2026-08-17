@@ -74,7 +74,11 @@ type PreviewApplicationCommandOwner = Readonly<{
   delete(request: PreviewState.DeletePreviewStateRequest): Promise<void>
 }>
 
-type SessionApplicationCommandOwner = SessionPersistenceHandlers
+type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  deleteSession(
+    request: SessionPersistence.DeleteSessionRequest
+  ): Promise<SessionPersistence.SessionDeletionResult>
+}
 
 type InvocationOwner<Owner> = Readonly<{
   [Method in keyof Owner]: Owner[Method] extends (...args: infer Args) => infer Result
@@ -261,6 +265,11 @@ const dataContentApplicationCommands = Object.freeze({
     ],
     SessionPersistence.PersistedChatSession
   >('sessions:save-session'),
+  sessionSetDelegationPolicy: defineApplicationCommand<
+    'sessions:set-delegation-policy',
+    readonly [projectId: string, sessionId: string, policy: SessionPersistence.DelegationPolicy],
+    SessionPersistence.PersistedChatSession
+  >('sessions:set-delegation-policy'),
   uploadAbortTransfer: uploadCommand('uploads:abort-transfer', 'abortTransfer'),
   uploadAppendTransfer: uploadCommand('uploads:append-transfer', 'appendTransfer'),
   uploadBeginTransfer: uploadCommand('uploads:begin-transfer', 'beginTransfer'),
@@ -325,7 +334,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionLoadOne,
     dataContentApplicationCommands.sessionSaveManifest,
     dataContentApplicationCommands.sessionUpdateArchive,
-    dataContentApplicationCommands.sessionSave
+    dataContentApplicationCommands.sessionSave,
+    dataContentApplicationCommands.sessionSetDelegationPolicy
   ] as const),
   defineApplicationCommandGroup('uploads', [
     dataContentApplicationCommands.uploadAbortTransfer,
@@ -357,6 +367,21 @@ const assertElectronCaller = (
 ): void => {
   if (invocation.callerContext.surface !== 'electron') {
     throw new Error(`Channel only available from the Electron app: ${name}`)
+  }
+}
+
+const assertTaskAutomationCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  name: string
+): void => {
+  const { callerContext } = invocation
+  if (
+    !callerContext.isAuthorizationCurrent() ||
+    callerContext.surface !== 'task' ||
+    callerContext.principalKind !== 'automation' ||
+    callerContext.actionOrigin !== 'automation'
+  ) {
+    throw new Error(`Channel only available from current Task automation: ${name}`)
   }
 }
 
@@ -475,11 +500,13 @@ const registerDataContentApplicationCommands = (
       }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[6], {
-      'sessions:delete-session': ({ args }) =>
-        dependencies.withDataRootWrite(async () => {
-          await dependencies.sessions.deleteSession(args[0])
+      'sessions:delete-session': async ({ args }) => {
+        const result = await dependencies.sessions.deleteSession(args[0])
+        if (result.status === 'deleted') {
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionDeleted, args[0])
-        }),
+        }
+        return result
+      },
       'sessions:export-conversation': (invocation) => {
         assertElectronCaller(
           invocation,
@@ -518,6 +545,25 @@ const registerDataContentApplicationCommands = (
           )
           return result.session
         })
+      },
+      'sessions:set-delegation-policy': (invocation) => {
+        assertTaskAutomationCaller(
+          invocation,
+          dataContentApplicationCommands.sessionSetDelegationPolicy.name
+        )
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(async () => {
+          const session = await dependencies.sessions.setDelegationPolicy(
+            invocation.args[0],
+            invocation.args[1],
+            invocation.args[2]
+          )
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+            session,
+            originClientId
+          })
+          return session
+        })
       }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[7], {
@@ -537,7 +583,7 @@ const registerDataContentApplicationCommands = (
         assertLocalCaller(invocation, dataContentApplicationCommands.uploadStageLocalPath.name)
         const attachment = await dependencies.uploads.stageLocalPath(invocation)
         dependencies.events.publish('project-files:changed', {
-          projectId: invocation.args[0].projectId ?? Uploads.DEFAULT_UPLOAD_PROJECT_NAME,
+          projectId: invocation.args[0].projectId ?? Uploads.DEFAULT_UPLOAD_PROJECT_ID,
           sessionId: Uploads.STANDALONE_UPLOAD_SESSION_ID,
           sources: ['upload'],
           kind: 'upsert'

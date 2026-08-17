@@ -61,6 +61,27 @@ describe('Windows micromamba cache preparation', () => {
     )
   })
 
+  it('does not require a PowerShell ACL read after a new cache was securely hardened', () => {
+    const hardenOwnership = vi.fn(() => true)
+    const verifyOwnership = vi.fn(() => false)
+
+    const cache = selectMicromambaCache(
+      'D:\\OpenScience\\runtime',
+      DEFAULT_MAX_CACHE_RELATIVE_PATH,
+      {
+        platform: 'win32',
+        env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
+        canonicalize: (path) => win32.normalize(path),
+        hardenOwnership,
+        verifyOwnership
+      }
+    )
+
+    expect(cache.path).toMatch(/^D:\\osp[0-9a-f]{10}$/)
+    expect(hardenOwnership).toHaveBeenCalledOnce()
+    expect(verifyOwnership).not.toHaveBeenCalled()
+  })
+
   it('removes newly created candidates when ACL hardening fails', () => {
     const hardenOwnership = vi.fn(() => {
       throw new Error('Set-Acl denied')
@@ -115,5 +136,41 @@ describe('Windows micromamba cache preparation', () => {
 
     expect(cache.path).toMatch(/^D:\\osp/)
     expect(hardenOwnership).not.toHaveBeenCalled()
+  })
+
+  it('rejects an untrusted existing cache before accepting a newly hardened fallback', () => {
+    fsMocks.lstatSync.mockImplementationOnce(
+      () =>
+        ({
+          isDirectory: () => true,
+          isSymbolicLink: () => false
+        }) as never
+    )
+    fsMocks.readFileSync.mockImplementationOnce(() =>
+      JSON.stringify({
+        schema: 1,
+        canonicalRoot: 'd:\\openscience\\runtime',
+        userIdentity: 'alice'
+      })
+    )
+    const hardenOwnership = vi.fn(() => true)
+    const verifyOwnership = vi.fn(() => false)
+
+    const cache = selectMicromambaCache(
+      'D:\\OpenScience\\runtime',
+      DEFAULT_MAX_CACHE_RELATIVE_PATH,
+      {
+        platform: 'win32',
+        env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
+        canonicalize: (path) => win32.normalize(path),
+        hardenOwnership,
+        verifyOwnership
+      }
+    )
+
+    expect(cache.path).toMatch(/^C:\\Users\\alice\\osp[0-9a-f]{10}$/)
+    expect(verifyOwnership).toHaveBeenCalledOnce()
+    expect(hardenOwnership).toHaveBeenCalledOnce()
+    expect(hardenOwnership).toHaveBeenCalledWith(cache.path)
   })
 })

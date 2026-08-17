@@ -28,7 +28,7 @@ type CreationEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'>
 
 type AcpProviderSessionCreatorDependencies = Readonly<{
   defaultCwd: string
-  defaultProjectName: string
+  defaultProjectId: string
   currentCwd: () => string | undefined
   ensureConnected: (cwd: string) => Promise<ClientConnection>
   assertCurrentConnection: (connection: ClientConnection) => void
@@ -46,10 +46,10 @@ type AcpProviderSessionCreatorDependencies = Readonly<{
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
-  // The ACP projectName carries the Project id (see workspace-conversation-controller). Returns
+  // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
   // session creation.
-  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
+  resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   updateCwd: (cwd: string) => void
   pushEvent: (event: CreationEvent) => void
@@ -69,14 +69,14 @@ export class AcpProviderSessionCreator {
     try {
       log.info('createSession: starting', this.deps.diagnosticContext())
       const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
-      const projectName = request.projectName?.trim() || this.deps.defaultProjectName
+      const projectId = request.projectId?.trim() || this.deps.defaultProjectId
       log.info('createSession: ensureConnected', this.deps.diagnosticContext())
       const connection = await this.deps.ensureConnected(cwd)
       this.deps.assertCurrentConnection(connection)
       const startupBackend = this.deps.currentBackend()
       const startupGeneration = this.deps.registry.startupGeneration
       const specialist = await this.resolveSpecialist(request.specialistId, startupBackend)
-      const projectContextAppend = await this.resolveProjectAgentContext(projectName)
+      const projectContextAppend = await this.resolveProjectAgentContext(projectId)
 
       log.info('createSession: createMcpServers', this.deps.diagnosticContext())
       capability = await this.deps.capabilities.provision({
@@ -85,7 +85,7 @@ export class AcpProviderSessionCreator {
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
         policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
-        projectName
+        projectId
       })
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
@@ -147,7 +147,7 @@ export class AcpProviderSessionCreator {
         const { aggregate } = this.deps.registry.publish(identityReservation, session.sessionId, {
           session,
           cwd,
-          projectName,
+          projectId,
           frameworkId: backend.framework.id,
           backendId: backend.backendId,
           permissionProfile: structuredClone(configuration.permissionProfile),
@@ -201,10 +201,10 @@ export class AcpProviderSessionCreator {
     }
   }
 
-  private async resolveProjectAgentContext(projectName: string): Promise<string | undefined> {
+  private async resolveProjectAgentContext(projectId: string): Promise<string | undefined> {
     if (!this.deps.resolveProjectAgentContext) return undefined
     try {
-      const context = await this.deps.resolveProjectAgentContext(projectName)
+      const context = await this.deps.resolveProjectAgentContext(projectId)
       const trimmed = context?.trim()
       return trimmed ? trimmed : undefined
     } catch (error) {

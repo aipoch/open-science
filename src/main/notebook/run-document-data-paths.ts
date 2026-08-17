@@ -19,21 +19,28 @@ const persistedProjectId = (scope: { projectId?: string; projectName?: string })
 // Replaces a data-root absolute path with a $DATA sentinel and drops the derived fileUrl.
 const encodeArtifact = (artifact: ArtifactFile, dataRoot: string | undefined): ArtifactFile => {
   const projectId = persistedProjectId(artifact)
-  const encoded: ArtifactFile = {
-    ...artifact,
+  const current = { ...artifact } as ArtifactFile & {
+    projectName?: string
+  }
+  delete current.projectName
+  delete (current as { fileUrl?: string }).fileUrl
+  return {
+    ...current,
     projectId,
     path: encodeDataPath(artifact.path, dataRoot) as string
-  }
-  delete (encoded as { projectName?: string }).projectName
-  delete (encoded as Partial<ArtifactFile>).fileUrl
-  return encoded
+  } as ArtifactFile
 }
 
 // Resolves a $DATA sentinel back to an absolute path and recomputes fileUrl from it.
 const decodeArtifact = (artifact: ArtifactFile, dataRoot: string | undefined): ArtifactFile => {
   const path = decodeDataPath(artifact.path, dataRoot) as string
   const projectId = persistedProjectId(artifact)
-  return { ...artifact, projectId, projectName: projectId, path, fileUrl: pathToFileURL(path).href }
+  const current = { ...artifact } as ArtifactFile & {
+    projectName?: string
+  }
+  delete current.projectName
+  delete (current as { fileUrl?: string }).fileUrl
+  return { ...current, projectId, path, fileUrl: pathToFileURL(path).href }
 }
 
 // Encodes/decodes a single working file's absolute path, leaving the already-relative field alone.
@@ -71,8 +78,12 @@ export const encodeRunDocumentDataPaths = (
   dataRoot?: string
 ): NotebookRunDocument => {
   const projectId = persistedProjectId(doc)
-  const encoded: NotebookRunDocument = {
-    ...doc,
+  const current = { ...doc } as NotebookRunDocument & {
+    projectName?: string
+  }
+  delete current.projectName
+  return {
+    ...current,
     projectId,
     workspaceCwd: encodeDataPath(doc.workspaceCwd, dataRoot) as string,
     notebookSessionRoot: encodeDataPath(doc.notebookSessionRoot, dataRoot) as string,
@@ -83,8 +94,6 @@ export const encodeRunDocumentDataPaths = (
     },
     runs: doc.runs.map((run) => encodeRun(run, dataRoot))
   }
-  delete (encoded as { projectName?: string }).projectName
-  return encoded
 }
 
 // Resolves a decoded document's "$DATA/..." sentinels against the current data root.
@@ -93,10 +102,13 @@ export const decodeRunDocumentDataPaths = (
   dataRoot?: string
 ): NotebookRunDocument => {
   const projectId = persistedProjectId(doc)
+  const current = { ...doc } as NotebookRunDocument & {
+    projectName?: string
+  }
+  delete current.projectName
   return {
-    ...doc,
+    ...current,
     projectId,
-    projectName: projectId,
     workspaceCwd: decodeDataPath(doc.workspaceCwd, dataRoot) as string,
     notebookSessionRoot: decodeDataPath(doc.notebookSessionRoot, dataRoot) as string,
     dataRoot: decodeDataPath(doc.dataRoot, dataRoot) as string,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, TriangleAlert } from 'lucide-react'
+import { Trans, useTranslation } from 'react-i18next'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
@@ -45,6 +46,7 @@ const AgentPanel = ({
   title,
   description
 }: AgentPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isOnboarding = variant === 'onboarding'
   const claude = useSettingsStore((state) => state.claude)
   const preflight = useSettingsStore((state) => state.preflight)
@@ -288,7 +290,7 @@ const AgentPanel = ({
       setFrameworkDetectionError(
         failure.reason instanceof Error
           ? failure.reason.message
-          : 'One or more agent runtimes could not be detected.'
+          : t('One or more agent runtimes could not be detected.')
       )
     }
   }
@@ -324,13 +326,13 @@ const AgentPanel = ({
       frameworkId: 'claude-code',
       name: 'Claude Agent',
       icon: <AgentFrameworkIcon frameworkId="claude-code" size={24} />,
-      description: "Anthropic's agentic coding tool for the terminal.",
+      description: t("Anthropic's agentic coding tool for the terminal."),
       ready: preflight.claudeReady,
       version: claude.version,
       path: claude.resolvedPath,
       sourceLabel: 'anthropics/claude-code',
       sourceUrl: 'https://github.com/anthropics/claude-code',
-      notReadyHint: 'Install Claude Agent below, or install it manually and re-detect.',
+      notReadyHint: t('Install Claude Agent below, or install it manually and re-detect.'),
       uninstallCommand: 'npm uninstall -g @anthropic-ai/claude-code',
       managed: claudeManaged,
       installSources: getClaudeInstallSources(window.api?.platform),
@@ -348,18 +350,21 @@ const AgentPanel = ({
       frameworkId: 'opencode',
       name: 'OpenCode',
       icon: <AgentFrameworkIcon frameworkId="opencode" size={24} />,
-      description: 'Open-source coding agent for the terminal.',
+      description: t('Open-source coding agent for the terminal.'),
       ready: preflight.opencodeReady,
       version: opencode.version,
       path: opencode.resolvedPath,
       sourceLabel: 'anomalyco/opencode',
       sourceUrl: 'https://github.com/anomalyco/opencode',
       notReadyHint: (
-        <>
-          OpenCode is required for this framework. Install it below, or install it manually (see{' '}
-          <ExternalTextLink href="https://opencode.ai/docs">opencode.ai/docs</ExternalTextLink>) and
-          re-detect.
-        </>
+        <Trans
+          i18nKey="OpenCode is required for this framework. Install it below, or install it manually (see <docs>opencode.ai/docs</docs>) and re-detect."
+          components={{
+            // Trans clones this element and supplies the link text from the catalog, so the
+            // placeholder children are discarded. ExternalTextLink requires them at the type level.
+            docs: <ExternalTextLink href="https://opencode.ai/docs">{null}</ExternalTextLink>
+          }}
+        />
       ),
       uninstallCommand: 'npm uninstall -g opencode-ai',
       managed: opencodeManaged,
@@ -372,15 +377,19 @@ const AgentPanel = ({
       frameworkId: 'codex',
       name: 'Codex',
       icon: <AgentFrameworkIcon frameworkId="codex" size={24} />,
-      description: "OpenAI's coding agent, connected through the Codex ACP adapter.",
+      description: t("OpenAI's coding agent, connected through the Codex ACP adapter."),
       ready: preflight.codexReady,
       version: codex.version,
       path: codex.resolvedPath,
       sourceLabel: 'agentclientprotocol/codex-acp',
       sourceUrl: 'https://github.com/agentclientprotocol/codex-acp',
       notReadyHint: codex.resolvedPath
-        ? 'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
-        : 'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.',
+        ? t(
+            'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
+          )
+        : t(
+            'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.'
+          ),
       uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
       managed: codexManaged,
       installSources: getCodexInstallSources(),
@@ -414,11 +423,11 @@ const AgentPanel = ({
       .map((check) => check.id) ?? []
   )
   if (failedCheckIds.has('system')) {
-    blockedInstallSources.managed = 'System requirements not met'
+    blockedInstallSources.managed = t('System requirements not met')
   }
   if (failedCheckIds.has('install-network')) {
-    blockedInstallSources.managed ??= 'Installation network unavailable'
-    blockedInstallSources.npm = 'Installation network unavailable'
+    blockedInstallSources.managed ??= t('Installation network unavailable')
+    blockedInstallSources.npm = t('Installation network unavailable')
   }
 
   // First-run installation selects the newly-ready runtime only when no usable runtime existed at
@@ -441,7 +450,7 @@ const AgentPanel = ({
       // The store already preserves runtime logs/error for real IPC failures. This panel-level
       // message also covers unexpected caller failures without leaking an unhandled event promise.
       setInstallActionError(
-        error instanceof Error ? error.message : 'The installer could not be started.'
+        error instanceof Error ? error.message : t('The installer could not be started.')
       )
       return
     }
@@ -539,7 +548,7 @@ const AgentPanel = ({
               className={isDetectingAnyFramework ? 'animate-spin' : ''}
               aria-hidden="true"
             />
-            {isDetectingAnyFramework ? 'Detecting…' : 'Re-detect'}
+            {isDetectingAnyFramework ? t('Detecting…') : t('Re-detect')}
           </Button>
         }
       >
@@ -551,7 +560,7 @@ const AgentPanel = ({
           ) : null}
           {!isOnboarding && agentCheckFailures.length > 0 ? (
             <div
-              aria-label="Agent runtime repair issues"
+              aria-label={t('Agent runtime repair issues')}
               className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
             >
               <div className="flex items-start gap-2">
@@ -561,10 +570,12 @@ const AgentPanel = ({
                 />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">
-                    {activeFramework?.displayName ?? 'The selected agent'} cannot be accessed.
+                    {t('{{agent}} cannot be accessed.', {
+                      agent: activeFramework?.displayName ?? t('The selected agent')
+                    })}
                   </p>
                   <p className="text-xs leading-5 text-muted-foreground">
-                    Repair the selected agent before using it.
+                    {t('Repair the selected agent before using it.')}
                   </p>
                 </div>
               </div>
@@ -582,7 +593,7 @@ const AgentPanel = ({
           ) : null}
           {installBlockers.length > 0 ? (
             <div
-              aria-label="Agent installation blockers"
+              aria-label={t('Agent installation blockers')}
               className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
             >
               {installBlockers.map((blocker) => (
@@ -606,7 +617,7 @@ const AgentPanel = ({
           {installedFrameworks.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                Installed · {installedFrameworks.length}
+                {t('Installed')} · {installedFrameworks.length}
               </p>
               <div className="space-y-3">{installedFrameworks.map(renderFrameworkCard)}</div>
             </div>
@@ -614,15 +625,17 @@ const AgentPanel = ({
           {availableFrameworks.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                Available · {availableFrameworks.length}
+                {t('Available')} · {availableFrameworks.length}
               </p>
               <div className="space-y-3">{availableFrameworks.map(renderFrameworkCard)}</div>
             </div>
           ) : null}
           {activeFramework && !activeFramework.supportsSkills ? (
             <p className="text-xs text-muted-foreground">
-              Skills aren&apos;t available with {activeFramework.displayName}; use Claude Code for
-              skill-based workflows.
+              {t(
+                "Skills aren't available with {{name}}; use Claude Code for skill-based workflows.",
+                { name: activeFramework.displayName }
+              )}
             </p>
           ) : null}
         </div>

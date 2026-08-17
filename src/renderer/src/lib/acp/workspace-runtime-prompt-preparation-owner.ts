@@ -1,4 +1,4 @@
-import type { AcpMessageImage } from '../../../../shared/acp'
+import type { AcpMessageImage, AcpStateSnapshot } from '../../../../shared/acp'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
@@ -9,7 +9,13 @@ import {
   RESUME_WORKSPACE_MISSING_MESSAGE
 } from '../../../../shared/run-error-classification'
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
-import { useSessionStore, type ChatMessage } from '../../stores/session-store'
+import {
+  projectSessionActionability,
+  resolveRootPermissionPending,
+  useSessionStore,
+  type ChatMessage,
+  type ChatSession
+} from '../../stores/session-store'
 import {
   buildWorkspaceHistoryReplay,
   resolveHistoryReplayTarget,
@@ -36,7 +42,7 @@ type PrepareExistingWorkspacePromptRequest = {
   sessionId: string
   requireExistingSession?: boolean
   cwd?: string
-  projectName?: string
+  projectId?: string
   permissionProfile?: PermissionProfileId
   selectedRuntime: {
     frameworkId?: AgentFrameworkId
@@ -67,6 +73,33 @@ type PreparedExistingWorkspacePrompt = {
   replay: () => PreparedWorkspacePromptReplay
   acceptPrompt: (messageId: string) => void
 }
+
+type ExistingWorkspacePromptAdmission = Readonly<{
+  sessionId: string
+  session: ChatSession | undefined
+  runtimeState: Pick<AcpStateSnapshot, 'pendingPermissions' | 'promptInFlightSessionIds'>
+  allowCompactionRecovery: boolean
+}>
+
+const canPrepareExistingWorkspacePrompt = ({
+  sessionId,
+  session,
+  runtimeState,
+  allowCompactionRecovery
+}: ExistingWorkspacePromptAdmission): boolean =>
+  !isWorkspacePromptPreparationInFlight(sessionId) &&
+  !runtimeState.promptInFlightSessionIds.includes(sessionId) &&
+  (!session?.compacting || allowCompactionRecovery) &&
+  (!session ||
+    projectSessionActionability(session, {
+      rootPermissionPending: resolveRootPermissionPending(
+        runtimeState.pendingPermissions,
+        sessionId
+      ),
+      allowPendingSessionRetry: Boolean(
+        session.isPending && (session.status !== 'idle' || !session.branchSource)
+      )
+    }).actions.startTurn.allowed)
 
 const isReplayImage = (attachment: Pick<UploadedAttachment, 'name' | 'mimeType'>): boolean =>
   imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
@@ -185,12 +218,12 @@ const prepareExistingWorkspacePrompt = async (
         return undefined
       }
 
-      await shutdownNotebookForBranchChange(sessionId, resetCwd, request.projectName)
+      await shutdownNotebookForBranchChange(sessionId, resetCwd, request.projectId)
       if (!selectedRuntimeChanged && !runtimeDetached) {
         const reset = await runtime.resetSessionContext(
           sessionId,
           resetCwd,
-          request.projectName,
+          request.projectId,
           currentSession?.permissionProfile ?? request.permissionProfile
         )
         useSessionStore.getState().markResumed(
@@ -220,7 +253,7 @@ const prepareExistingWorkspacePrompt = async (
       const resumeResult = await runtime.resumeSession(
         sessionId,
         resumeCwd,
-        request.projectName,
+        request.projectId,
         currentSession?.permissionProfile ?? request.permissionProfile,
         currentSession?.agentFrameworkId,
         currentSession?.agentBackendId,
@@ -245,7 +278,7 @@ const prepareExistingWorkspacePrompt = async (
         const reset = await runtime.resetSessionContext(
           sessionId,
           resumeCwd,
-          request.projectName,
+          request.projectId,
           currentSession?.permissionProfile ?? request.permissionProfile
         )
         useSessionStore.getState().markResumed(
@@ -317,7 +350,7 @@ const prepareExistingWorkspacePrompt = async (
             historyMessages,
             request.replay.descriptor,
             request.selectedRuntime.frameworkId,
-            request.projectName,
+            request.projectId,
             request.selectedRuntime.supportsImageInput
           )
         : undefined
@@ -328,7 +361,7 @@ const prepareExistingWorkspacePrompt = async (
             historyMessages,
             request.replay.descriptor,
             request.selectedRuntime.frameworkId,
-            request.projectName,
+            request.projectId,
             request.selectedRuntime.supportsImageInput
           )
         : undefined
@@ -385,6 +418,7 @@ const prepareExistingWorkspacePrompt = async (
 
 export {
   acquireWorkspacePromptPreparation,
+  canPrepareExistingWorkspacePrompt,
   getResumeFailureMessage,
   isWorkspacePromptPreparationInFlight,
   prepareExistingWorkspacePrompt,

@@ -1,4 +1,5 @@
 import { Database } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { formatByteSize, cn } from '@/lib/utils'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
@@ -39,9 +40,11 @@ const collectInputs = (
 
 const NotebookInputDataStrip = ({
   inputFiles,
-  label = 'Input data',
+  label,
   className
 }: NotebookInputDataStripProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const visibleLabel = label ?? t('Input data')
   const inputs = collectInputs(inputFiles)
   const openPreview = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const scrollFadeRef = useHorizontalScrollFade<HTMLElement>()
@@ -51,12 +54,12 @@ const NotebookInputDataStrip = ({
     <section
       ref={scrollFadeRef}
       className={cn('scroll-fade-x flex items-center gap-2 overflow-x-auto', className)}
-      aria-label={label}
+      aria-label={visibleLabel}
       data-testid="notebook-input-data"
     >
       <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-text-200">
         <Database className="size-3.5" aria-hidden="true" />
-        {label}
+        {visibleLabel}
       </span>
       {inputs.map((input) => (
         <button

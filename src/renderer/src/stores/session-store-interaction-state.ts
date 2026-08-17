@@ -1,4 +1,5 @@
 import type { ChatSession, SessionStatus } from './session-store-persistence-owner'
+import type { SessionWaitReason } from '../../../shared/session-persistence'
 
 export type SessionInteractionState = Readonly<{
   permission: boolean
@@ -6,12 +7,83 @@ export type SessionInteractionState = Readonly<{
   plan: boolean
 }>
 
-const isWaitingStatus = (status: SessionStatus): boolean =>
+export type { SessionWaitReason } from '../../../shared/session-persistence'
+
+export type SessionBlockingInteraction = 'permission' | 'elicitation' | 'plan'
+
+export type SessionActionDisabledReason =
+  | 'session-running'
+  | 'session-pending'
+  | 'permission-pending'
+  | 'elicitation-pending'
+  | 'plan-approval-pending'
+
+export type SessionActionAvailability = Readonly<{
+  allowed: boolean
+  disabledReason?: SessionActionDisabledReason
+}>
+
+export type SessionActionabilityFacts = Readonly<{
+  presentedWaitReason?: SessionWaitReason
+  hasRunningWork?: boolean
+  rootPermissionPending?: boolean
+  elicitationPending?: boolean
+  planPending?: boolean
+  allowPendingSessionRetry?: boolean
+}>
+
+export type SessionActionabilityProjection = Readonly<{
+  presentedStatus: SessionStatus
+  activity: 'inactive' | 'running' | 'waiting'
+  attentionOwner: 'none' | 'agent' | 'user'
+  waitReason?: SessionWaitReason
+  blockingInteraction?: SessionBlockingInteraction
+  actions: Readonly<{
+    startTurn: SessionActionAvailability
+    revise: SessionActionAvailability
+    branchFromMessage: SessionActionAvailability
+    startSideChat: SessionActionAvailability
+    changeAgentControls: SessionActionAvailability
+    archive: SessionActionAvailability
+  }>
+}>
+
+type SessionInteractionSource = Readonly<{
+  status: SessionStatus
+  interactionState?: SessionInteractionState
+  runtimeContext?: ChatSession['runtimeContext']
+  activities?: readonly {
+    elicitation?: {
+      state: string
+      durable?: { kind: string }
+    }
+  }[]
+  activeRun?: unknown
+  agentPromptInFlight?: boolean
+  isPending?: boolean
+}>
+
+type SessionPermissionRequest = Readonly<{
+  sessionId: string
+  delegated?: unknown
+}>
+
+export const resolveRootPermissionPending = (
+  pendingPermissions: readonly SessionPermissionRequest[],
+  sessionId: string | undefined
+): boolean | undefined => {
+  if (!sessionId) return undefined
+  const sessionRequests = pendingPermissions.filter((request) => request.sessionId === sessionId)
+  if (sessionRequests.length === 0) return undefined
+  return sessionRequests.some((request) => request.delegated === undefined)
+}
+
+export const isSessionWaitReason = (status: string): status is SessionWaitReason =>
   status === 'waiting-permission' ||
   status === 'waiting-for-user' ||
   status === 'waiting-plan-approval'
 
-const hasPendingDurableElicitation = (session: ChatSession): boolean =>
+const hasPendingDurableElicitation = (session: SessionInteractionSource): boolean =>
   (session.status === 'waiting-for-user' || session.status === 'waiting-permission') &&
   session.activities?.some(
     (activity) =>
@@ -19,8 +91,10 @@ const hasPendingDurableElicitation = (session: ChatSession): boolean =>
       activity.elicitation.durable?.kind === 'agent-user-choice'
   ) === true
 
-export const inferSessionInteractionState = (session: ChatSession): SessionInteractionState =>
-  session.interactionState && isWaitingStatus(session.status)
+export const inferSessionInteractionState = (
+  session: SessionInteractionSource
+): SessionInteractionState =>
+  session.interactionState && isSessionWaitReason(session.status)
     ? session.interactionState
     : {
         permission:
@@ -34,14 +108,90 @@ export const inferSessionInteractionState = (session: ChatSession): SessionInter
       }
 
 export const resolveSessionInteractionStatus = (
-  session: ChatSession,
+  session: SessionInteractionSource,
   interactionState: SessionInteractionState = inferSessionInteractionState(session)
 ): SessionStatus => {
   if (interactionState.permission) return 'waiting-permission'
   if (interactionState.elicitation) return 'waiting-for-user'
   if (interactionState.plan) return 'waiting-plan-approval'
-  if (!isWaitingStatus(session.status)) return session.status
+  if (!isSessionWaitReason(session.status)) return session.status
   return session.activeRun || session.agentPromptInFlight ? 'running' : 'idle'
+}
+
+const actionAvailability = (
+  disabledReason: SessionActionDisabledReason | undefined
+): SessionActionAvailability =>
+  disabledReason ? { allowed: false, disabledReason } : { allowed: true }
+
+const disabledReasonForInteraction = (
+  interaction: SessionBlockingInteraction | undefined
+): SessionActionDisabledReason | undefined => {
+  if (interaction === 'permission') return 'permission-pending'
+  if (interaction === 'elicitation') return 'elicitation-pending'
+  if (interaction === 'plan') return 'plan-approval-pending'
+  return undefined
+}
+
+export const projectSessionActionability = (
+  session: SessionInteractionSource,
+  facts: SessionActionabilityFacts = {}
+): SessionActionabilityProjection => {
+  const interactionState = inferSessionInteractionState(session)
+  const status = resolveSessionInteractionStatus(session, interactionState)
+  const waitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
+  const running = !waitReason && (status === 'running' || facts.hasRunningWork === true)
+  const durableRootPermissionPending = session.runtimeContext?.permission?.state === 'pending'
+  const permissionPending =
+    durableRootPermissionPending || (facts.rootPermissionPending ?? interactionState.permission)
+  const elicitationPending = facts.elicitationPending ?? interactionState.elicitation
+  const planPending = facts.planPending ?? interactionState.plan
+  const blockingInteraction: SessionBlockingInteraction | undefined = permissionPending
+    ? 'permission'
+    : elicitationPending
+      ? 'elicitation'
+      : planPending
+        ? 'plan'
+        : undefined
+  const interactionDisabledReason = disabledReasonForInteraction(blockingInteraction)
+  const turnDisabledReason =
+    session.isPending && !facts.allowPendingSessionRetry
+      ? 'session-pending'
+      : running
+        ? 'session-running'
+        : interactionDisabledReason
+  const revisionDisabledReason = running ? 'session-running' : interactionDisabledReason
+  const attentionDisabledReason = waitReason
+    ? waitReason === 'waiting-permission'
+      ? 'permission-pending'
+      : waitReason === 'waiting-for-user'
+        ? 'elicitation-pending'
+        : 'plan-approval-pending'
+    : undefined
+  const activity = waitReason ? 'waiting' : running ? 'running' : 'inactive'
+
+  return {
+    presentedStatus: waitReason ?? (running ? 'running' : status),
+    activity,
+    attentionOwner: waitReason ? 'user' : running ? 'agent' : 'none',
+    waitReason,
+    blockingInteraction,
+    actions: {
+      startTurn: actionAvailability(turnDisabledReason),
+      revise: actionAvailability(revisionDisabledReason),
+      branchFromMessage: actionAvailability(
+        session.isPending
+          ? 'session-pending'
+          : running
+            ? 'session-running'
+            : attentionDisabledReason
+      ),
+      startSideChat: actionAvailability(attentionDisabledReason),
+      changeAgentControls: actionAvailability(
+        running ? 'session-running' : (attentionDisabledReason ?? interactionDisabledReason)
+      ),
+      archive: actionAvailability(running ? 'session-running' : attentionDisabledReason)
+    }
+  }
 }
 
 export const projectSessionInteractionState = (

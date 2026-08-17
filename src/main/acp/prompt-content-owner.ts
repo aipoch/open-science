@@ -63,6 +63,7 @@ type AcpPromptContentOwnerOptions = {
 type PrepareAcpPromptContentInput = {
   appSessionId: string
   projectId: string
+  connectionGeneration?: number
   text: string
   historyImages: ReadonlyArray<AcpMessageImage>
   historyUploads: ReadonlyArray<UploadedAttachment>
@@ -115,7 +116,7 @@ const errorMessage = (error: unknown): string => {
 // Session/turn admission, authorization leases, Notebook registration, and provider dispatch remain
 // with the runtime; every piece of content resolved here is supplied explicitly by the caller.
 class AcpPromptContentOwner {
-  private readonly sessionInlineImageBytes = new Map<string, number>()
+  private readonly sessionInlineImageBytes = new Map<number, Map<string, number>>()
   private readonly activePreparedResources = new Set<() => void>()
   private readonly inlineImageBudgetBytes: number
 
@@ -197,7 +198,7 @@ class AcpPromptContentOwner {
         appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
       }
       if (input.historyImages.length > 0) {
-        this.sessionInlineImageBytes.set(input.appSessionId, imageBudget.base64Bytes)
+        this.setSessionInlineImageBytes(input, imageBudget.base64Bytes)
       }
 
       if (hasUploads) {
@@ -278,12 +279,39 @@ class AcpPromptContentOwner {
   }
 
   resetSession(sessionId: string): void {
-    this.sessionInlineImageBytes.delete(sessionId)
+    this.options.fileReferenceResolver.resetSession(sessionId)
+    for (const [connectionGeneration, sessionBytes] of this.sessionInlineImageBytes) {
+      sessionBytes.delete(sessionId)
+      if (sessionBytes.size === 0) this.sessionInlineImageBytes.delete(connectionGeneration)
+    }
   }
 
   clear(): void {
+    this.options.fileReferenceResolver.clear()
     this.sessionInlineImageBytes.clear()
     for (const close of [...this.activePreparedResources]) close()
+  }
+
+  clearGeneration(connectionGeneration: number): void {
+    this.options.fileReferenceResolver.clearGeneration(connectionGeneration)
+    this.sessionInlineImageBytes.delete(connectionGeneration)
+  }
+
+  private getSessionInlineImageBytes(input: PrepareAcpPromptContentInput): number {
+    return (
+      this.sessionInlineImageBytes.get(input.connectionGeneration ?? 0)?.get(input.appSessionId) ??
+      0
+    )
+  }
+
+  private setSessionInlineImageBytes(input: PrepareAcpPromptContentInput, bytes: number): void {
+    const connectionGeneration = input.connectionGeneration ?? 0
+    let sessionBytes = this.sessionInlineImageBytes.get(connectionGeneration)
+    if (!sessionBytes) {
+      sessionBytes = new Map()
+      this.sessionInlineImageBytes.set(connectionGeneration, sessionBytes)
+    }
+    sessionBytes.set(input.appSessionId, bytes)
   }
 
   private attachCodexSkillInputs(
@@ -354,7 +382,11 @@ class AcpPromptContentOwner {
     snapshots: TurnResourceSnapshotStore
   ): Promise<{ blocks: ContentBlock[]; reference: FileReference }> {
     const resolvedReference = await this.options.fileReferenceResolver.resolve(
-      { sessionId: input.appSessionId, projectId: input.projectId },
+      {
+        sessionId: input.appSessionId,
+        projectId: input.projectId,
+        connectionGeneration: input.connectionGeneration
+      },
       reference
     )
 
@@ -500,14 +532,14 @@ class AcpPromptContentOwner {
         descriptor.trustedLease ? () => this.readPromptFileBytes(descriptor) : undefined
       )
 
-      const alreadyInlined = this.sessionInlineImageBytes.get(input.appSessionId) ?? 0
+      const alreadyInlined = this.getSessionInlineImageBytes(input)
       if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
         return [{ type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }]
       }
 
       // Charge before the request-level append. Existing behavior retains this charge even if a later
       // reference fails or the request image budget rejects this block.
-      this.sessionInlineImageBytes.set(input.appSessionId, alreadyInlined + data.length)
+      this.setSessionInlineImageBytes(input, alreadyInlined + data.length)
       return [{ type: 'image', data, mimeType: outMimeType, uri }]
     }
 

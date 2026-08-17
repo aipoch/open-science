@@ -55,6 +55,27 @@ describe('notebook-env-store', () => {
     expect(useNotebookEnvStore.getState().status.pythonReady).toBe(true)
   })
 
+  it('surfaces an initial status query failure and retries the query without provisioning', async () => {
+    const getStatus = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('status unavailable'))
+      .mockResolvedValueOnce(READY)
+    const { api } = installApi({ getStatus })
+
+    await useNotebookEnvStore.getState().init()
+
+    expect(useNotebookEnvStore.getState().ui).toEqual({
+      kind: 'error',
+      message: 'status unavailable'
+    })
+
+    await useNotebookEnvStore.getState().retry()
+
+    expect(api.getStatus).toHaveBeenCalledTimes(2)
+    expect(api.provision).not.toHaveBeenCalled()
+    expect(useNotebookEnvStore.getState().ui).toEqual({ kind: 'ready' })
+  })
+
   it('maps a recovery-blocked status flag to a RUNTIME_RECOVERY_BLOCKED langError (surfaces Reset)', async () => {
     // Recovery blocks a prefix in the main process WITHOUT touching the ready marker, so status can read
     // ready. The store must translate the *RecoveryBlocked flag into a langError so the UI shows Reset.
@@ -94,11 +115,67 @@ describe('notebook-env-store', () => {
     expect(api.getStatus).toHaveBeenCalledTimes(2)
   })
 
+  it('ignores an older status failure after a newer refresh succeeds', async () => {
+    let rejectOlder!: (error: Error) => void
+    let resolveNewer!: (status: ProvisionStatus) => void
+    const older = new Promise<ProvisionStatus>((_resolve, reject) => {
+      rejectOlder = reject
+    })
+    const newer = new Promise<ProvisionStatus>((resolve) => {
+      resolveNewer = resolve
+    })
+    installApi({ getStatus: vi.fn().mockReturnValueOnce(older).mockReturnValueOnce(newer) })
+
+    const olderInit = useNotebookEnvStore.getState().init()
+    const newerInit = useNotebookEnvStore.getState().init()
+    resolveNewer(READY)
+    await newerInit
+    rejectOlder(new Error('stale failure'))
+    await olderInit
+
+    expect(useNotebookEnvStore.getState().status).toEqual(READY)
+    expect(useNotebookEnvStore.getState().statusError).toBeUndefined()
+  })
+
+  it('ignores an older status success after a newer refresh fails', async () => {
+    let resolveOlder!: (status: ProvisionStatus) => void
+    let rejectNewer!: (error: Error) => void
+    const older = new Promise<ProvisionStatus>((resolve) => {
+      resolveOlder = resolve
+    })
+    const newer = new Promise<ProvisionStatus>((_resolve, reject) => {
+      rejectNewer = reject
+    })
+    installApi({ getStatus: vi.fn().mockReturnValueOnce(older).mockReturnValueOnce(newer) })
+
+    const olderInit = useNotebookEnvStore.getState().init()
+    const newerInit = useNotebookEnvStore.getState().init()
+    rejectNewer(new Error('current failure'))
+    await newerInit
+    resolveOlder(READY)
+    await olderInit
+
+    expect(useNotebookEnvStore.getState().status.pythonReady).toBe(false)
+    expect(useNotebookEnvStore.getState().statusError).toBe('current failure')
+  })
+
   it('records the scope and forwards provision(lang) to the bridge', async () => {
     const { api } = installApi()
     await useNotebookEnvStore.getState().provision('r')
     expect(api.provision).toHaveBeenCalledWith('r', expect.any(String))
     expect(useNotebookEnvStore.getState().scope).toBe('r')
+  })
+
+  it('does not provision or reset while the authoritative status is unavailable', async () => {
+    const { api } = installApi()
+    useNotebookEnvStore.setState({ statusError: 'status unavailable' })
+
+    await useNotebookEnvStore.getState().provision('r')
+    await useNotebookEnvStore.getState().reset('python')
+
+    expect(api.provision).not.toHaveBeenCalled()
+    expect(api.repair).not.toHaveBeenCalled()
+    expect(useNotebookEnvStore.getState().statusError).toBe('status unavailable')
   })
 
   it('applies a broadcast progress event and refreshes status', async () => {
@@ -118,6 +195,33 @@ describe('notebook-env-store', () => {
     })
     // status is re-hydrated after each progress tick so provisioning/ready flip in lockstep.
     expect(api.getStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('surfaces a rejected status refresh after progress without leaking the rejection', async () => {
+    const preparing = { ...createInitialNotebookEnvState().status, provisioning: true }
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce(preparing)
+      .mockRejectedValueOnce(new Error('refresh unavailable'))
+    const { emit } = installApi({ getStatus })
+    await useNotebookEnvStore.getState().init()
+
+    emit({
+      phase: 'download',
+      message: 'Fetching bundle…',
+      progress: 0.25,
+      scope: 'r',
+      sessionId: 'session-r'
+    })
+
+    await vi.waitFor(() => {
+      expect(useNotebookEnvStore.getState().ui).toEqual({
+        kind: 'error',
+        message: 'refresh unavailable',
+        scope: 'r',
+        sessionId: 'session-r'
+      })
+    })
   })
 
   it('maps language progress scopes and clears the scope for a global upgrade', async () => {

@@ -1,6 +1,7 @@
 import type {
   NotebookCell,
   NotebookEnvironmentManifest,
+  NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookLiveEnvironmentOverlay,
@@ -59,6 +60,7 @@ export type NotebookSessionExecutionResult = {
   traceback: string
   cwdAfter: string
   outputs: NotebookOutput[]
+  truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
   environmentOverlay?: NotebookLiveEnvironmentOverlay
   environmentCapture?: NotebookRunEnvironmentCapture
@@ -109,6 +111,8 @@ export type NotebookSessionAggregateInit<
   runtimeRoot: string
   runJsonPath: string
   executionCount: number
+  initialKernelStatus?: NotebookKernelMetadata['lastKnownStatus']
+  initialTerminatedKernelInstances?: readonly NotebookKernelInstanceIdentity[]
   executor: NotebookSessionExecutor<Request, Result>
   executorGeneration: NotebookSessionExecutorGeneration
   lane: NotebookLaneIdentity
@@ -177,6 +181,8 @@ export class NotebookSessionAggregate<
   private mcpRpcConnection: NotebookSessionMcpRpcConnection | undefined
   private readonly terminatedKernels = new Set<string>()
   private readonly kernelStatuses = new Map<string, NotebookKernelMetadata['lastKnownStatus']>()
+  private readonly durableTerminatedKernelKeys = new Set<string>()
+  private durableUnknownKernelTermination: boolean
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
   private readonly forceStoppedKeys = new Set<string>()
 
@@ -192,6 +198,14 @@ export class NotebookSessionAggregate<
     this.lane = init.lane
     notebookLaneScope(this.lane)
     this.executionCountValue = init.executionCount
+    for (const instance of init.initialTerminatedKernelInstances ?? []) {
+      this.durableTerminatedKernelKeys.add(
+        instance.kind === 'repl' ? 'repl' : `${instance.kind}:${instance.environment}`
+      )
+    }
+    this.durableUnknownKernelTermination =
+      init.initialKernelStatus === 'terminated' &&
+      init.initialTerminatedKernelInstances === undefined
     this.executorValue = init.executor
     this.executorGenerationValue = init.executorGeneration
   }
@@ -250,6 +264,16 @@ export class NotebookSessionAggregate<
     const cell = this.requireCell(cellId)
     this.assertActiveWrite(writeId, cellId)
     cell.code += delta
+    return cloneCell(cell)
+  }
+
+  abortCellWrite(cellId: string, writeId: string): Readonly<NotebookCell> {
+    const cell = this.requireCell(cellId)
+    this.assertActiveWrite(writeId, cellId)
+    this.activeWriteValue = undefined
+    cell.writeId = undefined
+    cell.code = ''
+    cell.status = 'idle'
     return cloneCell(cell)
   }
 
@@ -387,6 +411,27 @@ export class NotebookSessionAggregate<
     return this.terminatedKernels.has(processKey)
   }
 
+  hasDurableKernelTermination(processKey: string): boolean {
+    return this.durableTerminatedKernelKeys.has(processKey)
+  }
+
+  markDurableKernelTermination(processKey: string): void {
+    this.durableTerminatedKernelKeys.add(processKey)
+  }
+
+  clearDurableKernelTermination(processKey: string): void {
+    this.durableTerminatedKernelKeys.delete(processKey)
+  }
+
+  hasUnknownDurableKernelTermination(): boolean {
+    return this.durableUnknownKernelTermination
+  }
+
+  clearAllDurableKernelTerminations(): void {
+    this.durableTerminatedKernelKeys.clear()
+    this.durableUnknownKernelTermination = false
+  }
+
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined {
     const binding = this.runtimeBindings.get(language)
     return binding ? cloneBinding(binding) : undefined
@@ -471,7 +516,7 @@ export class NotebookSessionAggregate<
           projectId: string
           agentFrameId: string
           attemptId?: string
-          workspaceCwd: string
+          executionCwd: string
         }) => Promise<NotebookSessionMcpRpcConnection>)
       | undefined
   ): Promise<NotebookSessionMcpRpcConnection | undefined> {
@@ -483,7 +528,7 @@ export class NotebookSessionAggregate<
         sessionId: this.sessionId,
         projectId: this.projectId,
         agentFrameId: lane.agentFrameId,
-        workspaceCwd: this.dataRoot,
+        executionCwd: this.dataRoot,
         ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
       })
       return this.mcpRpcConnection

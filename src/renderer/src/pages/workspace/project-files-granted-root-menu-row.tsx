@@ -1,4 +1,5 @@
 import { Check, Folder, Lock, LockOpen, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import {
   DropdownMenuItem,
@@ -24,6 +25,7 @@ const GrantedRootMenuRow = ({
   onSelect: (root: GrantedLocalRoot) => void
   onCloseMenu: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
   const remove = useGrantedFoldersStore((state) => state.remove)
 
@@ -88,7 +90,7 @@ const GrantedRootMenuRow = ({
               strokeWidth={1.8}
               aria-hidden="true"
             />
-            <span>Allow writes</span>
+            <span>{t('Allow writes')}</span>
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem
@@ -97,7 +99,7 @@ const GrantedRootMenuRow = ({
             onSelect={() => void setAccess(root.id, 'ro').catch(() => undefined)}
           >
             <Lock className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
-            <span>Make read-only</span>
+            <span>{t('Make read-only')}</span>
           </DropdownMenuItem>
         )}
         <DropdownMenuItem
@@ -106,7 +108,7 @@ const GrantedRootMenuRow = ({
           onSelect={() => void remove(root.id).catch(() => undefined)}
         >
           <Trash2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-          <span>Remove access</span>
+          <span>{t('Remove access')}</span>
         </DropdownMenuItem>
       </DropdownMenuSubContent>
     </DropdownMenuSub>

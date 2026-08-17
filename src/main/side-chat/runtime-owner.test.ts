@@ -706,12 +706,46 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-project-deleted-'))
     const persistence = createPersistence()
     const captureTarget = vi.fn()
+    const relay = createRelayOwner()
+    const deletedProfile = join(
+      temporaryRoot,
+      'runtime-support',
+      'side-chat',
+      'side-chat-project-deleted'
+    )
+    await mkdir(deletedProfile, { recursive: true })
+    relay.hydrate([
+      {
+        projectId: 'project-deleted',
+        parentSessionId: 'parent-deleted',
+        relays: [
+          {
+            sideChatId: 'side-chat-project-deleted',
+            id: 'relay-deleted',
+            text: 'Do not deliver after deletion.',
+            createdAt: 10
+          }
+        ]
+      },
+      {
+        projectId: 'project-kept',
+        parentSessionId: 'parent-kept',
+        relays: [
+          {
+            sideChatId: 'side-chat-project-kept',
+            id: 'relay-kept',
+            text: 'Keep this advisory.',
+            createdAt: 20
+          }
+        ]
+      }
+    ])
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
       captureTarget,
       resolveTarget: vi.fn(),
-      relay: createRelayOwner(),
+      relay,
       persistence,
       onEvent: vi.fn()
     })
@@ -747,10 +781,14 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     ])
 
     await owner.invalidateProject('project-deleted')
+    await owner.invalidateParents(['parent-deleted'])
+    const deletedRelayClaim = relay.claim('parent-deleted')
 
     expect(owner.list().chats).toEqual([
       expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
     ])
+    await expect(access(deletedProfile)).resolves.toBeUndefined()
+    expect(deletedRelayClaim?.messages).toEqual([expect.objectContaining({ id: 'relay-deleted' })])
     expect(persistence.clear).not.toHaveBeenCalled()
     await expect(
       owner.start({
@@ -760,6 +798,96 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       })
     ).rejects.toThrow('parent Project is unavailable')
     expect(captureTarget).not.toHaveBeenCalled()
+
+    owner.restoreProject('project-deleted')
+
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({ parentSessionId: 'parent-deleted', projectId: 'project-deleted' }),
+      expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
+    ])
+    captureTarget.mockRejectedValueOnce(new Error('backend unavailable'))
+    await expect(
+      owner.start({
+        parentSessionId: 'another-parent',
+        projectId: 'project-deleted',
+        text: 'Available after rollback'
+      })
+    ).rejects.toThrow('backend unavailable')
+    expect(captureTarget).toHaveBeenCalledOnce()
+
+    await owner.invalidateProject('project-deleted')
+    await owner.completeProjectDeletion('project-deleted')
+    await expect(access(deletedProfile)).rejects.toThrow()
+    expect(deletedRelayClaim?.commit()).toEqual([])
+    deletedRelayClaim?.restore()
+    expect(relay.claim('parent-deleted')).toBeUndefined()
+    expect(relay.claim('parent-kept')?.messages).toEqual([
+      expect.objectContaining({ id: 'relay-kept' })
+    ])
+    owner.restoreProject('project-deleted')
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
+    ])
+  })
+
+  it('retains dormant Side chats when Project profile cleanup fails', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-project-cleanup-'))
+    const relay = createRelayOwner()
+    relay.hydrate([
+      {
+        projectId: 'project-deleted',
+        parentSessionId: 'parent-deleted',
+        relays: [
+          {
+            sideChatId: 'side-chat-\u0000-invalid',
+            id: 'relay-retry',
+            text: 'Retain until cleanup succeeds.',
+            createdAt: 10
+          }
+        ]
+      }
+    ])
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn(),
+      relay,
+      persistence: createPersistence(),
+      onEvent: vi.fn()
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-deleted',
+        parentSessionId: 'parent-deleted',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-\u0000-invalid',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          historyPreamble: '',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+    await owner.invalidateProject('project-deleted')
+
+    await expect(owner.completeProjectDeletion('project-deleted')).rejects.toThrow(
+      'Side chat Project cleanup failed: project-deleted'
+    )
+    const retryRelayClaim = relay.claim('parent-deleted')
+    expect(retryRelayClaim?.messages).toEqual([expect.objectContaining({ id: 'relay-retry' })])
+    retryRelayClaim?.restore()
+
+    owner.restoreProject('project-deleted')
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({
+        parentSessionId: 'parent-deleted',
+        projectId: 'project-deleted'
+      })
+    ])
   })
 
   it('publishes a terminal lifecycle event and keeps a disconnected runtime dormant', async () => {
@@ -896,7 +1024,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       sessionId: 'side-chat-restored',
       providerSessionId: 'provider-restored',
       cwd: join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-restored', 'cwd'),
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: 'claude-code',
       previousBackendId: 'claude-code:provider-a'
     })
@@ -1450,7 +1578,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       sessionId: 'side-session-reconfigure',
       providerSessionId: 'side-session-reconfigure',
       cwd: join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId, 'cwd'),
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: 'claude-code',
       previousBackendId: 'claude-code:provider-a'
     })
@@ -1752,10 +1880,16 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     )
   })
 
-  it('keeps a Side chat retryable when durable close cleanup fails', async () => {
+  it('drains a failed in-flight close before Project invalidation and keeps it retryable', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-retry-'))
     const persistence = createPersistence()
-    persistence.clear.mockRejectedValueOnce(new Error('Session file is busy'))
+    const clearStarted = deferred<void>()
+    const failClear = deferred<void>()
+    persistence.clear.mockImplementationOnce(async () => {
+      clearStarted.resolve()
+      await failClear.promise
+      throw new Error('Session file is busy')
+    })
     const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
@@ -1787,10 +1921,18 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       text: 'Hello'
     })
 
-    await expect(owner.close({ sideSessionId: started.sideSessionId })).rejects.toThrow(
-      'Session file is busy'
+    const closeFailure = expect(
+      owner.close({ sideSessionId: started.sideSessionId })
+    ).rejects.toThrow('Session file is busy')
+    await clearStarted.promise
+    const invalidationFailure = expect(owner.invalidateProject('project-1')).rejects.toThrow(
+      'Side chat Project invalidation failed: project-1'
     )
+    failClear.resolve()
+
+    await Promise.all([closeFailure, invalidationFailure])
     expect(deleteSession).not.toHaveBeenCalled()
+    owner.restoreProject('project-1')
     expect(owner.list().chats).toContainEqual(
       expect.objectContaining({ sideSessionId: started.sideSessionId })
     )

@@ -30,7 +30,7 @@ export type MicromambaCacheDeps = {
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
   canonicalize?: (path: string) => string
-  hardenOwnership?: (path: string) => void
+  hardenOwnership?: (path: string) => boolean | void
   prepare?: (
     path: string,
     ownership: CacheOwnership
@@ -103,13 +103,57 @@ export const windowsCacheAclHardeningScript = (path: string): string => {
   )
 }
 
-export const hardenWindowsCacheAcl = (path: string): void => {
-  if (process.platform !== 'win32') return
-  execFileSync(
-    resolveWindowsPowerShellExecutable(),
-    ['-NoProfile', '-NonInteractive', '-Command', windowsCacheAclHardeningScript(path)],
+const resolveWindowsSystemExecutable = (name: string): string => {
+  const windowsRoot = process.env.SystemRoot || process.env.WINDIR
+  return windowsRoot ? win32.join(windowsRoot, 'System32', name) : name
+}
+
+const currentWindowsUserSid = (): string => {
+  const raw = execFileSync(
+    resolveWindowsSystemExecutable('whoami.exe'),
+    ['/user', '/fo', 'csv', '/nh'],
     { encoding: 'utf8', windowsHide: true }
   )
+  const sid = raw.match(/\bS-\d-(?:\d+-)+\d+\b/i)?.[0]
+  if (!sid) throw new Error('Could not determine the current Windows user SID.')
+  return sid
+}
+
+export const hardenWindowsCacheAclWithIcacls = (path: string): void => {
+  const currentSid = currentWindowsUserSid()
+  execFileSync(
+    resolveWindowsSystemExecutable('icacls.exe'),
+    [path, '/setowner', `*${currentSid}`],
+    { encoding: 'utf8', windowsHide: true }
+  )
+  execFileSync(
+    resolveWindowsSystemExecutable('icacls.exe'),
+    [
+      path,
+      '/inheritance:r',
+      '/grant:r',
+      `*${currentSid}:(OI)(CI)F`,
+      '*S-1-5-18:(OI)(CI)F',
+      '*S-1-5-32-544:(OI)(CI)F'
+    ],
+    { encoding: 'utf8', windowsHide: true }
+  )
+}
+
+export const hardenWindowsCacheAcl = (path: string): boolean => {
+  if (process.platform !== 'win32') return false
+  try {
+    execFileSync(
+      resolveWindowsPowerShellExecutable(),
+      ['-NoProfile', '-NonInteractive', '-Command', windowsCacheAclHardeningScript(path)],
+      { encoding: 'utf8', windowsHide: true }
+    )
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'EPERM' && code !== 'EACCES') throw error
+    hardenWindowsCacheAclWithIcacls(path)
+  }
+  return true
 }
 
 export type WindowsCacheAcl = {
@@ -201,10 +245,11 @@ const defaultVerifyOwnership = (path: string, userIdentity: string): boolean => 
 const defaultPrepare = (
   path: string,
   ownership: CacheOwnership,
-  hardenOwnership: (path: string) => void,
+  hardenOwnership: (path: string) => boolean | void,
   verifyOwnership: (path: string, userIdentity: string) => boolean
 ): MicromambaCachePreparation => {
   let created = false
+  let verifiedByHardening = false
   const reject = (rejection: string): MicromambaCachePreparation => {
     if (created) {
       try {
@@ -232,7 +277,7 @@ const defaultPrepare = (
       mkdirSync(path, { mode: 0o700 })
       created = true
       try {
-        hardenOwnership(path)
+        verifiedByHardening = hardenOwnership(path) === true
       } catch (error) {
         return reject(`cache ACL could not be hardened (${errorDetail(error)})`)
       }
@@ -272,7 +317,7 @@ const defaultPrepare = (
     ) {
       return reject('path resolves outside the Windows user profile')
     }
-    if (!verifyOwnership(physical, ownership.userIdentity)) {
+    if (!verifiedByHardening && !verifyOwnership(physical, ownership.userIdentity)) {
       return reject('ownership or permissions are not trusted')
     }
 

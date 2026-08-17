@@ -22,14 +22,19 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import {
-  isWorkspacePromptPreparationInFlight,
+  canPrepareExistingWorkspacePrompt,
   prepareExistingWorkspacePrompt
 } from './workspace-runtime-prompt-preparation-owner'
+import {
+  branchWorkspaceSessionFromMessage,
+  reconcileBranchedAttachments
+} from './workspace-runtime-session-branch-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
 
 type SendWorkspaceMessageIntent = {
   sessionId?: string
   branchSourceSessionId?: string
+  branchSourceMessageId?: string
   text: string
   turnIntent?: 'plan-first'
   planContinuation?: Pick<ActivePlanProjection, 'artifactVersionId' | 'revision'> & {
@@ -38,7 +43,6 @@ type SendWorkspaceMessageIntent = {
   attachments?: UploadedAttachment[]
   cwd?: string
   projectId?: string
-  projectName?: string
   permissionProfile?: PermissionProfileId
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
@@ -134,61 +138,13 @@ const failPrompt = async (
 
 const finalizeAttachments = async (
   sessionId: string,
-  messageId: string,
   attachments: UploadedAttachment[],
   projectId?: string
 ): Promise<UploadedAttachment[]> => {
   if (attachments.length === 0) return attachments
   const finalized = await window.api.uploads.finalizeSession({ projectId, sessionId, attachments })
-  useSessionStore.getState().replaceMessageUploads({
-    sessionId,
-    messageId,
-    uploads: finalized.map(toPersistedUploadedAttachment)
-  })
   usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalized)
   return finalized
-}
-
-const reconcileBranchedAttachments = async (
-  sourceSessionId: string,
-  childSessionId: string,
-  messages: ChatMessage[],
-  projectId?: string
-): Promise<void> => {
-  const stagedById = new Map<string, UploadedAttachment>()
-  for (const message of messages) {
-    for (const upload of message.uploads ?? []) {
-      if (!upload.versionId && !stagedById.has(upload.id)) {
-        stagedById.set(upload.id, toRuntimeUploadedAttachment(upload, projectId))
-      }
-    }
-  }
-  if (stagedById.size === 0) return
-
-  const finalized = await window.api.uploads.finalizeSession({
-    projectId,
-    sessionId: sourceSessionId,
-    attachments: [...stagedById.values()]
-  })
-  const finalizedById = new Map(finalized.map((upload) => [upload.id, upload]))
-  for (const stagedId of stagedById.keys()) {
-    if (!finalizedById.has(stagedId)) {
-      throw new Error(`Upload finalization did not return the staged attachment: ${stagedId}`)
-    }
-  }
-  for (const message of messages) {
-    if (!message.uploads?.some((upload) => stagedById.has(upload.id))) continue
-    const uploads = message.uploads.map((upload) => {
-      const replacement = finalizedById.get(upload.id)
-      return replacement ? toPersistedUploadedAttachment(replacement) : upload
-    })
-    for (const sessionId of [sourceSessionId, childSessionId]) {
-      useSessionStore
-        .getState()
-        .replaceMessageUploads({ sessionId, messageId: message.id, uploads })
-    }
-  }
-  usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalized)
 }
 
 const replayHistory = (
@@ -283,7 +239,7 @@ const startPendingPrompt = (
     try {
       created = await runtime.createSession(
         request.cwd,
-        request.projectName,
+        request.projectId,
         request.permissionProfile,
         request.specialistId ?? undefined
       )
@@ -314,21 +270,22 @@ const startPendingPrompt = (
       providerSessionId: created.providerSessionId,
       providerContinuityToken: created.providerContinuityToken
     })
-    if (!bound || !ownsPrompt(created.sessionId, bound.messageId)) return
+    const boundMessageId = bound?.messageId
+    if (!boundMessageId || !ownsPrompt(created.sessionId, boundMessageId)) return
 
     let attachments = request.attachments
     try {
-      attachments = await finalizeAttachments(
-        created.sessionId,
-        bound.messageId,
-        attachments,
-        request.projectName
-      )
+      attachments = await finalizeAttachments(created.sessionId, attachments, request.projectId)
+      useSessionStore.getState().replaceMessageUploads({
+        sessionId: created.sessionId,
+        messageId: boundMessageId,
+        uploads: attachments.map(toPersistedUploadedAttachment)
+      })
     } catch (error) {
       useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
       return
     }
-    if (!ownsPrompt(created.sessionId, bound.messageId)) return
+    if (!ownsPrompt(created.sessionId, boundMessageId)) return
 
     const boundSession = useSessionStore
       .getState()
@@ -348,17 +305,17 @@ const startPendingPrompt = (
         } catch (cleanupError) {
           console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
         }
-        if (ownsPrompt(created.sessionId, bound.messageId)) {
+        if (ownsPrompt(created.sessionId, boundMessageId)) {
           useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
         }
         return
       }
-      if (!ownsPrompt(created.sessionId, bound.messageId)) return
+      if (!ownsPrompt(created.sessionId, boundMessageId)) return
     }
 
     dispatchPrompt(runtime, {
       sessionId: created.sessionId,
-      messageId: bound.messageId,
+      messageId: boundMessageId,
       content: request.content,
       attachments,
       forcedSkillIds: request.forcedSkillIds,
@@ -366,7 +323,7 @@ const startPendingPrompt = (
       replay: { ...request.replay, contextReset: Boolean(request.contextReset) },
       turnIntent: request.turnIntent,
       accepted: () =>
-        useSessionStore.getState().clearPendingContextReplay(created.sessionId, bound.messageId)
+        useSessionStore.getState().clearPendingContextReplay(created.sessionId, boundMessageId)
     })
   })()
 }
@@ -376,6 +333,16 @@ const sendWorkspaceMessage = async (
   input: SendWorkspaceMessageCommand,
   lifecycle: WorkspaceCommandLifecycle = {}
 ): Promise<SendWorkspaceMessageResult | undefined> => {
+  if (input.branchSourceSessionId && input.branchSourceMessageId) {
+    return branchWorkspaceSessionFromMessage(runtime, {
+      sourceSessionId: input.branchSourceSessionId,
+      sourceMessageId: input.branchSourceMessageId,
+      agentFrameworkId: input.agentFrameworkId,
+      agentBackendId: input.agentBackendId,
+      agentModel: input.agentModel,
+      specialistId: input.specialistId
+    })
+  }
   const content = input.text.trim()
   const replaySession = input.sessionId
     ? useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
@@ -405,12 +372,13 @@ const sendWorkspaceMessage = async (
       agentModel: input.agentModel,
       specialistId: input.specialistId
     })
-    if (!pending) return undefined
+    if (!pending?.messageId) return undefined
+    const pendingPrompt = { sessionId: pending.sessionId, messageId: pending.messageId }
     const session = useSessionStore
       .getState()
       .sessions.find((item) => item.id === pending.sessionId)
     if (!session) return undefined
-    let history = session.messages.filter((message) => message.id !== pending.messageId)
+    let history = session.messages.filter((message) => message.id !== pendingPrompt.messageId)
     try {
       await reconcileBranchedAttachments(
         input.branchSourceSessionId,
@@ -422,50 +390,49 @@ const sendWorkspaceMessage = async (
         .getState()
         .sessions.find((item) => item.id === pending.sessionId)
       if (!reconciled) return undefined
-      if (!ownsPrompt(pending.sessionId, pending.messageId)) return pending
-      history = reconciled.messages.filter((message) => message.id !== pending.messageId)
+      if (!ownsPrompt(pendingPrompt.sessionId, pendingPrompt.messageId)) return pendingPrompt
+      history = reconciled.messages.filter((message) => message.id !== pendingPrompt.messageId)
     } catch (error) {
       useSessionStore.getState().failRun(pending.sessionId, errorMessage(error))
-      return pending
+      return pendingPrompt
     }
     let replay: HistoryReplayContext | undefined
     try {
       replay = replayHistory(history, input, session.projectId)
     } catch (error) {
       useSessionStore.getState().failRun(pending.sessionId, errorMessage(error))
-      return pending
+      return pendingPrompt
     }
     startPendingPrompt(runtime, {
       ...input,
-      pending,
+      pending: pendingPrompt,
       content,
       attachments,
       cwd: session.cwd || input.cwd,
-      projectName: session.projectId,
+      projectId: session.projectId,
       permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
       specialistId: session.specialistId,
       replay,
       contextReset: true
     })
-    return pending
+    return pendingPrompt
   }
 
   if (input.sessionId) {
     const sessionId = input.sessionId
     const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     if (input.requireExistingSession && !session) return undefined
-    if (isWorkspacePromptPreparationInFlight(sessionId)) return undefined
     if (
-      runtime.state.promptInFlightSessionIds.includes(sessionId) ||
-      (session?.compacting && !input.allowCompactionRecovery) ||
-      session?.status === 'running' ||
-      session?.status === 'waiting-for-user' ||
-      session?.status === 'waiting-permission'
-    ) {
+      !canPrepareExistingWorkspacePrompt({
+        sessionId,
+        session,
+        runtimeState: runtime.state,
+        allowCompactionRecovery: input.allowCompactionRecovery === true
+      })
+    )
       return undefined
-    }
-    const projectName = input.projectName ?? session?.projectId ?? input.projectId
-    if (input.planContinuation && !projectName) return undefined
+    const projectId = input.projectId ?? session?.projectId
+    if (input.planContinuation && !projectId) return undefined
 
     if (session?.isPending) {
       const cwd = input.cwd || session.cwd || undefined
@@ -475,7 +442,7 @@ const sendWorkspaceMessage = async (
           replay = replayHistory(
             session.messages.filter((item) => item.id !== session.pendingContextReplayMessageId),
             input,
-            projectName
+            projectId
           )
         } catch (error) {
           useSessionStore.getState().failRun(session.id, errorMessage(error))
@@ -501,7 +468,7 @@ const sendWorkspaceMessage = async (
         content,
         attachments: effectiveAttachments,
         cwd,
-        projectName,
+        projectId,
         permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         specialistId: session.pendingContextReplayMessageId ? session.specialistId : undefined,
         replay,
@@ -514,7 +481,7 @@ const sendWorkspaceMessage = async (
       sessionId,
       requireExistingSession: input.requireExistingSession,
       cwd: input.cwd,
-      projectName,
+      projectId,
       permissionProfile: input.permissionProfile,
       selectedRuntime: {
         frameworkId: input.agentFrameworkId,
@@ -531,13 +498,20 @@ const sendWorkspaceMessage = async (
       drainRuntimeEvents: lifecycle.drainRuntimeEvents
     })
     if (!prepared) return undefined
+    let promptAttachments = effectiveAttachments
+    try {
+      promptAttachments = await finalizeAttachments(sessionId, effectiveAttachments, projectId)
+    } catch (error) {
+      useSessionStore.getState().failRun(sessionId, errorMessage(error))
+      return undefined
+    }
     if (input.truncateFromMessageId) {
       useSessionStore.getState().truncateSessionFromMessage(sessionId, input.truncateFromMessageId)
     }
     const appended = useSessionStore.getState().appendUserMessage({
       sessionId,
       content,
-      attachments: effectiveAttachments,
+      attachments: promptAttachments,
       parts: input.parts,
       turnIntent: input.turnIntent,
       cwd: input.cwd,
@@ -548,21 +522,9 @@ const sendWorkspaceMessage = async (
     })
     if (!appended) return undefined
     const replay = prepared.replay()
-    let promptAttachments = effectiveAttachments
-    try {
-      promptAttachments = await finalizeAttachments(
-        sessionId,
-        appended.messageId,
-        effectiveAttachments,
-        projectName
-      )
-    } catch (error) {
-      useSessionStore.getState().failRun(sessionId, errorMessage(error))
-      return appended
-    }
     const continuation = input.planContinuation
       ? {
-          projectId: projectName!,
+          projectId: projectId!,
           artifactVersionId: input.planContinuation.artifactVersionId,
           expectedRevision: input.planContinuation.revision,
           ...(input.planContinuation.pendingAction
@@ -606,7 +568,7 @@ const sendWorkspaceMessage = async (
     content,
     attachments,
     cwd: input.cwd,
-    projectName: input.projectName,
+    projectId: input.projectId,
     permissionProfile: input.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     specialistId: input.specialistId ?? undefined,
     turnIntent: input.turnIntent

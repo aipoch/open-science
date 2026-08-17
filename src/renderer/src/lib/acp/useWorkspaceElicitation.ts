@@ -38,7 +38,7 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
-    projectName?: string,
+    projectId?: string,
     permissionProfile?: PermissionProfileId,
     previousFrameworkId?: AcpResumeSessionRequest['previousFrameworkId'],
     previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
@@ -49,7 +49,7 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
     window.api.acp.resumeSession({
       sessionId,
       cwd,
-      projectName,
+      projectId,
       permissionProfile,
       previousFrameworkId,
       previousBackendId,
@@ -60,9 +60,9 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
-    projectName?: string,
+    projectId?: string,
     permissionProfile?: PermissionProfileId
-  ) => window.api.acp.resetSessionContext({ sessionId, cwd, projectName, permissionProfile }),
+  ) => window.api.acp.resetSessionContext({ sessionId, cwd, projectId, permissionProfile }),
   respondToElicitation: (response) => window.api.acp.respondToElicitation(response)
 })
 

@@ -1,0 +1,100 @@
+name: Runtime Certification
+
+# Real source-level runtime coverage. Nightly calls this workflow in advisory mode; a focused manual
+# Nightly dispatch calls the exact same job as a blocking, no-publish dry-run. Packaged-runtime and
+# bundle-materialization certification remain separate boundaries and are intentionally not modeled
+# as source coverage here.
+on:
+  workflow_call:
+    inputs:
+      allow_failure:
+        description: Keep the scheduled Nightly signal advisory during burn-in
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-certification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: Source runtime chain (Linux)
+    continue-on-error: ${{ inputs.allow_failure }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # Several control-plane suites import modules that cross the Electron boundary. Use the normal
+      # repository install so Electron, generated clients, patches, and native dependencies match the
+      # source path exercised by the rest of CI. The focused dry-run proved that --ignore-scripts leaves
+      # Electron intentionally uninstalled and causes those suites to fail during collection.
+      - name: Install test dependencies
+        run: npm ci
+
+      # Use the same pinned, digest-verified micromamba downloader as the packaged runtime. These are
+      # ephemeral source-certification environments, not the immutable CDN packs certified later at
+      # the packaged boundary.
+      - name: Fetch pinned micromamba
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/micromamba"
+          node scripts/fetch-micromamba.mjs linux-64 "$bin"
+          echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: Create real Python and R environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/micromamba-root"
+          python_prefix="$RUNNER_TEMP/runtime-python"
+          r_prefix="$RUNNER_TEMP/runtime-r"
+
+          "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$python_prefix" \
+            --channel conda-forge python=3.12 matplotlib-base nomkl
+          "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$r_prefix" \
+            --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2
+
+          echo "OPEN_SCIENCE_TEST_PY_ENV=$python_prefix/bin/python" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_R_ENV=$r_prefix" >> "$GITHUB_ENV"
+
+      - name: Verify runtime prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$OPEN_SCIENCE_TEST_PY_ENV" -c \
+            'import matplotlib; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__)'
+          "$OPEN_SCIENCE_TEST_R_ENV/bin/Rscript" -e \
+            'library(jsonlite); library(ggplot2); cat("r=", as.character(getRversion()), " jsonlite=", as.character(packageVersion("jsonlite")), " ggplot2=", as.character(packageVersion("ggplot2")), "\n", sep="")'
+
+      - name: Test real source runtime chain
+        env:
+          RUN_KERNEL: '1'
+        run: >-
+          npx vitest run
+          src/main/notebook/repl-loop.integration.test.ts
+          src/main/notebook/host-compute.integration.test.ts
+          src/main/notebook/host-mcp.integration.test.ts
+          src/main/notebook/python-loop.integration.test.ts
+          src/main/notebook/r-loop.integration.test.ts
+          src/main/notebook/e2e.certification.test.ts
+          src/main/agents/agents-repl.integration.test.ts
+          src/main/agents/agents-repl.mutations.integration.test.ts
+          src/main/agents/agents-repl.privileged.integration.test.ts
+          src/main/agents/agents-repl.runtime-consumption.integration.test.ts
+          --maxWorkers=1
+          --testTimeout=60000
+          --hookTimeout=60000

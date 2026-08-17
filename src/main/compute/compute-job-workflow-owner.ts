@@ -17,6 +17,7 @@ import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher
 import type { StagedInputEntry } from './job-dispatcher'
 import type { ComputeJobRepository } from './job-repository'
 import { getJobHarvestDir } from './harvest-engine'
+import { validateHarvestConfig } from './harvest-classifier'
 import type { ComputeHostRepository } from './repository'
 import type { ScpRunner } from './scp-runner'
 import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './scp-runner'
@@ -160,6 +161,16 @@ export class ComputeJobWorkflowOwner {
   ): Promise<SubmitJobResult> {
     if (!this.jobRepository) {
       throw new Error('ComputeJobRepository is required to call submitJob.')
+    }
+
+    if (options.harvestConfig !== undefined) {
+      let harvestConfig: unknown
+      try {
+        harvestConfig = JSON.parse(options.harvestConfig)
+      } catch {
+        throw new Error('harvest must be valid JSON.')
+      }
+      validateHarvestConfig(harvestConfig)
     }
 
     const host = await this.hostRepository.get(providerId)
@@ -390,7 +401,7 @@ export class ComputeJobWorkflowOwner {
         `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
       )
     }
-    this.concurrencyManager.setSessionLimit(sessionId, limit)
+    await this.concurrencyManager.setSessionLimit(sessionId, limit)
   }
 
   async getSessionConcurrencyStatus(sessionId: string): Promise<SessionStatus> {

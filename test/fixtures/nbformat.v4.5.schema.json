@@ -188,14 +188,7 @@
       "description": "Notebook code cell.",
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "id",
-        "cell_type",
-        "metadata",
-        "source",
-        "outputs",
-        "execution_count"
-      ],
+      "required": ["id", "cell_type", "metadata", "source", "outputs", "execution_count"],
       "properties": {
         "id": { "$ref": "#/definitions/cell_id" },
         "cell_type": {

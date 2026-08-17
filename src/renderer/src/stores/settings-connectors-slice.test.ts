@@ -229,7 +229,7 @@ describe('settings Connectors slice', () => {
     expect(store.getState().connectors).toEqual([connector('authoritative')])
   })
 
-  it('retains an optimistic Connector toggle when main rejects it', async () => {
+  it('rolls back an optimistic Connector toggle when main rejects it', async () => {
     vi.mocked(commands.setConnectorEnabled).mockRejectedValue(new Error('toggle failed'))
     store.setState({ connectors: [connector('pubmed')] })
 
@@ -237,10 +237,84 @@ describe('settings Connectors slice', () => {
       'toggle failed'
     )
 
-    expect(store.getState().connectors).toEqual([connector('pubmed', { enabled: false })])
+    expect(store.getState().connectors).toEqual([connector('pubmed')])
   })
 
-  it('optimistically changes auto-allow and retains it after rejection', async () => {
+  it('does not let an older rejected Connector toggle overwrite a newer success', async () => {
+    let rejectOlder!: (error: Error) => void
+    let settleNewer!: (result: ConnectorsSnapshot) => void
+    vi.mocked(commands.setConnectorEnabled)
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectOlder = reject
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          settleNewer = resolve
+        })
+      )
+    store.setState({ connectors: [connector('pubmed')] })
+
+    const older = store.getState().setConnectorEnabled('pubmed', false)
+    const newer = store.getState().setConnectorEnabled('pubmed', true)
+
+    settleNewer(snapshot([connector('pubmed')]))
+    await newer
+    rejectOlder(new Error('older toggle failed'))
+    await expect(older).rejects.toThrow('older toggle failed')
+
+    expect(store.getState().connectors).toEqual([connector('pubmed')])
+  })
+
+  it('does not let an older Connector toggle overwrite a newer authoritative refresh', async () => {
+    let settleOlder!: (result: ConnectorsSnapshot) => void
+    vi.mocked(commands.setConnectorEnabled).mockReturnValue(
+      new Promise((resolve) => {
+        settleOlder = resolve
+      })
+    )
+    vi.mocked(commands.listConnectors).mockResolvedValue(snapshot([connector('pubmed')]))
+    store.setState({ connectors: [connector('pubmed')] })
+
+    const older = store.getState().setConnectorEnabled('pubmed', false)
+    await store.getState().loadConnectors()
+
+    settleOlder(snapshot([connector('pubmed', { enabled: false })]))
+    await older
+
+    expect(store.getState().connectors).toEqual([connector('pubmed')])
+  })
+
+  it('returns to the confirmed Connector value when overlapping toggles all fail', async () => {
+    let rejectOlder!: (error: Error) => void
+    let rejectNewer!: (error: Error) => void
+    vi.mocked(commands.setConnectorEnabled)
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectOlder = reject
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectNewer = reject
+        })
+      )
+    store.setState({ connectors: [connector('pubmed')] })
+
+    const older = store.getState().setConnectorEnabled('pubmed', false)
+    const newer = store.getState().setConnectorEnabled('pubmed', true)
+
+    rejectNewer(new Error('newer toggle failed'))
+    await expect(newer).rejects.toThrow('newer toggle failed')
+    expect(store.getState().connectors).toEqual([connector('pubmed', { enabled: false })])
+
+    rejectOlder(new Error('older toggle failed'))
+    await expect(older).rejects.toThrow('older toggle failed')
+    expect(store.getState().connectors).toEqual([connector('pubmed')])
+  })
+
+  it('rolls back an optimistic auto-allow change when main rejects it', async () => {
     vi.mocked(commands.setConnectorAutoAllow).mockRejectedValue(new Error('policy failed'))
     store.setState({ connectors: [connector('pubmed')] })
 
@@ -252,7 +326,7 @@ describe('settings Connectors slice', () => {
       id: 'pubmed',
       autoAllow: true
     })
-    expect(store.getState().connectors).toEqual([connector('pubmed', { autoAllow: true })])
+    expect(store.getState().connectors).toEqual([connector('pubmed')])
   })
 
   it('returns tool permission detail without adding component-owned detail state', async () => {
@@ -382,7 +456,7 @@ describe('settings Connectors slice', () => {
     expect(store.getState().customServers).toEqual([server('authoritative', false)])
   })
 
-  it('retains an optimistic custom-server toggle when main rejects it', async () => {
+  it('rolls back an optimistic custom-server toggle when main rejects it', async () => {
     vi.mocked(commands.setCustomServerEnabled).mockRejectedValue(new Error('toggle failed'))
     store.setState({ customServers: [server('custom')] })
 
@@ -390,10 +464,10 @@ describe('settings Connectors slice', () => {
       'toggle failed'
     )
 
-    expect(store.getState().customServers).toEqual([server('custom', false)])
+    expect(store.getState().customServers).toEqual([server('custom')])
   })
 
-  it('keeps approval ordering, ignores duplicates, and removes a response immediately', async () => {
+  it('keeps approval ordering, ignores duplicates, and removes a response after main confirms', async () => {
     const first: ConnectorApprovalRequest = {
       id: 'first',
       connector: 'pubmed',
@@ -414,7 +488,7 @@ describe('settings Connectors slice', () => {
     expect(store.getState().pendingApprovals).toEqual([first, second])
 
     const pending = store.getState().respondApproval('first', 'session')
-    expect(store.getState().pendingApprovals).toEqual([second])
+    expect(store.getState().pendingApprovals).toEqual([first, second])
     expect(commands.respondConnectorApproval).toHaveBeenCalledWith({
       id: 'first',
       decision: 'session'
@@ -422,9 +496,10 @@ describe('settings Connectors slice', () => {
 
     settle()
     await pending
+    expect(store.getState().pendingApprovals).toEqual([second])
   })
 
-  it('retains immediate approval removal when main rejects the response', async () => {
+  it('retains an approval when main rejects the response', async () => {
     const request: ConnectorApprovalRequest = {
       id: 'request',
       connector: 'pubmed',
@@ -438,6 +513,6 @@ describe('settings Connectors slice', () => {
       'response failed'
     )
 
-    expect(store.getState().pendingApprovals).toEqual([])
+    expect(store.getState().pendingApprovals).toEqual([request])
   })
 })

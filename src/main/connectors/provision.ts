@@ -7,6 +7,12 @@ import type { StoredCustomMcpServer } from '../settings/types'
 import { customConnectorNameFromSkillName } from '../../shared/custom-connector'
 import { parseFrontmatter } from '../skills/frontmatter'
 
+// Canonical generated Connector Skill documents are framework-neutral inputs. Keep them outside
+// every backend's private profile/projection so Claude's protected CLAUDE_CONFIG_DIR is never used
+// as a source of truth for Codex or OpenCode materialization.
+const connectorSkillSourceDir = (storageRoot: string): string =>
+  join(storageRoot, 'runtime-support', 'connector-skills')
+
 // Whether an `mcp-<x>` directory's suffix names a bundled connector — CASE-INSENSITIVELY. This
 // matters for cleanup ownership: an older version could have left a case-variant dir like
 // `mcp-Chemistry` (from a custom server literally named "Chemistry"), and on a case-preserving
@@ -232,3 +238,5 @@ export async function syncMaterializedCustomServerSkillDocs(
 
   return { materializedSkillNames, failures }
 }
+
+export { connectorSkillSourceDir }

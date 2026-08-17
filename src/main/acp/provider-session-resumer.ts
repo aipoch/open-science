@@ -47,7 +47,7 @@ type ResumeEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'>
 
 type AcpProviderSessionResumerDependencies = Readonly<{
   defaultCwd: string
-  defaultProjectName: string
+  defaultProjectId: string
   currentCwd: () => string | undefined
   currentConnection: () => ClientConnection | undefined
   ensureConnected: (cwd: string) => Promise<ClientConnection>
@@ -63,10 +63,10 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   clearLivePermissionProfile: (sessionId: string) => void
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
-  // The ACP projectName carries the Project id (see workspace-conversation-controller). Returns
+  // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
   // session resume.
-  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
+  resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
   updateCwd: (cwd: string) => void
   pushEvent: (event: ResumeEvent) => void
   emitState: () => void
@@ -87,13 +87,18 @@ export class AcpProviderSessionResumer {
     if (attached) return this.resumeAttached(request, attached)
 
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
-    const projectName = request.projectName?.trim() || this.deps.defaultProjectName
+    const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const reserved = this.deps.reserveIdentity(request.sessionId)
     if (reserved.collision) throw reserved.collision
     const identity = reserved.reservation
 
     try {
-      return await this.withTimeout(() => this.resumeReserved(request, cwd, projectName, identity))
+      const connection = await this.withTimeout(() => this.deps.ensureConnected(cwd))
+      this.deps.assertCurrentConnection(connection)
+      identity.renew()
+      return await this.withTimeout(() =>
+        this.resumeConnected(request, connection, cwd, projectId, identity)
+      )
     } finally {
       identity.release()
     }
@@ -109,7 +114,7 @@ export class AcpProviderSessionResumer {
     if (!connection) throw new Error('ACP connection is not available.')
 
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
-    const projectName = request.projectName?.trim() || this.deps.defaultProjectName
+    const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const backend = this.deps.currentBackend()
     if (request.specialistId) entry.aggregate.setSpecialistId(request.specialistId)
     const permissionProfile = await this.deps.configurator.configurePermissionProfile({
@@ -134,7 +139,7 @@ export class AcpProviderSessionResumer {
     this.deps.clearLivePermissionProfile(request.sessionId)
     this.deps.registry.select(request.sessionId)
     this.deps.updateCwd(cwd)
-    current.aggregate.updateLocation(cwd, projectName)
+    current.aggregate.updateLocation(cwd, projectId)
     this.deps.emitState()
 
     const responseBackend = this.deps.currentBackend()
@@ -150,9 +155,7 @@ export class AcpProviderSessionResumer {
     }
   }
 
-  private async withTimeout(
-    operation: () => Promise<AcpCreateSessionResponse>
-  ): Promise<AcpCreateSessionResponse> {
+  private async withTimeout<Result>(operation: () => Promise<Result>): Promise<Result> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -172,16 +175,13 @@ export class AcpProviderSessionResumer {
     }
   }
 
-  private async resumeReserved(
+  private async resumeConnected(
     request: AcpResumeSessionRequest,
+    connection: ClientConnection,
     cwd: string,
-    projectName: string,
+    projectId: string,
     identity: AcpPrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
-    const connection = await this.deps.ensureConnected(cwd)
-    this.deps.assertCurrentConnection(connection)
-    identity.renew()
-
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
@@ -204,13 +204,13 @@ export class AcpProviderSessionResumer {
         reason: decision.reason,
         ...this.deps.diagnosticContext()
       })
-      return this.adopt(request, connection, cwd, projectName, identity)
+      return this.adopt(request, connection, cwd, projectId, identity)
     }
     return this.resumeCompatible(
       request,
       connection,
       cwd,
-      projectName,
+      projectId,
       identity,
       decision.providerSessionId,
       persistedProviderSessionId !== undefined
@@ -221,7 +221,7 @@ export class AcpProviderSessionResumer {
     request: AcpResumeSessionRequest,
     connection: ClientConnection,
     cwd: string,
-    projectName: string,
+    projectId: string,
     identity: AcpPrimarySessionIdentityReservation,
     providerSessionId: string,
     providerSessionIdPersisted: boolean
@@ -237,12 +237,12 @@ export class AcpProviderSessionResumer {
         bridgeMcpAliasesEnabled: backend.adapter.bridgeMcpAliasesEnabled,
         policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
-        projectName
+        projectId
       })
       const specialistId =
         request.specialistId ??
         this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
-      const projectContextAppend = await this.resolveProjectAgentContext(projectName)
+      const projectContextAppend = await this.resolveProjectAgentContext(projectId)
       const setup = this.presentation.buildSessionSetup({
         framework: backend.framework,
         tooling: {
@@ -284,7 +284,7 @@ export class AcpProviderSessionResumer {
           sessionId: request.sessionId,
           ...errorLogFields(error)
         })
-        return await this.adopt(request, connection, cwd, projectName, identity)
+        return await this.adopt(request, connection, cwd, projectId, identity)
       }
 
       provisionalSession = (
@@ -324,7 +324,7 @@ export class AcpProviderSessionResumer {
         const { aggregate } = this.deps.registry.publish(identity, request.sessionId, {
           session: provisionalSession,
           cwd,
-          projectName,
+          projectId,
           frameworkId: backend.framework.id,
           backendId: backend.backendId,
           permissionProfile: structuredClone(configuration.permissionProfile),
@@ -368,23 +368,23 @@ export class AcpProviderSessionResumer {
     request: AcpResumeSessionRequest,
     connection: ClientConnection,
     cwd: string,
-    projectName: string,
+    projectId: string,
     identity: AcpPrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
     return this.deps.adopter.adopt(request.sessionId, {
       connection,
       cwd,
-      projectName,
+      projectId,
       identity,
       permissionProfile: request.permissionProfile,
       specialistId: request.specialistId
     })
   }
 
-  private async resolveProjectAgentContext(projectName: string): Promise<string | undefined> {
+  private async resolveProjectAgentContext(projectId: string): Promise<string | undefined> {
     if (!this.deps.resolveProjectAgentContext) return undefined
     try {
-      const context = await this.deps.resolveProjectAgentContext(projectName)
+      const context = await this.deps.resolveProjectAgentContext(projectId)
       const trimmed = context?.trim()
       return trimmed ? trimmed : undefined
     } catch (error) {

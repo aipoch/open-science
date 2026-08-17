@@ -19,6 +19,7 @@ import {
   RefreshCw
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type {
   LocalDirEntry,
@@ -155,107 +156,111 @@ const GoToMenu = ({
   onNavigate: (path: string) => void
   onPinCurrent: () => void
   onRemoveBookmark: (path: string) => void
-}): React.JSX.Element => (
-  <DropdownMenu>
-    <Hint label="Jump to Home, a drive, or a pinned folder">
-      {/* Label at the default 13px: at text-xs it was the smallest type in the row despite being
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <DropdownMenu>
+      <Hint label={t('Jump to Home, a drive, or a pinned folder')}>
+        {/* Label at the default 13px: at text-xs it was the smallest type in the row despite being
           the only worded control there. */}
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="gap-1 text-sm font-normal text-text-000"
-        >
-          Go to
-          <ChevronDown className="size-3.5 text-text-300" strokeWidth={TOOLBAR_ICON_STROKE} />
-        </Button>
-      </DropdownMenuTrigger>
-    </Hint>
-    <DropdownMenuContent align="start" className="w-[300px] max-w-[70vw]">
-      {/* Home stands alone at the top: a fixed shortcut that belongs to no category. */}
-      {home ? (
-        <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={() => onNavigate(home)}>
-          <GoToRow
-            icon={<Home className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-            label="Home"
-            path={home}
-          />
-        </DropdownMenuItem>
-      ) : null}
-      {drives.length > 0 ? (
-        <>
-          <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
-            {window.api.platform === 'win32' ? 'Drives' : 'Volumes'}
-          </DropdownMenuLabel>
-          {drives.map((drive) => (
-            <DropdownMenuItem
-              key={drive.path}
-              data-testid={`go-to-drive-${drive.path}`}
-              className="items-start gap-2 text-xs"
-              onSelect={() => onNavigate(drive.path)}
-            >
-              <GoToRow
-                wrapLabel
-                icon={<HardDrive className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-                label={drive.label}
-                path={drive.path}
-              />
-            </DropdownMenuItem>
-          ))}
-        </>
-      ) : null}
-      {bookmarks.length > 0 || (!isBookmarked && currentPath) ? (
-        <>
-          <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
-            Pinned
-          </DropdownMenuLabel>
-          {bookmarks.map((path) => (
-            <DropdownMenuItem
-              key={path}
-              className="items-start gap-2 pr-1 text-xs"
-              onSelect={() => onNavigate(path)}
-            >
-              <GoToRow
-                icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-                label={path.split('/').pop() || path}
-                path={path}
-              />
-              {/* The crossed-out pushpin can read as "delete this folder", so the hint says it
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-sm font-normal text-text-000"
+          >
+            {t('Go to')}
+            <ChevronDown className="size-3.5 text-text-300" strokeWidth={TOOLBAR_ICON_STROKE} />
+          </Button>
+        </DropdownMenuTrigger>
+      </Hint>
+      <DropdownMenuContent align="start" className="w-[300px] max-w-[70vw]">
+        {/* Home stands alone at the top: a fixed shortcut that belongs to no category. */}
+        {home ? (
+          <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={() => onNavigate(home)}>
+            <GoToRow
+              icon={<Home className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+              label={t('Home')}
+              path={home}
+            />
+          </DropdownMenuItem>
+        ) : null}
+        {drives.length > 0 ? (
+          <>
+            <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
+              {window.api.platform === 'win32' ? t('Drives') : t('Volumes')}
+            </DropdownMenuLabel>
+            {drives.map((drive) => (
+              <DropdownMenuItem
+                key={drive.path}
+                data-testid={`go-to-drive-${drive.path}`}
+                className="items-start gap-2 text-xs"
+                onSelect={() => onNavigate(drive.path)}
+              >
+                <GoToRow
+                  wrapLabel
+                  icon={<HardDrive className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+                  label={drive.label}
+                  path={drive.path}
+                />
+              </DropdownMenuItem>
+            ))}
+          </>
+        ) : null}
+        {bookmarks.length > 0 || (!isBookmarked && currentPath) ? (
+          <>
+            <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
+              {t('Pinned')}
+            </DropdownMenuLabel>
+            {bookmarks.map((path) => (
+              <DropdownMenuItem
+                key={path}
+                className="items-start gap-2 pr-1 text-xs"
+                onSelect={() => onNavigate(path)}
+              >
+                <GoToRow
+                  icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+                  label={path.split('/').pop() || path}
+                  path={path}
+                />
+                {/* The crossed-out pushpin can read as "delete this folder", so the hint says it
                   unpins. Its hover fill is surface-control-hover, a step darker than the muted fill
                   the highlighted row already shows, so the square reads as its own control.
                   stopPropagation keeps the click from selecting the row (which would navigate and
                   close the menu) — unpinning leaves the list open so several can go at once. */}
-              <Hint label="Remove from Go to (the folder is not deleted)">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onRemoveBookmark(path)
-                  }}
-                  aria-label={`Unpin ${path}`}
-                  className="flex size-6 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors hover:bg-surface-control-hover hover:text-text-000"
-                >
-                  <PinOff className="size-3.5" strokeWidth={1.5} />
-                </button>
-              </Hint>
-            </DropdownMenuItem>
-          ))}
-          {/* The pin action belongs to the Pinned category and always closes it. */}
-          {!isBookmarked && currentPath ? (
-            <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={onPinCurrent}>
-              <GoToRow
-                icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-                label="Pin current folder"
-                path={currentPath}
-              />
-            </DropdownMenuItem>
-          ) : null}
-        </>
-      ) : null}
-    </DropdownMenuContent>
-  </DropdownMenu>
-)
+                <Hint label={t('Remove from Go to (the folder is not deleted)')}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoveBookmark(path)
+                    }}
+                    aria-label={t('Unpin {{path}}', { path })}
+                    className="flex size-6 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors hover:bg-surface-control-hover hover:text-text-000"
+                  >
+                    <PinOff className="size-3.5" strokeWidth={1.5} />
+                  </button>
+                </Hint>
+              </DropdownMenuItem>
+            ))}
+            {/* The pin action belongs to the Pinned category and always closes it. */}
+            {!isBookmarked && currentPath ? (
+              <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={onPinCurrent}>
+                <GoToRow
+                  icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+                  label={t('Pin current folder')}
+                  path={currentPath}
+                />
+              </DropdownMenuItem>
+            ) : null}
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 // Directory listing table: dirs first, single-click opens (navigate for dirs, preview tab for files).
 const LocalListing = ({
@@ -265,10 +270,12 @@ const LocalListing = ({
   state: BrowserState
   onOpenEntry: (entry: LocalDirEntry) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   if (state.kind === 'loading') {
     return (
       <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-        Loading…
+        {t('Loading…')}
       </div>
     )
   }
@@ -277,7 +284,7 @@ const LocalListing = ({
     // text color and echo the path in mono underneath, rather than shouting the raw errno in red.
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-        <p className="text-xs text-text-100">{state.problem.summary}</p>
+        <p className="text-xs text-text-100">{t(state.problem.summary)}</p>
         {state.problem.path ? (
           <p className="max-w-full break-all font-mono text-[11px] text-text-300">
             {state.problem.path}
@@ -290,15 +297,15 @@ const LocalListing = ({
     <div className="min-h-0 flex-1 overflow-auto">
       {state.truncated ? (
         <div className="bg-amber-50 px-4 py-1.5 text-[11px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-          Showing the first entries only — this directory is very large.
+          {t('Showing the first entries only — this directory is very large.')}
         </div>
       ) : null}
       {state.entries.length === 0 ? (
         <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-          Empty folder
+          {t('Empty folder')}
         </div>
       ) : (
-        <ul role="listbox" aria-label="Directory contents">
+        <ul role="listbox" aria-label={t('Directory contents')}>
           {state.entries.map((entry) => (
             <li key={entry.name} className="border-b border-border-300/40 last:border-b-0">
               <button
@@ -341,6 +348,8 @@ export const LocalFileBrowser = ({
   // requests observable even for the same path; requests for the current directory are no-ops.
   requestedPath?: { path: string; nonce: number }
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [roots, setRoots] = useState<LocalRoots | null>(null)
   const [drives, setDrives] = useState<LocalDrive[]>([])
   const [cwd, setCwd] = useState('')
@@ -497,14 +506,14 @@ export const LocalFileBrowser = ({
   return (
     <div
       className="mx-4 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border-300/50 bg-bg-000"
-      aria-label="Local file browser"
+      aria-label={t('Local file browser')}
     >
       {/* Toolbar */}
       <TooltipProvider delayDuration={200}>
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border-300/40 px-3 py-1.5">
           {/* One arrow only: it goes to the parent directory. A separate up-arrow beside it read as a
               duplicate of the same action, so this is the single way to move a level out. */}
-          <Hint label="Go to the parent folder">
+          <Hint label={t('Go to the parent folder')}>
             <Button
               type="button"
               variant="ghost"
@@ -512,7 +521,7 @@ export const LocalFileBrowser = ({
               className={TOOLBAR_ICON_BUTTON}
               disabled={isAtRoot}
               onClick={() => void navigate(parentLocalPath(currentPath, window.api.platform))}
-              aria-label="Go to parent directory"
+              aria-label={t('Go to parent directory')}
             >
               <ArrowLeft className="size-4" strokeWidth={TOOLBAR_ICON_STROKE} />
             </Button>
@@ -539,25 +548,27 @@ export const LocalFileBrowser = ({
               onBlur={handleAddressSubmit}
               spellCheck={false}
               className="w-full rounded-md border border-border bg-bg-000 px-2 py-1 font-mono text-xs text-text-100 outline-none focus:text-text-000 focus:ring-2 focus:ring-ring/50"
-              aria-label="Directory path"
+              aria-label={t('Directory path')}
             />
           </form>
 
-          <Hint label="Re-read this folder from disk">
+          <Hint label={t('Re-read this folder from disk')}>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
               onClick={() => void navigate(currentPath)}
-              aria-label="Refresh directory"
+              aria-label={t('Refresh directory')}
             >
               <RefreshCw className="size-4" strokeWidth={TOOLBAR_ICON_STROKE} />
             </Button>
           </Hint>
           <Hint
             label={
-              isBookmarked ? 'Unpin this folder from Go to' : 'Pin this folder to the Go to menu'
+              isBookmarked
+                ? t('Unpin this folder from Go to')
+                : t('Pin this folder to the Go to menu')
             }
           >
             <Button
@@ -566,7 +577,7 @@ export const LocalFileBrowser = ({
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
               onClick={() => void handleToggleBookmark()}
-              aria-label={isBookmarked ? 'Remove bookmark' : 'Pin this folder'}
+              aria-label={isBookmarked ? t('Remove bookmark') : t('Pin this folder')}
             >
               {/* Pushpin for the action in both directions: PinOff (crossed-out pin) is what a click
                   will do next, so a pinned folder reads as "click to unpin". */}

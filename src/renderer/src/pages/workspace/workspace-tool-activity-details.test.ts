@@ -497,6 +497,23 @@ describe('workspace tool activity details', () => {
     expect(details?.metaLabel).toBe('conda · restart needed')
   })
 
+  it('shows the discarded byte count when a manage_packages log was truncated', () => {
+    const result = {
+      ok: true,
+      needsRestart: false,
+      method: 'pip',
+      logTruncation: { droppedBytes: 1536 }
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__manage_packages',
+      toolKind: 'other',
+      rawInput: { language: 'python', packages: ['numpy'] },
+      toolContent: [{ type: 'content', content: { type: 'text', text: JSON.stringify(result) } }]
+    })
+
+    expect(buildToolActivityDetails(activity)?.metaLabel).toBe('pip · log truncated (2 KB dropped)')
+  })
+
   it('shows verified requested-package version changes from manage_packages', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__manage_packages',

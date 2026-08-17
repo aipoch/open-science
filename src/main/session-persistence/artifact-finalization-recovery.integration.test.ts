@@ -109,14 +109,14 @@ describe('artifact finalization startup recovery', () => {
 
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -133,7 +133,9 @@ describe('artifact finalization startup recovery', () => {
       where: { id: version.versionId },
       data: {
         executionSnapshotJson: '{"schemaVersion":2}',
-        executionSnapshotChecksum: '0'.repeat(64)
+        executionSnapshotChecksum: '0'.repeat(64),
+        executionSnapshotStorageKey: 'corrupt-execution.json',
+        executionSnapshotSchemaVersion: 2
       }
     })
     const coordinator = new SessionPersistenceCoordinator(
@@ -160,14 +162,14 @@ describe('artifact finalization startup recovery', () => {
     ).resolves.not.toHaveProperty('messageId')
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([expect.objectContaining({ name: 'result.png' })])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -197,7 +199,7 @@ describe('artifact finalization startup recovery', () => {
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -226,7 +228,7 @@ describe('artifact finalization startup recovery', () => {
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -274,7 +276,7 @@ describe('artifact finalization startup recovery', () => {
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -283,14 +285,17 @@ describe('artifact finalization startup recovery', () => {
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     ).resolves.toMatchObject({ state: 'pending', messageId: null })
 
-    // Even with unavailable producer evidence, a persisted snapshot-associated field must not be
+    // Even with unavailable producer evidence, a corrupt persisted snapshot bundle must not be
     // interpreted as the legitimate no-producer case.
     await client.artifactVersion.update({
       where: { id: version.versionId },
       data: {
         evidenceJson: persisted.evidenceJson,
         evidenceChecksum: persisted.evidenceChecksum,
-        executionSnapshotChecksum: '0'.repeat(64)
+        executionSnapshotJson: '{}',
+        executionSnapshotChecksum: '0'.repeat(64),
+        executionSnapshotStorageKey: 'missing-execution.json',
+        executionSnapshotSchemaVersion: 2
       }
     })
     await coordinator.loadAll()
@@ -306,7 +311,10 @@ describe('artifact finalization startup recovery', () => {
       data: {
         evidenceJson: malformedEvidenceJson,
         evidenceChecksum: createHash('sha256').update(malformedEvidenceJson).digest('hex'),
-        executionSnapshotChecksum: null
+        executionSnapshotJson: null,
+        executionSnapshotChecksum: null,
+        executionSnapshotStorageKey: null,
+        executionSnapshotSchemaVersion: null
       }
     })
     await coordinator.loadAll()
@@ -346,7 +354,7 @@ describe('artifact finalization startup recovery', () => {
     ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -358,14 +366,14 @@ describe('artifact finalization startup recovery', () => {
     expect(retried.sessions[0].messages[1].artifactIds).toEqual([version.versionId])
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -483,14 +491,14 @@ describe('artifact finalization startup recovery', () => {
 
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -502,7 +510,7 @@ describe('artifact finalization startup recovery', () => {
     const { provenance, version, context } = await prepareRecovery(compatibility)
     await finalizeAndLinkVersion({ provenance, version, context })
     const [pending] = await compatibility.listPendingRunFiles({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sessionId: STORAGE_SESSION_ID,
       runId: RUN_ID
     })
@@ -511,7 +519,7 @@ describe('artifact finalization startup recovery', () => {
     await rename(pending.path, join(messageDirectory, pending.name))
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -529,7 +537,7 @@ describe('artifact finalization startup recovery', () => {
 
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -562,14 +570,14 @@ describe('artifact finalization startup recovery', () => {
     ).toEqual([version.versionId])
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -621,7 +629,7 @@ describe('artifact finalization startup recovery', () => {
     await coordinator.loadAll()
 
     await compatibility.writePendingFile({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sessionId: STORAGE_SESSION_ID,
       runId: RUN_ID,
       filename: 'second.png',
@@ -858,7 +866,7 @@ describe('artifact finalization startup recovery', () => {
       promptMessageId: prompt.id
     }
     await compatibility.writePendingFile({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sessionId: STORAGE_SESSION_ID,
       runId: RUN_ID,
       filename: 'result.png',
@@ -875,7 +883,7 @@ describe('artifact finalization startup recovery', () => {
       filename: 'result.png'
     })
     await compatibility.prepareRunFinalization({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sourceSessionId: STORAGE_SESSION_ID,
       sessionId: SESSION_ID,
       runId: RUN_ID,

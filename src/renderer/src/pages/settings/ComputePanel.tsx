@@ -1,5 +1,6 @@
 import { Folder, Info, Plus, Server, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ComputeHost } from '../../../../shared/compute'
 import { Badge } from '@/components/ui/badge'
@@ -7,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
+import { probedLabel } from './compute-probed-label'
 import { FileBrowserModal } from './FileBrowserModal'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
@@ -16,22 +18,6 @@ export type ComputeView =
 
 type ComputePanelProps = {
   onNavigate: (view: ComputeView) => void
-}
-
-// Renders a "probed X ago" relative label from an ISO timestamp. Placeholder chrome for Phase 1 — the
-// probe itself lands in a later issue, so an un-probed host shows nothing here.
-const probedLabel = (host: ComputeHost): string | null => {
-  const probedAt = host.probeResult?.probedAt
-  if (!probedAt) return null
-  const then = Date.parse(probedAt)
-  if (Number.isNaN(then)) return null
-  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000))
-  if (seconds < 60) return 'probed just now'
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `probed ${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `probed ${hours} h ago`
-  return `probed ${Math.round(hours / 24)} d ago`
 }
 
 // One host row. Status badge / icon tint are driven by the (later-issue) probe snapshot; with no probe
@@ -47,13 +33,14 @@ const HostCard = ({
   onDelete: () => void
   onBrowse: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const probed = host.probeResult
   const status: 'connected' | 'failed' | 'none' = probed
     ? probed.ok
       ? 'connected'
       : 'failed'
     : 'none'
-  const probed_ago = probedLabel(host)
+  const probedAgo = probedLabel(host)
 
   return (
     <div
@@ -81,10 +68,12 @@ const HostCard = ({
             {host.providerId}
           </span>
         </span>
-        {probed_ago ? (
-          <span className="mt-0.5 block font-mono text-xs text-muted-foreground">{probed_ago}</span>
+        {probedAgo ? (
+          <span className="mt-0.5 block font-mono text-xs text-muted-foreground">
+            {t(probedAgo.key, { count: probedAgo.count })}
+          </span>
         ) : (
-          <span className="mt-0.5 block text-xs text-muted-foreground">Not probed yet</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">{t('Not probed yet')}</span>
         )}
       </button>
 
@@ -101,8 +90,8 @@ const HostCard = ({
                 onClick={onBrowse}
                 aria-label={
                   status === 'connected'
-                    ? `Browse files on ${host.displayName}`
-                    : 'Host must be probed and reachable to browse files'
+                    ? t('Browse files on {{name}}', { name: host.displayName })
+                    : t('Host must be probed and reachable to browse files')
                 }
                 className={cn(
                   'shrink-0',
@@ -116,7 +105,9 @@ const HostCard = ({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            {status === 'connected' ? 'Browse files' : 'Probe the host first to enable browsing'}
+            {status === 'connected'
+              ? t('Browse files')
+              : t('Probe the host first to enable browsing')}
           </TooltipContent>
         </Tooltip>
         <Tooltip>
@@ -126,27 +117,27 @@ const HostCard = ({
               variant="ghost"
               size="icon-sm"
               onClick={onDelete}
-              aria-label={`Remove ${host.displayName}`}
+              aria-label={t('Remove {{name}}', { name: host.displayName })}
               className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Remove host</TooltipContent>
+          <TooltipContent>{t('Remove host')}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
 
       {status === 'connected' ? (
         <Badge className="shrink-0 bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">
-          Connected
+          {t('Connected')}
         </Badge>
       ) : status === 'failed' ? (
         <Badge className="shrink-0 bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground">
-          Probe failed
+          {t('Probe failed')}
         </Badge>
       ) : (
         <Badge variant="outline" className="shrink-0">
-          Not probed
+          {t('Not probed')}
         </Badge>
       )}
     </div>
@@ -154,6 +145,7 @@ const HostCard = ({
 }
 
 export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Element {
+  const { t } = useTranslation()
   const hosts = useComputeStore((state) => state.hosts)
   const isLoaded = useComputeStore((state) => state.isLoaded)
   const loadError = useComputeStore((state) => state.loadError)
@@ -161,7 +153,9 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
   const deleteHost = useComputeStore((state) => state.deleteHost)
 
   // A short-lived confirmation message shown after a delete (the prototype's "confirmation toast").
-  const [toast, setToast] = useState<string | undefined>(undefined)
+  // Stores the removed host's name rather than a rendered sentence, so a language switch inside the
+  // 4-second window re-renders it in the new language instead of freezing the old one.
+  const [removedName, setRemovedName] = useState<string | undefined>(undefined)
 
   // File browser modal state
   const [browserProviderId, setBrowserProviderId] = useState<string | undefined>(undefined)
@@ -171,28 +165,28 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
   }, [loadHosts])
 
   useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(undefined), 4000)
+    if (!removedName) return
+    const timer = window.setTimeout(() => setRemovedName(undefined), 4000)
     return () => window.clearTimeout(timer)
-  }, [toast])
+  }, [removedName])
 
   const handleDelete = async (host: ComputeHost): Promise<void> => {
     await deleteHost(host.providerId)
-    setToast(`Removed ${host.displayName}.`)
+    setRemovedName(host.displayName)
   }
 
   return (
     <div className="p-5">
       <div className="mb-5 flex items-start gap-2 rounded-xl bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-        <span>Connect where heavy compute runs — your own servers over SSH.</span>
+        <span>{t('Connect where heavy compute runs — your own servers over SSH.')}</span>
       </div>
 
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-base font-medium text-foreground">SSH hosts</h3>
+          <h3 className="text-base font-medium text-foreground">{t('SSH hosts')}</h3>
           <p className="mt-0.5 max-w-2xl text-sm leading-5 text-muted-foreground">
-            Servers, clusters or job submission nodes from your SSH host lists
+            {t('Servers, clusters or job submission nodes from your SSH host lists')}
           </p>
         </div>
         <Button
@@ -202,30 +196,30 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
           onClick={() => onNavigate({ kind: 'add' })}
         >
           <Plus className="size-4" aria-hidden="true" />
-          Add SSH host
+          {t('Add SSH host')}
         </Button>
       </div>
 
-      {toast ? (
+      {removedName ? (
         <p
           role="status"
           aria-live="polite"
           className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground"
         >
-          {toast}
+          {t('Removed {{name}}.', { name: removedName })}
         </p>
       ) : null}
 
       <div className="mt-4 flex flex-col gap-2.5">
         {loadError ? (
           <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-            Couldn&apos;t load hosts: {loadError}
+            {t("Couldn't load hosts: {{message}}", { message: loadError })}
           </p>
         ) : !isLoaded ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">Loading hosts…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">{t('Loading hosts…')}</p>
         ) : hosts.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            No SSH hosts yet. Add one to let Open Science run compute on your servers.
+            {t('No SSH hosts yet. Add one to let Open Science run compute on your servers.')}
           </p>
         ) : (
           hosts.map((host) => (

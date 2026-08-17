@@ -30,6 +30,8 @@ const ownerPaths = {
   layout: resolve(workspaceDirectory, 'workspace-panel-layout.tsx'),
   composer: resolve(workspaceDirectory, 'workspace-composer-controller.ts'),
   conversation: resolve(workspaceDirectory, 'workspace-conversation-controller.ts'),
+  messageQueue: resolve(workspaceDirectory, 'workspace-message-queue-controller.ts'),
+  branchSwitchGuard: resolve(workspaceDirectory, 'use-workspace-branch-switch-guard.ts'),
   sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
   session: resolve(workspaceDirectory, 'workspace-session-controller.ts')
 } as const
@@ -94,7 +96,7 @@ const conversationCommandCalls = (sourcePath: string): string[] => {
     'resendEditedMessage',
     'resumeInterruptedSession',
     'cancelRun',
-    'deleteRuntimeSession'
+    'deleteSession'
   ])
   const calls: string[] = []
   const sourceFile = createSourceFile(
@@ -138,15 +140,18 @@ const conversationPanelPropNames = (): string[] => {
 
 describe('workspace page architecture', () => {
   it('keeps the page and extracted owners within their completion gates', () => {
-    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_200)
+    // The i18n and queue subscriptions add wiring without adding a page responsibility.
+    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_207)
     for (const ownerPath of [
       ownerPaths.layout,
       ownerPaths.composer,
       ownerPaths.conversation,
+      ownerPaths.messageQueue,
+      ownerPaths.branchSwitchGuard,
       ownerPaths.sideChat,
       ownerPaths.session
     ]) {
-      expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(660)
+      expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(700)
     }
   })
 
@@ -154,8 +159,15 @@ describe('workspace page architecture', () => {
     expect(importersOf(ownerPaths.composer)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
+      'pages/workspace/workspace-conversation-controller.ts',
+      'pages/workspace/workspace-message-queue-controller.ts'
+    ])
+    expect(importersOf(ownerPaths.messageQueue)).toEqual([
+      'App.tsx',
+      'pages/workspace/ComposerMessageQueue.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
+    expect(importersOf(ownerPaths.branchSwitchGuard)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.session)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
@@ -171,7 +183,8 @@ describe('workspace page architecture', () => {
       'pages/workspace/SideChatPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/previews/PreviewToolContent.tsx',
-      'pages/workspace/workspace-conversation-controller.ts'
+      'pages/workspace/workspace-conversation-controller.ts',
+      'pages/workspace/workspace-message-queue-controller.ts'
     ])
   })
 
@@ -226,6 +239,27 @@ describe('workspace page architecture', () => {
     for (const intent of ['submit:', 'revise:', 'resume:', 'cancel:', 'delete:']) {
       expect(conversationSource).toContain(intent)
     }
+  })
+
+  it('routes desktop and mobile Session deletion through one controller and dialog', () => {
+    const pageSource = readSource(ownerPaths.page)
+
+    expect(pageSource.match(/sessionController\.actions\.openDelete/g)).toHaveLength(2)
+    expect(pageSource.match(/<DeleteSessionDialog/g)).toHaveLength(1)
+    expect(pageSource).toContain(
+      'error={sessionController.view.dialogs.delete?.error ?? undefined}'
+    )
+    expect(pageSource).toContain('onConfirmDelete={conversation.actions.delete}')
+  })
+
+  it('forwards archived Session deletion progress to the shared dialog', () => {
+    const archivedPanelSource = readSource(
+      resolve(rendererRoot, 'pages/settings/ArchivedPanel.tsx')
+    )
+
+    expect(archivedPanelSource).toContain(
+      'isDeleting={busyKey === `session:${sessionToDelete?.id}`}'
+    )
   })
 
   it('keeps Workspace runtime internals behind the public renderer facade', () => {

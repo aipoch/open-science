@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -35,6 +36,7 @@ const RenameSessionDialog = ({
   onCancel,
   onConfirmRename
 }: RenameSessionDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogRenameDraft = useRetainedDialogValue(session ? renameDraft : undefined) ?? renameDraft
 
   return (
@@ -55,13 +57,13 @@ const RenameSessionDialog = ({
           <form onSubmit={onConfirmRename}>
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
-                <Dialog.Title className={dialogTitleClassName}>Rename session</Dialog.Title>
+                <Dialog.Title className={dialogTitleClassName}>{t('Rename session')}</Dialog.Title>
               </div>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close"
+                aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
                 onClick={onCancel}
               >
@@ -70,19 +72,19 @@ const RenameSessionDialog = ({
             </div>
             <div className={`${dialogBodyClassName} space-y-3`}>
               <Dialog.Description className={dialogDescriptionClassName}>
-                Update the name shown in the session list.
+                {t('Update the name shown in the session list.')}
               </Dialog.Description>
               <label
                 className={`${dialogFormLabelClassName} sr-only`}
                 htmlFor="rename-session-name"
               >
-                Session name
+                {t('Session name')}
               </label>
               <Input
                 id="rename-session-name"
                 value={dialogRenameDraft}
                 onChange={(event) => onRenameDraftChange(event.target.value)}
-                aria-label="Session name"
+                aria-label={t('Session name')}
                 autoFocus
                 className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
               />
@@ -91,13 +93,13 @@ const RenameSessionDialog = ({
               <Button
                 type="button"
                 variant="ghost"
-                className={dialogCancelButtonClassName}
                 onClick={onCancel}
+                className={dialogCancelButtonClassName}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
               <Button type="submit" disabled={dialogRenameDraft.trim().length === 0}>
-                Rename
+                {t('Rename')}
               </Button>
             </div>
           </form>

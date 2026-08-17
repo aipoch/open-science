@@ -9,6 +9,9 @@ import {
   type PreviewFileItem,
   type PreviewToolItem
 } from '@/stores/preview-workbench-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -710,5 +713,81 @@ describe('PreviewPanel', () => {
 
     await act(async () => usePreviewWorkbenchStore.getState().togglePanel())
     expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+  })
+
+  it('collapses the panel full-screen preview after View in context navigates', async () => {
+    const name = 'figure.png'
+    // The managed-artifact identity and a live origin session make View in context actionable.
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        title: name,
+        name,
+        path: `/workspace/${name}`,
+        artifactId: 'artifact-1',
+        sessionId: 'session-1'
+      })
+    )
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-1',
+          name: 'Project One',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
+    const session = (id: string, updatedAt: number): ChatSession => ({
+      id,
+      projectId: 'project-1',
+      title: id,
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      artifacts: [],
+      filesRevision: 1,
+      createdAt: 1,
+      updatedAt
+    })
+    useSessionStore.setState({
+      sessions: [session('session-1', 1), session('session-2', 2)],
+      selectedSessionId: 'session-2'
+    })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-1' })
+    window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      artifacts: {
+        getLineage: vi.fn().mockResolvedValue({
+          artifactId: 'artifact-1',
+          filename: name,
+          originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+          versions: []
+        })
+      }
+    } as unknown as Window['api']
+
+    await renderPanel()
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(`[aria-label="Open full screen preview of ${name}"]`)
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull()
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(`[aria-label="View in context for ${name}"]`)
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+    // The floating preview must step aside so the switched conversation is visible.
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector('[role="tabpanel"]')).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
   })
 })

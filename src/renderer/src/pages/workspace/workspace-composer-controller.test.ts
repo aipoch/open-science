@@ -145,6 +145,61 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
   })
 
+  it('reports a queued-edit conflict without replacing the newer composer draft', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('queued intent')))
+    const queued = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(queued.draftKey, queued.version))
+    act(() => hook.result.current.actions.changeDoc(textDoc('new intent')))
+
+    expect(hook.result.current.lifecycle.restoreFailedSend(queued, true)).toBe(false)
+    expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
+  })
+
+  it('restores an older queued item after later queued drafts leave the composer empty', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('first queued intent')))
+    const first = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(first.draftKey, first.version))
+    act(() => hook.result.current.actions.changeDoc(textDoc('second queued intent')))
+    const second = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(second.draftKey, second.version))
+
+    act(() => expect(hook.result.current.lifecycle.restoreFailedSend(first, true)).toBe(true))
+    expect(hook.result.current.view.doc).toEqual(textDoc('first queued intent'))
+  })
+
+  it('discards queued uploads without changing the current draft version', () => {
+    const uploadApi = uploads()
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('current intent')))
+    const current = hook.result.current.lifecycle.captureSend()
+    act(() =>
+      hook.result.current.lifecycle.discardSnapshot({
+        ...current,
+        attachments: [
+          {
+            id: 'queued-upload',
+            sessionId: '.pending',
+            name: 'queued.txt',
+            originalName: 'queued.txt',
+            path: '/uploads/queued.txt',
+            size: 1
+          }
+        ]
+      })
+    )
+
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/queued.txt' })
+    expect(hook.result.current.lifecycle.captureSend().version).toBe(current.version)
+  })
+
   it('clears a Side chat first prompt only when the captured draft is still current', () => {
     const hook = renderController()
     mounted.push(hook)

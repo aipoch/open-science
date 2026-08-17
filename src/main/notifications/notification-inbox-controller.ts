@@ -46,7 +46,7 @@ type NotificationInboxController = Readonly<{
   markAllRead(throughSequence: number): Promise<void>
   markSessionsRead(sessionIds: readonly string[]): Promise<void>
   markSessionCompletionsRead(sessionIds: readonly string[]): Promise<void>
-  deleteSessions(sessionIds: readonly string[]): Promise<void>
+  invalidateSessions(sessionIds: readonly string[]): Promise<void>
   reconcileSessionCatalog(existingSessionIds: readonly string[]): Promise<void>
   syncViewState(state: UnreadTaskViewState): Promise<void>
   handleAppFocus(): Promise<void>
@@ -228,16 +228,16 @@ export const createNotificationInboxController = (
   const markSessionCompletionsRead = (sessionIds: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markSessionCompletionsRead(sessionIds, now()))
 
-  const deleteSessions = async (sessionIds: readonly string[]): Promise<void> => {
+  const invalidateSessions = async (sessionIds: readonly string[]): Promise<void> => {
     for (const sessionId of sessionIds) {
       const normalized = sessionId.trim()
       if (normalized) deletedSessionIds.add(normalized)
     }
-    await mutate(() => dependencies.repository.deleteSessions(sessionIds))
+    await mutate(() => dependencies.repository.invalidateSessions(sessionIds, now()))
   }
 
   const reconcileSessionCatalog = (existingSessionIds: readonly string[]): Promise<void> =>
-    mutate(() => dependencies.repository.reconcileSessionCatalog(existingSessionIds))
+    mutate(() => dependencies.repository.reconcileSessionCatalog(existingSessionIds, now()))
 
   const syncViewState = async (state: UnreadTaskViewState): Promise<void> => {
     visibleSessionId = state.visibleSessionId?.trim() || undefined
@@ -267,7 +267,7 @@ export const createNotificationInboxController = (
     markAllRead,
     markSessionsRead,
     markSessionCompletionsRead,
-    deleteSessions,
+    invalidateSessions,
     reconcileSessionCatalog,
     syncViewState,
     handleAppFocus,

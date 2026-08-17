@@ -80,7 +80,7 @@ describe('production application command wiring', () => {
       [
         'sessionPersistenceHandlers',
         'reviewRepository, sessionPersistenceHandlers, async (session)',
-        'sessions: sessionPersistenceHandlers'
+        '...sessionPersistenceHandlers'
       ],
       ['artifactHandlers', 'artifactHandlers )', 'artifacts: artifactHandlers'],
       [
@@ -128,9 +128,14 @@ describe('production application command wiring', () => {
     }
 
     expect(dependencyBlock).toContain('projects: projectHandlers')
+    expect(dependencyBlock).toContain(
+      'deleteSession: (request) => sessionDeletionOwner.delete(request)'
+    )
     expect(compact(ipcSource)).toContain(
       "declareElectronAdapter('application-projects', () => registerApplicationCommandElectronAdapter(applicationCommandComposition.electron) )"
     )
+    expect(ipcSource).not.toContain('registerSessionDeletionIpcHandler')
+    expect(ipcSource).not.toContain("declareElectronAdapter('session-deletion'")
     expect(ipcSource).not.toContain('registerProjectIpcHandlers')
     expect(legacyAdapterBlock).toContain('registerPreviewStateIpcHandlers(previewStateRepository)')
 
@@ -197,6 +202,16 @@ describe('production application command wiring', () => {
     expect(runtimeSource).toContain("await modules.dispose('rollback')")
   })
 
+  it('registers startup network IPC before creating the first renderer window', () => {
+    const preWindowStartup = compact(
+      between(indexSource, 'await app.whenReady()', 'const startupWindow = webMode.headless')
+    )
+
+    expect(preWindowStartup).toContain('registerNetworkIpcHandlers()')
+    expect(legacyAdapterBlock).not.toContain('registerNetworkIpcHandlers()')
+    expect(occurrences(indexSource + ipcSource, 'registerNetworkIpcHandlers()')).toBe(1)
+  })
+
   it('late-binds the unique Remote Access owner and passes only narrow views to Web and Task', () => {
     const startup = compact(
       between(
@@ -219,7 +234,9 @@ describe('production application command wiring', () => {
     expect(webServiceSource).toContain(
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
-    expect(webServiceSource).toContain('{ commands: applicationCommands.task, agent: taskAgent }')
+    expect(webServiceSource).toContain(
+      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls }'
+    )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
     expect(readSource('src/main/tasks/task-runner.ts')).not.toContain('applicationCommands')

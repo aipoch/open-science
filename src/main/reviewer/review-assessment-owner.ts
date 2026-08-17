@@ -46,6 +46,7 @@ type CommonAssessmentOptions = {
   onReviewUpdate?: (review: ReviewWithChecks) => void
   reviewerTimeoutMs: number
   reviewerMaxUpdates: number
+  abortSignal?: AbortSignal
 }
 
 type InitialAssessmentOptions = CommonAssessmentOptions & {
@@ -78,6 +79,11 @@ const incompleteReviewMessage = (rejectedToolCalls: number): string =>
 
 const REVIEWER_BRIDGE_SCOPE_ERROR =
   'Reviewer request was not constrained to the reviewer-only tool scope.'
+
+const REVIEWER_PROTOCOL_RECOVERY_PROMPT =
+  'Your previous turn ended without calling submit_findings. Continue using only the provided ' +
+  'Reviewer MCP tools: call read_turn, then call submit_findings exactly once. Do not use any ' +
+  'other tools or write assistant prose.'
 
 type ReviewerCleanupResult = {
   rejectedToolCalls: number
@@ -145,7 +151,8 @@ export const runReviewAssessment = async (
     model,
     onReviewUpdate,
     reviewerTimeoutMs,
-    reviewerMaxUpdates
+    reviewerMaxUpdates,
+    abortSignal
   } = options
   const trackedChecks = options.mode === 'tracked' ? options.trackedChecks : []
 
@@ -170,7 +177,7 @@ export const runReviewAssessment = async (
     })
   )
 
-  const runningReview: ReviewWithChecks = { ...review, checks: [] }
+  const runningReview: ReviewWithChecks = { ...review, checks: [], submittedChecks: [] }
   onReviewUpdate?.(runningReview)
   if (options.mode === 'initial') options.onStarted?.()
 
@@ -237,11 +244,27 @@ export const runReviewAssessment = async (
     reviewerSession.prompt([{ type: 'text', text: reviewerPromptText }])
     const stopReason = await driveReviewerToStop(
       reviewerSession,
-      { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates },
+      { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
       { onUpdate: (entry) => capturedLog.push(entry) }
     )
     if (options.mode === 'initial') {
       log.info('reviewer session stopped', { reviewId: review.id, stopReason })
+    }
+    if (stopReason === 'end_turn' && !checksSubmitted && !mcpServer.submissionAttempted) {
+      log.warn('reviewer protocol incomplete; requesting one recovery turn', {
+        reviewId: review.id,
+        stopReason
+      })
+      reviewerSession.prompt([{ type: 'text', text: REVIEWER_PROTOCOL_RECOVERY_PROMPT }])
+      const recoveryStopReason = await driveReviewerToStop(
+        reviewerSession,
+        { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
+        { onUpdate: (entry) => capturedLog.push(entry) }
+      )
+      log.info('reviewer recovery session stopped', {
+        reviewId: review.id,
+        stopReason: recoveryStopReason
+      })
     }
   } catch (error) {
     reviewerSessionFailed = true
@@ -282,7 +305,7 @@ export const runReviewAssessment = async (
         ...(includeReviewerLog ? { reviewerLog: capturedLog } : {})
       })
     )
-    const errorReview: ReviewWithChecks = { ...review, checks: [] }
+    const errorReview: ReviewWithChecks = { ...review, checks: [], submittedChecks: [] }
     onReviewUpdate?.(errorReview)
     return { review: errorReview, submittedChecks: [] }
   }

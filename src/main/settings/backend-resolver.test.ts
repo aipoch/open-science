@@ -239,7 +239,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveOpencodeExecutable: vi.fn(async () => '/runtime/opencode'),
     resolveCodexExecutable: vi.fn(async () => '/runtime/codex-acp'),
     probeCodexNativeVersion: vi.fn(async () => '0.144.6'),
-    provisionClaudeRuntimeConfig: vi.fn(async () => '/storage/claude-config'),
+    provisionClaudeRuntimeConfig: vi.fn(async () => ({
+      privateProfileDir: '/storage/claude-private',
+      settingsPath: '/storage/claude-private/settings.json',
+      privateSettings: {
+        disableBundledSkills: true,
+        permissions: { deny: ['Read(//storage/claude-private/**)'] }
+      },
+      skillProjection: {
+        root: '/storage/runtime-support/agent-skills/claude/v1/revision-1',
+        revision: 'revision-1'
+      }
+    })),
     materializeAgentSkills: vi.fn(
       async () =>
         options.materializedConnectorSkillNames ??
@@ -297,6 +308,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     connectors,
     storageRoot: '/storage',
     userClaudeDir: '/user/.claude',
+    skillRuntimeMcpEntryPath: '/app/main.js',
     readFrameworkOverride,
     createResponsesBridge,
     createNativeResponsesProxy,
@@ -543,6 +555,59 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     )
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
   })
+
+  it.each([
+    {
+      providerType: 'claude-shared' as const,
+      expectedSettings: expect.objectContaining({
+        disableBundledSkills: true,
+        permissions: { deny: ['Read(//storage/claude-private/**)'] }
+      })
+    },
+    { providerType: 'claude-isolated' as const, expectedSettings: undefined },
+    {
+      providerType: 'custom' as const,
+      expectedSettings: expect.objectContaining({
+        skipWebFetchPreflight: true,
+        permissions: { ask: ['WebFetch'] }
+      })
+    }
+  ])(
+    'mounts the external canonical Skill projection read-only for $providerType Claude sessions',
+    async ({ providerType, expectedSettings }) => {
+      const provider: StoredProvider = {
+        ...makeStoredProvider('claude-provider'),
+        type: providerType
+      }
+      const harness = makeHarness({
+        settings: makeSettings({
+          providers: [provider],
+          activeProviderId: provider.id,
+          activeModel: provider.model
+        })
+      })
+
+      const backend = await harness.resolver.resolveActiveBackend()
+      const projectionRoot = '/storage/runtime-support/agent-skills/claude/v1/revision-1'
+
+      expect(backend.sessionOptions).not.toHaveProperty('plugins')
+      expect(backend.sessionOptions).toMatchObject({
+        additionalDirectories: [projectionRoot],
+        sandbox: {
+          filesystem: {
+            allowRead: [projectionRoot],
+            denyWrite: [projectionRoot]
+          }
+        }
+      })
+      if (expectedSettings === undefined) {
+        expect(backend.sessionOptions).not.toHaveProperty('settings')
+      } else {
+        expect(backend.sessionOptions).toHaveProperty('settings', expectedSettings)
+      }
+      expect(backend.sessionOptions).not.toHaveProperty('strictPluginOnlyCustomization')
+    }
+  )
 
   it('leaves application prompt appends to the Claude session presentation owner', async () => {
     const harness = makeHarness()

@@ -324,6 +324,17 @@ describe('Compute service architecture', () => {
     expect(backgroundProjectRecovery).toBeGreaterThan(backgroundOrphanRecovery)
   })
 
+  it('awaits Compute Job barrier rollback when a new Project deletion aborts', () => {
+    const source = readSource(computePaths.mainIpc)
+    const abortStart = source.indexOf('abortProjectDeletion: async (projectId) => {')
+    const abortEnd = source.indexOf('const detectArchiveBlockingSessions', abortStart)
+    const abortSource = source.slice(abortStart, abortEnd)
+
+    expect(abortStart).toBeGreaterThan(-1)
+    expect(abortEnd).toBeGreaterThan(abortStart)
+    expect(abortSource).toContain('await computeJobDeletionPort.abortProjectJobDeletion(projectId)')
+  })
+
   it('treats unreadable Session authority as unknown during Compute Job recovery', () => {
     const source = readSource(computePaths.mainIpc)
     const livenessStart = source.indexOf('const isComputeJobOwnerLive')

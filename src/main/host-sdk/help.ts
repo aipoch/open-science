@@ -1,25 +1,35 @@
-const HOST_SDK_SUBAGENT_OPERATION_IDS = [
-  'host.children',
-  'host.collect',
-  'host.delegate',
-  'host.messageReceipt',
-  'host.resolveMessage',
-  'host.sendFrameMessage',
-  'host.stopChild',
-  'host.submitOutput'
-] as const
+import {
+  HOST_CAPABILITY_OPERATION_KEYS,
+  type HostCapabilityOperationKey
+} from './capability-projection'
+
+const HOST_SDK_SUBAGENT_OPERATION_IDS = HOST_CAPABILITY_OPERATION_KEYS.map(
+  (operation) => `host.${operation}` as const
+) as readonly `host.${HostCapabilityOperationKey}`[]
 const HOST_SDK_OPERATION_IDS = Object.freeze(
-  [...HOST_SDK_SUBAGENT_OPERATION_IDS, 'host.viewImage'].sort()
+  [
+    ...HOST_SDK_SUBAGENT_OPERATION_IDS,
+    'host.currentModel',
+    'host.llm',
+    'host.listModels',
+    'host.sessions',
+    'host.viewImage'
+  ].sort()
 )
 
-type HostSdkSubagentOperation =
-  (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number] extends `host.${infer Operation}`
-    ? Operation
-    : never
+type HostSdkSubagentOperation = HostCapabilityOperationKey
 
 type HostSdkHelpContext = Readonly<{
   callerRole: 'main' | 'delegate'
-  capabilities: Readonly<Record<HostSdkSubagentOperation, boolean> & { viewImage?: boolean }>
+  capabilities: Readonly<
+    Record<HostSdkSubagentOperation, boolean> & {
+      currentModel?: boolean
+      llm?: boolean
+      listModels?: boolean
+      sessions?: boolean
+      viewImage?: boolean
+    }
+  >
 }>
 
 type HostSdkAvailability =
@@ -686,7 +696,7 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         type: '{ versionId: string } | { path: string }',
         required: true,
         description:
-          'Artifact or Upload Version in the current Project, or current-Session relative workspace path.'
+          'Artifact or Upload Version in the current Project, or a path relative to the current execution workspace. For a generated file, pass the same relative path used to save it.'
       }
     ]
   },
@@ -740,20 +750,276 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       : { status: 'unavailable', reason: 'host.viewImage requires a certified visual route.' }
 }
 
+const CURRENT_MODEL_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.currentModel',
+  path: 'host.currentModel',
+  aliases: ['currentModel'],
+  summary: "Return the calling Session's exact current model id.",
+  call_forms: [{ signature: 'await host.currentModel()', accepts: 'no_arguments' }],
+  request: NO_OPTIONS,
+  options: NO_OPTIONS,
+  returns: { type: 'string', description: 'Exact model id for the token-bound Session.' },
+  constraints: [
+    'JavaScript control REPL only; caller-supplied Session identity is never accepted.',
+    'Fails when the live Session backend cannot establish an exact model id.'
+  ],
+  examples: [{ title: 'Inspect the Session model', code: 'await host.currentModel()' }],
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.currentModel
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: 'The calling Session model is unavailable.' }
+}
+
+const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.llm',
+  path: 'host.llm',
+  aliases: ['llm'],
+  summary: 'Run bounded, one-shot, tool-less inference through the active Host LLM backend.',
+  call_forms: [{ signature: 'await host.llm(request, options?)', accepts: 'request_options' }],
+  request: {
+    accepts: ['prompt_string', 'exact_prompt_object', 'request_array'],
+    fields: [
+      {
+        name: 'prompt',
+        type: 'string',
+        required: true,
+        description: 'Non-empty prompt; an object request accepts no other fields.'
+      }
+    ]
+  },
+  options: {
+    fields: [
+      {
+        name: 'maxConcurrency',
+        type: 'integer',
+        required: false,
+        default: 2,
+        range: '1..4',
+        description: 'Batch-only concurrency bound.'
+      }
+    ]
+  },
+  returns: {
+    mirrorsInput: true,
+    success_fields: [
+      { name: 'text', type: 'string', required: true, description: 'Generated text.' },
+      { name: 'model', type: 'string', required: true, description: 'Observed model id.' },
+      {
+        name: 'stopReason',
+        type: 'string',
+        required: true,
+        description: 'end_turn, max_tokens, max_turn_requests, refusal, or cancelled.'
+      },
+      {
+        name: 'usage',
+        type: 'object',
+        required: false,
+        description: 'Provider-neutral camelCase token usage when available.'
+      }
+    ],
+    usage_fields: [
+      {
+        name: 'inputTokens',
+        type: 'integer',
+        required: true,
+        description: 'Non-negative input-token count.'
+      },
+      {
+        name: 'cacheTokens',
+        type: 'integer',
+        required: true,
+        description: 'Non-negative aggregate cache-token count.'
+      },
+      {
+        name: 'outputTokens',
+        type: 'integer',
+        required: true,
+        description: 'Non-negative output-token count.'
+      },
+      {
+        name: 'cachedReadTokens',
+        type: 'integer',
+        required: false,
+        description: 'Non-negative cache-read token count when available.'
+      },
+      {
+        name: 'cachedWriteTokens',
+        type: 'integer',
+        required: false,
+        description: 'Non-negative cache-write token count when available.'
+      },
+      {
+        name: 'turnCount',
+        type: 'integer',
+        required: false,
+        description: 'Positive provider-turn count when available.'
+      }
+    ],
+    batch_error_fields: [
+      { name: 'error', type: 'string', required: true, description: 'Public per-item failure.' }
+    ]
+  },
+  constraints: [
+    'JavaScript control REPL only; no caller-supplied model, tools, files, network, or system prompt.',
+    'Options are accepted only for batch calls; batches preserve request order and item count.',
+    'Each prompt is limited to 64 KiB; a batch is limited to 32 items and 512 KiB.'
+  ],
+  examples: [
+    { title: 'One-shot inference', code: "await host.llm('Summarize the findings.')" },
+    {
+      title: 'Bounded fan-out',
+      code: "await host.llm(['Classify A.', 'Classify B.'], { maxConcurrency: 2 })"
+    }
+  ],
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.llm
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: 'The active Host LLM route is unavailable.' }
+}
+
+const LIST_MODELS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.listModels',
+  path: 'host.listModels',
+  aliases: ['listModels'],
+  summary: 'List configured models for the current Host LLM Provider and framework.',
+  call_forms: [{ signature: 'await host.listModels()', accepts: 'no_arguments' }],
+  request: NO_OPTIONS,
+  options: NO_OPTIONS,
+  returns: {
+    type: 'string[]',
+    description: 'Stable-sorted, deduplicated, frozen model ids.'
+  },
+  constraints: [
+    'Uses the existing configured and validated catalog; never refreshes over the network.',
+    'Does not merge model ids across Providers.'
+  ],
+  examples: [{ title: 'Inspect Host LLM models', code: 'await host.listModels()' }],
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.listModels
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: 'The active Host LLM model catalog is unavailable.' }
+}
+
+const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.sessions',
+  path: 'host.sessions',
+  aliases: ['sessions'],
+  summary: 'List or inspect read-only Session diagnostics in the current Project.',
+  call_forms: [
+    { signature: 'await host.sessions.list(options?)', accepts: 'optional_list_options' },
+    { signature: 'await host.sessions.inspect(sessionId)', accepts: 'exact_session_id' }
+  ],
+  request: {
+    fields: [
+      {
+        name: 'sessionId',
+        type: 'string',
+        required: true,
+        when: 'inspect',
+        description: 'Exact Session id in the token-owned current Project.'
+      }
+    ]
+  },
+  options: {
+    fields: [
+      {
+        name: 'archived',
+        type: "'exclude' | 'include' | 'only'",
+        required: false,
+        default: 'exclude',
+        description: 'List-only archive filter.'
+      },
+      {
+        name: 'search',
+        type: 'string',
+        required: false,
+        description: 'Fuzzy title or exact Session id match.'
+      },
+      {
+        name: 'cursor',
+        type: 'string',
+        required: false,
+        description: 'List-only cursor from the same filters and snapshot.'
+      },
+      {
+        name: 'limit',
+        type: 'integer',
+        required: false,
+        default: 20,
+        range: '1..100',
+        description: 'Maximum Sessions returned by list.'
+      }
+    ]
+  },
+  returns: {
+    type: 'SessionDiagnostic | SessionDiagnosticPage',
+    list_fields: [
+      { name: 'totalCount', type: 'integer', required: true, description: 'Total matches.' },
+      { name: 'nextCursor', type: 'string', required: false, description: 'Next page.' },
+      { name: 'sessions', type: 'SessionDiagnostic[]', required: true, description: 'Page.' }
+    ],
+    session_fields: [
+      { name: 'sessionId', type: 'string', required: true, description: 'Exact Session id.' },
+      { name: 'title', type: 'string', required: true, description: 'Durable title.' },
+      { name: 'status', type: 'string', required: true, description: 'Durable Session status.' },
+      { name: 'createdAt', type: 'string', required: true, description: 'ISO timestamp.' },
+      { name: 'updatedAt', type: 'string', required: true, description: 'ISO timestamp.' },
+      { name: 'runtime', type: 'object', required: true, description: 'Bounded live evidence.' },
+      {
+        name: 'activeConversation',
+        type: 'object',
+        required: false,
+        description: 'Frame, Branch, and message-count navigation metadata.'
+      },
+      {
+        name: 'latestObservation',
+        type: 'object',
+        required: false,
+        description: 'Latest bounded runtime observation.'
+      }
+    ]
+  },
+  constraints: [
+    'Main JavaScript control REPL only; Project scope comes from the session-bound token.',
+    'Read-only and metadata-only; use host.frames for transcript content and Branch traversal.',
+    'Live runtime fields are current evidence, not inferred historical state.'
+  ],
+  examples: [
+    { title: 'List recent Sessions', code: 'await host.sessions.list({ limit: 20 })' },
+    { title: 'Inspect one Session', code: 'await host.sessions.inspect(sessionId)' }
+  ],
+  resolveAvailability: ({ callerRole, capabilities }) =>
+    callerRole === 'delegate'
+      ? { status: 'unavailable', reason: 'host.sessions is available only to Main.' }
+      : capabilities.sessions
+        ? { status: 'available' }
+        : { status: 'unavailable', reason: 'host.sessions is not provisioned for this Session.' }
+}
+
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   CHILDREN_DESCRIPTOR,
   COLLECT_DESCRIPTOR,
+  CURRENT_MODEL_DESCRIPTOR,
   DELEGATE_DESCRIPTOR,
+  LLM_DESCRIPTOR,
+  LIST_MODELS_DESCRIPTOR,
   MESSAGE_RECEIPT_DESCRIPTOR,
   RESOLVE_MESSAGE_DESCRIPTOR,
   SEND_FRAME_MESSAGE_DESCRIPTOR,
+  SESSIONS_DESCRIPTOR,
   STOP_CHILD_DESCRIPTOR,
   SUBMIT_OUTPUT_DESCRIPTOR,
   VIEW_IMAGE_DESCRIPTOR
 ]
 
 const registeredOperationIds = [...OPERATION_DESCRIPTORS]
-  .filter(({ id }) => id !== 'host.viewImage')
+  .filter(({ id }) =>
+    HOST_SDK_SUBAGENT_OPERATION_IDS.includes(id as (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number])
+  )
   .map(({ id }) => id)
   .sort() as (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number][]
 if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_OPERATION_IDS)) {
@@ -761,7 +1027,7 @@ if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_
 }
 
 const MAX_HELP_QUERY_CHARS = 128
-const MAX_CATALOG_RESULT_CHARS = 2_500
+const MAX_CATALOG_RESULT_CHARS = 2_900
 const MAX_OPERATION_RESULT_CHARS = 3_600
 const MAX_DELEGATE_RESULT_CHARS = 3_200
 

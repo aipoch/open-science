@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -41,6 +42,7 @@ const UninstallRuntimeDialog = ({
   onCancel,
   onConfirm
 }: UninstallRuntimeDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogFramework = useRetainedDialogValue(framework)
   const dialogIsUninstalling =
     useRetainedDialogValue(framework ? isUninstalling : undefined) ?? isUninstalling
@@ -61,14 +63,14 @@ const UninstallRuntimeDialog = ({
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
-                Uninstall {name}?
+                {t('Uninstall {{name}}?', { name })}
               </AlertDialog.Title>
             </div>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               disabled={dialogIsUninstalling}
               onClick={onCancel}
@@ -79,8 +81,10 @@ const UninstallRuntimeDialog = ({
 
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              This removes the {name} runtime this app downloaded and manages. A separate {name} you
-              installed yourself is not affected. You can reinstall it here at any time.
+              {t(
+                'This removes the {{name}} runtime this app downloaded and manages. A separate {{name}} you installed yourself is not affected. You can reinstall it here at any time.',
+                { name }
+              )}
             </AlertDialog.Description>
           </div>
 
@@ -92,7 +96,7 @@ const UninstallRuntimeDialog = ({
                 className={dialogCancelButtonClassName}
                 disabled={dialogIsUninstalling}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <Button
@@ -101,7 +105,7 @@ const UninstallRuntimeDialog = ({
               disabled={dialogIsUninstalling}
               onClick={onConfirm}
             >
-              {dialogIsUninstalling ? 'Uninstalling…' : 'Uninstall'}
+              {dialogIsUninstalling ? t('Uninstalling…') : t('Uninstall')}
             </Button>
           </div>
         </AlertDialog.Content>

@@ -204,7 +204,7 @@ const createHarness = (): {
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
     {
       publication,
-      sessionEnvironment: { projectName: vi.fn(() => 'project-1') }
+      sessionEnvironment: { projectId: vi.fn(() => 'project-1') }
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
     { continuations }
   )
@@ -695,7 +695,7 @@ describe('ACP Runtime Session Plan composition', () => {
       } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
       {
         publication: { pushEvent: vi.fn() },
-        sessionEnvironment: { projectName: vi.fn(() => 'project-1') }
+        sessionEnvironment: { projectId: vi.fn(() => 'project-1') }
       } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
     )
 

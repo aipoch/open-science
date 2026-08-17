@@ -148,4 +148,42 @@ describe('runReview started-contract (real orchestrator)', () => {
     expect(onStarted).not.toHaveBeenCalled()
     expect(createReview).not.toHaveBeenCalled()
   })
+
+  it('propagates the admitted Review signal into the initial assessment drive', async () => {
+    const controller = new AbortController()
+    const prompt = vi.fn()
+    const disposeReviewerSession = vi.fn(() => ({
+      rejectedToolCalls: 0,
+      reviewerBridgeScoped: undefined
+    }))
+    const cancellableRuntime = {
+      buildReviewerSession: vi.fn().mockResolvedValue({
+        session: {
+          sessionId: 'reviewer-session-1',
+          prompt,
+          nextUpdate: () => new Promise(() => {})
+        }
+      }),
+      disposeReviewerSession
+    } as unknown as AcpRuntime
+    const createReview = vi.fn().mockResolvedValue(runningReview())
+    const options = baseOptions(makeRepo(createReview), {
+      onStarted: vi.fn(),
+      onReviewUpdate: vi.fn()
+    })
+
+    const running = runReview({
+      ...options,
+      acpRuntime: cancellableRuntime,
+      fixLoopAbortSignal: controller.signal
+    })
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce())
+    controller.abort()
+
+    await expect(running).resolves.toMatchObject({
+      lifecycle: 'error',
+      errorMessage: 'reviewer session was aborted before stopping'
+    })
+    expect(disposeReviewerSession).toHaveBeenCalledOnce()
+  })
 })

@@ -65,6 +65,7 @@ The bundled `esmfold2_gpu` Modal env (remote-compute-modal skill) is the
 canonical, version-pinned recipe.
 
 **Gotchas:**
+
 - **Default kernel backend is `None`** (reference PyTorch, ~12x slower than paper). Call `model.set_kernel_backend('fused')` after `from_pretrained()`. See section below.
 - Match torch CUDA build to your driver; the pin `<2.8` targets CUDA 12.2.
 - Weights via Xet bridge ~300 MB/s: ESMFold2 1.36 GB, ESMFold2-Fast 0.76 GB. Set `HF_HOME=/work/hf_cache`.
@@ -112,13 +113,13 @@ adds `msa_depth=1024` with 10% column masking and ESMC dropout 0.3.
 
 ## Model variants on HF `biohub/`
 
-| repo | size | pair layers | MSA | use |
-|---|---|---|---|---|
-| `ESMFold2` | 0.94 GB + ccd.pkl 0.42 GB | 48 | yes | full eval |
-| `ESMFold2-Fast` | 0.76 GB | 24 | no | fast single-seq |
-| `ESMFold2-Experimental{,-Fast}` | 0.90 / 0.72 GB | 48 / 24 | — | design search (Alg 11) |
-| `ESMFold2-Experimental{,-Fast}-Cutoff2025` | 0.90 / 0.72 GB | — | — | design search + critic |
-| `ESMFold2-Experimental-Fast-base{300M,600M,6B}-step{250k..1500k}` | — | — | — | 15 critic ensemble |
+| repo                                                              | size                      | pair layers | MSA | use                    |
+| ----------------------------------------------------------------- | ------------------------- | ----------- | --- | ---------------------- |
+| `ESMFold2`                                                        | 0.94 GB + ccd.pkl 0.42 GB | 48          | yes | full eval              |
+| `ESMFold2-Fast`                                                   | 0.76 GB                   | 24          | no  | fast single-seq        |
+| `ESMFold2-Experimental{,-Fast}`                                   | 0.90 / 0.72 GB            | 48 / 24     | —   | design search (Alg 11) |
+| `ESMFold2-Experimental{,-Fast}-Cutoff2025`                        | 0.90 / 0.72 GB            | —           | —   | design search + critic |
+| `ESMFold2-Experimental-Fast-base{300M,600M,6B}-step{250k..1500k}` | —                         | —           | —   | 15 critic ensemble     |
 
 ## Throughput: `set_kernel_backend("fused")` is REQUIRED
 
@@ -193,6 +194,7 @@ inp = StructurePredictionInput(sequences=[
 ```
 
 **Gotchas:**
+
 - `MSA.from_a3m(remove_insertions=True)` asserts equal row lengths after
   insertion removal. ColabFold a3m files often carry trailing **null bytes** and
   off-by-one rows vs the query — `tr -d '\000'` and force row 0 to the exact
@@ -204,11 +206,11 @@ inp = StructurePredictionInput(sequences=[
 
 The paper's FoldBench protocol (section A.2.11):
 
-| Parameter | Paper default | Paper "20lp" | Notes |
-|---|---|---|---|
-| `num_loops` (folding-trunk recycles) | **10** | 20 | +2pp on AbAg |
-| `num_sampling_steps` (diffusion) | **68** | 68 | EDM-tuned; do **NOT** use 200 |
-| seeds x diffusion samples | 25 x 5 | 25 x 5 | Fig S6/S7 oracle = best-of-125 |
+| Parameter                            | Paper default | Paper "20lp" | Notes                          |
+| ------------------------------------ | ------------- | ------------ | ------------------------------ |
+| `num_loops` (folding-trunk recycles) | **10**        | 20           | +2pp on AbAg                   |
+| `num_sampling_steps` (diffusion)     | **68**        | 68           | EDM-tuned; do **NOT** use 200  |
+| seeds x diffusion samples            | 25 x 5        | 25 x 5       | Fig S6/S7 oracle = best-of-125 |
 
 ## Training data cutoff
 

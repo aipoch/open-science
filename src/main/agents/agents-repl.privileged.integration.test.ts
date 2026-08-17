@@ -223,7 +223,7 @@ gate('host.agents repl privileged integration', () => {
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(runtimeStorage),
       executorFactory: () => ({
         execute: async () => ({
@@ -572,7 +572,7 @@ gate('host.agents repl privileged integration', () => {
       new NotebookRuntimeService({
         configRoot: runtimeStorage,
         dataRoot: runtimeStorage,
-        projectName: 'decline-project',
+        projectId: 'decline-project',
         repository: new NotebookRunRepository(runtimeStorage),
         executorFactory: () => ({
           execute: async () => ({
@@ -650,7 +650,7 @@ gate('host.agents repl privileged integration', () => {
       new NotebookRuntimeService({
         configRoot: runtimeStorage,
         dataRoot: runtimeStorage,
-        projectName: 'decline-del-project',
+        projectId: 'decline-del-project',
         repository: new NotebookRunRepository(runtimeStorage),
         executorFactory: () => ({
           execute: async () => ({
@@ -759,7 +759,7 @@ gate('host.agents repl privileged integration', () => {
       new NotebookRuntimeService({
         configRoot: runtimeStorage,
         dataRoot: runtimeStorage,
-        projectName: 'no-approval-upd-project',
+        projectId: 'no-approval-upd-project',
         repository: new NotebookRunRepository(runtimeStorage),
         executorFactory: () => ({
           execute: async () => ({
@@ -825,7 +825,7 @@ gate('host.agents repl privileged integration', () => {
       new NotebookRuntimeService({
         configRoot: runtimeStorage,
         dataRoot: runtimeStorage,
-        projectName: 'no-retry-project',
+        projectId: 'no-retry-project',
         repository: new NotebookRunRepository(runtimeStorage),
         executorFactory: () => ({
           execute: async () => ({

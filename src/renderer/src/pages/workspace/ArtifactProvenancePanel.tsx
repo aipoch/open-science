@@ -1,5 +1,7 @@
 import { ChevronLeft, ChevronRight, Circle, Download, LoaderCircle, X } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -11,6 +13,7 @@ import {
   MessageScrollerViewport
 } from '@/components/ui/message-scroller'
 import { ReviewerCard } from '@/components/ReviewerCard'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import {
@@ -149,15 +152,16 @@ const statusReason = (value: unknown): string | undefined => {
 }
 
 const codeReconstructionUnavailableLabel = (
-  reason: Extract<ArtifactCodeReconstructionState, { state: 'unavailable' }>['reason']
+  reason: Extract<ArtifactCodeReconstructionState, { state: 'unavailable' }>['reason'],
+  t: TFunction
 ): string => {
   switch (reason) {
     case 'execution-unavailable':
-      return 'A reconstruction needs an immutable Execution Log for this version.'
+      return t('A reconstruction needs an immutable Execution Log for this version.')
     case 'producer-unavailable':
-      return 'The producer run could not be identified from the captured evidence.'
+      return t('The producer run could not be identified from the captured evidence.')
     case 'producer-script-missing':
-      return 'The producer run did not retain a script to reconstruct.'
+      return t('The producer run did not retain a script to reconstruct.')
   }
 }
 
@@ -167,31 +171,31 @@ const packageKey = (value: string): string =>
 const packageNameFromSpec = (value: string): string | undefined =>
   value.trim().match(/^[A-Za-z0-9_.-]+/u)?.[0]
 
-const environmentWarningLabel = (warning: string): string => {
+const environmentWarningLabel = (warning: string, t: TFunction): string => {
   switch (warning) {
     case 'inventory-cache-best-effort':
-      return 'Inventory cache was reused without a full validation.'
+      return t('Inventory cache was reused without a full validation.')
     case 'environment-changed-during-run':
-      return 'The Environment changed while the producer run was executing.'
+      return t('The Environment changed while the producer run was executing.')
     default:
       return warning
   }
 }
 
-const packageChangeLabel = (change: Record<string, unknown>): string => {
-  const name = asString(change.name) ?? 'unknown package'
+const packageChangeLabel = (change: Record<string, unknown>, t: TFunction): string => {
+  const name = asString(change.name) ?? t('Unknown package')
   const before = asString(change.before_version)
   const after = asString(change.after_version)
   switch (asString(change.change)) {
     case 'installed':
-      return `${name} ${after ?? '(version unavailable)'}`
+      return `${name} ${after ?? t('(version unavailable)')}`
     case 'updated':
       return `${name} ${before ?? '—'} → ${after ?? '—'}`
     case 'removed':
-      return `${name} ${before ?? '(version unavailable)'} → removed`
+      return `${name} ${before ?? t('(version unavailable)')} → ${t('removed')}`
     case 'unchanged':
     case 'observed':
-      return `${name} ${after ?? before ?? '(version unavailable)'}`
+      return `${name} ${after ?? before ?? t('(version unavailable)')}`
     default:
       return name
   }
@@ -299,6 +303,7 @@ const toChatMessage = (message: ProvenanceMessage, sortIndex: number): ChatMessa
   id: message.id,
   role: message.role,
   content: message.content,
+  ...(message.attribution ? { attribution: message.attribution } : {}),
   status: 'complete',
   eventIds: [],
   createdAt: message.createdAt,
@@ -326,6 +331,8 @@ const ProvenanceMessagesTimeline = ({
   projectId: string
   sessionId: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({})
   const projectedById = useMemo(
@@ -336,7 +343,7 @@ const ProvenanceMessagesTimeline = ({
     const session: ChatSession = {
       id: sessionId,
       projectId,
-      title: 'Provenance Messages',
+      title: t('Provenance Messages'),
       cwd: '',
       status: 'idle',
       messages: snapshot.items.map(toChatMessage),
@@ -346,7 +353,7 @@ const ProvenanceMessagesTimeline = ({
       updatedAt: snapshot.items.at(-1)?.createdAt ?? 0
     }
     return groupConversationItems(createConversationItems(session), snapshot.activityGroups)
-  }, [projectId, sessionId, snapshot])
+  }, [projectId, sessionId, snapshot, t])
 
   return (
     <MessageScrollerProvider
@@ -356,7 +363,7 @@ const ProvenanceMessagesTimeline = ({
       scrollPreviousItemPeek={64}
     >
       <MessageScroller className="min-h-0 bg-bg-000">
-        <MessageScrollerViewport aria-label="Provenance messages">
+        <MessageScrollerViewport aria-label={t('Provenance messages')}>
           <MessageScrollerContent className="gap-0 px-4">
             <div className="mx-auto w-full max-w-4xl pb-4">
               {conversationItems.map((conversationItem) => {
@@ -460,6 +467,8 @@ const ArtifactProvenancePanel = ({
   onClose,
   onVersionChange
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const tabScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
   const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
@@ -524,7 +533,7 @@ const ArtifactProvenancePanel = ({
     codeActionFailure?.key === provenanceKey ? codeActionFailure.message : undefined
   const codeReconstructionResult = codeReconstructionResults[provenanceKey]
   const error =
-    (selectedVersionUnavailable ? 'The selected Artifact version is unavailable.' : undefined) ??
+    (selectedVersionUnavailable ? t('The selected Artifact version is unavailable.') : undefined) ??
     (lineageResult?.key === lineageRequestKey ? lineageResult.error : undefined) ??
     (provenanceResult?.key === provenanceKey ? provenanceResult.error : undefined)
 
@@ -664,6 +673,7 @@ const ArtifactProvenancePanel = ({
   const deferredTabLabel = deferredTab
     ? tabs.find((tab) => tab.id === deferredTab)?.label
     : undefined
+  const translatedDeferredTabLabel = deferredTabLabel ? t(deferredTabLabel) : undefined
   const deferredSectionLoading = Boolean(deferredSectionKey && deferredSectionState === undefined)
   const deferredSectionReady = !deferredSectionKey || deferredSectionState === 'loaded'
   const hasLoadedProvenance = Boolean(coreProvenance)
@@ -787,16 +797,7 @@ const ArtifactProvenancePanel = ({
     provenance?.review.state === 'available' ? provenance.review.value : undefined
   const reviewUnavailableReason =
     provenance?.review.state === 'unavailable' ? provenance.review.reason : undefined
-  const reviewAssessment = reviewProjection
-    ? (reviewProjection.currentDirectAssessment ?? reviewProjection.latestChainReview)
-    : undefined
-  const reviewForCard =
-    reviewAssessment && reviewProjection
-      ? {
-          ...reviewAssessment,
-          checks: [...reviewProjection.selectedVersionChecks, ...reviewProjection.turnLevelChecks]
-        }
-      : undefined
+  const reviewForCard = reviewProjection?.selectedVersionAssessment
   const executionKernels = [
     ...new Set(
       rawExecutionRuns
@@ -827,7 +828,7 @@ const ArtifactProvenancePanel = ({
       createSessionReviewerPreviewItem({
         sessionId: item.sessionId,
         reviewId: intent.reviewId,
-        findingId: intent.findingId,
+        findingId: intent.checkId ?? intent.findingId,
         locator: intent.locator
       })
     )
@@ -981,7 +982,7 @@ const ArtifactProvenancePanel = ({
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label="Previous Artifact version"
+          aria-label={t('Previous Artifact version')}
           disabled={selectedIndex <= 0}
           onClick={() => {
             const versionId = lineage?.versions[selectedIndex - 1]?.versionId
@@ -991,13 +992,15 @@ const ArtifactProvenancePanel = ({
           <ChevronLeft aria-hidden="true" />
         </Button>
         <span className="text-xs font-medium text-text-100">
-          {selectedIndex >= 0 ? `v${lineage?.versions[selectedIndex]?.versionNumber}` : 'Version'}
+          {selectedIndex >= 0
+            ? `v${lineage?.versions[selectedIndex]?.versionNumber}`
+            : t('Version')}
         </span>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label="Next Artifact version"
+          aria-label={t('Next Artifact version')}
           disabled={!lineage || selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1}
           onClick={() => {
             const versionId = lineage?.versions[selectedIndex + 1]?.versionId
@@ -1009,10 +1012,10 @@ const ArtifactProvenancePanel = ({
         <span className="min-w-0 flex-1 truncate text-xs text-text-300">
           {lineage?.originSession.state === 'deleted'
             ? [
-                'Source session deleted',
+                t('Source session deleted'),
                 lineage.originSession.title,
                 lineage.originSession.deletedAt
-                  ? new Date(lineage.originSession.deletedAt).toLocaleString()
+                  ? formatDate(lineage.originSession.deletedAt, 'dateTime')
                   : undefined
               ]
                 .filter(Boolean)
@@ -1023,7 +1026,7 @@ const ArtifactProvenancePanel = ({
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label="Close Provenance"
+          aria-label={t('Close Provenance')}
           onClick={onClose}
         >
           <X aria-hidden="true" />
@@ -1045,7 +1048,7 @@ const ArtifactProvenancePanel = ({
               className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
               onClick={() => setActiveTab(tab.id)}
             >
-              {tab.label}
+              {t(tab.label)}
             </button>
           ))}
         </div>
@@ -1055,43 +1058,47 @@ const ArtifactProvenancePanel = ({
         {error ? <p className="p-5 text-sm text-danger-000">{error}</p> : null}
         {!error && lineageUnavailable ? (
           <p className="p-5 text-sm text-text-300">
-            Provenance is not available for this legacy file.
+            {t('Provenance is not available for this legacy file.')}
           </p>
         ) : null}
         {!error && isUserEdit ? (
           <section className="p-5">
-            <h2 className="text-sm font-medium text-text-100">Edited in Open Science</h2>
+            <h2 className="text-sm font-medium text-text-100">{t('Edited in Open Science')}</h2>
             {basedOnVersionId && basedOnVersionNumber !== undefined ? (
               <button
                 type="button"
-                aria-label={`Open source version v${basedOnVersionNumber}`}
+                aria-label={t('Open source version v{{version}}', {
+                  version: basedOnVersionNumber
+                })}
                 className="mt-1 text-sm text-primary hover:underline"
                 onClick={() => selectVersion(basedOnVersionId)}
               >
-                Based on v{basedOnVersionNumber}
+                {t('Based on v{{version}}', { version: basedOnVersionNumber })}
               </button>
             ) : (
-              <p className="mt-1 text-sm text-text-300">Based on an earlier immutable version.</p>
+              <p className="mt-1 text-sm text-text-300">
+                {t('Based on an earlier immutable version.')}
+              </p>
             )}
           </section>
         ) : null}
         {!error && isLegacyVersion ? (
           <p className="p-5 text-sm text-text-300">
-            Provenance is not available for this legacy version.
+            {t('Provenance is not available for this legacy version.')}
           </p>
         ) : null}
         {!error && !lineageUnavailable && !isUserEdit && !isLegacyVersion && !provenance ? (
           <div className="flex h-full items-center justify-center text-text-300">
-            <LoaderCircle className="size-4 animate-spin" aria-label="Loading Provenance" />
+            <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
           </div>
         ) : null}
-        {provenance && deferredTabLabel && deferredSectionLoading ? (
+        {provenance && translatedDeferredTabLabel && deferredSectionLoading ? (
           <div
             className="flex h-full items-center justify-center gap-2 text-sm text-text-300"
-            aria-label={`Loading ${deferredTabLabel}`}
+            aria-label={t('Loading {{label}}', { label: translatedDeferredTabLabel })}
           >
             <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-            Loading {deferredTabLabel}
+            {t('Loading {{label}}', { label: translatedDeferredTabLabel })}
           </div>
         ) : null}
         {provenance && deferredSectionResult?.state === 'error' ? (
@@ -1101,8 +1108,9 @@ const ArtifactProvenancePanel = ({
           <section>
             {provenance.contentStatus.state === 'unavailable' ? (
               <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-warning-900">
-                Artifact content is {provenance.contentStatus.reason}; captured provenance remains
-                available.
+                {t('Artifact content is {{reason}}; captured provenance remains available.', {
+                  reason: provenance.contentStatus.reason
+                })}
               </p>
             ) : null}
             <div className={tabActionBarClassName}>
@@ -1114,7 +1122,7 @@ const ArtifactProvenancePanel = ({
                   onClick={() => void downloadScript(generatedCode.code, generatedCode.language)}
                 >
                   <Download aria-hidden="true" />
-                  Download script
+                  {t('Download script')}
                 </Button>
               ) : codeReconstructionResult?.status === 'generating' ? (
                 <Button type="button" size="sm" className="shrink-0 whitespace-nowrap" disabled>
@@ -1122,7 +1130,7 @@ const ArtifactProvenancePanel = ({
                     className="animate-spin motion-reduce:animate-none"
                     aria-hidden="true"
                   />
-                  Generating…
+                  {t('Generating…')}
                 </Button>
               ) : codeReconstructionState?.state === 'ready' ? (
                 <Button
@@ -1131,7 +1139,7 @@ const ArtifactProvenancePanel = ({
                   className="shrink-0 whitespace-nowrap"
                   onClick={() => void generateCodeReconstruction()}
                 >
-                  Generate script
+                  {t('Generate script')}
                 </Button>
               ) : codeReconstructionResult?.status === 'error' ? (
                 <Button
@@ -1144,31 +1152,36 @@ const ArtifactProvenancePanel = ({
                       : retryCodeReconstructionLookup()
                   }
                 >
-                  Retry
+                  {t('Retry')}
                 </Button>
               ) : codeReconstructionState?.state === 'unavailable' ? (
                 <Button type="button" size="sm" className="shrink-0 whitespace-nowrap" disabled>
-                  Generate script
+                  {t('Generate script')}
                 </Button>
               ) : (
                 <LoaderCircle
                   className="size-4 animate-spin text-text-300 motion-reduce:animate-none"
-                  aria-label="Checking for a generated script"
+                  aria-label={t('Checking for a generated script')}
                 />
               )}
               {generatedCode ? (
                 <div className="min-w-0 flex-1 truncate text-sm text-text-200">
-                  <span>LLM-generated reconstruction · see </span>
-                  <Button
-                    type="button"
-                    variant="link"
-                    size="sm"
-                    className="h-auto whitespace-nowrap px-0 py-0 text-sm"
-                    onClick={() => setActiveTab('execution')}
-                  >
-                    Execution Log
-                  </Button>
-                  <span> for the raw record</span>
+                  {/* One sentence around the tab link, so each locale can place the link where its
+                      own word order needs it. */}
+                  <Trans
+                    i18nKey="LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record"
+                    components={{
+                      logLink: (
+                        <Button
+                          type="button"
+                          variant="link"
+                          size="sm"
+                          className="h-auto whitespace-nowrap px-0 py-0 text-sm"
+                          onClick={() => setActiveTab('execution')}
+                        />
+                      )
+                    }}
+                  />
                 </div>
               ) : codeReconstructionResult?.status === 'error' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-danger-000" role="alert">
@@ -1176,27 +1189,28 @@ const ArtifactProvenancePanel = ({
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
-                  {codeReconstructionUnavailableLabel(codeReconstructionState.reason)}
+                  {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
-                  Using the provider and model selected when generation started.
+                  {t('Using the provider and model selected when generation started.')}
                 </p>
               ) : codeReconstructionState?.state === 'ready' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
-                  Generate a standalone script from the immutable Execution Log with your current
-                  provider and model.
+                  {t(
+                    'Generate a standalone script from the immutable Execution Log with your current provider and model.'
+                  )}
                 </p>
               ) : (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
-                  Checking for a previously generated script…
+                  {t('Checking for a previously generated script…')}
                 </p>
               )}
             </div>
             {producerInputs.length > 0 ? (
               <NotebookInputDataStrip
                 inputFiles={producerInputs}
-                label="Inputs"
+                label={t('Inputs')}
                 className="border-b border-border-300/50 px-4 py-2"
               />
             ) : null}
@@ -1204,8 +1218,9 @@ const ArtifactProvenancePanel = ({
             (codeReconstructionState?.state === 'ready' &&
               codeReconstructionState.sourceTruncated) ? (
               <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
-                The immutable Execution Log was bounded; the reconstruction may include a
-                provenance-gap comment.
+                {t(
+                  'The immutable Execution Log was bounded; the reconstruction may include a provenance-gap comment.'
+                )}
               </p>
             ) : null}
             {codeReconstructionResult?.status === 'generating' ? (
@@ -1213,20 +1228,22 @@ const ArtifactProvenancePanel = ({
                 className="flex min-h-48 items-center justify-center gap-2 px-4 py-8 text-sm text-text-300"
                 role="status"
                 aria-live="polite"
-                aria-label="Generating reconstructed script"
+                aria-label={t('Generating reconstructed script')}
               >
                 <LoaderCircle
                   className="size-5 animate-spin motion-reduce:animate-none"
                   aria-hidden="true"
                 />
-                <span>Generating script…</span>
+                <span>{t('Generating script…')}</span>
               </div>
             ) : generatedCode ? (
               <NotebookCodeBlock code={generatedCode.code} language={generatedCode.language} />
             ) : (
               <div className="space-y-3 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-text-000">Captured producer block</h3>
+                  <h3 className="text-sm font-semibold text-text-000">
+                    {t('Captured producer block')}
+                  </h3>
                   {reproductionCode ? (
                     <div className="flex items-center gap-1">
                       <Button
@@ -1236,7 +1253,7 @@ const ArtifactProvenancePanel = ({
                         onClick={() => void downloadProducerCode()}
                       >
                         <Download aria-hidden="true" />
-                        Download
+                        {t('Download')}
                       </Button>
                     </div>
                   ) : null}
@@ -1252,7 +1269,7 @@ const ArtifactProvenancePanel = ({
                   />
                 ) : (
                   <p className="text-sm text-text-300">
-                    No producer block was recorded for this version. {statusReason(producer)}
+                    {t('No producer block was recorded for this version.')} {statusReason(producer)}
                   </p>
                 )}
               </div>
@@ -1269,10 +1286,14 @@ const ArtifactProvenancePanel = ({
             <div>
               {executionTruncation ? (
                 <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
-                  Execution evidence was bounded for storage: omitted{' '}
-                  {executionTruncation.omittedLeadingRunCount} earlier runs,{' '}
-                  {executionTruncation.omittedOutputCount} outputs, and{' '}
-                  {executionTruncation.omittedInputCount} inputs.
+                  {t(
+                    'Execution evidence was bounded for storage: omitted {{runs}} earlier runs, {{outputs}} outputs, and {{inputs}} inputs.',
+                    {
+                      runs: executionTruncation.omittedLeadingRunCount,
+                      outputs: executionTruncation.omittedOutputCount,
+                      inputs: executionTruncation.omittedInputCount
+                    }
+                  )}
                 </p>
               ) : null}
               <div className={tabActionBarClassName}>
@@ -1288,10 +1309,10 @@ const ArtifactProvenancePanel = ({
                     <Download aria-hidden="true" />
                   )}
                   {exportingNotebook
-                    ? 'Preparing…'
+                    ? t('Preparing…')
                     : executionKernels.length > 1
-                      ? 'Download notebooks'
-                      : 'Download notebook'}
+                      ? t('Download notebooks')
+                      : t('Download notebook')}
                 </Button>
               </div>
               {notebookExportError ? (
@@ -1305,7 +1326,7 @@ const ArtifactProvenancePanel = ({
             </div>
           ) : (
             <p className="p-5 text-sm text-text-300">
-              Unable to determine the producer execution for this version.
+              {t('Unable to determine the producer execution for this version.')}
             </p>
           )
         ) : null}
@@ -1319,8 +1340,9 @@ const ArtifactProvenancePanel = ({
             />
           ) : (
             <p className="p-5 text-sm text-text-300">
-              The immutable message snapshot is not available for this version (
-              {provenance.messages.reason}).
+              {t('The immutable message snapshot is not available for this version ({{reason}}).', {
+                reason: provenance.messages.reason
+              })}
             </p>
           )
         ) : null}
@@ -1329,24 +1351,24 @@ const ArtifactProvenancePanel = ({
             <h3 className="font-semibold text-text-000">
               {asString(environment?.environment_name) ??
                 provenance.descriptor.environment ??
-                'Environment unavailable'}
+                t('Environment unavailable')}
             </h3>
             {environment ? (
               <>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                  <dt className="text-text-300">Runtime</dt>
+                  <dt className="text-text-300">{t('Runtime')}</dt>
                   <dd className="text-text-100">
-                    {asString(environment.runtime_version) ?? 'Version unavailable'}
+                    {asString(environment.runtime_version) ?? t('Version unavailable')}
                   </dd>
-                  <dt className="text-text-300">Source</dt>
+                  <dt className="text-text-300">{t('Source')}</dt>
                   <dd className="text-text-100">
                     {asString(environment.runtime_source) ?? 'unknown'} ·{' '}
                     {asString(environment.kernel_kind) ?? 'unknown'}
                   </dd>
-                  <dt className="text-text-300">Capture</dt>
+                  <dt className="text-text-300">{t('Capture')}</dt>
                   <dd className="text-text-100">
-                    {asString(environment.capture_status) ?? 'partial'} ·{' '}
-                    {environmentPackages.length} packages
+                    {asString(environment.capture_status) ?? t('partial')} ·{' '}
+                    {t('{{count}} packages', { count: environmentPackages.length })}
                   </dd>
                 </dl>
                 {environmentWarnings.length > 0 ? (
@@ -1354,10 +1376,10 @@ const ArtifactProvenancePanel = ({
                     role="status"
                     className="rounded-md border border-warning-100/50 bg-warning-100/10 px-3 py-2 text-xs text-text-200"
                   >
-                    <p className="font-medium text-text-100">Partial capture details</p>
+                    <p className="font-medium text-text-100">{t('Partial capture details')}</p>
                     <ul className="mt-1 list-disc space-y-1 pl-4">
                       {environmentWarnings.map((warning) => (
-                        <li key={warning}>{environmentWarningLabel(warning)}</li>
+                        <li key={warning}>{environmentWarningLabel(warning, t)}</li>
                       ))}
                     </ul>
                   </div>
@@ -1366,9 +1388,9 @@ const ArtifactProvenancePanel = ({
                   <table className="w-full table-fixed text-left text-xs">
                     <thead className="bg-bg-100 text-text-300">
                       <tr>
-                        <th className="w-1/2 px-3 py-2 font-medium">Package</th>
-                        <th className="w-1/4 px-3 py-2 font-medium">Version</th>
-                        <th className="w-1/4 px-3 py-2 font-medium">State</th>
+                        <th className="w-1/2 px-3 py-2 font-medium">{t('Package')}</th>
+                        <th className="w-1/4 px-3 py-2 font-medium">{t('Version')}</th>
+                        <th className="w-1/4 px-3 py-2 font-medium">{t('State')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1378,7 +1400,7 @@ const ArtifactProvenancePanel = ({
                           className="border-t border-border-300/40"
                         >
                           <td className="truncate px-3 py-2 text-text-100">
-                            {asString(pkg.name) ?? 'Unknown package'}
+                            {asString(pkg.name) ?? t('Unknown package')}
                           </td>
                           <td className="px-3 py-2 text-text-300">
                             {asString(pkg.version) ?? '—'}
@@ -1402,29 +1424,47 @@ const ArtifactProvenancePanel = ({
                     }
                   >
                     {showAllPackages
-                      ? `Show relevant ${filteredEnvironmentPackages.length} packages`
-                      : `Show all ${environmentPackages.length} packages`}
+                      ? t('Show relevant {{count}} packages', {
+                          count: filteredEnvironmentPackages.length
+                        })
+                      : t('Show all {{count}} packages', { count: environmentPackages.length })}
                   </button>
                 ) : null}
                 {omittedOperationCount > 0 ? (
                   <p className="rounded-md bg-bg-100 px-3 py-2 text-xs text-text-300">
-                    {`${omittedOperationCount} earlier operation${omittedOperationCount === 1 ? '' : 's'} omitted from this bounded history.`}
+                    {omittedOperationCount === 1
+                      ? t('{{count}} earlier operation omitted from this bounded history.', {
+                          count: omittedOperationCount
+                        })
+                      : t('{{count}} earlier operations omitted from this bounded history.', {
+                          count: omittedOperationCount
+                        })}
                     {earliestRetainedOperationAt
-                      ? ` Retained entries begin ${new Date(earliestRetainedOperationAt).toLocaleString()}.`
+                      ? ` ${t('Retained entries begin {{time}}.', {
+                          time: formatDate(earliestRetainedOperationAt, 'dateTime')
+                        })}`
                       : ''}
                   </p>
                 ) : null}
                 {environmentOperations.length > 0 ? (
                   <div className="space-y-2">
-                    <h4 className="font-semibold text-text-000">Operations</h4>
+                    <h4 className="font-semibold text-text-000">{t('Operations')}</h4>
                     <div className="overflow-hidden rounded-md border border-border-300/60">
                       <table className="w-full table-fixed text-left text-xs">
                         <thead className="bg-bg-100 text-text-300">
                           <tr>
-                            <th className="w-[34%] break-words px-2 py-2 font-medium">Time</th>
-                            <th className="w-1/5 break-words px-2 py-2 font-medium">Operation</th>
-                            <th className="w-[28%] break-words px-2 py-2 font-medium">Packages</th>
-                            <th className="w-[18%] break-words px-2 py-2 font-medium">Result</th>
+                            <th className="w-[34%] break-words px-2 py-2 font-medium">
+                              {t('Time')}
+                            </th>
+                            <th className="w-1/5 break-words px-2 py-2 font-medium">
+                              {t('Operation')}
+                            </th>
+                            <th className="w-[28%] break-words px-2 py-2 font-medium">
+                              {t('Packages')}
+                            </th>
+                            <th className="w-[18%] break-words px-2 py-2 font-medium">
+                              {t('Result')}
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1459,18 +1499,20 @@ const ArtifactProvenancePanel = ({
                                         dateTime={timestamp}
                                         className="block whitespace-normal break-words tabular-nums leading-5"
                                       >
-                                        {new Date(timestamp).toLocaleString()}
+                                        {formatDate(timestamp, 'dateTime')}
                                       </time>
                                     ) : (
                                       '—'
                                     )}
                                   </td>
                                   <td className="whitespace-normal break-words px-2 py-2 align-top text-text-100">
-                                    {asString(operation.operation) ?? 'unknown'}
+                                    {asString(operation.operation) ?? t('unknown')}
                                   </td>
                                   <td className="whitespace-normal break-words px-2 py-2 align-top text-text-300">
                                     {requestedChanges.length > 0
-                                      ? requestedChanges.map(packageChangeLabel).join(', ')
+                                      ? requestedChanges
+                                          .map((change) => packageChangeLabel(change, t))
+                                          .join(', ')
                                       : Array.isArray(operation.packages)
                                         ? operation.packages
                                             .filter(
@@ -1489,7 +1531,7 @@ const ArtifactProvenancePanel = ({
                                       {dependencyChanges.length > 0 ? (
                                         <div>
                                           <span className="font-medium text-text-200">
-                                            Dependency impact
+                                            {t('Dependency impact')}
                                           </span>
                                           <div className="mt-1 flex flex-wrap gap-1.5">
                                             {dependencyChanges.map((change, changeIndex) => (
@@ -1497,7 +1539,7 @@ const ArtifactProvenancePanel = ({
                                                 key={`${key}-dependency-${changeIndex}`}
                                                 className="rounded bg-bg-200 px-1.5 py-0.5 font-mono text-[11px] text-text-200"
                                               >
-                                                {packageChangeLabel(change)}
+                                                {packageChangeLabel(change, t)}
                                               </span>
                                             ))}
                                           </div>
@@ -1506,8 +1548,9 @@ const ArtifactProvenancePanel = ({
                                       {unattributedChanges.length > 0 ? (
                                         <div className={dependencyChanges.length > 0 ? 'mt-2' : ''}>
                                           <span className="font-medium text-text-200">
-                                            Observed since the previous snapshot (not attributed to
-                                            this operation)
+                                            {t(
+                                              'Observed since the previous snapshot (not attributed to this operation)'
+                                            )}
                                           </span>
                                           <div className="mt-1 flex flex-wrap gap-1.5">
                                             {unattributedChanges.map((change, changeIndex) => (
@@ -1515,7 +1558,7 @@ const ArtifactProvenancePanel = ({
                                                 key={`${key}-unattributed-${changeIndex}`}
                                                 className="rounded bg-bg-200 px-1.5 py-0.5 font-mono text-[11px] text-text-200"
                                               >
-                                                {packageChangeLabel(change)}
+                                                {packageChangeLabel(change, t)}
                                               </span>
                                             ))}
                                           </div>
@@ -1523,7 +1566,7 @@ const ArtifactProvenancePanel = ({
                                       ) : null}
                                       {dependencyChanges.length === 0 &&
                                       unattributedChanges.length === 0 ? (
-                                        <span>No additional package version changes</span>
+                                        <span>{t('No additional package version changes')}</span>
                                       ) : null}
                                     </td>
                                   </tr>
@@ -1540,7 +1583,7 @@ const ArtifactProvenancePanel = ({
             ) : (
               <p className="text-text-300">
                 {statusReason(evidence?.environment_status) ??
-                  'Environment evidence was not captured for this version.'}
+                  t('Environment evidence was not captured for this version.')}
               </p>
             )}
           </section>
@@ -1555,7 +1598,7 @@ const ArtifactProvenancePanel = ({
               />
               {lineage?.originSession.state === 'deleted' ? (
                 <p className="mt-3 text-xs text-text-300">
-                  Captured before source session deletion
+                  {t('Captured before source session deletion')}
                 </p>
               ) : null}
             </section>
@@ -1565,18 +1608,22 @@ const ArtifactProvenancePanel = ({
               <div>
                 <h3 className="text-sm font-semibold text-text-000">
                   {reviewUnavailableReason === 'source-session-unavailable'
-                    ? 'Review unavailable'
-                    : 'No review for this version'}
+                    ? t('Review unavailable')
+                    : t('No review for this version')}
                 </h3>
                 <p className="mt-1 text-sm text-text-300">
                   {reviewUnavailableReason === 'source-session-unavailable'
-                    ? 'The active source session could not be loaded, so its saved review cannot be verified as current.'
+                    ? t(
+                        'The active source session could not be loaded, so its saved review cannot be verified as current.'
+                      )
                     : lineage?.originSession.state === 'deleted'
-                      ? 'The source session was deleted before an applicable review was captured.'
-                      : 'This version was generated without an applicable reviewer audit.'}
+                      ? t(
+                          'The source session was deleted before an applicable review was captured.'
+                        )
+                      : t('This version was generated without an applicable reviewer audit.')}
                 </p>
                 {reviewUnavailableReason !== 'source-session-unavailable' ? (
-                  <p className="mt-3 text-xs text-text-300">Model · not triggered</p>
+                  <p className="mt-3 text-xs text-text-300">{t('Model · not triggered')}</p>
                 ) : null}
               </div>
             </section>

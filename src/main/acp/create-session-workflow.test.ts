@@ -64,11 +64,46 @@ const createHarness = (
 }
 
 describe('ACP create-Session workflow', () => {
+  it('holds Project admission through Session publication', async () => {
+    const created = createDeferred<AcpCreateSessionResponse>()
+    let admissionActive = false
+    const createSession = vi.fn(async () => {
+      expect(admissionActive).toBe(true)
+      return created.promise
+    })
+    const withProjectAvailable = async <Result>(
+      projectId: string | undefined,
+      operation: () => Promise<Result>
+    ): Promise<Result> => {
+      expect(projectId).toBe('project-1')
+      admissionActive = true
+      try {
+        return await operation()
+      } finally {
+        admissionActive = false
+      }
+    }
+    const workflow = createAcpCreateSessionWorkflow({ createSession }, { withProjectAvailable })
+
+    const pending = workflow.create({
+      cwd: '/workspace',
+      projectId: 'project-1',
+      permissionProfile: 'ask'
+    })
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce())
+    expect(admissionActive).toBe(true)
+
+    created.resolve({ sessionId: 'session-1', cwd: '/workspace' })
+    await pending
+
+    expect(admissionActive).toBe(false)
+  })
+
   it('trims and uses an explicit workspace without acquiring managed storage', async () => {
     const harness = createHarness()
     const request = {
       cwd: '  /chosen/workspace  ',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask' as const
     }
 
@@ -91,7 +126,7 @@ describe('ACP create-Session workflow', () => {
       const harness = createHarness()
 
       await expect(
-        harness.workflow.create({ cwd, projectName: 'project-1', permissionProfile: 'ask' })
+        harness.workflow.create({ cwd, projectId: 'project-1', permissionProfile: 'ask' })
       ).resolves.toEqual({
         sessionId: 'session-1',
         cwd: harness.lease.cwd
@@ -99,7 +134,7 @@ describe('ACP create-Session workflow', () => {
 
       expect(harness.createSession).toHaveBeenCalledWith({
         cwd: harness.lease.cwd,
-        projectName: 'project-1',
+        projectId: 'project-1',
         permissionProfile: 'ask'
       })
       expect(harness.events).toEqual([
@@ -118,10 +153,21 @@ describe('ACP create-Session workflow', () => {
     async (failure) => {
       const harness = createHarness(failure)
 
-      await expect(harness.workflow.create({ projectName: 'project-1' })).rejects.toBe(failure)
+      await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toBe(failure)
 
       expect(harness.lease.commit).not.toHaveBeenCalled()
       expect(harness.events).toEqual(['guard:start', 'acquire', 'session', 'release', 'guard:end'])
     }
   )
 })
+
+const createDeferred = <Value>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}

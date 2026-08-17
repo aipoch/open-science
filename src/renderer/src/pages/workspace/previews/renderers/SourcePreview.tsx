@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 import type { PreviewPagination } from '../usePreviewFileContent'
@@ -21,6 +22,7 @@ export const SourcePreviewContent = ({
   lineClassName,
   language
 }: SourcePreviewContentProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const lineNumberWidth = `${Math.max(String(content.replace(/\0/g, '').split(/\r?\n/).length).length, 2) + 1}ch`
 
   return (
@@ -28,13 +30,13 @@ export const SourcePreviewContent = ({
       {topContent}
       {pagination && (pagination.hasPrevious || pagination.hasNext) ? (
         <div className="flex shrink-0 items-center justify-between border-b border-border-300 bg-bg-000 px-3 py-1.5 text-[12px] text-text-300">
-          <span>Page {pagination.pageNumber}</span>
+          <span>{t('Page {{page}}', { page: pagination.pageNumber })}</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
               className="rounded p-1 hover:bg-bg-200 disabled:opacity-40"
-              aria-label="Previous preview page"
-              title="Previous page"
+              aria-label={t('Previous preview page')}
+              title={t('Previous page')}
               disabled={!pagination.hasPrevious}
               onClick={pagination.previousPage}
             >
@@ -43,8 +45,8 @@ export const SourcePreviewContent = ({
             <button
               type="button"
               className="rounded p-1 hover:bg-bg-200 disabled:opacity-40"
-              aria-label="Next preview page"
-              title="Next page"
+              aria-label={t('Next preview page')}
+              title={t('Next page')}
               disabled={!pagination.hasNext}
               onClick={pagination.nextPage}
             >

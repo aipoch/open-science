@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +32,7 @@ const SwitchFrameworkDialog = ({
   onCancel,
   onConfirm
 }: SwitchFrameworkDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogTargetName = useRetainedDialogValue(targetName)
 
   return (
@@ -48,7 +50,7 @@ const SwitchFrameworkDialog = ({
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
-                Switch to {dialogTargetName}?
+                {t('Switch to {{name}}?', { name: dialogTargetName })}
               </AlertDialog.Title>
             </div>
             <AlertDialog.Cancel asChild>
@@ -56,7 +58,7 @@ const SwitchFrameworkDialog = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close"
+                aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
               >
                 <X className="size-4" aria-hidden="true" />
@@ -66,22 +68,22 @@ const SwitchFrameworkDialog = ({
 
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              A conversation can&apos;t be resumed on a different backend, so switching starts a
-              fresh agent session. Open conversations keep their existing messages, and their
-              transcript is replayed to {dialogTargetName} so it can pick up where you left off
-              (tool state is not carried over). New conversations are unaffected.
+              {t(
+                "A conversation can't be resumed on a different backend, so switching starts a fresh agent session. Open conversations keep their existing messages, and their transcript is replayed to {{name}} so it can pick up where you left off (tool state is not carried over). New conversations are unaffected.",
+                { name: dialogTargetName }
+              )}
             </AlertDialog.Description>
           </div>
 
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
               <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
-                Cancel
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
               <Button type="button" onClick={onConfirm}>
-                Switch
+                {t('Switch')}
               </Button>
             </AlertDialog.Action>
           </div>

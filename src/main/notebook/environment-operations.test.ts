@@ -43,9 +43,11 @@ const createOwner = async (
 ): Promise<{
   owner: NotebookEnvironmentOperations
   notifyChanged: ReturnType<typeof vi.fn>
+  clearKernelTermination: ReturnType<typeof vi.fn>
 }> => {
   const recovery = new NotebookRecoveryCoordinator(join(await createRoot(), 'runtime'))
   const notifyChanged = vi.fn()
+  const clearKernelTermination = vi.fn(async () => undefined)
   const bindings = {
     runWrites: async <T>(_sessionIds: Iterable<string>, operation: () => Promise<T>): Promise<T> =>
       operation(),
@@ -72,10 +74,11 @@ const createOwner = async (
     recovery,
     bindings,
     sessions: () => sessions,
+    clearKernelTermination,
     notifyChanged,
     now: () => 123
   })
-  return { owner, notifyChanged }
+  return { owner, notifyChanged, clearKernelTermination }
 }
 
 describe('NotebookEnvironmentOperations', () => {
@@ -205,7 +208,7 @@ describe('NotebookEnvironmentOperations', () => {
         this.statuses.delete(processKey)
       }
     }
-    const { owner, notifyChanged } = await createOwner([session])
+    const { owner, notifyChanged, clearKernelTermination } = await createOwner([session])
 
     await owner.revokeRuntime('python', '/env/python')
 
@@ -217,6 +220,7 @@ describe('NotebookEnvironmentOperations', () => {
     releaseDrain()
     await owner.waitForRevocationDrains()
     expect(terminations).toEqual(['python:default-python'])
+    expect(clearKernelTermination).toHaveBeenCalledWith(session, 'python:default-python')
     expect(owner.snapshot().revocationDrains).toBe(0)
     expect(notifyChanged).toHaveBeenCalledTimes(2)
   })

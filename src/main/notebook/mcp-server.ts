@@ -11,6 +11,7 @@ import {
   MIN_AGENT_USER_CHOICE_OPTIONS
 } from '../../shared/elicitation'
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import {
   fetchLocalRpc,
   fetchLongLivedLocalRpc,
@@ -260,8 +261,6 @@ const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest):
         : []),
       { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: request.token },
       { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: projectId },
-      // Keep the old variable for rollback to a child entry point that predates the adapter.
-      { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: request.sessionId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: request.workspaceCwd }
     ]
@@ -286,10 +285,12 @@ const requireEnvironmentVariable = (
 const createNotebookMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
 ): NotebookMcpEnvironment => {
-  const projectId = resolveProjectId({
-    projectId: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID,
-    projectName: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
-  })
+  const currentProjectId = env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID
+  const legacyProjectId = env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
+  if (currentProjectId && legacyProjectId && currentProjectId !== legacyProjectId) {
+    throw new Error('Conflicting projectId and legacy projectName values.')
+  }
+  const projectId = resolveProjectId({ projectId: currentProjectId ?? legacyProjectId })
   return {
     endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
     socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
@@ -543,16 +544,19 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   const filesOmitted =
     (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length) ||
     (Array.isArray(record.artifacts) && record.artifacts.length > artifacts.length)
-  const truncated =
+  const resultCompacted =
     stdout.clipped ||
     stderr.clipped ||
     traceback.clipped ||
     compactOutputs.truncated ||
     filesOmitted
+  const captureTruncated = record.truncated === true
+  const truncated = captureTruncated || resultCompacted
 
   return {
     ...pickDefined(record, [
       'runId',
+      'executionInvocationId',
       'cellId',
       'kernelKind',
       'status',
@@ -575,7 +579,11 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
     ...(truncated
       ? {
           truncated: true,
-          note: 'Agent-facing result shortened; full output remains in the notebook preview.'
+          note: captureTruncated
+            ? resultCompacted
+              ? 'Notebook output was truncated during capture and shortened again for this agent-facing result.'
+              : 'Notebook output was truncated during capture.'
+            : 'Agent-facing result shortened; full output remains in the notebook preview.'
         }
       : {})
   }
@@ -614,7 +622,8 @@ const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown
       'environment',
       'startedAt',
       'endedAt',
-      'interruptionReason'
+      'interruptionReason',
+      'truncated'
     ]),
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(outputPreview ? { outputPreview } : {})
@@ -662,7 +671,8 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
     ...(runtimeBindings ? { runtimeBindings } : {}),
     cellCount: Array.isArray(record.cells) ? record.cells.length : 0,
     ...(cells.length ? { cells } : {}),
-    runCount: runs.length || recentSource.length,
+    runCount:
+      typeof record.runCount === 'number' ? record.runCount : runs.length || recentSource.length,
     recentRuns: recentRuns.map((run, index) =>
       compactStateRun(run, index === recentRuns.length - 1)
     ),
@@ -686,6 +696,7 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
   const identity = pickDefined(record, [
     'status',
     'runId',
+    'executionInvocationId',
     'sessionId',
     'kernelStatus',
     'exitCode',
@@ -946,6 +957,13 @@ const compactManageEnvironmentsResult = (raw: unknown, input: unknown = {}): unk
 const compactManagePackagesResult = (raw: unknown): unknown => {
   if (typeof raw !== 'object' || raw === null) return raw
   const result = raw as Record<string, unknown>
+  const logTruncation = asRecord(result.logTruncation)
+  const droppedLogBytes =
+    logTruncation &&
+    Number.isSafeInteger(logTruncation.droppedBytes) &&
+    Number(logTruncation.droppedBytes) > 0
+      ? Number(logTruncation.droppedBytes)
+      : undefined
   const packageChanges = Array.isArray(result.packageChanges)
     ? result.packageChanges.slice(0, MAX_PACKAGE_RESULTS).flatMap((change) => {
         const item = asRecord(change)
@@ -968,6 +986,7 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     needsRestart: result.needsRestart,
     ...(result.method !== undefined ? { method: result.method } : {}),
     ...(result.fallbackUsed !== undefined ? { fallbackUsed: result.fallbackUsed } : {}),
+    ...(droppedLogBytes !== undefined ? { logTruncation: { droppedBytes: droppedLogBytes } } : {}),
     ...(packageChanges !== undefined ? { packageChanges } : {}),
     ...(Array.isArray(result.packageChanges) &&
     result.packageChanges.length > (packageChanges?.length ?? 0)
@@ -1129,7 +1148,11 @@ const runNotebookMcpServer = async (
 ): Promise<void> => {
   const server = createNotebookMcpServer(environment)
 
-  await server.connect(new StdioServerTransport())
+  await server.connect(
+    new StdioServerTransport(process.stdin, process.stdout, {
+      maxBufferSize: LOCAL_RESOURCE_BUDGETS.requestBytes
+    })
+  )
 }
 
 export {

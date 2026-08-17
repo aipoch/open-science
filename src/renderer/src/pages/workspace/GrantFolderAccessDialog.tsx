@@ -5,6 +5,7 @@
 import { ChevronDown, CircleAlert, Folder, Home, Info, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type {
   GrantedLocalRoot,
@@ -88,6 +89,7 @@ const PathEditInput = ({
   onSubmit: (input: string) => void
   onCancel: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const [value, setValue] = useState(initialPath)
   const inputRef = useRef<HTMLInputElement>(null)
   // Focus on mount with the caret at the end of the prefilled cwd — no select-all, so clicking
@@ -115,7 +117,7 @@ const PathEditInput = ({
       }}
       onBlur={() => onSubmit(value)}
       spellCheck={false}
-      aria-label="Folder path"
+      aria-label={t('Folder path')}
       className="w-full rounded-md border border-border bg-bg-000 px-2 py-1 font-mono text-xs text-text-100 outline-none focus:text-text-000 focus:ring-2 focus:ring-ring/50"
     />
   )
@@ -149,6 +151,7 @@ const GrantFolderAccessDialogContent = ({
   onOpenChange: (open: boolean) => void
   onGranted?: (root: GrantedLocalRoot) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const roots = useGrantedFoldersStore((state) => state.roots)
   const refresh = useGrantedFoldersStore((state) => state.refresh)
   const grant = useGrantedFoldersStore((state) => state.grant)
@@ -353,13 +356,13 @@ const GrantFolderAccessDialogContent = ({
         )}
       >
         <div className={dialogHeaderClassName}>
-          <Dialog.Title className={dialogTitleClassName}>Grant folder access</Dialog.Title>
+          <Dialog.Title className={dialogTitleClassName}>{t('Grant folder access')}</Dialog.Title>
           <Dialog.Close asChild>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               data-testid="grant-access-close"
               className={dialogCloseButtonClassName}
             >
@@ -368,7 +371,7 @@ const GrantFolderAccessDialogContent = ({
           </Dialog.Close>
         </div>
         <Dialog.Description className="sr-only">
-          Browse to a folder and grant the app read-only or read &amp; write access to it.
+          {t('Browse to a folder and grant the app read-only or read & write access to it.')}
         </Dialog.Description>
 
         {/* Breadcrumb bar. Clicking the bar's own empty space (not a crumb) swaps it for the
@@ -393,7 +396,7 @@ const GrantFolderAccessDialogContent = ({
           >
             <button
               type="button"
-              aria-label="Go to home folder"
+              aria-label={t('Go to home folder')}
               data-testid="grant-access-crumb-home"
               onClick={() => home && navigateTo(home)}
               className="flex items-center rounded p-1 hover:bg-bg-200 hover:text-text-000"
@@ -410,7 +413,7 @@ const GrantFolderAccessDialogContent = ({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    aria-label="Choose a drive or volume"
+                    aria-label={t('Choose a drive or volume')}
                     data-testid="grant-access-drive-root"
                     className="flex items-center gap-0.5 rounded px-1 py-0.5 font-medium text-text-000 hover:bg-bg-200"
                   >
@@ -432,7 +435,7 @@ const GrantFolderAccessDialogContent = ({
                       data-testid="grant-access-no-drives"
                       className="text-xs"
                     >
-                      No other drives
+                      {t('No other drives')}
                     </DropdownMenuItem>
                   ) : (
                     drives.map((drive) => {
@@ -505,15 +508,15 @@ const GrantFolderAccessDialogContent = ({
         <div className="flex max-h-[320px] min-h-[220px] flex-col overflow-y-auto px-5 pb-3 pt-2">
           {listing.kind === 'loading' ? (
             <div className="flex flex-1 items-center justify-center text-[13px] text-text-300">
-              Loading…
+              {t('Loading…')}
             </div>
           ) : listing.kind === 'error' ? (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-text-300">
-              {listing.summary}
+              {t(listing.summary)}
             </div>
           ) : listing.entries.length === 0 ? (
             <div className="flex flex-1 items-center justify-center text-[13px] text-text-300">
-              No subfolders.
+              {t('No subfolders.')}
             </div>
           ) : (
             <ul data-testid="grant-access-folder-list">
@@ -547,7 +550,7 @@ const GrantFolderAccessDialogContent = ({
           {isHome ? (
             <div className="flex items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs leading-[18px] text-text-100">
               <Info className="mt-px size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-              <span>Your home folder itself can&apos;t be granted — pick a subfolder.</span>
+              <span>{t("Your home folder itself can't be granted — pick a subfolder.")}</span>
             </div>
           ) : null}
           {grantFailed ? (
@@ -561,17 +564,17 @@ const GrantFolderAccessDialogContent = ({
                 strokeWidth={1.8}
                 aria-hidden="true"
               />
-              <span>Directory could not be accessed.</span>
+              <span>{t('Directory could not be accessed.')}</span>
             </div>
           ) : null}
           <div className="flex items-center gap-2.5">
             <AccessRadio
-              label="Read-only"
+              label={t('Read-only')}
               selected={access === 'ro'}
               onSelect={() => setAccess('ro')}
             />
             <AccessRadio
-              label="Read & write"
+              label={t('Read & write')}
               selected={access === 'rw'}
               onSelect={() => setAccess('rw')}
             />
@@ -583,7 +586,7 @@ const GrantFolderAccessDialogContent = ({
               data-testid="grant-access-cancel"
               onClick={() => onOpenChange(false)}
             >
-              Cancel
+              {t('Cancel')}
             </Button>
             <Button
               type="button"
@@ -592,7 +595,7 @@ const GrantFolderAccessDialogContent = ({
               onClick={() => void handleGrant()}
               className="bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-40"
             >
-              Grant this folder
+              {t('Grant this folder')}
             </Button>
           </div>
         </div>

@@ -284,4 +284,67 @@ describe('ProviderAuthLifecycleOwner', () => {
     await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(true)
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
   })
+
+  it('reports shared and isolated Claude status through the lifecycle Interface', async () => {
+    await expect(owner.getClaudeSharedStatus()).resolves.toMatchObject({
+      ok: true,
+      category: 'ok'
+    })
+    expect(runClaudeSubscriptionProbe).toHaveBeenCalledOnce()
+
+    await repository.deleteProvider(CLAUDE_SHARED_PROVIDER_ID)
+    await expect(owner.getClaudeSharedStatus()).resolves.toEqual({
+      ok: false,
+      category: 'unknown',
+      message: 'Claude subscription provider is not configured.'
+    })
+
+    await repository.upsertProvider({
+      id: CLAUDE_ISOLATED_PROVIDER_ID,
+      type: 'claude-isolated',
+      name: 'Open Science Claude login',
+      apiEndpoints: ['anthropic'],
+      keyRef: 'plain:setup-token'
+    })
+    vi.mocked(claudeIsolatedAuth.getStatus).mockResolvedValueOnce({
+      supported: true,
+      authenticated: true
+    })
+    await expect(owner.getClaudeIsolatedStatus()).resolves.toMatchObject({
+      ok: true,
+      category: 'ok'
+    })
+    expect(runClaudeSubscriptionProbe).toHaveBeenCalledTimes(2)
+  })
+
+  it('owns browser cancellation and explicit login cancellation', async () => {
+    await repository.deleteProvider(CLAUDE_SHARED_PROVIDER_ID)
+    await repository.upsertProvider({
+      id: CLAUDE_ISOLATED_PROVIDER_ID,
+      type: 'claude-isolated',
+      name: 'Open Science Claude login',
+      apiEndpoints: ['anthropic']
+    })
+    vi.mocked(claudeIsolatedAuth.loginIsolatedBrowser).mockResolvedValueOnce({
+      supported: true,
+      authenticated: false,
+      cancelled: true,
+      message: 'Sign-in cancelled.'
+    })
+
+    await expect(owner.loginIsolatedClaudeBrowser()).resolves.toEqual({
+      ok: false,
+      category: 'unknown',
+      message: 'Sign-in cancelled.',
+      applied: false,
+      cancelled: true
+    })
+
+    owner.cancelCodexLogin()
+    owner.cancelClaudeLogin()
+    await owner.cancelClaudeIsolatedLogin()
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
+  })
 })

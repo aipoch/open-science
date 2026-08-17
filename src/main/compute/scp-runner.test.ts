@@ -2,7 +2,7 @@
 // (driven via a fake execFile so no real scp is invoked).
 
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -28,13 +28,17 @@ import type { ResolvedSshTarget } from './ssh-runner'
 // Hoisted execFile double — drives SystemScpRunner's child event lifecycle.
 // ---------------------------------------------------------------------------
 
-const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }))
+const { execFileMock, spawnMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+  spawnMock: vi.fn()
+}))
 
-vi.mock('node:child_process', () => ({ execFile: execFileMock }))
+vi.mock('node:child_process', () => ({ execFile: execFileMock, spawn: spawnMock }))
 
 // Controllable ChildProcess double matching execFile's surface used by
 // SystemScpRunner: stderr is an EventEmitter, kill() records the signal.
 class FakeChild extends EventEmitter {
+  stdout = new EventEmitter()
   stderr = new EventEmitter()
   kill = vi.fn(() => true)
 }
@@ -475,11 +479,49 @@ describe('SystemScpRunner', () => {
   beforeEach(() => {
     runner = new SystemScpRunner()
     execFileMock.mockReset()
+    spawnMock.mockReset()
   })
 
   afterEach(() => {
     execFileMock.mockReset()
+    spawnMock.mockReset()
     vi.useRealTimers()
+  })
+
+  it('writes at most maxBytes and terminates a remote file that grows past the limit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'scp-bounded-test-'))
+    const localPath = join(dir, 'bounded.bin')
+    try {
+      const child = new FakeChild()
+      spawnMock.mockReturnValueOnce(child as unknown as ReturnType<typeof spawnMock>)
+      const target: ResolvedSshTarget = {
+        sshBinary: '/usr/bin/ssh',
+        host: 'cluster',
+        extraArgs: []
+      }
+
+      const promise = runner.copyFromRemoteBounded(
+        target,
+        '~/.openscience/jobs/job-1/growing.log',
+        localPath,
+        3
+      )
+      child.stdout.emit('data', Buffer.from('abcd'))
+      child.stdout.emit('end')
+      child.emit('close', null)
+
+      const result = await promise
+      expect(result).toMatchObject({ bytesWritten: 3, exceeded: true })
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+      await expect(readFile(localPath, 'utf8')).resolves.toBe('abc')
+      expect(spawnMock).toHaveBeenCalledWith(
+        '/usr/bin/ssh',
+        ['cluster', "head -c 4 -- ~/'.openscience/jobs/job-1/growing.log'"],
+        { stdio: ['ignore', 'pipe', 'pipe'] }
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('returns exitCode 0 and the captured stderr on a clean child close', async () => {

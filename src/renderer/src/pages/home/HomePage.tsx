@@ -18,8 +18,10 @@ import {
   X
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { formatRelativeTime } from '@/lib/format-relative-time'
+import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
+import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,34 +40,56 @@ import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { LanguagePreferenceMenu } from '@/components/LanguageControls'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
+import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import { APP } from '../../../../shared/app-config'
-import {
-  earliestCurrentDelegatedAttemptStartedAt,
-  hasCurrentRunningDelegatedAttempt
-} from '../../../../shared/delegated-work-projection'
+import { earliestCurrentDelegatedAttemptStartedAt } from '../../../../shared/delegated-work-projection'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
 import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
-import { hasAnswerableDelegatedQuestion } from '../workspace/subagent-release-projection'
+import {
+  isSessionWaitReason,
+  projectPresentedSessionActionability,
+  type SessionWaitReason
+} from '../workspace/session-wait-reason'
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
 
 const RECENT_SESSION_LIMIT = 5
 
+// Compact labels for dense rows ("3d"), unlike the verbose wording in global search ("3 days ago").
+// The unit is a runtime value, so it maps to its English text rather than being interpolated into a
+// key. Every entry carries the 'ago' context: Chinese needs "3 天前" here, where the file browser's
+// bare-age column says "3 天" for the same unit.
+const COMPACT_ELAPSED = {
+  minute: '{{count}}m',
+  hour: '{{count}}h',
+  day: '{{count}}d',
+  week: '{{count}}w',
+  month: '{{count}}mo',
+  year: '{{count}}y'
+} as const satisfies Record<Exclude<RelativeTimeUnit, 'now'>, string>
+
 type ProjectSummary = {
   project: Project
   sessionCount: number
   runningCount: number
-  needsYouCount: number
+  waitingCount: number
   lastActivityAt: number
 }
 
-type HomeSessionActivity = 'running' | 'needs-you' | 'completed'
+type HomeSessionActivity = 'running' | 'completed' | SessionWaitReason
+
+const homeSessionWaitAriaLabelKeys = {
+  'waiting-for-user': 'Open session {{title}}, waiting for your answer',
+  'waiting-permission': 'Open session {{title}}, waiting for permission',
+  'waiting-plan-approval': 'Open session {{title}}, waiting for plan approval'
+} as const satisfies Record<SessionWaitReason, string>
 
 type HomeSessionUpdate = {
   session: ChatSession
@@ -76,8 +100,12 @@ type HomeSessionUpdate = {
 type HomePageProps = {
   canDeleteProjects: boolean
   hasCompleteSessionCatalog: boolean
+  catalogRecovery?: SessionCatalogRecovery
   onOpenGlobalSearch: () => void
 }
+
+const INCOMPLETE_PROJECT_SESSION_CATALOG_ERROR =
+  'Cannot archive a Project while its Session catalog is incomplete.'
 
 // Optional warnings (currently Python and reduced key protection) never create a Home alert. Only a
 // failed check that blocks the core flow asks an existing user to revisit environment setup.
@@ -86,15 +114,9 @@ const getRequiredEnvironmentFailures = (
 ): EnvironmentCheckItem[] => environment?.checks.filter((check) => check.status === 'failed') ?? []
 
 const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
-  if (hasAnswerableDelegatedQuestion(session)) return 'needs-you'
-  if (session.status === 'running' || hasCurrentRunningDelegatedAttempt(session)) return 'running'
-  if (
-    session.status === 'waiting-for-user' ||
-    session.status === 'waiting-permission' ||
-    session.status === 'waiting-plan-approval'
-  ) {
-    return 'needs-you'
-  }
+  const actionability = projectPresentedSessionActionability(session)
+  if (actionability.waitReason) return actionability.waitReason
+  if (actionability.activity === 'running') return 'running'
   return undefined
 }
 
@@ -121,10 +143,13 @@ const rowActionClassName =
 const HomePage = ({
   canDeleteProjects,
   hasCompleteSessionCatalog,
+  catalogRecovery,
   onOpenGlobalSearch
 }: HomePageProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
+  const loadProjects = useProjectStore((state) => state.loadProjects)
   const updateProject = useProjectStore((state) => state.updateProject)
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
@@ -156,11 +181,15 @@ const HomePage = ({
   const [archivingProjectIds, setArchivingProjectIds] = useState<Set<string>>(() => new Set())
   const [pinningProjectIds, setPinningProjectIds] = useState<Set<string>>(() => new Set())
   const [projectActionError, setProjectActionError] = useState<string | undefined>(undefined)
+  const [isRetryingProjects, setIsRetryingProjects] = useState(false)
   const [artifactCounts, setArtifactCounts] = useState<Map<string, number>>(() => new Map())
   const [markingReadSessionIds, setMarkingReadSessionIds] = useState<Set<string>>(() => new Set())
   const [markReadErrorSessionIds, setMarkReadErrorSessionIds] = useState<Set<string>>(
     () => new Set()
   )
+  const effectiveCatalogRecovery: SessionCatalogRecovery =
+    catalogRecovery ??
+    (hasCompleteSessionCatalog ? { kind: 'ready' } : { kind: 'repairable', reason: 'session-scan' })
 
   const activeProjects = useMemo(
     () => projects.filter((project) => project.archivedAt === undefined),
@@ -206,8 +235,9 @@ const HomePage = ({
           {
             session,
             activity,
-            activityTimestamp:
-              activity === 'needs-you' ? session.updatedAt : getRunningActivityTimestamp(session)
+            activityTimestamp: isSessionWaitReason(activity)
+              ? session.updatedAt
+              : getRunningActivityTimestamp(session)
           }
         ]
       }
@@ -224,10 +254,10 @@ const HomePage = ({
         : []
     })
 
-    const activityOrder: HomeSessionActivity[] = ['needs-you', 'running', 'completed']
     return updates.sort(
       (left, right) =>
-        activityOrder.indexOf(left.activity) - activityOrder.indexOf(right.activity) ||
+        (isSessionWaitReason(left.activity) ? 0 : left.activity === 'running' ? 1 : 2) -
+          (isSessionWaitReason(right.activity) ? 0 : right.activity === 'running' ? 1 : 2) ||
         right.activityTimestamp - left.activityTimestamp
     )
   }, [persistedSessions, unreadCompletedBySession])
@@ -235,7 +265,7 @@ const HomePage = ({
   const activeSessionCounts = useMemo(
     () => ({
       running: sessionUpdates.filter(({ activity }) => activity === 'running').length,
-      needsYou: sessionUpdates.filter(({ activity }) => activity === 'needs-you').length
+      waiting: sessionUpdates.filter(({ activity }) => isSessionWaitReason(activity)).length
     }),
     [sessionUpdates]
   )
@@ -261,9 +291,10 @@ const HomePage = ({
         runningCount: projectSessions.filter(
           (session) => getHomeSessionActivity(session) === 'running'
         ).length,
-        needsYouCount: projectSessions.filter(
-          (session) => getHomeSessionActivity(session) === 'needs-you'
-        ).length,
+        waitingCount: projectSessions.filter((session) => {
+          const activity = getHomeSessionActivity(session)
+          return activity !== undefined && isSessionWaitReason(activity)
+        }).length,
         lastActivityAt
       }
     })
@@ -341,6 +372,13 @@ const HomePage = ({
     })
   }, [consumeProjectCreation, openCreateDialog, pendingProjectCreation])
 
+  const retryProjectLoad = (): void => {
+    if (isRetryingProjects) return
+
+    setIsRetryingProjects(true)
+    void loadProjects().finally(() => setIsRetryingProjects(false))
+  }
+
   const openDeleteDialog = (project: Project): void => {
     if (!canDeleteProjects) return
 
@@ -362,12 +400,21 @@ const HomePage = ({
     !sessions.some(
       (session) =>
         session.projectId === project.id &&
-        (hasCurrentRunningDelegatedAttempt(session) ||
-          session.status === 'running' ||
-          session.status === 'waiting-for-user' ||
-          session.status === 'waiting-permission' ||
-          session.status === 'waiting-plan-approval')
+        projectPresentedSessionActionability(session).activity !== 'inactive'
     )
+
+  const archiveUnavailableReason = (project: Project): string | undefined => {
+    if (!canDeleteProjects) return t('Retry project recovery before archiving.')
+    if (!hasCompleteSessionCatalog) {
+      return effectiveCatalogRecovery.kind === 'damaged-authority'
+        ? t('Project archive is unavailable because a damaged conversation cannot be verified.')
+        : t('Repair the project index before archiving.')
+    }
+    if (!canArchiveProject(project)) {
+      return t('Finish or stop active sessions before archiving this project.')
+    }
+    return undefined
+  }
 
   const archiveProject = (project: Project): void => {
     if (!canArchiveProject(project) || archivingProjectIds.has(project.id)) return
@@ -377,7 +424,13 @@ const HomePage = ({
     void updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
-        setProjectActionError(error instanceof Error ? error.message : 'Could not archive project.')
+        setProjectActionError(
+          error instanceof Error && error.message.includes(INCOMPLETE_PROJECT_SESSION_CATALOG_ERROR)
+            ? t('Repair the project index before archiving.')
+            : error instanceof Error
+              ? error.message
+              : t('Could not archive project.')
+        )
       )
       .finally(() => {
         setArchivingProjectIds((current) => {
@@ -415,10 +468,14 @@ const HomePage = ({
 
     setPinningProjectIds((current) => new Set(current).add(project.id))
     setProjectActionError(undefined)
-    void updateProject({ id: project.id, pinned: !project.pinned })
+    void updateProject({
+      id: project.id,
+      pinned: !project.pinned,
+      expectedUpdatedAt: project.updatedAt
+    })
       .catch((error: unknown) =>
         setProjectActionError(
-          error instanceof Error ? error.message : 'Could not update project pin.'
+          error instanceof Error ? error.message : t('Could not update project pin.')
         )
       )
       .finally(() => {
@@ -452,12 +509,20 @@ const HomePage = ({
         // Durable deletion failed; keep the target and in-memory sessions visible so the user can
         // inspect the failure and retry or cancel explicitly.
         setDeleteProjectError(
-          error instanceof Error ? error.message : 'Could not delete the project. Please try again.'
+          error instanceof Error
+            ? error.message
+            : t('Could not delete the project. Please try again.')
         )
       })
       .finally(() => {
         setIsDeletingProject(false)
       })
+  }
+
+  // The bucket comes from a pure helper; the wording is per-locale ("3d" vs "3 天前").
+  const relativeTime = (timestamp: number): string => {
+    const { unit, count } = relativeTimeParts(timestamp)
+    return unit === 'now' ? t('now') : t(COMPACT_ELAPSED[unit], { count, context: 'ago' })
   }
 
   return (
@@ -475,27 +540,27 @@ const HomePage = ({
                 Open Science
               </a>
               {hasCompleteSessionCatalog &&
-              (activeSessionCounts.needsYou > 0 || activeSessionCounts.running > 0) ? (
+              (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
                 <div className="flex items-center gap-1.5 text-xs font-medium">
-                  {activeSessionCounts.needsYou > 0 ? (
+                  {activeSessionCounts.waiting > 0 ? (
                     <span className="text-session-waiting">
-                      {activeSessionCounts.needsYou} waiting on you
+                      {t('{{count}} waiting on you', { count: activeSessionCounts.waiting })}
                     </span>
                   ) : null}
-                  {activeSessionCounts.needsYou > 0 && activeSessionCounts.running > 0 ? (
+                  {activeSessionCounts.waiting > 0 && activeSessionCounts.running > 0 ? (
                     <span className="text-text-300" aria-hidden="true">
                       ·
                     </span>
                   ) : null}
                   {activeSessionCounts.running > 0 ? (
                     <span className="text-session-running">
-                      {activeSessionCounts.running} running
+                      {t('{{count}} running', { count: activeSessionCounts.running })}
                     </span>
                   ) : null}
                 </div>
               ) : null}
             </div>
-            <div className="mt-1 text-[11px] text-muted-foreground">Beta</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">{t('Beta')}</div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
             {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
@@ -503,36 +568,41 @@ const HomePage = ({
                 type="button"
                 onClick={() => openSettingsToPanel(environmentRepairPanel)}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80"
-                aria-label="Open environment repair"
+                aria-label={t('Open environment repair')}
               >
                 <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
                 <span className="hidden sm:inline">
                   {requiredEnvironmentFailures.length === 1
-                    ? `${requiredEnvironmentFailures[0].label} needs attention`
-                    : `${requiredEnvironmentFailures.length} environment items need attention`}
+                    ? t('{{label}} needs attention', {
+                        label: requiredEnvironmentFailures[0].label
+                      })
+                    : t('{{count}} environment items need attention', {
+                        count: requiredEnvironmentFailures.length
+                      })}
                 </span>
-                <span className="sm:hidden">Environment</span>
+                <span className="sm:hidden">{t('Environment')}</span>
               </button>
             ) : null}
             <NetworkStatusIndicator variant="pill" />
             <span className="hidden sm:inline-flex">
-              <GitHubStarBadge />
+              <GitHubStarBadge variant="home" />
             </span>
             <Button
               variant="ghost"
               size="icon"
               className="size-9 rounded-lg text-text-300"
               onClick={onOpenGlobalSearch}
-              aria-label="Search"
-              title="Search (Cmd/Ctrl+K)"
+              aria-label={t('Search')}
+              title={t('Search (Cmd/Ctrl+K)')}
             >
               <Search className="size-4" strokeWidth={2} aria-hidden="true" />
             </Button>
+            <LanguagePreferenceMenu />
             <ThemePreferenceMenu />
             <NotificationBell />
             <button
               type="button"
-              aria-label="Model settings"
+              aria-label={t('Model settings')}
               onClick={openSettings}
               className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000"
             >
@@ -547,18 +617,22 @@ const HomePage = ({
               onClick={openCreateDialog}
             >
               <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-              <span className="hidden sm:inline">New project</span>
+              <span className="hidden sm:inline">{t('New project')}</span>
             </Button>
           </div>
         </header>
 
         {sessionUpdates.length > 0 ? (
-          <section className="mt-8 sm:mt-10" aria-label="Session updates">
+          <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
             <div className="grid grid-cols-1 gap-3 py-1 md:grid-cols-2">
               {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
-                const needsYou = activity === 'needs-you'
+                const waitReason = isSessionWaitReason(activity) ? activity : undefined
+                const waiting = waitReason !== undefined
                 const completed = activity === 'completed'
-                const relativeActivityTime = formatRelativeTime(activityTimestamp)
+                // A finished session reads "just now" rather than the bare bucket, so the two cases
+                // stay separate keys instead of being assembled from a translated fragment.
+                const isJustNow = relativeTimeParts(activityTimestamp).unit === 'now'
+                const relativeActivityTime = relativeTime(activityTimestamp)
                 const markingRead = markingReadSessionIds.has(session.id)
                 const markReadFailed = markReadErrorSessionIds.has(session.id)
 
@@ -568,25 +642,31 @@ const HomePage = ({
                       type="button"
                       className="flex min-h-36 w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
                       onClick={() => openSession(session.projectId, session.id, 'user')}
-                      aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : completed ? 'completed' : 'running'}`}
+                      aria-label={
+                        waitReason
+                          ? t(homeSessionWaitAriaLabelKeys[waitReason], { title: session.title })
+                          : completed
+                            ? t('Open session {{title}}, completed', { title: session.title })
+                            : t('Open session {{title}}, running', { title: session.title })
+                      }
                     >
                       <span
                         className={cn(
                           'min-w-0 max-w-full truncate text-base font-semibold text-text-000',
                           completed && 'pr-10',
-                          !needsYou && !completed && 'home-session-title-running'
+                          !waiting && !completed && 'home-session-title-running'
                         )}
                       >
                         {session.title}
                       </span>
                       <span className="mt-1 truncate text-xs text-text-100">
-                        {projectNames.get(session.projectId) ?? 'Unknown project'}
+                        {projectNames.get(session.projectId) ?? t('Unknown project')}
                       </span>
                       <span className="mt-auto flex w-full items-end justify-between gap-3 pt-6">
                         <span
                           className={cn(
                             'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
-                            needsYou
+                            waiting
                               ? 'bg-session-waiting/10 text-session-waiting'
                               : completed
                                 ? 'bg-success-000/10 text-success-000'
@@ -595,7 +675,7 @@ const HomePage = ({
                         >
                           {completed ? (
                             <Check className="size-3" strokeWidth={2} aria-hidden="true" />
-                          ) : needsYou ? (
+                          ) : waiting ? (
                             <span
                               className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
                               aria-hidden="true"
@@ -607,14 +687,22 @@ const HomePage = ({
                               aria-hidden="true"
                             />
                           )}
-                          {needsYou ? 'Needs you' : completed ? 'Completed' : 'Running'}
+                          {t(
+                            waitReason
+                              ? sessionWaitReasonLabelKeys[waitReason]
+                              : completed
+                                ? 'Completed'
+                                : 'Running'
+                          )}
                         </span>
                         <span className="shrink-0 text-xs text-text-100">
                           {completed
-                            ? relativeActivityTime === 'now'
-                              ? 'just now'
+                            ? isJustNow
+                              ? t('just now')
                               : relativeActivityTime
-                            : `${needsYou ? 'waiting' : 'running'} ${relativeActivityTime}`}
+                            : waiting
+                              ? t('waiting {{time}}', { time: relativeActivityTime })
+                              : t('running {{time}}', { time: relativeActivityTime })}
                         </span>
                       </span>
                     </button>
@@ -628,8 +716,16 @@ const HomePage = ({
                         onClick={() => void dismissCompletedSession(session.id)}
                         disabled={markingRead}
                         aria-busy={markingRead}
-                        aria-label={`${markReadFailed ? 'Retry marking' : 'Mark'} completed session ${session.title} as read`}
-                        title={markReadFailed ? 'Could not mark as read. Try again.' : undefined}
+                        aria-label={
+                          markReadFailed
+                            ? t('Retry marking completed session {{title}} as read', {
+                                title: session.title
+                              })
+                            : t('Mark completed session {{title}} as read', {
+                                title: session.title
+                              })
+                        }
+                        title={markReadFailed ? t('Could not mark as read. Try again.') : undefined}
                       >
                         {markingRead ? (
                           <LoaderCircle
@@ -642,7 +738,7 @@ const HomePage = ({
                         )}
                         {markReadFailed ? (
                           <span className="sr-only" role="alert">
-                            Could not mark this completed session as read. Try again.
+                            {t('Could not mark this completed session as read. Try again.')}
                           </span>
                         ) : null}
                       </button>
@@ -660,14 +756,14 @@ const HomePage = ({
             sessionUpdates.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
           )}
         >
-          <section className="min-w-0" aria-label="Projects">
+          <section className="min-w-0" aria-label={t('Projects')}>
             <h2 className={sectionHeadingClassName}>
               <GalleryVerticalEnd
                 className="size-4 text-text-100"
                 strokeWidth={2}
                 aria-hidden="true"
               />
-              Projects
+              {t('Projects')}
             </h2>
             {projectActionError ? (
               <div
@@ -682,16 +778,26 @@ const HomePage = ({
                 className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
                 role="alert"
               >
-                Could not load projects: {loadError}
+                <p>{t('Could not load projects: {{error}}', { error: loadError })}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={isRetryingProjects}
+                  onClick={retryProjectLoad}
+                >
+                  {isRetryingProjects ? t('Retrying...') : t('Retry')}
+                </Button>
               </div>
             ) : projectSummaries.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                No projects yet. Create one to get started.
+                {t('No projects yet. Create one to get started.')}
               </div>
             ) : (
               <div className={listCardClassName}>
                 {projectSummaries.map(
-                  ({ project, sessionCount, runningCount, needsYouCount, lastActivityAt }) => (
+                  ({ project, sessionCount, runningCount, waitingCount, lastActivityAt }) => (
                     <div
                       key={project.id}
                       className={rowClassName}
@@ -712,30 +818,30 @@ const HomePage = ({
                               strokeWidth={2}
                               aria-hidden="true"
                             />
-                            <span className="sr-only">Pinned project</span>
+                            <span className="sr-only">{t('Pinned project')}</span>
                           </>
                         ) : null}
                         {project.isExample ? (
                           <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
-                            Example
+                            {t('Example')}
                           </span>
                         ) : null}
-                        {hasCompleteSessionCatalog && needsYouCount > 0 ? (
+                        {hasCompleteSessionCatalog && waitingCount > 0 ? (
                           <span
                             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-waiting"
-                            aria-label={`${needsYouCount} waiting on you`}
+                            aria-label={t('{{count}} waiting on you', { count: waitingCount })}
                           >
                             <span
                               className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
                               aria-hidden="true"
                             />
-                            <span aria-hidden="true">{needsYouCount}</span>
+                            <span aria-hidden="true">{waitingCount}</span>
                           </span>
                         ) : null}
                         {hasCompleteSessionCatalog && runningCount > 0 ? (
                           <span
                             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-running"
-                            aria-label={`${runningCount} running`}
+                            aria-label={t('{{count}} running', { count: runningCount })}
                           >
                             <LoaderCircle
                               className="size-3 animate-spin motion-reduce:animate-none"
@@ -748,30 +854,35 @@ const HomePage = ({
                       </button>
                       <span className="hidden shrink-0 text-xs text-text-100 sm:inline">
                         {hasCompleteSessionCatalog
-                          ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
-                          : 'Session count unavailable'}
+                          ? t('{{count}} sessions', {
+                              defaultValue_one: '{{count}} session',
+                              count: sessionCount
+                            })
+                          : t('Session count unavailable')}
                       </span>
                       {showArtifactCounts && artifactCounts.has(project.id) ? (
                         <span className="hidden shrink-0 tabular-nums text-xs text-text-100 sm:inline">
-                          {artifactCounts.get(project.id)}{' '}
-                          {artifactCounts.get(project.id) === 1 ? 'artifact' : 'artifacts'}
+                          {t('{{count}} artifacts', {
+                            defaultValue_one: '{{count}} artifact',
+                            count: artifactCounts.get(project.id)
+                          })}
                         </span>
                       ) : null}
                       <span className="hidden w-8 shrink-0 text-right text-xs text-text-000 sm:inline">
-                        {formatRelativeTime(lastActivityAt)}
+                        {relativeTime(lastActivityAt)}
                       </span>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
                             className={rowActionClassName}
-                            aria-label={`Open actions for ${project.name}`}
+                            aria-label={t('Open actions for {{name}}', { name: project.name })}
                           >
                             <MoreVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent
-                          aria-label="Project actions"
+                          aria-label={t('Project actions')}
                           className="w-max min-w-0"
                           align="end"
                           sideOffset={6}
@@ -786,33 +897,42 @@ const HomePage = ({
                               strokeWidth={2}
                               aria-hidden="true"
                             />
-                            {project.pinned ? 'Unpin project' : 'Pin project'}
+                            {t(project.pinned ? 'Unpin project' : 'Pin project')}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="gap-2"
                             onSelect={() => openEditDialog(project)}
                           >
                             <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Settings
+                            {t('Settings')}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="gap-2"
                             disabled={
                               !canArchiveProject(project) || archivingProjectIds.has(project.id)
                             }
+                            title={archiveUnavailableReason(project)}
                             onSelect={() => archiveProject(project)}
                           >
                             <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                            {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
+                            {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
+                            {archivingProjectIds.has(project.id)
+                              ? t('Archiving…')
+                              : t('Archive', { context: 'verb' })}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
                             disabled={!canDeleteProjects}
+                            title={
+                              canDeleteProjects
+                                ? undefined
+                                : t('Retry project recovery before deleting projects.')
+                            }
                             onSelect={() => openDeleteDialog(project)}
                           >
                             <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Delete
+                            {t('Delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -823,14 +943,14 @@ const HomePage = ({
             )}
           </section>
 
-          <section className="min-w-0" aria-label="Recent sessions">
+          <section className="min-w-0" aria-label={t('Recent sessions')}>
             <h2 className={sectionHeadingClassName}>
               <Clock className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
-              Recent sessions
+              {t('Recent sessions')}
             </h2>
             {recentSessions.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                Sessions you start will appear here.
+                {t('Sessions you start will appear here.')}
               </div>
             ) : (
               <div className={listCardClassName}>
@@ -853,11 +973,11 @@ const HomePage = ({
                         {session.title}
                       </span>
                       <span className="truncate text-xs text-text-100">
-                        {projectNames.get(session.projectId) ?? 'Unknown project'}
+                        {projectNames.get(session.projectId) ?? t('Unknown project')}
                       </span>
                     </span>
                     <span className="shrink-0 text-xs text-text-000">
-                      {formatRelativeTime(session.updatedAt)}
+                      {relativeTime(session.updatedAt)}
                     </span>
                   </button>
                 ))}

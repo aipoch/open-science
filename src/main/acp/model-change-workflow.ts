@@ -21,6 +21,7 @@ type AcpModelChangeWorkflowOptions = Readonly<{
   >
   connectionResources: Pick<
     AcpConnectionResourceOwner,
+    | 'epoch'
     | 'connection'
     | 'isShuttingDown'
     | 'anthropicBridgeAvailable'
@@ -40,7 +41,7 @@ type AcpModelChangeWorkflowOptions = Readonly<{
   contextEstimateInput: (sessionId: string) => SessionEstimateInput
   emitState: () => void
   requestReconnect: () => Promise<void>
-  recoverFailedReconnect: () => void
+  recoverFailedReconnect: (disconnectedGeneration: number) => void
   reportReconnectFailure: (error: unknown) => void
   diagnosticContext: () => Readonly<Record<string, unknown>>
 }>
@@ -165,11 +166,12 @@ class AcpModelChangeWorkflow {
 
       if (!this.canApply(target) || !(await this.applyTarget(target))) {
         this.pending = undefined
+        const disconnectedGeneration = this.options.connectionResources.epoch
         try {
           await this.options.requestReconnect()
         } catch (error) {
           this.options.reportReconnectFailure(error)
-          this.options.recoverFailedReconnect()
+          this.options.recoverFailedReconnect(disconnectedGeneration)
         }
         return
       }

@@ -495,7 +495,7 @@ describe('HostLineageService', () => {
         versionNumber: 3,
         checksum: 'c'.repeat(64),
         createdAt: '2026-08-03T00:00:00.000Z',
-        projectName: 'project-a',
+        projectId: 'project-a',
         sessionId: 'session-other',
         runId: 'artifact-run-internal',
         name: 'result.csv',

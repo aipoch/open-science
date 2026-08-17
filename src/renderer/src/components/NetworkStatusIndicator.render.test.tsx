@@ -104,6 +104,18 @@ describe('NetworkStatusIndicator', () => {
     expect(button?.textContent).toContain('Unreachable')
   })
 
+  it('renders a retry entry point when the internet check fails', async () => {
+    useNetworkStore.setState({ isOnline: true, connectivity: 'probe-failed' })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+
+    const button = container.querySelector('button')
+    expect(button?.getAttribute('aria-label')).toBe('Internet check failed')
+    expect(button?.textContent).toContain('Check failed')
+  })
+
   it('renders nothing while the internet is reachable', async () => {
     useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
 

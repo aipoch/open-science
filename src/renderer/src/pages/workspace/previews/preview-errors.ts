@@ -1,16 +1,17 @@
-// User-facing copy when a previewed file is gone from disk (deleted, or on a disconnected drive).
-export const FILE_MISSING_MESSAGE =
+// Copy shown when a previewed file is gone from disk (deleted, or on a disconnected drive). The
+// English text is itself the catalog key, so callers pass it straight to t().
+export const FILE_MISSING_MESSAGE_KEY =
   'This file is no longer available — it may have been moved or deleted.'
 
-// User-facing copy when the file's path resolves outside the current storage root (e.g. it belongs
-// to a data folder you've since migrated away from). The file may still exist elsewhere, but it is
-// not reachable under the active data root — so this is NOT phrased as "deleted".
-export const FILE_OUTSIDE_STORAGE_MESSAGE =
+// Copy shown when the file's path resolves outside the current storage root (e.g. it belongs to a
+// data folder you've since migrated away from). The file may still exist elsewhere, but it is not
+// reachable under the active data root — so this is NOT phrased as "deleted".
+export const FILE_OUTSIDE_STORAGE_MESSAGE_KEY =
   "This file isn't in your current storage location — it may belong to a data folder you moved away from."
 
-// Short tag for an unavailable file, shown on file cards/thumbnails so the state is perceivable at
-// a glance. Both "missing" and "outside storage" share the same tag; only the opened view differs.
-export const FILE_MISSING_TAG = 'Missing'
+// Short tag on an unavailable file, shown on file cards/thumbnails so the state is perceivable at a
+// glance. Both "missing" and "outside storage" share the same tag; only the opened view differs.
+export const FILE_MISSING_TAG_KEY = 'Missing'
 
 // True when a read failed because the underlying file is missing on disk. Electron IPC drops custom
 // error props (e.g. `code`), so across the boundary the fs message ("ENOENT: no such file…") is the

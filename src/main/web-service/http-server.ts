@@ -11,6 +11,7 @@ import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
 import { toApplicationCommandErrorEnvelope } from '../../shared/application-command-contract'
+import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
 import {
   ClientLeaseRegistry,
@@ -22,6 +23,7 @@ import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
 import {
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
   isWebRpcChannel,
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema
@@ -32,8 +34,9 @@ import {
   projectPublicTaskProgressEvent,
   projectWebRendererEvent
 } from './application-event-projections'
+import { InternalWebEventStream } from './internal-web-event-stream'
 import { authenticateRequest, persistAuthCookie } from './auth'
-import type { StartTaskRunRequest } from '../../shared/task-api'
+import type { StartTaskRunRequest, TaskPlanResponseRequest } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
@@ -88,7 +91,8 @@ type WebServerOptions = {
     | 'acquireArtifact'
     | 'releaseArtifact'
     | 'runWithCallerContext'
-  >
+  > &
+    Partial<Pick<HeadlessTaskApi, 'getSessionPlan' | 'respondSessionPlan'>>
   onShutdownRequest?: () => void
   bootstrap: {
     appName: string
@@ -191,8 +195,47 @@ const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_request') return 400
-  if (error.code === 'project_ambiguous' || error.code === 'session_busy') return 409
+  if (error.code === 'session_busy') return 409
   return 404
+}
+
+const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TaskApiError('invalid_request', 'Plan response must be an object.')
+  }
+  const candidate = value as Record<string, unknown>
+  if ('feedback' in candidate) {
+    if (
+      typeof candidate.feedback !== 'string' ||
+      candidate.feedback.trim().length === 0 ||
+      'decision' in candidate ||
+      'artifactVersionId' in candidate ||
+      'expectedRevision' in candidate
+    ) {
+      throw new TaskApiError(
+        'invalid_request',
+        'Plan feedback must be a non-empty string without decision fields.'
+      )
+    }
+    return { feedback: candidate.feedback.trim() }
+  }
+  if (
+    (candidate.decision !== 'approved' && candidate.decision !== 'rejected') ||
+    typeof candidate.artifactVersionId !== 'string' ||
+    candidate.artifactVersionId.trim().length === 0 ||
+    !Number.isInteger(candidate.expectedRevision) ||
+    (candidate.expectedRevision as number) < 0
+  ) {
+    throw new TaskApiError(
+      'invalid_request',
+      'Plan decision requires approved or rejected, a non-empty artifact version, and a non-negative integer revision.'
+    )
+  }
+  return {
+    decision: candidate.decision,
+    artifactVersionId: candidate.artifactVersionId.trim(),
+    expectedRevision: candidate.expectedRevision as number
+  }
 }
 
 class ExternalAuthorizationExpiredError extends Error {
@@ -220,6 +263,12 @@ const taskError = (response: ServerResponse, error: unknown): void => {
   if (error instanceof ExternalAuthorizationExpiredError) {
     json(response, 401, {
       error: { code: 'unauthorized', message: error.message }
+    })
+    return
+  }
+  if (error instanceof PlanCommandError) {
+    json(response, error.code === 'invalid-plan' ? 400 : 409, {
+      error: { code: error.code, message: error.message }
     })
     return
   }
@@ -354,6 +403,28 @@ const handleTaskApiRequest = async (
         })
         return true
       }
+      const sessionPlanMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/plan$/)
+      if (sessionPlanMatch && request.method === 'GET' && tasks.getSessionPlan) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.getSessionPlan(decodeURIComponent(sessionPlanMatch[1]))
+        })
+        return true
+      }
+      const sessionPlanResponseMatch = url.pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/plan\/respond$/
+      )
+      if (sessionPlanResponseMatch && request.method === 'POST' && tasks.respondSessionPlan) {
+        const body = parseTaskPlanResponseRequest(await readJsonBody(request))
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.respondSessionPlan(
+            decodeURIComponent(sessionPlanResponseMatch[1]),
+            body
+          )
+        })
+        return true
+      }
       const sessionArtifactsMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/artifacts$/)
       if (sessionArtifactsMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
@@ -438,6 +509,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const sockets = new Set<WebSocket>()
   const externalSockets = new Map<WebSocket, string | undefined>()
   const publicEventSockets = new Set<WebSocket>()
+  const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
+  const internalEventStream = new InternalWebEventStream()
   const commandClient = createApplicationCommandClient()
   const clientLeases = new ClientLeaseRegistry((clientId) => {
     commandClient.releaseClient('web', clientId)
@@ -483,6 +556,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           ...options.bootstrap,
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcChannels,
+          eventStream: internalEventStream.cursor(),
           restrictedRpcChannels
         })
         return
@@ -676,27 +750,55 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const clientId = url.searchParams.get('client') ?? 'web'
     const lease = clientLeases.acquire(clientId)
-    sockets.add(socket)
-    if (url.pathname === '/api/v1/events') publicEventSockets.add(socket)
     socket.on('close', () => {
       sockets.delete(socket)
       externalSockets.delete(socket)
       publicEventSockets.delete(socket)
+      internalEventSockets.delete(socket)
       lease.release()
     })
+    if (url.pathname === '/api/v1/events') {
+      publicEventSockets.add(socket)
+    } else {
+      const requestedProtocol = url.searchParams.get('eventProtocol')
+      // A page loaded before this server upgrade has no cursor query. Keep it live-only until its
+      // next reload instead of breaking an already-open Web surface.
+      if (requestedProtocol === null) {
+        internalEventSockets.set(socket, 'legacy')
+      } else if (requestedProtocol !== String(WEB_EVENT_STREAM_PROTOCOL_VERSION)) {
+        socket.close(1002, 'Unsupported event stream protocol')
+        return
+      } else {
+        internalEventSockets.set(socket, 'replay')
+        const streamId = url.searchParams.get('stream') ?? ''
+        const afterValue = url.searchParams.get('after')
+        const after = afterValue === null ? Number.NaN : Number(afterValue)
+        for (const message of internalEventStream.resume({ streamId, after })) {
+          socket.send(message)
+        }
+      }
+    }
+    sockets.add(socket)
   })
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
     const internalProjection = projectWebRendererEvent(event)
     const publicProjection = projectPublicTaskEvent(event)
-    const internalMessage = internalProjection ? JSON.stringify(internalProjection) : undefined
+    const legacyInternalMessage = internalProjection
+      ? JSON.stringify(internalProjection)
+      : undefined
+    const replayInternalMessage = internalProjection
+      ? internalEventStream.publish(internalProjection)
+      : undefined
     const publicMessage = publicProjection ? JSON.stringify(publicProjection) : undefined
     for (const socket of sockets) {
       if (socket.readyState !== WebSocket.OPEN) continue
       if (publicEventSockets.has(socket)) {
         if (publicMessage) socket.send(publicMessage)
-      } else if (internalMessage) {
-        socket.send(internalMessage)
+      } else if (internalEventSockets.get(socket) === 'replay') {
+        if (replayInternalMessage) socket.send(replayInternalMessage)
+      } else if (legacyInternalMessage) {
+        socket.send(legacyInternalMessage)
       }
     }
   })

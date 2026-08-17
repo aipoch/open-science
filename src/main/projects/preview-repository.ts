@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client'
+import { Prisma, type PrismaClient } from '@prisma/client'
 
 import {
   PREVIEW_STATE_VERSION,
@@ -22,6 +22,10 @@ const parseItems = (items: string): unknown => {
 
 // Resolves the Prisma client on demand so a failed initialization is not held forever (see repository.ts).
 type PreviewStateClientProvider = () => Promise<PreviewStateClient>
+
+const isMissingPreviewOwnerError = (error: unknown): boolean =>
+  (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') ||
+  (error instanceof Error && /FOREIGN KEY constraint failed/i.test(error.message))
 
 // Owns per-project preview panel state reads/writes. The client is resolved lazily per call.
 class PreviewStateRepository {
@@ -65,11 +69,18 @@ class PreviewStateRepository {
     }
     const client = await this.getClient()
 
-    await client.projectPreviewState.upsert({
-      where: { projectId },
-      create: { projectId, ...data },
-      update: data
-    })
+    // The owner FK is the deletion fence: if this write wins first, a later Project delete cascades
+    // it; if deletion wins first, the rejected autosave is an expected no-op for renderer and Web.
+    try {
+      await client.projectPreviewState.upsert({
+        where: { projectId },
+        create: { projectId, ...data },
+        update: data
+      })
+    } catch (error) {
+      if (isMissingPreviewOwnerError(error)) return
+      throw error
+    }
   }
 
   // Removes a project's preview state (used when the project is deleted). Missing rows are ignored.

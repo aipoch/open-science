@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client'
+import { Prisma, type PrismaClient } from '@prisma/client'
 
 import {
   RUNTIME_SCHEMA_INDEX_DDLS as CURRENT_RUNTIME_SCHEMA_INDEX_DDLS,
@@ -18,7 +18,8 @@ import {
 import {
   applySqliteCheckConstraints,
   findPendingSqliteCheckConstraints,
-  type SqliteCheckConstraintMigration
+  type SqliteCheckConstraintMigration,
+  type SqliteMigrationOperation
 } from './sqlite-schema-migrations'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
@@ -57,6 +58,17 @@ const RETIRED_LEGACY_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   Finding: ['severity']
 }
 
+const CURRENT_TABLE_COLUMNS = new Map(
+  Prisma.dmmf.datamodel.models.map((model) => [
+    model.dbName ?? model.name,
+    new Set(
+      model.fields
+        .filter((field) => field.kind !== 'object')
+        .map((field) => field.dbName ?? field.name)
+    )
+  ])
+)
+
 type TargetColumn = {
   name: string
   type: string
@@ -85,6 +97,7 @@ type TargetIndex = {
   columns: readonly string[]
   unique: boolean
 }
+type AllowedSuffixCheckConstraints = Readonly<Record<string, Readonly<Record<string, string>>>>
 
 const splitSqlDefinitions = (ddl: string): string[] => {
   const open = ddl.indexOf('(')
@@ -338,15 +351,28 @@ const CURRENT_RUNTIME_SCHEMA_TABLE_DDL_BY_NAME = new Map(
     return parsed ? [[parsed[0], ddl] as const] : []
   })
 )
-const CURRENT_TABLE_COLUMNS = new Map(
-  [...CURRENT_TARGET_TABLES].map(([tableName, table]) => [tableName, new Set(table.columns.keys())])
-)
+// Non-exact baseline adoption may recognize only released suffix FKs named here. Do not derive this
+// list from the generated current target: doing so would silently admit every future suffix FK.
+const NON_EXACT_BASELINE_FOREIGN_KEY_ALLOWLIST: ReadonlyMap<string, readonly TargetForeignKey[]> =
+  new Map([
+    [
+      'ProjectPreviewState',
+      [
+        {
+          name: 'ProjectPreviewState_projectId_fkey',
+          columns: ['projectId'],
+          targetColumns: ['id'],
+          targetTable: 'Project',
+          onDelete: 'CASCADE',
+          onUpdate: 'CASCADE'
+        }
+      ]
+    ]
+  ])
 // Post-baseline migrations can add indexes (e.g. 0003's GrantedLocalRoot_path_key), so a pre-ledger
-// database carrying them must still classify against the baseline and current target union.
-const CURRENT_TARGET_INDEX_NAMES = new Set([
-  ...TARGET_INDEXES.keys(),
-  ...CURRENT_TARGET_INDEXES.keys()
-])
+// database carrying them must still classify: known indexes are the baseline ∪ current target union,
+// mirroring the unknown-table check, which already classifies against the current target.
+const TARGET_INDEX_NAMES = new Set([...TARGET_INDEXES.keys(), ...CURRENT_TARGET_INDEXES.keys()])
 
 type RuntimeSchemaTarget = {
   tableNames: readonly string[]
@@ -457,6 +483,31 @@ const hasCurrentManagedFileVersionFoundation = async (client: PrismaClient): Pro
   return present.every(Boolean)
 }
 
+const adaptMigrationOperationsForCurrentSchema = (
+  operations: readonly SqliteMigrationOperation[]
+): readonly SqliteMigrationOperation[] =>
+  operations.map((operation) => {
+    if (operation.kind !== 'rebuild-table-set') return operation
+    const tableNames = new Set(operation.tables.map((table) => table.tableName))
+    const tables = operation.tables.map((table) => {
+      const current = CURRENT_TARGET_TABLES.get(table.tableName)
+      const canonicalTableDdl = CURRENT_RUNTIME_SCHEMA_TABLE_DDL_BY_NAME.get(table.tableName)
+      if (!current || !canonicalTableDdl) {
+        throw new Error(`Current SQLite schema is missing ${table.tableName}.`)
+      }
+      return {
+        ...table,
+        canonicalTableDdl,
+        columns: [...current.columns.keys()]
+      }
+    })
+    const indexes = CURRENT_RUNTIME_SCHEMA_INDEX_DDLS.filter((ddl) => {
+      const current = [...createTargetIndexes([ddl]).values()][0]
+      return current ? tableNames.has(current.tableName) : false
+    })
+    return { ...operation, tables, indexes }
+  })
+
 const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
   const unsupportedObjects = await migrationSqlExecutor.query<
     Array<{ name: string; type: string }>
@@ -520,7 +571,7 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
   )
   const unknownIndexes = indexes
     .map((index) => index.name)
-    .filter((indexName) => !CURRENT_TARGET_INDEX_NAMES.has(indexName))
+    .filter((indexName) => !TARGET_INDEX_NAMES.has(indexName))
   if (unknownIndexes.length > 0) {
     throw new DatabaseValidationError(`Legacy database classification found unknown indexes.`, {
       kind: 'unknown-indexes',
@@ -565,7 +616,8 @@ const prepareRuntimeSchemaBaseline = async (
 const verifyRuntimeSchemaTarget = async (
   client: PrismaClient,
   target: RuntimeSchemaTarget,
-  exact: boolean = false
+  exact: boolean = false,
+  allowedSuffixChecks: AllowedSuffixCheckConstraints = {}
 ): Promise<void> => {
   const tables = await migrationSqlExecutor.query<SqliteSchemaName[]>(
     client,
@@ -602,6 +654,20 @@ const verifyRuntimeSchemaTarget = async (
       foreignKey.onDelete,
       foreignKey.onUpdate
     ].join('|')
+  const findUnmatchedOccurrences = (
+    candidates: readonly string[],
+    available: readonly string[]
+  ): string[] => {
+    const remaining = new Map<string, number>()
+    for (const value of available) remaining.set(value, (remaining.get(value) ?? 0) + 1)
+
+    return candidates.filter((candidate) => {
+      const count = remaining.get(candidate) ?? 0
+      if (count === 0) return true
+      remaining.set(candidate, count - 1)
+      return false
+    })
+  }
 
   for (const [tableName, expectedTable] of target.tables) {
     const columns = await migrationSqlExecutor.query<SqliteTableColumn[]>(
@@ -709,20 +775,43 @@ const verifyRuntimeSchemaTarget = async (
         }
       )
     }
-    if (actualTable.checks.size !== expectedTable.checks.size) {
+    const allowedChecks = allowedSuffixChecks[tableName] ?? {}
+    const incompatibleSuffixCheck = [...actualTable.checks].find(
+      ([name, expression]) =>
+        !expectedTable.checks.has(name) &&
+        (!Object.hasOwn(allowedChecks, name) ||
+          !checkExpressionsMatch(
+            tableName,
+            name,
+            expression,
+            normalizeSqlFragment(allowedChecks[name]!)!
+          ))
+    )
+    if (incompatibleSuffixCheck) {
       throw new DatabaseValidationError(
         `Database baseline verification found an incompatible CHECK constraint set for ${tableName}.`,
         {
           kind: 'check-constraint-set-mismatch',
           table: tableName,
-          expected: [...expectedTable.checks.keys()],
+          expected: [...expectedTable.checks.keys(), ...Object.keys(allowedChecks)],
           actual: [...actualTable.checks.keys()]
         }
       )
     }
     const expectedForeignKeys = expectedTable.foreignKeys.map(foreignKeyKey).sort()
+    // A pre-ledger database can already contain an explicitly released suffix FK. Require every
+    // baseline FK, admit only the narrow allowlist above, and keep exact current verification.
+    const allowedSuffixForeignKeys = exact
+      ? []
+      : (NON_EXACT_BASELINE_FOREIGN_KEY_ALLOWLIST.get(tableName) ?? [])
+    const knownForeignKeys = [
+      ...expectedForeignKeys,
+      ...allowedSuffixForeignKeys.map(foreignKeyKey)
+    ]
     const parsedForeignKeys = actualTable.foreignKeys.map(foreignKeyKey).sort()
-    if (parsedForeignKeys.join('\n') !== expectedForeignKeys.join('\n')) {
+    const missingForeignKeys = findUnmatchedOccurrences(expectedForeignKeys, parsedForeignKeys)
+    const unknownForeignKeys = findUnmatchedOccurrences(parsedForeignKeys, knownForeignKeys)
+    if (missingForeignKeys.length > 0 || unknownForeignKeys.length > 0) {
       throw new DatabaseValidationError(
         `Database baseline verification found incompatible foreign-key definitions for ${tableName}.`,
         {
@@ -744,15 +833,32 @@ const verifyRuntimeSchemaTarget = async (
           `${row.from}|${row.table}|${row.to}|${row.on_delete.toUpperCase()}|${row.on_update.toUpperCase()}`
       )
       .sort()
+    const pragmaForeignKeyKey = (
+      foreignKey: TargetForeignKey,
+      column: string,
+      index: number
+    ): string =>
+      `${column}|${foreignKey.targetTable}|${foreignKey.targetColumns[index]}|${foreignKey.onDelete}|${foreignKey.onUpdate}`
     const targetPragmaForeignKeys = expectedTable.foreignKeys
       .flatMap((foreignKey) =>
-        foreignKey.columns.map(
-          (column, index) =>
-            `${column}|${foreignKey.targetTable}|${foreignKey.targetColumns[index]}|${foreignKey.onDelete}|${foreignKey.onUpdate}`
-        )
+        foreignKey.columns.map((column, index) => pragmaForeignKeyKey(foreignKey, column, index))
       )
       .sort()
-    if (pragmaForeignKeys.join('\n') !== targetPragmaForeignKeys.join('\n')) {
+    const knownPragmaForeignKeys = [
+      ...targetPragmaForeignKeys,
+      ...allowedSuffixForeignKeys.flatMap((foreignKey) =>
+        foreignKey.columns.map((column, index) => pragmaForeignKeyKey(foreignKey, column, index))
+      )
+    ]
+    const missingPragmaForeignKeys = findUnmatchedOccurrences(
+      targetPragmaForeignKeys,
+      pragmaForeignKeys
+    )
+    const unknownPragmaForeignKeys = findUnmatchedOccurrences(
+      pragmaForeignKeys,
+      knownPragmaForeignKeys
+    )
+    if (missingPragmaForeignKeys.length > 0 || unknownPragmaForeignKeys.length > 0) {
       throw new DatabaseValidationError(
         `Database baseline verification found incompatible foreign-key metadata for ${tableName}.`,
         {
@@ -837,8 +943,11 @@ const verifyRuntimeSchemaTarget = async (
   }
 }
 
-const verifyRuntimeSchemaBaseline = (client: PrismaClient): Promise<void> =>
-  verifyRuntimeSchemaTarget(client, BASELINE_SCHEMA_TARGET)
+const verifyRuntimeSchemaBaseline = (
+  client: PrismaClient,
+  allowedSuffixChecks: AllowedSuffixCheckConstraints = {}
+): Promise<void> =>
+  verifyRuntimeSchemaTarget(client, BASELINE_SCHEMA_TARGET, false, allowedSuffixChecks)
 
 const verifyCurrentRuntimeSchema = (client: PrismaClient): Promise<void> =>
   verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true)
@@ -910,8 +1019,10 @@ export {
   RUNTIME_SCHEMA_BASELINE_CONTRACT,
   RUNTIME_SCHEMA_BASELINE_TARGET_SQL,
   applyRuntimeSchemaBaseline,
+  adaptMigrationOperationsForCurrentSchema,
+  hasCurrentManagedFileVersionFoundation,
   prepareRuntimeSchemaBaseline,
   verifyCurrentRuntimeSchema,
   verifyRuntimeSchemaBaseline
 }
-export type { PreparedRuntimeSchemaBaseline }
+export type { AllowedSuffixCheckConstraints, PreparedRuntimeSchemaBaseline }

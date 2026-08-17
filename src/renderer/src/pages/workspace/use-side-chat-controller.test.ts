@@ -300,6 +300,102 @@ describe('Side chat renderer controller', () => {
     act(() => root.unmount())
   })
 
+  it('retries hydration once when the initial Side chat list fails', async () => {
+    const list = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Temporary IPC failure'))
+      .mockResolvedValueOnce({ revision: 0, chats: [] })
+    const start = vi.fn(async () => ({
+      sideSessionId: 'side-after-retry',
+      frameworkId: 'claude-code' as const
+    }))
+    window.api = {
+      sideChat: {
+        list,
+        start,
+        send: vi.fn(async () => undefined),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(async () => undefined),
+        onEvent: vi.fn(() => () => undefined),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+
+    const root = createRoot(document.createElement('div'))
+    const result = {
+      current: undefined as unknown as ReturnType<typeof useSideChatController>
+    }
+    const Harness = (): null => {
+      result.current = useSideChatController({ sessionId: 'main-retry', projectId: 'project-1' })
+      return null
+    }
+
+    await act(async () => {
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(result.current.unavailableReason).toBeUndefined()
+    await act(async () => expect(await result.current.start('Recovered')).toBe(true))
+    expect(start).toHaveBeenCalledWith({
+      parentSessionId: 'main-retry',
+      projectId: 'project-1',
+      text: 'Recovered'
+    })
+    act(() => root.unmount())
+  })
+
+  it('exposes a user retry after automatic hydration attempts fail', async () => {
+    const list = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Temporary IPC failure'))
+      .mockRejectedValueOnce(new Error('IPC still unavailable'))
+      .mockResolvedValueOnce({ revision: 0, chats: [] })
+    window.api = {
+      sideChat: {
+        list,
+        start: vi.fn(),
+        send: vi.fn(async () => undefined),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(async () => undefined),
+        onEvent: vi.fn(() => () => undefined),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+
+    const root = createRoot(document.createElement('div'))
+    const result = {
+      current: undefined as unknown as ReturnType<typeof useSideChatController>
+    }
+    const Harness = (): null => {
+      result.current = useSideChatController({ sessionId: 'main-retry', projectId: 'project-1' })
+      return null
+    }
+
+    await act(async () => {
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(result.current.unavailableReason).toContain('Could not restore Side chats')
+    const retryHydration = result.current.retryHydration
+    expect(retryHydration).toBeTypeOf('function')
+
+    await act(async () => {
+      retryHydration?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(list).toHaveBeenCalledTimes(3)
+    expect(result.current.unavailableReason).toBeUndefined()
+    act(() => root.unmount())
+  })
+
   it('hydrates every live Side chat and routes background events by parent Session', async () => {
     let eventListener: ((event: never) => void) | undefined
     const list = vi.fn(async () => ({

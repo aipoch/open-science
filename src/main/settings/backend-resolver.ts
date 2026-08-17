@@ -24,6 +24,7 @@ import {
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { buildProviderEnv } from './provider-env'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
 import type { ConnectorSettingsModule } from './connector-settings'
@@ -107,6 +108,7 @@ export type AgentBackendResolverOptions = ProviderTransportOwnerOptions & {
   connectors: AgentBackendConnectorPort
   storageRoot: string
   userClaudeDir: string
+  skillRuntimeMcpEntryPath: string
   readFrameworkOverride?: () => string | undefined
   ensureCodexSubscriptionHome?: () => Promise<void>
 }
@@ -120,6 +122,7 @@ export class AgentBackendResolver {
   private readonly connectors: AgentBackendConnectorPort
   private readonly storageRoot: string
   private readonly userClaudeDir: string
+  private readonly skillRuntimeMcpEntryPath: string
   private readonly selection: BackendSelectionOwner
   private readonly planner: BackendRoutePlanner
   private readonly transports: ProviderTransportOwner
@@ -132,6 +135,7 @@ export class AgentBackendResolver {
     this.connectors = options.connectors
     this.storageRoot = options.storageRoot
     this.userClaudeDir = options.userClaudeDir
+    this.skillRuntimeMcpEntryPath = options.skillRuntimeMcpEntryPath
     this.selection = new BackendSelectionOwner({
       readSettings: this.readSettings,
       readFrameworkOverride:
@@ -500,7 +504,7 @@ export class AgentBackendResolver {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
     const provider = target.provider
-    const appConfigDir = await this.runtime.provisionClaudeRuntimeConfig(
+    const runtimeConfig = await this.runtime.provisionClaudeRuntimeConfig(
       settings,
       forcedSkillIds,
       modelConfig ?? null
@@ -510,11 +514,30 @@ export class AgentBackendResolver {
       claudeExecutablePath: executablePath,
       userClaudeConfigDir: this.userClaudeDir
     })
+    const skillProjectionOptions = {
+      // The additional directory makes the immutable Skill package and its supporting files
+      // readable without enabling the workspace `project` settings source. Session presentation
+      // grants primary Agents a scoped loader that preserves the native `Skill` call shape.
+      additionalDirectories: [runtimeConfig.skillProjection.root],
+      sandbox: {
+        filesystem: {
+          allowRead: [runtimeConfig.skillProjection.root],
+          denyWrite: [runtimeConfig.skillProjection.root]
+        }
+      },
+      [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+        command: process.execPath,
+        entryPath: this.skillRuntimeMcpEntryPath,
+        root: runtimeConfig.skillProjection.root
+      }
+    }
     const sessionOptions =
       target.providerType === 'claude-shared'
         ? {
-            settings: join(appConfigDir, 'settings.json'),
-            plugins: [{ type: 'local', path: appConfigDir, skipMcpDiscovery: true }]
+            // The SDK rejects a settings file path combined with a session sandbox. Pass the exact
+            // app-owned settings snapshot instead; settingsPath remains the CLI probe seam.
+            settings: runtimeConfig.privateSettings,
+            ...skillProjectionOptions
           }
         : provider.type === 'custom'
           ? {
@@ -522,9 +545,10 @@ export class AgentBackendResolver {
                 skipWebFetchPreflight: true,
                 permissions: { ask: ['WebFetch'] },
                 ...(modelConfig ?? {})
-              }
+              },
+              ...skillProjectionOptions
             }
-          : undefined
+          : skillProjectionOptions
 
     return {
       envOverrides,

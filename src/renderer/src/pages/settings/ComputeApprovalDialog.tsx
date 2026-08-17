@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -36,6 +37,7 @@ export function ComputeApprovalDialog({
   active?: boolean
   blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
+  const { t } = useTranslation()
   const request = useComputeStore((state) =>
     state.pendingApprovals.find(
       (candidate) => !candidate.session_id || !blockedSessionIds?.has(candidate.session_id)
@@ -75,12 +77,15 @@ export function ComputeApprovalDialog({
           <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
             <div className="min-w-0">
-              <Dialog.Title className={dialogTitleClassName}>Allow remote command?</Dialog.Title>
+              <Dialog.Title className={dialogTitleClassName}>
+                {t('Allow remote command?')}
+              </Dialog.Title>
               <Dialog.Description
                 className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}
               >
-                Remote commands run as your account on the host and are not sandboxed. Approve only
-                if you trust this command.
+                {t(
+                  'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
+                )}
               </Dialog.Description>
             </div>
           </div>
@@ -88,17 +93,17 @@ export function ComputeApprovalDialog({
           <div className={dialogBodyClassName}>
             <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
               <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">Host</span>
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
                 <span className="min-w-0 truncate font-medium text-foreground">
                   {dialogRequest.provider_name}
                 </span>
               </div>
               <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">Intent</span>
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
                 <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
               </div>
               <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">Command</span>
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Command')}</span>
                 <div className="min-w-0 flex-1">
                   <span className="break-all font-mono text-muted-foreground">
                     {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
@@ -116,11 +121,12 @@ export function ComputeApprovalDialog({
                     >
                       {showFull ? (
                         <>
-                          <ChevronUp className="size-3" aria-hidden="true" /> Show less
+                          <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
                         </>
                       ) : (
                         <>
-                          <ChevronDown className="size-3" aria-hidden="true" /> Show full command
+                          <ChevronDown className="size-3" aria-hidden="true" />{' '}
+                          {t('Show full command')}
                         </>
                       )}
                     </button>
@@ -129,7 +135,7 @@ export function ComputeApprovalDialog({
               </div>
               {dialogRequest.inputs_summary && (
                 <div className="flex gap-2">
-                  <span className="w-16 shrink-0 text-muted-foreground">Inputs</span>
+                  <span className="w-16 shrink-0 text-muted-foreground">{t('Inputs')}</span>
                   <span className="min-w-0 break-words text-foreground">
                     {dialogRequest.inputs_summary}
                   </span>
@@ -140,19 +146,19 @@ export function ComputeApprovalDialog({
 
           <div className={cn(dialogFooterClassName, 'flex-wrap')}>
             <Button type="button" variant="destructive" onClick={deny}>
-              Deny
+              {t('Deny')}
             </Button>
             <Button type="button" variant="outline" onClick={approveOnce}>
-              Once
+              {t('Once')}
             </Button>
             <Button type="button" variant="outline" onClick={approveSession}>
-              This session
+              {t('This session')}
             </Button>
             <Button type="button" variant="outline" onClick={() => setPendingBroadScope('project')}>
-              This project
+              {t('This project')}
             </Button>
             <Button type="button" onClick={() => setPendingBroadScope('global')}>
-              Always
+              {t('Always')}
             </Button>
           </div>
         </Dialog.Content>
@@ -162,7 +168,9 @@ export function ComputeApprovalDialog({
           active && pendingBroadScope
             ? {
                 scope: pendingBroadScope,
-                subject: `remote commands on ${dialogRequest.provider_name}`,
+                subject: t('remote commands on {{host}}', {
+                  host: dialogRequest.provider_name
+                }),
                 codeExecution: true
               }
             : undefined

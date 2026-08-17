@@ -1,8 +1,12 @@
 import { Archive, RotateCcw, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
+import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { DeleteProjectDialog } from '@/pages/home/DeleteProjectDialog'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { DeleteSessionDialog } from '@/pages/workspace/DeleteSessionDialog'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -15,16 +19,26 @@ export type ArchivedView = { kind: 'list' } | { kind: 'project'; projectId: stri
 type ArchivedPanelProps = {
   view: ArchivedView
   onNavigate: (view: ArchivedView) => void
+  catalogRecovery?: SessionCatalogRecovery
+  hasCompleteSessionCatalog?: boolean
+  canDeleteProjects?: boolean
+  onRetryCatalogRecovery?: () => void
 }
-
-const formatArchivedAt = (archivedAt: number): string =>
-  new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(archivedAt)
 
 const describeError = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback
 
 // Archive recovery stays in Settings so active workspace surfaces only need to reason about active data.
-const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Element => {
+const ArchivedPanel = ({
+  view,
+  onNavigate,
+  catalogRecovery = { kind: 'ready' },
+  hasCompleteSessionCatalog = true,
+  canDeleteProjects = true,
+  onRetryCatalogRecovery
+}: ArchivedPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const projects = useProjectStore((state) => state.projects)
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
@@ -33,7 +47,11 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>()
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
   const [busyKey, setBusyKey] = useState<string | undefined>()
-  const [error, setError] = useState<string | undefined>()
+  const [panelError, setPanelError] = useState<string | undefined>()
+  const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>()
+  const [sessionDeleteError, setSessionDeleteError] = useState<
+    'runtime' | 'persistence' | undefined
+  >()
 
   const archivedProjects = useMemo(
     () => projects.filter((project) => project.archivedAt !== undefined),
@@ -62,7 +80,7 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
   const restoreProject = (project: Project): void => {
     if (project.archivedAt === undefined) return
     setBusyKey(`project:${project.id}`)
-    setError(undefined)
+    setPanelError(undefined)
     void updateProjectArchive({
       id: project.id,
       archived: false,
@@ -70,7 +88,7 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
     })
       .then(() => onNavigate({ kind: 'list' }))
       .catch((restoreError: unknown) =>
-        setError(describeError(restoreError, 'Could not restore project.'))
+        setPanelError(describeError(restoreError, t('Could not restore project.')))
       )
       .finally(() => setBusyKey(undefined))
   }
@@ -78,7 +96,7 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
   const restoreSession = (session: ChatSession): void => {
     if (session.archivedAt === undefined) return
     setBusyKey(`session:${session.id}`)
-    setError(undefined)
+    setPanelError(undefined)
     void updateSessionArchive({
       projectId: session.projectId,
       sessionId: session.id,
@@ -86,50 +104,57 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
       expectedArchivedAt: session.archivedAt
     })
       .catch((restoreError: unknown) =>
-        setError(describeError(restoreError, 'Could not restore session.'))
+        setPanelError(describeError(restoreError, t('Could not restore session.')))
       )
       .finally(() => setBusyKey(undefined))
   }
 
   const deleteArchivedSession = (): void => {
     const session = sessionToDelete
-    if (!session) return
+    if (!session || !canDeleteProjects || busyKey === `session:${session.id}`) return
 
     setBusyKey(`session:${session.id}`)
-    setError(undefined)
-    void (async () => {
-      const state = await window.api.acp.getState()
-      if (state.sessionIds.includes(session.id)) {
-        await window.api.acp.deleteSession({ sessionId: session.id })
-      }
-      await window.api.sessions.deleteSession({
+    setPanelError(undefined)
+    setSessionDeleteError(undefined)
+    void window.api.sessions
+      .deleteSession({
         projectId: session.projectId,
         sessionId: session.id
       })
-      useSessionStore.getState().deleteSession(session.id)
-      useArchiveUndoStore.getState().dismissSession(session.id)
-      setSessionToDelete(undefined)
-    })()
+      .then((result) => {
+        if (result.status === 'failed') {
+          setSessionDeleteError(result.reason)
+          return
+        }
+        useArchiveUndoStore.getState().dismissSession(session.id)
+        setSessionToDelete(undefined)
+      })
       .catch((deleteError: unknown) =>
-        setError(describeError(deleteError, 'Could not delete session.'))
+        setPanelError(describeError(deleteError, t('Could not delete session.')))
       )
       .finally(() => setBusyKey(undefined))
   }
 
+  const openProjectDeleteDialog = (project: Project): void => {
+    if (!canDeleteProjects) return
+    setProjectDeleteError(undefined)
+    setProjectToDelete(project)
+  }
+
+  const closeProjectDeleteDialog = (): void => {
+    if (busyKey === `project:${projectToDelete?.id}`) return
+
+    setProjectToDelete(undefined)
+    setProjectDeleteError(undefined)
+  }
+
   const deleteArchivedProject = (): void => {
     const project = projectToDelete
-    if (!project) return
+    if (!project || !canDeleteProjects) return
 
     setBusyKey(`project:${project.id}`)
-    setError(undefined)
+    setProjectDeleteError(undefined)
     void (async () => {
-      const state = await window.api.acp.getState()
-      const liveIds = new Set(state.sessionIds)
-      for (const session of sessions) {
-        if (session.projectId === project.id && liveIds.has(session.id)) {
-          await window.api.acp.deleteSession({ sessionId: session.id })
-        }
-      }
       await deleteProject(project.id)
       useSessionStore.getState().removeSessionsForProject(project.id)
       useArchiveUndoStore.getState().dismissProject(project.id)
@@ -137,7 +162,7 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
     })()
       .then(() => onNavigate({ kind: 'list' }))
       .catch((deleteError: unknown) =>
-        setError(describeError(deleteError, 'Could not delete project.'))
+        setProjectDeleteError(describeError(deleteError, t('Could not delete project.')))
       )
       .finally(() => setBusyKey(undefined))
   }
@@ -148,8 +173,8 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
         <p className="truncate text-sm font-medium text-foreground">{session.title}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {session.archivedAt === undefined
-            ? 'Hidden because its project is archived.'
-            : `Archived ${formatArchivedAt(session.archivedAt)}`}
+            ? t('Hidden because its project is archived.')
+            : t('Archived {{when}}', { when: formatDate(session.archivedAt, 'dateTime') })}
         </p>
       </div>
       {session.archivedAt !== undefined ? (
@@ -158,11 +183,11 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
           variant="outline"
           size="sm"
           disabled={projectArchived || busyKey === `session:${session.id}`}
-          title={projectArchived ? 'Restore the project first.' : undefined}
+          title={projectArchived ? t('Restore the project first.') : undefined}
           onClick={() => restoreSession(session)}
         >
           <RotateCcw className="size-3.5" aria-hidden="true" />
-          Restore
+          {t('Restore')}
         </Button>
       ) : null}
       <Button
@@ -170,20 +195,32 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
         variant="outline"
         size="sm"
         className="text-danger-000 hover:text-danger-000"
-        disabled={busyKey === `session:${session.id}`}
-        onClick={() => setSessionToDelete(session)}
+        disabled={!canDeleteProjects || busyKey === `session:${session.id}`}
+        title={
+          canDeleteProjects ? undefined : t('Retry project recovery before deleting projects.')
+        }
+        onClick={() => {
+          setPanelError(undefined)
+          setSessionDeleteError(undefined)
+          setSessionToDelete(session)
+        }}
       >
         <Trash2 className="size-3.5" aria-hidden="true" />
-        Delete
+        {t('Delete')}
       </Button>
     </div>
   )
 
   return (
     <div className="space-y-5 p-5">
-      {error ? (
+      <SessionCatalogRecoveryAlert
+        recovery={catalogRecovery}
+        inline
+        onRetry={onRetryCatalogRecovery}
+      />
+      {panelError ? (
         <p role="alert" className="text-sm text-danger-000">
-          {error}
+          {panelError}
         </p>
       ) : null}
       {selectedProject ? (
@@ -194,7 +231,9 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
                 {selectedProject.name}
               </h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Archived {formatArchivedAt(selectedProject.archivedAt!)}
+                {t('Archived {{when}}', {
+                  when: formatDate(selectedProject.archivedAt!, 'dateTime')
+                })}
               </p>
             </div>
             <div className="flex gap-2">
@@ -206,28 +245,33 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
                 onClick={() => restoreProject(selectedProject)}
               >
                 <RotateCcw className="size-3.5" aria-hidden="true" />
-                Restore project
+                {t('Restore project')}
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 className="text-danger-000 hover:text-danger-000"
-                disabled={busyKey === `project:${selectedProject.id}`}
-                onClick={() => setProjectToDelete(selectedProject)}
+                disabled={!canDeleteProjects || busyKey === `project:${selectedProject.id}`}
+                title={
+                  canDeleteProjects
+                    ? undefined
+                    : t('Retry project recovery before deleting projects.')
+                }
+                onClick={() => openProjectDeleteDialog(selectedProject)}
               >
                 <Trash2 className="size-3.5" aria-hidden="true" />
-                Delete project
+                {t('Delete project')}
               </Button>
             </div>
           </div>
           <section className="space-y-2">
-            <h4 className="text-sm font-medium text-foreground">Sessions</h4>
+            <h4 className="text-sm font-medium text-foreground">{t('Sessions')}</h4>
             {selectedProjectSessions.length > 0 ? (
               selectedProjectSessions.map((session) => sessionRow(session, true))
             ) : (
               <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                This project has no saved sessions.
+                {t('This project has no saved sessions.')}
               </p>
             )}
           </section>
@@ -235,13 +279,13 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
       ) : (
         <>
           <div>
-            <h3 className="text-base font-semibold text-foreground">Archived</h3>
+            <h3 className="text-base font-semibold text-foreground">{t('Archived')}</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Restore archived work here, or permanently delete it after confirming.
+              {t('Restore archived work here, or permanently delete it after confirming.')}
             </p>
           </div>
           <section className="space-y-2">
-            <h4 className="text-sm font-medium text-foreground">Projects</h4>
+            <h4 className="text-sm font-medium text-foreground">{t('Projects')}</h4>
             {archivedProjects.length > 0 ? (
               archivedProjects.map((project) => (
                 <button
@@ -256,25 +300,27 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
                       {project.name}
                     </span>
                     <span className="block text-xs text-muted-foreground">
-                      Archived {formatArchivedAt(project.archivedAt!)}
+                      {t('Archived {{when}}', {
+                        when: formatDate(project.archivedAt!, 'dateTime')
+                      })}
                     </span>
                   </span>
-                  <span className="text-xs text-muted-foreground">Manage</span>
+                  <span className="text-xs text-muted-foreground">{t('Manage')}</span>
                 </button>
               ))
             ) : (
               <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                No archived projects.
+                {t('No archived projects.')}
               </p>
             )}
           </section>
           <section className="space-y-2">
-            <h4 className="text-sm font-medium text-foreground">Sessions</h4>
+            <h4 className="text-sm font-medium text-foreground">{t('Sessions')}</h4>
             {individuallyArchivedSessions.length > 0 ? (
               individuallyArchivedSessions.map((session) => sessionRow(session, false))
             ) : (
               <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                No individually archived sessions.
+                {t('No individually archived sessions.')}
               </p>
             )}
           </section>
@@ -286,17 +332,22 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
         sessionCount={
           sessions.filter((session) => session.projectId === projectToDelete?.id).length
         }
-        hasCompleteSessionCatalog
-        canDelete
+        hasCompleteSessionCatalog={hasCompleteSessionCatalog}
+        canDelete={canDeleteProjects}
         isDeleting={busyKey === `project:${projectToDelete?.id}`}
-        error={error}
-        onCancel={() => setProjectToDelete(undefined)}
+        error={projectDeleteError}
+        onCancel={closeProjectDeleteDialog}
         onConfirmDelete={deleteArchivedProject}
       />
       <DeleteSessionDialog
         session={sessionToDelete}
-        canDelete
-        onCancel={() => setSessionToDelete(undefined)}
+        canDelete={canDeleteProjects}
+        isDeleting={busyKey === `session:${sessionToDelete?.id}`}
+        error={sessionDeleteError}
+        onCancel={() => {
+          setSessionToDelete(undefined)
+          setSessionDeleteError(undefined)
+        }}
         onConfirmDelete={deleteArchivedSession}
       />
     </div>

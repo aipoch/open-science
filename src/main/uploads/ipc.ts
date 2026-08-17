@@ -15,7 +15,7 @@ import type {
   StageLocalUploadRequest,
   UploadTransferRequest
 } from '../../shared/uploads'
-import { DEFAULT_UPLOAD_PROJECT_NAME, STANDALONE_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { DEFAULT_UPLOAD_PROJECT_ID, STANDALONE_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import type { UploadCommandOwner } from './command-owner'
@@ -93,7 +93,7 @@ const registerUploadIpcHandlers = (
     const attachment = await owner.stageLocalPath(ownedInvocationFor(event, [request]), {
       report: (progress) => event.sender.send('uploads:transfer-progress', progress)
     })
-    const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_NAME
+    const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_ID
     options.onStandaloneUploadSaved?.(projectId, STANDALONE_UPLOAD_SESSION_ID)
     return attachment
   })

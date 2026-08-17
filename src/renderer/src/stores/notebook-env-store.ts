@@ -21,6 +21,9 @@ export type NotebookEnvState = {
   status: ProvisionStatus
   progress?: ProvisionProgress
   error?: string
+  // A failed authoritative status read is distinct from a failed provision operation: Retry must
+  // re-read status rather than starting a runtime setup while the current environment is unknown.
+  statusError?: string
   // Last explicit provision request; used when an older progress sender omits its operation scope.
   scope?: ProvisionScope
   // Derived view state (contract §4 UI): recomputed from status/scope/progress/error on every update.
@@ -53,6 +56,7 @@ export const createInitialNotebookEnvState = (): NotebookEnvState => {
     status,
     progress: undefined,
     error: undefined,
+    statusError: undefined,
     scope: undefined,
     ui: deriveProvisionUi(status, undefined, undefined, undefined),
     byLang: {}
@@ -78,6 +82,7 @@ const subscribedBridges = new WeakSet<object>()
 export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   type ExplicitRun = { operationId: string; startProgressRevision: number }
   type ProgressCursor = { revision: number; operationId?: string; terminal: boolean }
+  let statusRefreshRevision = 0
   const latestProgress = new Map<NotebookLanguage, ProgressCursor>()
   const explicitRuns = new Map<NotebookLanguage, ExplicitRun[]>()
   const localOperationIds = new Map<NotebookLanguage, Set<string>>()
@@ -131,12 +136,23 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   // Merges a partial update into state, then re-derives `ui` from the resulting status/scope/
   // progress/error so every consumer of `ui` (onboarding step, launch banner, notebook gate) sees a
   // view that always matches the latest mirrored state (reuses provisioning-view's pure reducer).
+  // An authoritative status-read failure takes precedence over an older operation error until a
+  // later status snapshot succeeds.
   const applyUi = (partial: Partial<NotebookEnvState>): void =>
     set((s) => {
       const next = { ...s, ...partial }
+      const statusErrorScope = next.progress?.scope ?? next.scope
+      const statusErrorSessionId = next.progress?.sessionId
       return {
         ...partial,
-        ui: deriveProvisionUi(next.status, next.scope, next.progress, next.error)
+        ui: next.statusError
+          ? ({
+              kind: 'error',
+              message: next.statusError,
+              ...(statusErrorScope ? { scope: statusErrorScope } : {}),
+              ...(statusErrorSessionId ? { sessionId: statusErrorSessionId } : {})
+            } as const)
+          : deriveProvisionUi(next.status, next.scope, next.progress, next.error)
       }
     })
 
@@ -172,6 +188,26 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       }
       return { byLang }
     })
+  }
+
+  // Every getStatus call crosses a renderer transport and can fail independently of provisioning.
+  // Keep that failure inside the store so fire-and-forget init/progress callers never leak an
+  // unhandled rejection, and so Retry can safely re-read instead of mutating an unknown runtime.
+  const refreshStatus = async (
+    bridge: typeof window.api.notebookEnv
+  ): Promise<ProvisionStatus | undefined> => {
+    const revision = ++statusRefreshRevision
+    try {
+      const status = await bridge.getStatus()
+      if (revision !== statusRefreshRevision) return undefined
+      applyUi({ status, statusError: undefined })
+      applyRecoveryBlocks(status)
+      return status
+    } catch (e) {
+      if (revision !== statusRefreshRevision) return undefined
+      applyUi({ statusError: errorText(e) })
+      return undefined
+    }
   }
 
   return {
@@ -225,18 +261,14 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
               )
             }))
           }
-          void bridge.getStatus().then((status) => {
-            applyUi({ status })
-            applyRecoveryBlocks(status)
-          })
+          void refreshStatus(bridge)
         })
       }
-      const status = await bridge.getStatus()
-      applyUi({ status })
-      applyRecoveryBlocks(status)
+      await refreshStatus(bridge)
     },
 
     provision: async (lang) => {
+      if (get().statusError) return
       const bridge = window.api?.notebookEnv
       const scope: ProvisionScope = lang
       applyUi({ scope, progress: undefined, error: undefined })
@@ -252,8 +284,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       let failure: string | undefined
       try {
         await bridge.provision(lang, run.operationId)
-        status = await bridge.getStatus()
-        applyUi({ status })
+        status = await refreshStatus(bridge)
       } catch (e) {
         failure = errorText(e)
       } finally {
@@ -284,18 +315,17 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       try {
         // Forward the language so cancelling this card never aborts the OTHER language's in-flight run.
         await bridge.cancel(lang)
-        const status = await bridge.getStatus()
-        applyUi({ status })
-        // Reapply recovery blocks: if the cancelled run was a queued Reset whose block was never cleared,
-        // status.*RecoveryBlocked is still true and the Reset button must stay visible — not be replaced
-        // by an empty/cancelled state that hides it.
-        applyRecoveryBlocks(status)
+        await refreshStatus(bridge)
       } catch (e) {
         applyUi({ error: errorText(e) })
       }
     },
 
     retry: async () => {
+      if (get().statusError) {
+        await get().init()
+        return
+      }
       const scope = get().scope
       await get().provision(scope === 'r' ? 'r' : 'python')
     },
@@ -304,6 +334,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
     // confirmed stopped). Repair force-clears the quarantine and rebuilds — the reachable "Reset" entry
     // for a block that won't clear on its own. Tracked per-language like provision.
     reset: async (lang) => {
+      if (get().statusError) return
       const bridge = window.api?.notebookEnv
       applyUi({ scope: lang, error: undefined })
       applyLang(lang, { preparing: true, error: undefined })
@@ -316,8 +347,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       let failure: string | undefined
       try {
         await bridge.repair(lang, run.operationId)
-        status = await bridge.getStatus()
-        applyUi({ status })
+        status = await refreshStatus(bridge)
       } catch (e) {
         failure = errorText(e)
       } finally {

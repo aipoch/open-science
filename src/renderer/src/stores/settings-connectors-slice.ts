@@ -12,6 +12,8 @@ import type {
   UpdateCustomServerRequest
 } from '../../../shared/settings'
 
+import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolean'
+
 type SettingsConnectorsProjection = {
   connectors: ConnectorView[]
   customServers: CustomServerView[]
@@ -79,11 +81,43 @@ export const createSettingsConnectorsSlice = ({
   setState,
   getCommands
 }: SettingsConnectorsSliceOptions): SettingsConnectorsActions => {
+  const toggleWrites = createOptimisticBooleanCoordinator()
+  const connectorEnabledKey = (id: string): string => `connector:${id}:enabled`
+  const connectorAutoAllowKey = (id: string): string => `connector:${id}:autoAllow`
+  const customServerEnabledKey = (id: string): string => `custom-server:${id}:enabled`
+  const projectOptimisticToggles = (
+    projection: SettingsConnectorsProjection,
+    generation: number
+  ): SettingsConnectorsProjection => ({
+    ...projection,
+    connectors: projection.connectors.map((connector) => ({
+      ...connector,
+      enabled: toggleWrites.project(
+        connectorEnabledKey(connector.id),
+        connector.enabled,
+        generation
+      ),
+      autoAllow: toggleWrites.project(
+        connectorAutoAllowKey(connector.id),
+        connector.autoAllow,
+        generation
+      )
+    })),
+    customServers: projection.customServers.map((server) => ({
+      ...server,
+      enabled: toggleWrites.project(customServerEnabledKey(server.id), server.enabled, generation)
+    }))
+  })
   let reconcileGeneration = 0
-  const reconcile = async (command: () => Promise<SettingsConnectorsProjection>): Promise<void> => {
+  const reconcile = async (
+    command: () => Promise<SettingsConnectorsProjection>
+  ): Promise<SettingsConnectorsProjection> => {
     const generation = ++reconcileGeneration
+    const projectionGeneration = toggleWrites.beginProjection()
     const projection = await command()
-    if (generation === reconcileGeneration) setState(projection)
+    if (generation === reconcileGeneration)
+      setState(projectOptimisticToggles(projection, projectionGeneration))
+    return projection
   }
   let mutationsInFlight = 0
   let runtimeRefreshPending = false
@@ -94,10 +128,10 @@ export const createSettingsConnectorsSlice = ({
     }
     void reconcile(() => getCommands().listConnectors()).catch(() => undefined)
   }
-  const runMutation = async (mutation: () => Promise<void>): Promise<void> => {
+  const runMutation = async <Result>(mutation: () => Promise<Result>): Promise<Result> => {
     mutationsInFlight += 1
     try {
-      await mutation()
+      return await mutation()
     } finally {
       mutationsInFlight -= 1
       if (mutationsInFlight === 0 && runtimeRefreshPending) {
@@ -106,8 +140,11 @@ export const createSettingsConnectorsSlice = ({
       }
     }
   }
-  const reconcileMutation = (command: () => Promise<SettingsConnectorsProjection>): Promise<void> =>
-    runMutation(() => reconcile(command))
+  const reconcileMutation = async (
+    command: () => Promise<SettingsConnectorsProjection>
+  ): Promise<void> => {
+    await runMutation(() => reconcile(command))
+  }
   let removeRuntimeChangedListener: (() => void) | undefined
   const subscribeToRuntimeChanges = (): void => {
     removeRuntimeChangedListener ??= getCommands().onConnectorRuntimeChanged(() => {
@@ -116,25 +153,85 @@ export const createSettingsConnectorsSlice = ({
   }
 
   return {
-    loadConnectors: () => {
+    loadConnectors: async () => {
       subscribeToRuntimeChanges()
-      return reconcile(() => getCommands().listConnectors())
+      await reconcile(() => getCommands().listConnectors())
     },
     setConnectorEnabled: async (id, enabled) => {
+      const key = connectorEnabledKey(id)
+      let confirmed: boolean | undefined
       setState((state) => ({
-        connectors: state.connectors.map((connector) =>
-          connector.id === id ? { ...connector, enabled } : connector
-        )
+        connectors: state.connectors.map((connector) => {
+          if (connector.id !== id) return connector
+          confirmed = connector.enabled
+          return { ...connector, enabled }
+        })
       }))
-      await reconcileMutation(() => getCommands().setConnectorEnabled({ id, enabled }))
+      if (confirmed === undefined) {
+        await reconcileMutation(() => getCommands().setConnectorEnabled({ id, enabled }))
+        return
+      }
+
+      const token = toggleWrites.begin(key, confirmed, enabled)
+      try {
+        const projection = await runMutation(() =>
+          reconcile(() => getCommands().setConnectorEnabled({ id, enabled }))
+        )
+        const authoritative =
+          projection.connectors.find((connector) => connector.id === id)?.enabled ?? confirmed
+        const projected = toggleWrites.succeed(token, authoritative)
+        setState((state) => ({
+          connectors: state.connectors.map((connector) =>
+            connector.id === id ? { ...connector, enabled: projected } : connector
+          )
+        }))
+      } catch (error) {
+        const projected = toggleWrites.fail(token)
+        setState((state) => ({
+          connectors: state.connectors.map((connector) =>
+            connector.id === id ? { ...connector, enabled: projected } : connector
+          )
+        }))
+        throw error
+      }
     },
     setConnectorAutoAllow: async (id, autoAllow) => {
+      const key = connectorAutoAllowKey(id)
+      let confirmed: boolean | undefined
       setState((state) => ({
-        connectors: state.connectors.map((connector) =>
-          connector.id === id ? { ...connector, autoAllow } : connector
-        )
+        connectors: state.connectors.map((connector) => {
+          if (connector.id !== id) return connector
+          confirmed = connector.autoAllow
+          return { ...connector, autoAllow }
+        })
       }))
-      await reconcileMutation(() => getCommands().setConnectorAutoAllow({ id, autoAllow }))
+      if (confirmed === undefined) {
+        await reconcileMutation(() => getCommands().setConnectorAutoAllow({ id, autoAllow }))
+        return
+      }
+
+      const token = toggleWrites.begin(key, confirmed, autoAllow)
+      try {
+        const projection = await runMutation(() =>
+          reconcile(() => getCommands().setConnectorAutoAllow({ id, autoAllow }))
+        )
+        const authoritative =
+          projection.connectors.find((connector) => connector.id === id)?.autoAllow ?? confirmed
+        const projected = toggleWrites.succeed(token, authoritative)
+        setState((state) => ({
+          connectors: state.connectors.map((connector) =>
+            connector.id === id ? { ...connector, autoAllow: projected } : connector
+          )
+        }))
+      } catch (error) {
+        const projected = toggleWrites.fail(token)
+        setState((state) => ({
+          connectors: state.connectors.map((connector) =>
+            connector.id === id ? { ...connector, autoAllow: projected } : connector
+          )
+        }))
+        throw error
+      }
     },
     setToolPermission: async (toolId, permission) =>
       getCommands().setToolPermission({ toolId, permission }),
@@ -158,12 +255,42 @@ export const createSettingsConnectorsSlice = ({
       getCommands().cancelCustomServerAuthentication(request),
     retryCustomServer: (id) => reconcileMutation(() => getCommands().retryCustomServer({ id })),
     setCustomServerEnabled: async (id, enabled) => {
+      const key = customServerEnabledKey(id)
+      let confirmed: boolean | undefined
       setState((state) => ({
-        customServers: state.customServers.map((server) =>
-          server.id === id ? { ...server, enabled } : server
-        )
+        customServers: state.customServers.map((server) => {
+          if (server.id !== id) return server
+          confirmed = server.enabled
+          return { ...server, enabled }
+        })
       }))
-      await reconcileMutation(() => getCommands().setCustomServerEnabled({ id, enabled }))
+      if (confirmed === undefined) {
+        await reconcileMutation(() => getCommands().setCustomServerEnabled({ id, enabled }))
+        return
+      }
+
+      const token = toggleWrites.begin(key, confirmed, enabled)
+      try {
+        const projection = await runMutation(() =>
+          reconcile(() => getCommands().setCustomServerEnabled({ id, enabled }))
+        )
+        const authoritative =
+          projection.customServers.find((server) => server.id === id)?.enabled ?? confirmed
+        const projected = toggleWrites.succeed(token, authoritative)
+        setState((state) => ({
+          customServers: state.customServers.map((server) =>
+            server.id === id ? { ...server, enabled: projected } : server
+          )
+        }))
+      } catch (error) {
+        const projected = toggleWrites.fail(token)
+        setState((state) => ({
+          customServers: state.customServers.map((server) =>
+            server.id === id ? { ...server, enabled: projected } : server
+          )
+        }))
+        throw error
+      }
     },
     removeCustomServer: (id) => reconcileMutation(() => getCommands().removeCustomServer({ id })),
     enqueueApproval: (request) => {
@@ -174,10 +301,10 @@ export const createSettingsConnectorsSlice = ({
       )
     },
     respondApproval: async (id, decision) => {
+      await getCommands().respondConnectorApproval({ id, decision })
       setState((state) => ({
         pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
       }))
-      await getCommands().respondConnectorApproval({ id, decision })
     }
   }
 }

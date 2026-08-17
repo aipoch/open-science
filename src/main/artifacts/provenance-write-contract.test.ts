@@ -50,6 +50,10 @@ const canonicalize = (value: unknown): unknown => {
 const PUBLIC_METHODS = [
   'writeAppGeneratedVersion',
   'createVersion',
+  'reserveWrite',
+  'releaseWriteReservation',
+  'releaseRunWriteReservations',
+  'releaseAllWriteReservations',
   'replayVersion',
   'validateFinalizationOwnership',
   'finalizeRun',
@@ -67,6 +71,7 @@ const PUBLIC_METHODS = [
   'getVersionReview',
   'readCodeReconstructionCache',
   'writeCodeReconstructionCache',
+  'resolveVersionContentForStreamingVerification',
   'resolveVersionContent',
   'deleteProjectProvenance'
 ] as const satisfies readonly (keyof ArtifactProvenanceRepository)[]
@@ -224,7 +229,7 @@ describe('artifact provenance allocation and write identity', () => {
       content: string
     ): Promise<ArtifactVersionFile> => {
       await value.compatibilityRepository.writePendingFile({
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'artifact-session-1',
         runId: artifactRunId,
         filename: 'README.md',
@@ -355,7 +360,7 @@ const appendNotebookRun = async (
 ): Promise<{ path: string; sizeBytes: number; mtimeMs: number }> => {
   const lane = createFrameNotebookLane('project-1', 'session-1', provenanceGraph.agentFrameId)
   const document = await value.notebookRepository.loadOrCreate({
-    projectName: 'project-1',
+    projectId: 'project-1',
     sessionId: 'session-1',
     workspaceCwd: join(value.storageRoot, 'workspace'),
     lane
@@ -365,7 +370,7 @@ const appendNotebookRun = async (
   await writeFile(sourcePath, createPngBytes(input.payload))
   const sourceStat = await stat(sourcePath)
   await value.notebookRepository.appendRun({
-    projectName: 'project-1',
+    projectId: 'project-1',
     sessionId: 'session-1',
     lane,
     run: {

@@ -138,6 +138,52 @@ const methodDeclarationSites = (methodName: string): string[] => {
   return sites.sort()
 }
 
+const interactiveTransactionOptions = (): string[] => {
+  const sites: string[] = []
+  for (const file of productionFiles) {
+    const sourceFile = sourceFileFor(file)
+    const visit = (node: Node): void => {
+      if (
+        isCallExpression(node) &&
+        isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === '$transaction'
+      ) {
+        sites.push(`${file}:${node.arguments[1]?.getText(sourceFile) ?? '<missing>'}`)
+      }
+      forEachChild(node, visit)
+    }
+    visit(sourceFile)
+  }
+  return sites.sort()
+}
+
+const functionCallSites = (functionName: string): string[] => {
+  const sites: string[] = []
+  for (const file of productionFiles) {
+    const sourceFile = sourceFileFor(file)
+    const visit = (node: Node): void => {
+      if (isCallExpression(node) && isIdentifier(node.expression)) {
+        if (node.expression.text === functionName) sites.push(file)
+      }
+      forEachChild(node, visit)
+    }
+    visit(sourceFile)
+  }
+  return sites.sort()
+}
+
+const variableInitializer = (file: string, variableName: string): string | undefined => {
+  const sourceFile = sourceFileFor(file)
+  for (const statement of sourceFile.statements) {
+    if (!isVariableStatement(statement)) continue
+    const declaration = statement.declarationList.declarations.find(
+      (candidate) => isIdentifier(candidate.name) && candidate.name.text === variableName
+    )
+    if (declaration) return declaration.initializer?.getText(sourceFile)
+  }
+  return undefined
+}
+
 const facadeDelegations = (
   facade: ClassDeclaration,
   facadeFile: SourceFile
@@ -352,5 +398,19 @@ describe('Upload repository architecture', () => {
       }
     }
     expect(recoverySource).toContain('cleanup: Pick<')
+  })
+
+  it('routes every interactive Upload transaction through the shared connection wait policy', () => {
+    expect(variableInitializer('staged-publication-owner.ts', 'UPLOAD_TRANSACTION_OPTIONS')).toBe(
+      '{ maxWait: 10_000 } as const'
+    )
+    expect(interactiveTransactionOptions()).toEqual([
+      'staged-publication-owner.ts:UPLOAD_TRANSACTION_OPTIONS'
+    ])
+    expect(functionCallSites('runUploadTransaction')).toEqual([
+      'legacy-recovery-owner.ts',
+      'legacy-recovery-owner.ts',
+      'staged-publication-owner.ts'
+    ])
   })
 })

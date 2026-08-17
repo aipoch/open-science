@@ -1,4 +1,12 @@
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'
+import { getAgentFramework } from '../agent-framework'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import {
+  providerValidationFailed,
+  type ClaudeSubscriptionProviderId,
+  type ProviderView
+} from '../../shared/settings'
 import {
   DEFAULT_OUTPUT_LIMIT_BYTES,
   RestrictedInferenceError,
@@ -21,18 +29,18 @@ const HOST_LLM_SYSTEM_PROMPT = [
 type HostLlmRequest = string | Readonly<{ prompt: string }>
 
 type HostLlmUsage = Readonly<{
-  input_tokens: number
-  cache_tokens: number
-  output_tokens: number
-  cached_read_tokens?: number
-  cached_write_tokens?: number
-  turn_count?: number
+  inputTokens: number
+  cacheTokens: number
+  outputTokens: number
+  cachedReadTokens?: number
+  cachedWriteTokens?: number
+  turnCount?: number
 }>
 
 type HostLlmResult = Readonly<{
   text: string
   model: string
-  stop_reason: RestrictedInferenceResult['stopReason']
+  stopReason: RestrictedInferenceResult['stopReason']
   usage?: HostLlmUsage
 }>
 
@@ -50,8 +58,17 @@ type HostLlmRunner = Pick<
   'run' | 'shutdown' | 'supportsTarget' | 'sweepStaleProfiles'
 >
 
-type HostLlmServiceOptions = Readonly<{
+type HostModelCatalogSnapshot = Readonly<{
+  providers: readonly ProviderView[]
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+}>
+
+type HostModelServiceOptions = Readonly<{
   captureTarget: () => Promise<ExplicitAgentBackendTarget>
+  captureSessionModel: (
+    sessionId: string
+  ) => Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined
+  captureModelCatalog: () => Promise<HostModelCatalogSnapshot>
   runner: HostLlmRunner
 }>
 
@@ -125,36 +142,110 @@ const publicError = (error: unknown): string => {
 const projectResult = (result: RestrictedInferenceResult): HostLlmResult => {
   const usage = result.usage
     ? Object.freeze({
-        input_tokens: result.usage.inputTokens,
-        cache_tokens: result.usage.cacheTokens,
-        output_tokens: result.usage.outputTokens,
+        inputTokens: result.usage.inputTokens,
+        cacheTokens: result.usage.cacheTokens,
+        outputTokens: result.usage.outputTokens,
         ...(result.usage.cachedReadTokens === undefined
           ? {}
-          : { cached_read_tokens: result.usage.cachedReadTokens }),
+          : { cachedReadTokens: result.usage.cachedReadTokens }),
         ...(result.usage.cachedWriteTokens === undefined
           ? {}
-          : { cached_write_tokens: result.usage.cachedWriteTokens }),
-        ...(result.usage.turnCount === undefined ? {} : { turn_count: result.usage.turnCount })
+          : { cachedWriteTokens: result.usage.cachedWriteTokens }),
+        ...(result.usage.turnCount === undefined ? {} : { turnCount: result.usage.turnCount })
       })
     : undefined
   return Object.freeze({
     text: result.text,
     model: result.model,
-    stop_reason: result.stopReason,
+    stopReason: result.stopReason,
     ...(usage ? { usage } : {})
   })
 }
 
-class HostLlmService {
+class HostModelService {
   private readonly activeCalls = new Set<AbortController>()
   private readonly callDrainWaiters = new Set<() => void>()
   private readonly runSlotWaiters: Array<() => void> = []
   private activeRuns = 0
   private shuttingDown = false
 
-  constructor(private readonly options: HostLlmServiceOptions) {}
+  constructor(private readonly options: HostModelServiceOptions) {}
 
-  async isAvailable(): Promise<boolean> {
+  async currentModel(sessionId: string): Promise<string> {
+    const snapshot = this.options.captureSessionModel(sessionId)
+    const backend = snapshot?.backend
+    const candidates =
+      backend?.framework.id === 'opencode'
+        ? [snapshot?.appliedModel]
+        : [backend?.context.model, snapshot?.appliedModel, backend?.session.model]
+    const model = candidates.find(
+      (candidate) => candidate && candidate.trim() && candidate !== 'provider-default'
+    )
+    if (!model) {
+      throw new Error('host.currentModel is unavailable because the Session model is unknown.')
+    }
+    return model
+  }
+
+  async isCurrentModelAvailable(sessionId: string): Promise<boolean> {
+    try {
+      await this.currentModel(sessionId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async listModels(): Promise<readonly string[]> {
+    try {
+      const target = await this.options.captureTarget()
+      const snapshot = await this.options.captureModelCatalog()
+      const framework = getAgentFramework(target.frameworkId)
+      const targetProvider = snapshot.providers.find(
+        (provider) => provider.id === target.providerId
+      )
+      if (
+        !targetProvider ||
+        targetProvider.lastValidatedAt === undefined ||
+        providerValidationFailed(targetProvider)
+      ) {
+        throw new Error('Target Provider is unavailable.')
+      }
+      const models = Array.from(
+        new Set(
+          buildConfiguredModelCatalog({
+            providers: snapshot.providers,
+            activeProviderId: target.providerId,
+            claudeSubscriptionProviderId: snapshot.claudeSubscriptionProviderId,
+            frameworkId: framework.id,
+            frameworkEndpoints: framework.supportedApiTypes
+          })
+            .filter(
+              (entry) =>
+                entry.providerId === target.providerId && entry.selectable && entry.model.length > 0
+            )
+            .map((entry) => entry.model)
+        )
+      ).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+      if (models.length === 0) throw new Error('No configured models are available.')
+      return Object.freeze(models)
+    } catch {
+      throw new Error(
+        'host.listModels is unavailable because the active Host LLM model catalog cannot be resolved.'
+      )
+    }
+  }
+
+  async isListModelsAvailable(): Promise<boolean> {
+    try {
+      await this.listModels()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async isLlmAvailable(): Promise<boolean> {
     if (this.shuttingDown) return false
     try {
       const target = await this.options.captureTarget()
@@ -384,13 +475,14 @@ export {
   MAX_BATCH_ITEMS,
   MAX_CONCURRENCY,
   MAX_PROMPT_BYTES,
-  HostLlmService
+  HostModelService
 }
 export type {
   HostLlmBatchItem,
   HostLlmCallInput,
   HostLlmRequest,
   HostLlmResult,
-  HostLlmServiceOptions,
+  HostModelServiceOptions,
+  HostModelCatalogSnapshot,
   HostLlmUsage
 }

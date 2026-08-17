@@ -183,7 +183,12 @@ describe('ComputeJob schema migration (integration)', () => {
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
         '0003_granted_local_roots',
-        '0004_managed_file_version_foundation'
+        '0004_review_assessment_snapshots',
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints',
+        '0009_managed_file_version_foundation'
       ]
     })
     // Idempotent second run.
@@ -260,7 +265,12 @@ describe('ComputeJob schema migration (integration)', () => {
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
         '0003_granted_local_roots',
-        '0004_managed_file_version_foundation'
+        '0004_review_assessment_snapshots',
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints',
+        '0009_managed_file_version_foundation'
       ]
     })
     // Idempotent second run.
@@ -486,18 +496,62 @@ describe('ComputeJob schema migration (integration)', () => {
     await repo.update('job-to-consume', { notifiedAt: new Date() })
 
     // First call sets the timestamp.
-    await repo.markNotificationsConsumed(['job-to-consume'])
+    await repo.markNotificationsConsumed('s1', ['job-to-consume'])
     const after = await repo.get('job-to-consume')
     expect(after!.notification_consumed_at).toBeGreaterThan(0)
 
     // Second call is idempotent (no error, no change to timestamp).
     const ts1 = after!.notification_consumed_at!
-    await repo.markNotificationsConsumed(['job-to-consume'])
+    await repo.markNotificationsConsumed('s1', ['job-to-consume'])
     const after2 = await repo.get('job-to-consume')
     expect(after2!.notification_consumed_at).toBe(ts1)
 
     // Empty array is a no-op.
-    await expect(repo.markNotificationsConsumed([])).resolves.toBeUndefined()
+    await expect(repo.markNotificationsConsumed('s1', [])).resolves.toBeUndefined()
+  })
+
+  it('rejects a mixed-session, missing, or unnotified consumption batch atomically', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-consume-owner-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const createJob = async (id: string, sessionId: string): Promise<void> => {
+      await repo.create({
+        id,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId,
+        projectId: 'p1',
+        intent: 'test',
+        command: 'echo',
+        commandHash: id
+      })
+    }
+
+    await createJob('job-owned', 'session-1')
+    await createJob('job-foreign', 'session-2')
+    await createJob('job-unnotified', 'session-1')
+    await repo.update('job-owned', { notifiedAt: new Date('2026-01-01') })
+    await repo.update('job-foreign', { notifiedAt: new Date('2026-01-01') })
+
+    await expect(
+      repo.markNotificationsConsumed('session-1', ['job-owned', 'job-foreign'])
+    ).rejects.toThrow(/outside the requested Session/)
+    expect((await repo.get('job-owned'))?.notification_consumed_at).toBeUndefined()
+    expect((await repo.get('job-foreign'))?.notification_consumed_at).toBeUndefined()
+
+    await expect(
+      repo.markNotificationsConsumed('session-1', ['job-owned', 'missing-job'])
+    ).rejects.toThrow(/outside the requested Session/)
+    await expect(repo.markNotificationsConsumed('session-1', ['job-unnotified'])).rejects.toThrow(
+      /outside the requested Session/
+    )
+
+    await repo.markNotificationsConsumed('session-1', ['job-owned', 'job-owned'])
+    expect((await repo.get('job-owned'))?.notification_consumed_at).toBeGreaterThan(0)
   })
 
   it('countNonTerminalByProvider counts active jobs across all sessions', async () => {

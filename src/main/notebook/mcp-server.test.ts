@@ -43,7 +43,7 @@ describe('notebook MCP server config', () => {
       entryPath: '/app/out/main/index.js',
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })
@@ -57,7 +57,6 @@ describe('notebook MCP server config', () => {
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: 'http://127.0.0.1:4567' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
-        { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: 'session-1' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' }
       ]
@@ -93,7 +92,7 @@ describe('notebook MCP server config', () => {
       endpoint: 'http://localhost',
       socketPath: '\\\\.\\pipe\\open-science-notebook',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: 'C:\\workspace'
     })
@@ -341,7 +340,7 @@ describe('notebook_execute tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }
@@ -389,7 +388,7 @@ describe('notebook_execute tool', () => {
       const environment = {
         endpoint: 'http://127.0.0.1:4567',
         token: 'secret-token',
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         workspaceCwd: '/workspace'
       }
@@ -537,7 +536,7 @@ describe('repl_execute tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }
@@ -615,7 +614,7 @@ describe('bash_execute tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }
@@ -655,6 +654,23 @@ describe('manage_packages tool', () => {
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(
       expect.arrayContaining(['language', 'packages', 'usePip', 'channels'])
     )
+  })
+
+  it('preserves bounded installer-log truncation metadata in the compact result', () => {
+    expect(
+      compactManagePackagesResult({
+        ok: true,
+        needsRestart: false,
+        method: 'pip',
+        log: 'latest retained output',
+        logTruncation: { droppedBytes: 524_321 }
+      })
+    ).toEqual({
+      ok: true,
+      needsRestart: false,
+      method: 'pip',
+      logTruncation: { droppedBytes: 524_321 }
+    })
   })
 
   it('has no per-call environment param — installs target the session-bound runtime (v4)', () => {
@@ -980,7 +996,7 @@ describe('manage_environments tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }
@@ -1021,6 +1037,7 @@ describe('compactNotebookExecutionResult', () => {
     traceback?: string
   }): Record<string, unknown> => ({
     runId: 'notebook-run-1',
+    executionInvocationId: 'invocation-1',
     status: 'completed',
     text: { stdout: '', stderr: '', traceback: '', plain: [], ...text },
     outputs: [],
@@ -1050,7 +1067,11 @@ describe('compactNotebookExecutionResult', () => {
 
     const compact = compactNotebookExecutionResult(result) as Record<string, unknown>
 
-    expect(compact).toMatchObject({ stdout: 'answer\n', stderr: 'warning\n' })
+    expect(compact).toMatchObject({
+      executionInvocationId: 'invocation-1',
+      stdout: 'answer\n',
+      stderr: 'warning\n'
+    })
     expect(compact).not.toHaveProperty('text')
     expect(compact).not.toHaveProperty('script')
     expect(compact).not.toHaveProperty('roots')
@@ -1067,6 +1088,16 @@ describe('compactNotebookExecutionResult', () => {
 
     expect(compact.stdout).toBe(stdout)
     expect(compact.truncated).toBeUndefined()
+  })
+
+  it('preserves producer truncation when no additional MCP clipping is needed', () => {
+    const compact = compactNotebookExecutionResult({
+      ...runSummary({ stdout: 'retained prefix' }),
+      truncated: true
+    }) as { truncated?: boolean; note?: string }
+
+    expect(compact.truncated).toBe(true)
+    expect(compact.note).toContain('during capture')
   })
 
   it('keeps a practical connector trailing result inline', () => {
@@ -1105,6 +1136,7 @@ describe('compactNotebookExecutionResult', () => {
     const oversized = Array.from({ length: 100_000 }, (_, index) => `${index % 10}`).join('')
     const result = {
       status: 'completed',
+      executionInvocationId: 'invocation-1',
       environment: oversized,
       stdout: oversized,
       stderr: oversized,
@@ -1123,7 +1155,11 @@ describe('compactNotebookExecutionResult', () => {
     expect(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT).toBe(24_000)
     expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
     expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(8_000)
-    expect(JSON.parse(serialized)).toMatchObject({ status: 'completed', truncated: true })
+    expect(JSON.parse(serialized)).toMatchObject({
+      status: 'completed',
+      executionInvocationId: 'invocation-1',
+      truncated: true
+    })
     expect(result.stdout.length).toBe(oversized.length)
   })
 
@@ -1146,6 +1182,7 @@ describe('compactNotebookStateResult', () => {
       cellId: `cell-${index}`,
       kernelKind: 'python',
       status: 'completed',
+      truncated: index === 19,
       startedAt: index,
       endedAt: index + 1,
       script: 'print(1)'.repeat(10_000),
@@ -1162,6 +1199,7 @@ describe('compactNotebookStateResult', () => {
       kernelStatus: 'idle',
       cwd: '/workspace',
       dataRoot: '/workspace/data',
+      runCount: 125,
       cells: [
         { id: 'cell-19', language: 'python', code: 'x'.repeat(100_000), status: 'completed' }
       ],
@@ -1178,12 +1216,15 @@ describe('compactNotebookStateResult', () => {
     expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
     expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(2_000)
     expect(parsed).not.toHaveProperty('runs')
-    expect(parsed).toHaveProperty('runCount', 20)
+    expect(parsed).toHaveProperty('runCount', 125)
     expect((parsed.recentRuns as unknown[]).length).toBe(10)
     expect(serialized).not.toContain('print(1)')
     expect(serialized).not.toContain('outputs')
     expect(serialized).not.toContain('code')
     expect(serialized).toContain('output-19')
+    expect(parsed.recentRuns).toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId: 'run-19', truncated: true })])
+    )
   })
 
   it('keeps the latest successful text result available for recovery', () => {

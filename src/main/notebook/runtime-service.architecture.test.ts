@@ -221,6 +221,7 @@ describe('Notebook runtime facade architecture', () => {
       [
         'appendCodeCell',
         'beginCodeCell',
+        'beginProjectDeletion',
         'bindRuntime',
         'blockPrefixRecovery',
         'clearCorruptRecoveryBlock',
@@ -247,6 +248,7 @@ describe('Notebook runtime facade architecture', () => {
         'managePackages',
         'peekHandoffContext',
         'recoverInterruptedOperations',
+        'releaseProjectDeletion',
         'restart',
         'revokeRuntime',
         'runCell',
@@ -256,6 +258,7 @@ describe('Notebook runtime facade architecture', () => {
         'setMcpRpcConnectionResolver',
         'shutdown',
         'shutdownAll',
+        'shutdownProject',
         'shutdownSession',
         'state',
         'switchRuntime',

@@ -13,6 +13,74 @@ import traceback
 # Protocol output must survive user code that reassigns fd 1; keep a private handle to the real stdout.
 _protocol_out = os.fdopen(os.dup(1), "w", buffering=1)
 _figures_dir = os.environ.get("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
+_text_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES", 2 * 1024 * 1024))
+_diagnostic_limit = min(16 * 1024, max(0, _text_limit))
+_figure_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", int(3.5 * 1024 * 1024)))
+_figure_count_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
+_figure_total_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
+
+
+class _OutputBudget:
+    def __init__(self, limit=_text_limit):
+        self.remaining = max(0, limit)
+        self.truncated = False
+
+    def take(self, value):
+        value = str(value)
+        if self.remaining <= 0:
+            self.truncated = self.truncated or bool(value)
+            return ""
+        # Every Python character needs at least one UTF-8 byte. Slice by the remaining byte count
+        # before encoding so a single enormous print cannot allocate an equally enormous byte copy.
+        candidate = value[:self.remaining] if len(value) > self.remaining else value
+        data = candidate.encode("utf-8", errors="replace")
+        if len(data) <= self.remaining:
+            self.remaining -= len(data)
+            if len(candidate) < len(value):
+                self.truncated = True
+            return data.decode("utf-8")
+        prefix = data[:max(0, self.remaining)].decode("utf-8", errors="ignore")
+        self.remaining -= len(prefix.encode("utf-8"))
+        self.truncated = True
+        return prefix
+
+    def take_tail(self, value):
+        value = str(value)
+        if self.remaining <= 0:
+            self.truncated = self.truncated or bool(value)
+            return ""
+        # Traceback exception names/messages live at the end. Bound the temporary encoding by first
+        # taking at most `remaining` characters, then keep a valid UTF-8 suffix within the byte cap.
+        candidate = value[-self.remaining:] if len(value) > self.remaining else value
+        data = candidate.encode("utf-8", errors="replace")
+        if len(data) <= self.remaining:
+            self.remaining -= len(data)
+            if len(candidate) < len(value):
+                self.truncated = True
+            return data.decode("utf-8")
+        suffix = data[-self.remaining:].decode("utf-8", errors="ignore")
+        self.remaining -= len(suffix.encode("utf-8"))
+        self.truncated = True
+        return suffix
+
+
+class _BudgetTextIO(io.TextIOBase):
+    def __init__(self, budget):
+        self._budget = budget
+        self._parts = []
+
+    def write(self, value):
+        value = str(value)
+        captured = self._budget.take(value)
+        if captured:
+            self._parts.append(captured)
+        return len(value)
+
+    def getvalue(self):
+        return "".join(self._parts)
+
+    def flush(self):
+        return None
 
 # Protected-dirs audit hook, injected once into the persistent namespace. This is a DATA kernel with
 # NO outbound connector access: host.mcp lives only in the control-plane REPL kernel, and connector
@@ -359,23 +427,30 @@ exec(compile(_BOOTSTRAP, "<bootstrap>", "exec"), _globals)
 # closes them. No-op when matplotlib was never imported, so a pure-compute cell pays nothing.
 def _capture_figures():
     figures = []
+    total_bytes = 0
+    truncated = False
     module = sys.modules.get("matplotlib")
     if module is None or not _figures_dir:
-        return figures
+        return figures, truncated
     try:
         from matplotlib._pylab_helpers import Gcf
     except Exception:
-        return figures
+        return figures, truncated
     for manager in list(Gcf.get_all_fig_managers()):
         try:
             buf = io.BytesIO()
             manager.canvas.figure.savefig(buf, format="png", bbox_inches="tight")
             data = buf.getvalue()
+            if (len(figures) >= _figure_count_limit or len(data) > _figure_limit or
+                    total_bytes + len(data) > _figure_total_limit):
+                truncated = True
+                continue
             digest = hashlib.sha256(data).hexdigest()
             path = os.path.join(_figures_dir, digest + ".png")
             with open(path, "wb") as handle:
                 handle.write(data)
             figures.append({"mime": "image/png", "path": path})
+            total_bytes += len(data)
         except Exception:
             continue
     try:
@@ -384,8 +459,8 @@ def _capture_figures():
     except Exception:
         # Best-effort cleanup only: figures were already captured above, so if matplotlib is
         # unimportable or close() fails there is nothing more to do.
-        return figures
-    return figures
+        return figures, truncated
+    return figures, truncated
 
 
 def _capture_environment():
@@ -422,7 +497,9 @@ def _capture_environment():
 # evals that expression so its repr echoes like a REPL. KeyboardInterrupt (from a SIGINT timeout) is
 # caught so the process survives and the driver can map the reply to a timeout.
 def _run(code):
-    out, err = io.StringIO(), io.StringIO()
+    output_budget = _OutputBudget(_text_limit - _diagnostic_limit)
+    diagnostic_budget = _OutputBudget(_diagnostic_limit)
+    out, err = _BudgetTextIO(output_budget), _BudgetTextIO(output_budget)
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
     error = None
@@ -438,20 +515,21 @@ def _run(code):
         if tail is not None:
             value = eval(compile(tail, "<cell>", "eval"), _globals)
             if value is not None:
-                result = repr(value)
+                result = output_budget.take(repr(value))
     except KeyboardInterrupt:
-        error = "KeyboardInterrupt\n" + traceback.format_exc()
+        error = diagnostic_budget.take_tail("KeyboardInterrupt\n" + traceback.format_exc())
     except SystemExit:
         # A cell calling sys.exit()/exit() raises SystemExit (a BaseException, not Exception). Report
         # it as a normal cell error so the kernel survives instead of the process exiting.
-        error = traceback.format_exc()
+        error = diagnostic_budget.take_tail(traceback.format_exc())
     except Exception:
-        error = traceback.format_exc()
+        error = diagnostic_budget.take_tail(traceback.format_exc())
     finally:
         sys.stdout, sys.stderr = old_out, old_err
-    figures = _capture_figures()
+    figures, figures_truncated = _capture_figures()
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "error": error,
             "result": result, "cwd": os.getcwd(), "figures": figures,
+            "output_truncated": output_budget.truncated or diagnostic_budget.truncated or figures_truncated,
             "environment": _capture_environment()}
 
 
@@ -480,6 +558,7 @@ def main():
             # into an error inside _run, so it doesn't reach this guard.
             fallback = {"stdout": "", "stderr": "", "error": traceback.format_exc(),
                         "result": None, "cwd": os.getcwd(), "figures": [],
+                        "output_truncated": False,
                         "environment": _capture_environment(), "req_id": req_id}
             try:
                 _protocol_out.write(json.dumps(fallback) + "\n")

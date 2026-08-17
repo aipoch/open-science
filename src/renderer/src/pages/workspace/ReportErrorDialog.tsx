@@ -1,6 +1,7 @@
 import { Dialog } from 'radix-ui'
 import { Check, Copy, ExternalLink, FolderOpen, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -44,6 +45,7 @@ const ReportErrorDialog = ({
   subject,
   onClose
 }: ReportErrorDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const appVersion = useUpdateStore((state) => state.appInfo?.version)
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
@@ -92,19 +94,19 @@ const ReportErrorDialog = ({
   const issuePrefillPreview = useMemo(
     () =>
       [
-        'What happened',
-        issuePrefill.fields['what-happened'] ?? '(not prefilled)',
+        t('What happened'),
+        issuePrefill.fields['what-happened'] ?? t('(not prefilled)'),
         '',
-        'App version',
-        issuePrefill.fields['app-version'] ?? '(not prefilled)',
+        t('App version'),
+        issuePrefill.fields['app-version'] ?? t('(not prefilled)'),
         '',
-        'Provider / model',
-        issuePrefill.fields['provider-model'] ?? '(not prefilled)',
+        t('Provider / model'),
+        issuePrefill.fields['provider-model'] ?? t('(not prefilled)'),
         '',
-        'Relevant logs',
-        issuePrefill.fields.logs ?? '(not prefilled)'
+        t('Relevant logs'),
+        issuePrefill.fields.logs ?? t('(not prefilled)')
       ].join('\n'),
-    [issuePrefill]
+    [issuePrefill, t]
   )
 
   // Consent is tied to the exact payload it was given for, not a bare flag. We record the URL the user
@@ -125,7 +127,7 @@ const ReportErrorDialog = ({
         window.setTimeout(() => setCopied(false), 1500)
       })
       .catch(() => {
-        setRevealMessage('Could not write to clipboard.')
+        setRevealMessage(t('Could not write to clipboard.'))
       })
   }
 
@@ -134,14 +136,14 @@ const ReportErrorDialog = ({
   // and the IPC call itself can reject — both surface inline rather than throwing (matches GeneralPanel).
   const handleRevealLog = async (): Promise<void> => {
     if (!window.api?.logs?.revealInFolder) {
-      setRevealMessage('Log reveal is not available in this environment.')
+      setRevealMessage(t('Log reveal is not available in this environment.'))
       return
     }
     try {
       const result = await window.api.logs.revealInFolder()
-      if (!result.revealed) setRevealMessage(result.error ?? 'Could not reveal the log file.')
+      if (!result.revealed) setRevealMessage(result.error ?? t('Could not reveal the log file.'))
     } catch (error) {
-      setRevealMessage(error instanceof Error ? error.message : 'Could not reveal the log file.')
+      setRevealMessage(error instanceof Error ? error.message : t('Could not reveal the log file.'))
     }
   }
 
@@ -162,11 +164,11 @@ const ReportErrorDialog = ({
         >
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
-              <Dialog.Title className={dialogTitleClassName}>Report this error</Dialog.Title>
+              <Dialog.Title className={dialogTitleClassName}>{t('Report this error')}</Dialog.Title>
               <Dialog.Description className={dialogDescriptionClassName}>
-                This report is posted publicly on GitHub. Edit the error text below to remove
-                anything sensitive before sharing. Your runtime log stays on this device and is
-                never attached automatically.
+                {t(
+                  'This report is posted publicly on GitHub. Edit the error text below to remove anything sensitive before sharing. Your runtime log stays on this device and is never attached automatically.'
+                )}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -175,7 +177,7 @@ const ReportErrorDialog = ({
                 variant="ghost"
                 size="icon-sm"
                 className={dialogCloseButtonClassName}
-                aria-label="Close"
+                aria-label={t('Close')}
               >
                 <X className="size-4" aria-hidden="true" />
               </Button>
@@ -184,11 +186,11 @@ const ReportErrorDialog = ({
 
           <div className={cn(dialogBodyClassName, 'min-h-0 flex flex-1 flex-col')}>
             <label className="text-[11px] font-medium uppercase tracking-wide text-text-300">
-              Error details
+              {t('Error details')}
             </label>
             <textarea
               className="mt-1 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
-              aria-label="Error details"
+              aria-label={t('Error details')}
               value={editedError}
               onChange={(event) => {
                 // Editing changes issueUrl, so consent lapses automatically via consentedUrl !== issueUrl.
@@ -197,11 +199,11 @@ const ReportErrorDialog = ({
             />
 
             <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
-              Also included
+              {t('Also included')}
             </p>
             <pre
               className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
-              aria-label="Report environment"
+              aria-label={t('Report environment')}
             >
               {environmentBlock}
             </pre>
@@ -209,11 +211,11 @@ const ReportErrorDialog = ({
             {issuePrefill.truncatedFields.length > 0 ? (
               <>
                 <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
-                  GitHub issue prefill
+                  {t('GitHub issue prefill')}
                 </p>
                 <pre
                   className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
-                  aria-label="GitHub issue prefill"
+                  aria-label={t('GitHub issue prefill')}
                 >
                   {issuePrefillPreview}
                 </pre>
@@ -229,18 +231,20 @@ const ReportErrorDialog = ({
                 onChange={(event) => setConsentedUrl(event.target.checked ? issueUrl : null)}
               />
               <span>
-                I&apos;ve reviewed the details above and agree to share them in a public GitHub
-                issue, subject to GitHub&apos;s{' '}
-                <a
-                  href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline hover:text-text-000"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  Privacy Statement
-                </a>
-                .
+                <Trans
+                  i18nKey="I've reviewed the details above and agree to share them in a public GitHub issue, subject to GitHub's <privacyLink>Privacy Statement</privacyLink>."
+                  components={{
+                    privacyLink: (
+                      <a
+                        href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline hover:text-text-000"
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                    )
+                  }}
+                />
               </span>
             </label>
 
@@ -258,7 +262,7 @@ const ReportErrorDialog = ({
               onClick={() => void handleRevealLog()}
             >
               <FolderOpen className="size-4" aria-hidden="true" />
-              Reveal log file
+              {t('Reveal log file')}
             </button>
             <button
               type="button"
@@ -270,7 +274,7 @@ const ReportErrorDialog = ({
               ) : (
                 <Copy className="size-4" aria-hidden="true" />
               )}
-              {copied ? 'Copied' : 'Copy details'}
+              {copied ? t('Copied') : t('Copy details')}
             </button>
             <a
               href={consented ? issueUrl : undefined}
@@ -287,7 +291,7 @@ const ReportErrorDialog = ({
               }`}
             >
               <ExternalLink className="size-4" aria-hidden="true" />
-              Open GitHub issue
+              {t('Open GitHub issue')}
             </a>
           </div>
         </Dialog.Content>

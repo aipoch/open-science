@@ -308,4 +308,187 @@ describe('ArchiveCoordinator', () => {
     )
     expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
   })
+
+  it('establishes a Project deletion fence after admitted Session work drains', async () => {
+    const admitted = createDeferred<void>()
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(project.id)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const quiesce = vi.fn().mockResolvedValue(undefined)
+
+    const existing = coordinator.withSessionAvailable(
+      project.id,
+      session.id,
+      () => admitted.promise
+    )
+    await vi.waitFor(() => expect(sessions.assertSessionAvailable).toHaveBeenCalledOnce())
+    const deletion = coordinator.withProjectDeletion(project.id, quiesce)
+    await Promise.resolve()
+
+    expect(quiesce).not.toHaveBeenCalled()
+    admitted.resolve(undefined)
+    await existing
+    await deletion
+
+    expect(quiesce).toHaveBeenCalledOnce()
+    await expect(coordinator.assertProjectAvailable(project.id)).rejects.toThrow(
+      'Project is being deleted.'
+    )
+    const blockedDispatch = vi.fn().mockResolvedValue(undefined)
+    await expect(
+      coordinator.withSessionDeletionAdmissionById(session.id, blockedDispatch)
+    ).rejects.toThrow('Project is being deleted.')
+    expect(blockedDispatch).not.toHaveBeenCalled()
+    coordinator.releaseProjectDeletion(project.id)
+    await expect(coordinator.assertProjectAvailable(project.id)).resolves.toBeUndefined()
+  })
+
+  it('retains and re-enters a Project deletion fence after teardown fails', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(project.id)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const failedTeardown = vi.fn().mockRejectedValue(new Error('runtime cleanup failed'))
+
+    await expect(coordinator.withProjectDeletion(project.id, failedTeardown)).rejects.toThrow(
+      'runtime cleanup failed'
+    )
+    await expect(coordinator.assertProjectAvailable(project.id)).rejects.toThrow(
+      'Project is being deleted.'
+    )
+
+    const retry = vi.fn().mockResolvedValue(undefined)
+    await expect(coordinator.withProjectDeletion(project.id, retry)).resolves.toBeUndefined()
+    expect(retry).toHaveBeenCalledOnce()
+
+    coordinator.releaseProjectDeletion(project.id)
+    await expect(coordinator.assertProjectAvailable(project.id)).resolves.toBeUndefined()
+  })
+
+  it('releases admission after prompt dispatch starts without awaiting prompt completion', async () => {
+    const prompt = createDeferred<string>()
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(project.id)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const dispatch = vi.fn(() => prompt.promise)
+    const quiesce = vi.fn().mockResolvedValue(undefined)
+
+    const prompting = coordinator.withSessionDeletionAdmissionById(session.id, dispatch)
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+    await coordinator.withProjectDeletion(project.id, quiesce)
+
+    expect(quiesce).toHaveBeenCalledOnce()
+    prompt.resolve('complete')
+    await expect(prompting).resolves.toBe('complete')
+  })
+
+  it('drains an admitted Project continuation before establishing its deletion fence', async () => {
+    const continuation = createDeferred<string>()
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn()
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const deliver = vi.fn(() => continuation.promise)
+    const quiesce = vi.fn().mockResolvedValue(undefined)
+
+    const delivering = coordinator.withProjectDeletionAdmission(project.id, deliver)
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce())
+    const deletion = coordinator.withProjectDeletion(project.id, quiesce)
+    await Promise.resolve()
+
+    expect(quiesce).not.toHaveBeenCalled()
+    continuation.resolve('accepted')
+    await expect(delivering).resolves.toBe('accepted')
+    await deletion
+
+    expect(quiesce).toHaveBeenCalledOnce()
+    const lateDelivery = vi.fn().mockResolvedValue('accepted')
+    await expect(
+      coordinator.withProjectDeletionAdmission(project.id, lateDelivery)
+    ).rejects.toThrow('Project is being deleted.')
+    expect(lateDelivery).not.toHaveBeenCalled()
+  })
+
+  it('allows deletion-only dispatch admission for a non-Project runtime', async () => {
+    const projects = {
+      get: vi.fn(),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn().mockReturnValue(undefined)
+    })
+    const dispatch = vi.fn().mockResolvedValue('reviewed')
+
+    await expect(
+      coordinator.withSessionDeletionAdmissionById('reviewer-session', dispatch)
+    ).resolves.toBe('reviewed')
+
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(projects.get).not.toHaveBeenCalled()
+  })
 })
+
+const createDeferred = <Value>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
