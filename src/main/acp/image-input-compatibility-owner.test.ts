@@ -107,6 +107,40 @@ describe('ImageInputCompatibilityOwner', () => {
     ])
   })
 
+  it('accepts a null uncertainty from the Vision model', async () => {
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: vi.fn(async () => target),
+      runner: {
+        run: vi.fn(async () => ({
+          text: JSON.stringify({
+            summary: 'A clear screenshot.',
+            findings: [],
+            transcription: '',
+            regions: [],
+            entities: [],
+            relations: [],
+            uncertainty: null
+          }),
+          frameworkId: 'opencode' as const,
+          model: 'vision-model',
+          stopReason: 'end_turn' as const
+        }))
+      }
+    })
+
+    const prepared = await owner.prepare({
+      content: [image],
+      supportsImageInput: false
+    })
+
+    expect(prepared).toEqual([
+      expect.objectContaining({
+        type: 'text',
+        text: expect.stringContaining('Uncertainty: []')
+      })
+    ])
+  })
+
   it('bypasses the relay for a native visual active model', async () => {
     const captureTarget = vi.fn(async () => target)
     const run = vi.fn()
