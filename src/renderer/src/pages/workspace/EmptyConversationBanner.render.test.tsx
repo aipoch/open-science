@@ -13,5 +13,8 @@ describe('EmptyConversationBanner', () => {
     // The dotted flask is decorative; only the heading carries meaning.
     expect(html).toContain('aria-hidden="true"')
     expect(html).toContain('<h2')
+    expect(html).toContain('class="size-32 text-text-300 opacity-40 md:size-36 dark:opacity-80"')
+    expect(html).toContain('class="text-balance text-xl font-normal text-text-000 md:text-2xl"')
+    expect(html).toContain('class="text-sm text-text-300"')
   })
 })

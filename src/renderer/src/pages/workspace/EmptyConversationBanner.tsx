@@ -23,15 +23,15 @@ const EmptyConversationBanner = (): React.JSX.Element => {
         aria-hidden="true"
         viewBox="0 0 432 432"
         fill="currentColor"
-        className="size-40 text-text-300 opacity-40 md:size-44 dark:opacity-80"
+        className="size-32 text-text-300 opacity-40 md:size-36 dark:opacity-80"
       >
         <path d={FLASK_LOGO_PATH} />
       </svg>
       <div className="flex flex-col gap-2">
-        <h2 className="text-balance text-2xl font-normal text-text-000 md:text-3xl">
+        <h2 className="text-balance text-xl font-normal text-text-000 md:text-2xl">
           {t('What will you research in Open Science?')}
         </h2>
-        <p className="text-sm text-text-300 md:text-base">
+        <p className="text-sm text-text-300">
           {t('Discover, share, and collaborate on research that matters')}
         </p>
       </div>
