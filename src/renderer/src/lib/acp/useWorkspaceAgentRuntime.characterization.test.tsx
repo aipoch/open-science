@@ -547,6 +547,7 @@ describe('workspace Agent Runtime hook contract', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       undefined
     )
     expect(runtime.respondToPermission).toHaveBeenCalledWith('permission-restored', 'allow-once', {

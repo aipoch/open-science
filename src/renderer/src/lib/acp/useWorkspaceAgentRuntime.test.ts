@@ -1208,6 +1208,7 @@ describe('workspace durable elicitation', () => {
         backendId,
         undefined,
         undefined,
+        undefined,
         undefined
       )
       expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1523,6 +1524,7 @@ describe('workspace durable elicitation', () => {
       'ask',
       'opencode',
       'opencode:provider-1',
+      undefined,
       undefined,
       undefined,
       undefined
@@ -2097,6 +2099,7 @@ describe('workspace agent message sending', () => {
       'claude-code:anthropic',
       undefined,
       undefined,
+      undefined,
       undefined
     )
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
@@ -2197,6 +2200,7 @@ describe('workspace agent message sending', () => {
       'ask',
       'claude-code',
       'claude-code:anthropic',
+      undefined,
       undefined,
       undefined,
       undefined
@@ -4313,6 +4317,7 @@ describe('resuming an interrupted session on demand', () => {
       'codex:codex-isolated',
       undefined,
       undefined,
+      undefined,
       undefined
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
@@ -5236,6 +5241,7 @@ describe('resuming an interrupted session on demand', () => {
       'ask',
       'claude-code',
       'claude-code:anthropic',
+      undefined,
       undefined,
       undefined,
       undefined
@@ -6416,6 +6422,7 @@ describe('resendEditedWorkspaceMessage', () => {
       'ask',
       'claude-code',
       'claude-code:anthropic',
+      undefined,
       undefined,
       undefined,
       undefined
