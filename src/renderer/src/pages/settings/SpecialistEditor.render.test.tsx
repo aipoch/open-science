@@ -425,7 +425,7 @@ describe('SpecialistEditor', () => {
     )
   })
 
-  it('blocks creation when a user-provided ID is invalid', async () => {
+  it('validates a user-provided ID while typing and blocks invalid creation', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     await act(async () => {
       root.render(<SpecialistEditor onCancel={vi.fn()} onSave={onSave} />)
@@ -443,8 +443,27 @@ describe('SpecialistEditor', () => {
     })
     await act(async () => {
       fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-specialist-id')!, {
-        target: { value: 'RNA Reviewer' }
+        target: { value: 'hello ee' }
       })
+    })
+
+    const idInput = document.body.querySelector<HTMLInputElement>('#sp-specialist-id')!
+    expect(idInput.getAttribute('aria-invalid')).toBe('true')
+    expect(document.body.textContent).toContain(
+      'ID may only contain lowercase letters, numbers, and hyphens.'
+    )
+
+    await act(async () => {
+      fireEvent.change(idInput, { target: { value: 'hello-ee' } })
+    })
+
+    expect(idInput.getAttribute('aria-invalid')).toBeNull()
+    expect(document.body.textContent).not.toContain(
+      'ID may only contain lowercase letters, numbers, and hyphens.'
+    )
+
+    await act(async () => {
+      fireEvent.change(idInput, { target: { value: 'hello ee' } })
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
         .find((button) => button.textContent === 'Create specialist')
         ?.click()

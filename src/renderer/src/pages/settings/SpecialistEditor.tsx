@@ -786,9 +786,21 @@ const SpecialistEditor = ({
                     aria-invalid={idError ? true : undefined}
                     aria-describedby="sp-specialist-id-help"
                     onChange={(event) => {
+                      const id = event.target.value
+                      const idErrors = id.trim()
+                        ? validateCreateSpecialistInput(
+                            { id: id.trim(), name: form.name },
+                            existingNames,
+                            undefined,
+                            existingIds
+                          ).filter((error) => error.field === 'id')
+                        : []
                       setIdTouched(true)
-                      setForm((previous) => ({ ...previous, id: event.target.value }))
-                      setFieldErrors((previous) => previous.filter((error) => error.field !== 'id'))
+                      setForm((previous) => ({ ...previous, id }))
+                      setFieldErrors((previous) => [
+                        ...previous.filter((error) => error.field !== 'id'),
+                        ...idErrors
+                      ])
                     }}
                   />
                   <p
