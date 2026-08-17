@@ -19,7 +19,7 @@ const EmptyConversationBanner = (): React.JSX.Element => {
         aria-hidden="true"
         viewBox="0 0 432 432"
         fill="currentColor"
-        className="size-24 text-text-300 opacity-40 md:size-28"
+        className="size-28 text-text-300 opacity-40 md:size-32"
       >
         <path d={FLASK_LOGO_PATH} />
       </svg>
