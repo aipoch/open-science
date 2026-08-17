@@ -475,7 +475,7 @@ const ContextHistoryChart = ({
             <span className="border-t border-border" />
             <span className="border-t border-border" />
           </div>
-          <div className="absolute inset-0 flex items-end justify-around gap-1 px-2">
+          <div className="absolute inset-0 flex items-end justify-between gap-1 px-2">
             {points.map((point, index) => {
               const usage = point.sample.contextWindow
               const categories = visibleCategories(usage)

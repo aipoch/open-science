@@ -207,7 +207,7 @@ describe('ContextWindowDialog', () => {
     ).toBe(true)
     expect(dialog?.querySelector('[role="group"]')?.className.includes('min-w-full')).toBe(true)
     expect(
-      dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('justify-around')
+      dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('justify-between')
     ).toBe(true)
   })
 
