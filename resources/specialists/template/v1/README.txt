@@ -36,7 +36,7 @@ specialist.json contains these six fields; only display_name is optional:
                existing Specialist name.
   display_name Optional. Label shown in lists and pickers; defaults to name when omitted.
                When supplied, it must be non-empty and no longer than 80 characters.
-  description  Required and non-empty. Short summary, up to 200 characters.
+  description  Required and non-empty. Short summary, up to 1,000 characters.
   system_prompt Required and non-empty. Sets the agent identity, duties, and working rules.
                 Up to 32,768 characters.
   skill_ids     Required array of unique portable Skill names. A bundled name matches its
@@ -134,7 +134,7 @@ specialist.json 只允许下面六个字段；仅 display_name 可省略：
                Specialist 名称重复。
   display_name 可选。列表和选择器中显示的名称；省略时使用 name。填写时不能
                为空，最多 80 个字符。
-  description  必填且不能为空。简短说明用途，最多 200 个字符。
+  description  必填且不能为空。简短说明用途，最多 1,000 个字符。
   system_prompt 必填且不能为空。设定 agent 身份、职责与工作准则，最多 32,768 个字符。
   skill_ids     必填。无重复项的可移植 Skill 名称数组；随包 Skill 名称须与
                 skills/<名称>/ 目录一致；不可用的名称会产生 warning。

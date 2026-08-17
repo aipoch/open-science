@@ -326,12 +326,29 @@ describe('validateSpecialistPackage', () => {
     )
   })
 
+  it('rejects camelCase specialist.json fields in schema v1', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        name: 'RNA Reviewer',
+        description: 'Reviews RNA-seq experiments.',
+        systemPrompt: 'Legacy camelCase content.'
+      }),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(false)
+    expect(result.preview.diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining(['specialist.field-forbidden', 'specialist.system-prompt-invalid'])
+    )
+  })
+
   it.each([
-    ['iconKey', 'specialist.presentation-field-forbidden'],
-    ['colorKey', 'specialist.presentation-field-forbidden'],
-    ['capabilityMode', 'specialist.capability-field-forbidden'],
-    ['fullAccess', 'specialist.capability-field-forbidden'],
-    ['selectedCapabilities', 'specialist.capability-field-forbidden'],
+    ['icon_key', 'specialist.presentation-field-forbidden'],
+    ['color_key', 'specialist.presentation-field-forbidden'],
+    ['capability_mode', 'specialist.capability-field-forbidden'],
+    ['full_access', 'specialist.capability-field-forbidden'],
+    ['selected_capabilities', 'specialist.capability-field-forbidden'],
     ['enabled', 'specialist.enabled-field-forbidden']
   ])('clearly rejects application-owned specialist field %s', (field, code) => {
     const result = validateSpecialistPackage(
@@ -361,7 +378,7 @@ describe('validateSpecialistPackage', () => {
           system_prompt: { secret: 'must-not-leak' },
           skill_ids: [],
           connector_ids: [],
-          connectorConfig: { token: 'credential-value' }
+          connector_config: { token: 'credential-value' }
         }
       ),
       catalog,

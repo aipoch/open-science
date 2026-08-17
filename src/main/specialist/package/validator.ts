@@ -216,8 +216,8 @@ const parsePayload = (
     'connector_ids'
   ])
   const identityFields = ['id', 'version'].filter((key) => key in value)
-  const presentationFields = ['iconKey', 'colorKey'].filter((key) => key in value)
-  const capabilityFields = ['capabilityMode', 'fullAccess', 'selectedCapabilities'].filter(
+  const presentationFields = ['icon_key', 'color_key'].filter((key) => key in value)
+  const capabilityFields = ['capability_mode', 'full_access', 'selected_capabilities'].filter(
     (key) => key in value
   )
   if (identityFields.length) {
@@ -232,7 +232,7 @@ const parsePayload = (
     diagnostic(
       diagnostics,
       'specialist.presentation-field-forbidden',
-      'iconKey and colorKey are chosen in the Specialist configuration page and cannot be imported.',
+      'icon_key and color_key are chosen in the Specialist configuration page and cannot be imported.',
       'specialist.json'
     )
   }

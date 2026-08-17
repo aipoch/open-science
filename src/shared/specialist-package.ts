@@ -78,6 +78,7 @@ export type SpecialistPackageManifestV1 = {
   exported_with_app_version: string
 }
 
+/** In-memory payload normalized from the snake_case specialist.json boundary. */
 export type SpecialistPackagePayload = {
   name: string
   displayName?: string

@@ -30,9 +30,9 @@ describe('MarketplaceService', () => {
         JSON.stringify({
           name: 'EXAMPLE_SPECIALIST',
           description: 'Example',
-          systemPrompt: 'Use the selected Skill.',
-          skillIds: ['example-skill'],
-          connectorIds: []
+          system_prompt: 'Use the selected Skill.',
+          skill_ids: ['example-skill'],
+          connector_ids: []
         })
       ),
       'skills/example-skill/SKILL.md': strToU8(

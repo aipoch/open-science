@@ -407,7 +407,7 @@ export const filterMarketplaceSpecialistZip = (
     filtered[file.path] = file.bytes
   }
   filtered['specialist.json'] = strToU8(
-    `${JSON.stringify({ ...specialist, skillIds: skillNames, connectorIds }, null, 2)}\n`
+    `${JSON.stringify({ ...specialist, skill_ids: skillNames, connector_ids: connectorIds }, null, 2)}\n`
   )
   return buildDeterministicSpecialistZip(filtered)
 }

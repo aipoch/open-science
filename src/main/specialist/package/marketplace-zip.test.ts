@@ -27,9 +27,9 @@ describe('Marketplace Specialist ZIP filtering', () => {
         JSON.stringify({
           name: 'EXAMPLE_SPECIALIST',
           description: 'Example',
-          systemPrompt: 'Use selected Skills.',
-          skillIds: ['selected-skill', 'large-unselected-skill'],
-          connectorIds: []
+          system_prompt: 'Use selected Skills.',
+          skill_ids: ['selected-skill', 'large-unselected-skill'],
+          connector_ids: []
         })
       ),
       'skills/selected-skill/SKILL.md': strToU8(
@@ -52,7 +52,8 @@ describe('Marketplace Specialist ZIP filtering', () => {
     const specialist = JSON.parse(strFromU8(archive['specialist.json']))
 
     expect(validation.preview.installable).toBe(true)
-    expect(specialist.skillIds).toEqual(['selected-skill'])
+    expect(specialist.skill_ids).toEqual(['selected-skill'])
+    expect(specialist.connector_ids).toEqual([])
     expect(Object.keys(archive)).toContain('skills/selected-skill/SKILL.md')
     expect(Object.keys(archive).some((path) => path.includes('large-unselected-skill'))).toBe(false)
   })
