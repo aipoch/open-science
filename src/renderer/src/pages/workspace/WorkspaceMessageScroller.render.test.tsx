@@ -192,11 +192,18 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
   ...overrides
 })
 
-const renderScroller = async (session: ChatSession): Promise<string> => {
+const renderScroller = async (
+  session: ChatSession,
+  props: { isResumingSession?: boolean } = {}
+): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
   return renderToStaticMarkup(
-    <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+    <WorkspaceMessageScroller
+      activeSession={session}
+      isResumingSession={props.isResumingSession}
+      onSendEditedMessage={vi.fn()}
+    />
   )
 }
 
@@ -244,14 +251,7 @@ describe('WorkspaceMessageScroller empty conversation banner', () => {
   })
 
   it('hides the banner while a session is resuming', async () => {
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
-    const html = renderToStaticMarkup(
-      <WorkspaceMessageScroller
-        activeSession={createSession({})}
-        isResumingSession
-        onSendEditedMessage={vi.fn()}
-      />
-    )
+    const html = await renderScroller(createSession({}), { isResumingSession: true })
 
     expect(html).not.toContain('data-testid="empty-conversation-banner"')
   })
