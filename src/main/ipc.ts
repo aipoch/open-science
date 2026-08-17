@@ -856,7 +856,7 @@ const createApplicationModules = async (
       await projectDeletionCoordinator.recoverPendingDeletions()
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
-      const durableSession = created
+      let durableSession = created
         ? await (() => {
             if (!sessionEnabledComputeHostsOwnerRef.current) {
               throw new Error('Session enabled Compute Host ownership is not initialized.')
@@ -869,16 +869,16 @@ const createApplicationModules = async (
       // Flush any approved host.agents.switch binding stashed while this session was not yet durable,
       // so the approved target survives a restart before the next message (the in-memory binding
       // alone does not persist across restart).
-      if (pendingSpecialistBindings.has(durableSession.id)) {
-        const binding = pendingSpecialistBindings.take(durableSession.id)
-        if (binding) {
-          await sessionPersistenceCoordinator.saveSessionSpecialistBinding(
+      durableSession = await pendingSpecialistBindings.flush(
+        durableSession.id,
+        durableSession,
+        (binding) =>
+          sessionPersistenceCoordinator.saveSessionSpecialistBinding(
             durableSession,
             binding.specialistId,
             binding.specialistBindingPending
           )
-        }
-      }
+      )
       return { created, session: durableSession }
     },
     setDelegationPolicy: async (projectId, sessionId, policy) => {

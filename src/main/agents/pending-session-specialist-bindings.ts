@@ -44,4 +44,17 @@ export class PendingSessionSpecialistBindings {
     this.pending.delete(sessionId)
     return value
   }
+
+  async flush<Result>(
+    sessionId: string,
+    current: Result,
+    persist: (binding: PendingSessionSpecialistBinding) => Promise<Result>
+  ): Promise<Result> {
+    const binding = this.pending.get(sessionId)
+    if (!binding) return current
+
+    const durable = await persist(binding)
+    if (this.pending.get(sessionId) === binding) this.pending.delete(sessionId)
+    return durable
+  }
 }
