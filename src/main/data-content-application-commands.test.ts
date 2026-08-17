@@ -779,10 +779,9 @@ describe('Data and content application commands', () => {
       const deps = createDependencies()
       registerDataContentApplicationCommands(router.registrar, deps.dependencies)
 
-      const dispatched = router.dispatcher.invoke(
-        dataContentApplicationCommands.sessionDelete,
-        invocation([request] as const)
-      )
+      // Malformed payloads are intentionally outside the command's static arg type; dispatch
+      // through the type-widened harness so the runtime codec is what rejects them.
+      const { result: dispatched } = dispatchCommand(router, 'sessionDelete', [request])
 
       const error = await dispatched.catch((error: unknown) => error)
       expect(error).toBeInstanceOf(ApplicationCommandError)
