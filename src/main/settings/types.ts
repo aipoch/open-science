@@ -142,6 +142,8 @@ export type StoredConnectors = {
   // enabled (default-on), mirroring disabledSkillIds. This is the authoritative bundled gate.
   disabledConnectorIds?: string[]
   customMcpServers?: StoredCustomMcpServer[]
+  // Durable tombstones for Connector deletions that still need their permission grants pruned.
+  pendingCustomServerDeletionIds?: string[]
 }
 
 export type StoredCodexInfo = CodexInfo & {

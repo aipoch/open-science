@@ -15,7 +15,6 @@ import type { SettingsService } from '../service'
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
   | 'listConnectors'
-  | 'getConnectors'
   | 'setConnectorEnabled'
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
@@ -87,13 +86,11 @@ class ConnectorSettingsWorkflows {
   async removeCustomServer(
     request: RemoveCustomServerRequest
   ): WorkflowResult<'removeCustomServer'> {
-    const serverId = (await this.settings.getConnectors())?.customMcpServers?.find(
-      (server) => server.id === request.id
-    )?.id
-    if (serverId) await this.effects.pruneCustomServerPermissions(serverId)
-    const snapshot = await this.settings.removeCustomServer(request)
-    this.connectorsChanged()
-    return snapshot
+    return this.settings
+      .removeCustomServer(request, (serverId) =>
+        this.effects.pruneCustomServerPermissions(serverId)
+      )
+      .finally(() => this.connectorsChanged())
   }
 
   async updateCustomServer(

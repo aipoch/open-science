@@ -923,11 +923,12 @@ class SettingsService {
     return this.connectors.setCustomServerEnabled(request)
   }
 
-  // Removes one custom MCP server and returns the refreshed snapshot.
-  async removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot> {
-    return this.connectors.removeCustomServer(request)
+  async removeCustomServer(
+    request: RemoveCustomServerRequest,
+    afterPersistedRemoval: (serverId: string) => Promise<void>
+  ): Promise<ConnectorsSnapshot> {
+    return this.connectors.removeCustomServer(request, afterPersistedRemoval)
   }
-
   // Edits an existing custom MCP server, keeping its immutable identity (id, name, enabled, trust).
   // Omitted env/headers keep the stored secret values; providing them replaces the set. A caller can
   // invalidate remembered authority after validation but before persistence whenever the executable,

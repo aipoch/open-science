@@ -318,6 +318,12 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   if (customMcpServers.length) {
     connectors.customMcpServers = customMcpServers
   }
+  const pendingCustomServerDeletionIds = [
+    ...new Set(asStringArray(value.pendingCustomServerDeletionIds).filter(Boolean))
+  ]
+  if (pendingCustomServerDeletionIds.length) {
+    connectors.pendingCustomServerDeletionIds = pendingCustomServerDeletionIds
+  }
   return connectors
 }
 

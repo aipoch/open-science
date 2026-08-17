@@ -11,6 +11,11 @@ type PermissionGrantOwnerSnapshot = {
   computeProviderIds?: readonly string[]
 }
 
+type PendingCustomServerDeletionStore = {
+  pendingCustomServerDeletionIds: readonly string[]
+  completeCustomServerDeletion(id: string): Promise<unknown>
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const reconcilePermissionGrantOwners = async (
@@ -69,5 +74,19 @@ const reconcilePermissionGrantOwners = async (
   for (const owner of owners.values()) await registry.prune(owner)
 }
 
-export { reconcilePermissionGrantOwners }
-export type { PermissionGrantOwnerSnapshot, PermissionGrantReconciliationRegistry }
+const reconcilePendingCustomServerDeletions = async (
+  registry: Pick<PermissionGrantReconciliationRegistry, 'prune'>,
+  store: PendingCustomServerDeletionStore
+): Promise<void> => {
+  for (const serverId of store.pendingCustomServerDeletionIds) {
+    await registry.prune({ kind: 'mcp_server', serverId })
+    await store.completeCustomServerDeletion(serverId)
+  }
+}
+
+export { reconcilePendingCustomServerDeletions, reconcilePermissionGrantOwners }
+export type {
+  PendingCustomServerDeletionStore,
+  PermissionGrantOwnerSnapshot,
+  PermissionGrantReconciliationRegistry
+}

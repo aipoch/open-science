@@ -36,7 +36,11 @@ import {
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
-import { appendCustomServer } from './custom-server-identity'
+import {
+  appendCustomServer,
+  beginCustomServerDeletion,
+  completeCustomServerDeletion
+} from './custom-server-identity'
 import {
   buildReviewerModelMutation,
   buildSubagentModelMutation,
@@ -583,28 +587,21 @@ class SettingsRepository {
   // Appends a fully-formed custom MCP server record.
   async addCustomServer(server: StoredCustomMcpServer): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
-      connectors.customMcpServers = appendCustomServer(connectors.customMcpServers, server)
+      connectors.customMcpServers = appendCustomServer(
+        connectors.customMcpServers,
+        server,
+        connectors.pendingCustomServerDeletionIds
+      )
     })
   }
 
-  // Removes a custom MCP server by id and policy entries owned by its public name.
+  // Removes a custom MCP server and journals its id until permission cleanup is durable.
   async removeCustomServer(id: string): Promise<StoredSettings> {
-    return this.mutateConnectors((connectors) => {
-      const removed = (connectors.customMcpServers ?? []).find((s) => s.id === id)
-      connectors.customMcpServers = (connectors.customMcpServers ?? []).filter((s) => s.id !== id)
-      if (!removed) return
+    return this.mutateConnectors((connectors) => beginCustomServerDeletion(connectors, id))
+  }
 
-      const aliases = new Set([removed.name])
-      connectors.autoAllowIds = connectors.autoAllowIds.filter((entry) => !aliases.has(entry))
-      const withoutToolAliases = (entries: string[] | undefined): string[] | undefined => {
-        const kept = (entries ?? []).filter(
-          (entry) => !Array.from(aliases).some((alias) => entry.startsWith(`${alias}/`))
-        )
-        return kept.length > 0 ? kept : undefined
-      }
-      connectors.blockedToolIds = withoutToolAliases(connectors.blockedToolIds)
-      connectors.askToolIds = withoutToolAliases(connectors.askToolIds)
-    })
+  async completeCustomServerDeletion(id: string): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => completeCustomServerDeletion(connectors, id))
   }
 
   // Enables or disables one custom MCP server by id.

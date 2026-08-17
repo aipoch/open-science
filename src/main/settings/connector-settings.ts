@@ -277,7 +277,8 @@ class ConnectorSettingsModule {
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
     const name = request.name.trim()
     const displayName = request.displayName.trim()
-    const existingServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
+    const connectors = (await this.repository.getSettings()).connectors
+    const existingServers = connectors?.customMcpServers ?? []
     if (!displayName) throw new Error('Display name is required')
     if (!isCustomConnectorName(name)) {
       throw new Error('Connector name must use only lowercase letters, numbers, and hyphens')
@@ -297,7 +298,8 @@ class ConnectorSettingsModule {
     const inferredId = inferResourceId(name)
     const usedIds = new Set([
       ...CONNECTOR_CATALOG.map((connector) => connector.id),
-      ...existingServers.flatMap((server) => [server.id, server.name])
+      ...existingServers.flatMap((server) => [server.id, server.name]),
+      ...(connectors?.pendingCustomServerDeletionIds ?? [])
     ])
     const requestedId = request.id?.trim() || undefined
     const idError = requestedId ? validateResourceId(requestedId) : undefined
@@ -358,8 +360,18 @@ class ConnectorSettingsModule {
     return this.connectorsSnapshot()
   }
 
-  async removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot> {
+  async removeCustomServer(
+    request: RemoveCustomServerRequest,
+    afterPersistedRemoval: (serverId: string) => Promise<void>
+  ): Promise<ConnectorsSnapshot> {
+    const existing = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
+      (server) => server.id === request.id
+    )
     await this.repository.removeCustomServer(request.id)
+    if (existing) {
+      await afterPersistedRemoval(existing.id)
+      await this.repository.completeCustomServerDeletion(existing.id)
+    }
 
     return this.connectorsSnapshot()
   }

@@ -187,7 +187,10 @@ import { createPermissionGrantRegistry } from './permission-grants/registry'
 import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
 import { registerPermissionGrantIpcAdapter } from './permission-grants/ipc'
 import { createPermissionGrantProjectionController } from './permission-grants/projection-controller'
-import { reconcilePermissionGrantOwners } from './permission-grants/reconciliation'
+import {
+  reconcilePendingCustomServerDeletions,
+  reconcilePermissionGrantOwners
+} from './permission-grants/reconciliation'
 import {
   SessionPersistenceCoordinator,
   type ComputeJobDeletionParticipant
@@ -1819,8 +1822,24 @@ const createApplicationModules = async (
     })
   })
 
+  const recoverPendingCustomServerDeletions = async (): Promise<void> => {
+    const pendingCustomServerDeletionIds =
+      (await settingsRepository.getSettings()).connectors?.pendingCustomServerDeletionIds ?? []
+    await reconcilePendingCustomServerDeletions(permissionGrantRegistry, {
+      pendingCustomServerDeletionIds,
+      completeCustomServerDeletion: (serverId) =>
+        settingsRepository.completeCustomServerDeletion(serverId)
+    })
+  }
   const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
-    connectorRuntimeSettings.refresh(),
+    recoverPendingCustomServerDeletions()
+      .catch((error) =>
+        permissionGrantsLog.error(
+          'pending Connector permission cleanup failed',
+          errorLogFields(error)
+        )
+      )
+      .then(() => connectorRuntimeSettings.refresh()),
     {
       // If custom MCP discovery outlives the startup barrier, the first agent may already have
       // materialized the old connector docs. Rotate it once the late refresh settles so the next
@@ -1829,9 +1848,9 @@ const createApplicationModules = async (
     }
   )
 
-  // Repair soft-owner grants left behind if the app stopped between deleting a Connector/ComputeHost
-  // and pruning its authority. A failed/timeout Connector refresh leaves that owner class untouched;
-  // app-owned MCP catalog ids are non-UUID and are never guessed to be stale.
+  // Repair legacy UUID Connector grants and ComputeHost grants left behind without a deletion
+  // journal. A failed/timeout Connector refresh leaves that owner class untouched; app-owned MCP
+  // catalog ids are non-UUID and are never guessed to be stale.
   void initialConnectorSkillsReady
     .then(async () => {
       const hosts = await hostRepository.list()

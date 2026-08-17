@@ -394,6 +394,7 @@ describe('Settings backend ownership architecture', () => {
       'clearComputeGrants',
       'clearGrantedLocalRoots',
       'clearOpencodeInfo',
+      'completeCustomServerDeletion',
       'deleteProvider',
       'getSettings',
       'hasComputeGrant',

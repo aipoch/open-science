@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { PermissionGrantRecord } from '../../shared/permission-grants'
-import { reconcilePermissionGrantOwners } from './reconciliation'
+import type { PermissionGrantOwner, PermissionGrantRecord } from '../../shared/permission-grants'
+import {
+  reconcilePendingCustomServerDeletions,
+  reconcilePermissionGrantOwners
+} from './reconciliation'
 
 const record = (
   id: string,
@@ -50,5 +53,41 @@ describe('reconcilePermissionGrantOwners', () => {
       { kind: 'mcp_server', serverId: staleServerId },
       { kind: 'compute_provider', providerId: 'ssh:stale' }
     ])
+  })
+
+  it('prunes journaled name-derived Connector IDs before completing their deletion', async () => {
+    const calls: string[] = []
+    const prune = vi.fn(async (owner: PermissionGrantOwner) => {
+      if (owner.kind === 'mcp_server') calls.push(`prune:${owner.serverId}`)
+    })
+    const completeCustomServerDeletion = vi.fn(async (serverId: string) => {
+      calls.push(`complete:${serverId}`)
+    })
+
+    await reconcilePendingCustomServerDeletions(
+      { prune },
+      {
+        pendingCustomServerDeletionIds: ['rna-reviewer'],
+        completeCustomServerDeletion
+      }
+    )
+
+    expect(calls).toEqual(['prune:rna-reviewer', 'complete:rna-reviewer'])
+  })
+
+  it('leaves a journaled Connector deletion pending when grant pruning fails', async () => {
+    const completeCustomServerDeletion = vi.fn()
+
+    await expect(
+      reconcilePendingCustomServerDeletions(
+        { prune: vi.fn().mockRejectedValue(new Error('grant cleanup failed')) },
+        {
+          pendingCustomServerDeletionIds: ['rna-reviewer'],
+          completeCustomServerDeletion
+        }
+      )
+    ).rejects.toThrow('grant cleanup failed')
+
+    expect(completeCustomServerDeletion).not.toHaveBeenCalled()
   })
 })

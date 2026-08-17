@@ -24,6 +24,7 @@ vi.mock('electron', () => ({
 }))
 
 const { ConnectorSettingsModule } = await import('./connector-settings')
+const { CustomServerIdConflictError } = await import('./custom-server-identity')
 const { SettingsRepository } = await import('./repository')
 const { ALL_CONNECTOR_IDS } = await import('../connectors/registry')
 
@@ -168,11 +169,58 @@ describe('ConnectorSettingsModule', () => {
 
     await repository.setConnectorAutoAllow(added.name, true)
     await repository.setToolPolicy(`${added.name}/lookup`, true, false)
-    snapshot = await service.removeCustomServer({ id: added.id })
+    const prunePermissions = vi.fn(async (serverId: string) => {
+      expect(serverId).toBe(added.id)
+      const persisted = (await repository.getSettings()).connectors
+      expect(persisted?.customMcpServers ?? []).toEqual([])
+      expect(persisted?.pendingCustomServerDeletionIds).toEqual([added.id])
+    })
+    snapshot = await service.removeCustomServer({ id: added.id }, prunePermissions)
     expect(snapshot.customServers).toEqual([])
+    expect(prunePermissions).toHaveBeenCalledOnce()
     const afterRemoval = (await repository.getSettings()).connectors
     expect(afterRemoval?.autoAllowIds).not.toContain(added.name)
     expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.name}/lookup`)
+    expect(afterRemoval?.pendingCustomServerDeletionIds).toBeUndefined()
+  })
+
+  it('retains a deletion journal and reserves its ID when permission pruning fails', async () => {
+    const added = await addCustomServer({
+      name: 'recoverable-delete',
+      transport: 'stdio',
+      command: 'npx'
+    })
+    const id = added.customServers[0].id
+
+    await expect(
+      service.removeCustomServer({ id }, async () => {
+        throw new Error('grant cleanup failed')
+      })
+    ).rejects.toThrow('grant cleanup failed')
+
+    const persisted = (await repository.getSettings()).connectors
+    expect(persisted?.customMcpServers ?? []).toEqual([])
+    expect(persisted?.pendingCustomServerDeletionIds).toEqual([id])
+    await expect(
+      service.addCustomServer({
+        id,
+        name: 'replacement',
+        displayName: 'Replacement',
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).rejects.toThrow('ID is already in use')
+
+    const replacement = await service.addCustomServer({
+      name: id,
+      displayName: 'Replacement',
+      transport: 'stdio',
+      command: 'npx'
+    })
+    expect(replacement.customServers[0].id).not.toBe(id)
+    expect(replacement.customServers[0].id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
   })
 
   it('uses a valid user-provided custom server ID', async () => {
@@ -200,26 +248,21 @@ describe('ConnectorSettingsModule', () => {
     )
   })
 
-  it('falls back to a UUID when concurrent names infer the same ID', async () => {
-    await Promise.all([
-      service.addCustomServer({
-        name: 'rna-reviewer',
-        displayName: 'RNA reviewer',
-        transport: 'stdio',
-        command: 'npx'
-      }),
-      service.addCustomServer({
-        name: 'rna--reviewer',
-        displayName: 'RNA double-hyphen reviewer',
-        transport: 'stdio',
-        command: 'npx'
-      })
-    ])
+  it('falls back to a UUID when an inferred ID loses a repository race', async () => {
+    const persist = vi.spyOn(repository, 'addCustomServer')
+    persist.mockRejectedValueOnce(new CustomServerIdConflictError())
 
-    const ids = (await service.listConnectors()).customServers.map((server) => server.id)
-    expect(ids).toContain('rna-reviewer')
-    expect(new Set(ids)).toHaveLength(2)
-    expect(ids.some((id) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(id))).toBe(true)
+    const snapshot = await service.addCustomServer({
+      name: 'rna-reviewer',
+      displayName: 'RNA reviewer',
+      transport: 'stdio',
+      command: 'npx'
+    })
+
+    expect(persist).toHaveBeenCalledTimes(2)
+    expect(snapshot.customServers[0].id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
   })
 
   it('rejects invalid or already-used custom server IDs', async () => {
