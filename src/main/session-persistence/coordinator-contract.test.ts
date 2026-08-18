@@ -114,7 +114,7 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {
-  it('serializes every mutation and snapshot through one failure-tolerant queue', async () => {
+  it('keeps scoped lanes failure-tolerant and snapshots behind a global barrier', async () => {
     const gate = createDeferred()
     const order: string[] = []
     const { repository } = createRepository()
@@ -134,20 +134,75 @@ describe('SessionPersistenceCoordinator contracts', () => {
       return value
     })
 
-    await vi.waitFor(() => expect(order).toEqual(['mutation:start']))
+    await vi.waitFor(() => expect(order).toEqual(['mutation:start', 'manifest']))
     gate.resolve()
     await expect(mutation).resolves.toBeUndefined()
     await expect(manifest).resolves.toBeUndefined()
     await expect(snapshot).resolves.toEqual({ sessions: [], isComplete: false })
-    expect(order).toEqual(['mutation:start', 'mutation:end', 'manifest', 'snapshot'])
+    expect(order).toEqual(['mutation:start', 'manifest', 'mutation:end', 'snapshot'])
 
     await expect(
       coordinator.runSessionMutation('project-1', 'session-1', async () => {
         throw new Error('isolated failure')
       })
     ).rejects.toThrow('isolated failure')
+    await expect(
+      coordinator.runSessionMutation('project-1', 'session-1', async () => {
+        order.push('mutation:recovered')
+      })
+    ).resolves.toBeUndefined()
     await expect(coordinator.saveManifest({ lastProjectId: 'project-1' })).resolves.toBeUndefined()
+    expect(order.slice(-2)).toEqual(['mutation:recovered', 'manifest'])
     expect(repository.saveManifest).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let a blocked Project mutation stall an independent Project', async () => {
+    const projectOneGate = createDeferred()
+    const projectTwoStarted = createDeferred()
+    const { repository } = createRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const projectOne = coordinator.runSessionMutation('project-1', 'session-1', async () => {
+      await projectOneGate.promise
+    })
+    const projectTwo = coordinator.runSessionMutation('project-2', 'session-2', async () => {
+      projectTwoStarted.resolve()
+    })
+
+    const outcome = await Promise.race([
+      projectTwoStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+    projectOneGate.resolve()
+    await Promise.all([projectOne, projectTwo])
+
+    expect(outcome).toBe('started')
+  })
+
+  it('keeps one Session identity owner while different Projects save concurrently', async () => {
+    const firstWriteGate = createDeferred()
+    const firstWriteStarted = createDeferred()
+    const { repository, sessions } = createRepository([])
+    repository.saveSession = vi.fn(async (session) => {
+      if (session.projectId === 'project-1') {
+        firstWriteStarted.resolve()
+        await firstWriteGate.promise
+      }
+      sessions.set(session.id, structuredClone(session))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const first = coordinator.saveSession(
+      createSession({ id: 'shared-session', projectId: 'project-1' })
+    )
+    await firstWriteStarted.promise
+
+    const conflicting = coordinator.saveSession(
+      createSession({ id: 'shared-session', projectId: 'project-2' })
+    )
+    firstWriteGate.resolve()
+    await expect(first).resolves.toMatchObject({ projectId: 'project-1' })
+    await expect(conflicting).rejects.toThrow(/already owned by another Project/)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
   })
 
   it('publishes metadata only from queued durable state and marks degraded projections incomplete', async () => {

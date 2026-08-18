@@ -255,8 +255,8 @@ const validateFinalizedArtifactBindings = async (
   }
 }
 
-// Owns queued Session reads/writes and their in-memory projections. The coordinator remains the sole
-// queue owner and calls this module only from inside that serialization boundary.
+// Owns scheduled Session reads/writes and their in-memory projections. The coordinator calls this
+// module only from inside the operation scheduler's matching Project/Session lane.
 class SessionPersistenceStateOwner {
   private readonly validatedBindingTopologies = new Map<string, string>()
   private sessionMetadata = new Map<string, SessionMetadata>()
