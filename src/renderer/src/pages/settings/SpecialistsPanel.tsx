@@ -46,6 +46,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { useTagStore } from '@/stores/tag-store'
 import type { CreateSpecialistInput } from '../../../../shared/specialist'
 import type { SkillSource } from '../../../../shared/settings'
 import { specialistPackageReportFromPreview } from '../../../../shared/specialist-package'
@@ -68,6 +69,12 @@ import {
   specialistSkillConflicts,
   type SkillConflictResolutionMap
 } from './specialist-skill-conflicts'
+import {
+  ResourceTagBadges,
+  ResourceTagMenu,
+  ResourceTagSummary,
+  TagFilter
+} from './ResourceTagControls'
 
 // Sub-view for the Specialists panel (parallels SkillsView).
 export type SpecialistsView =
@@ -177,6 +184,8 @@ const InstalledSpecialistsPanel = ({
   const projects = useProjectStore((s) => s.projects)
   const [filter, setFilter] = useState<CategoryFilter>('all')
   const [query, setQuery] = useState('')
+  const [tagFilter, setTagFilter] = useState('all')
+  const tagAssignments = useTagStore((state) => state.assignments)
   const [deletingItem, setDeletingItem] = useState<{
     id: string
     revision: number
@@ -283,31 +292,53 @@ const InstalledSpecialistsPanel = ({
   const visibleBuiltinItems = useMemo(() => {
     if (filter === 'custom') return []
     const term = query.trim().toLowerCase()
-    if (!term) return builtinItems
-    return builtinItems.filter(
+    const filtered =
+      tagFilter === 'all'
+        ? builtinItems
+        : builtinItems.filter((item) =>
+            tagAssignments.some(
+              (assignment) =>
+                assignment.tagId === tagFilter &&
+                assignment.resourceType === 'catalog.specialist' &&
+                assignment.resourceId === item.id
+            )
+          )
+    if (!term) return filtered
+    return filtered.filter(
       (item) =>
         (item.displayName ?? item.name).toLowerCase().includes(term) ||
         item.name.toLowerCase().includes(term) ||
         item.description.toLowerCase().includes(term)
     )
-  }, [builtinItems, filter, query])
+  }, [builtinItems, filter, query, tagAssignments, tagFilter])
   const visibleCustomItems = useMemo(() => {
     const term = query.trim().toLowerCase()
     if (filter === 'builtin') return []
-    if (!term) return customItems
-    return customItems.filter(
+    const filtered =
+      tagFilter === 'all'
+        ? customItems
+        : customItems.filter((item) =>
+            tagAssignments.some(
+              (assignment) =>
+                assignment.tagId === tagFilter &&
+                assignment.resourceType === 'catalog.specialist' &&
+                assignment.resourceId === item.id
+            )
+          )
+    if (!term) return filtered
+    return filtered.filter(
       (item) =>
         (item.displayName ?? item.name).toLowerCase().includes(term) ||
         item.name.toLowerCase().includes(term) ||
         item.description.toLowerCase().includes(term)
     )
-  }, [customItems, filter, query])
+  }, [customItems, filter, query, tagAssignments, tagFilter])
   const visibleReviewerItems = useMemo(() => {
-    if (filter === 'custom') return []
+    if (filter === 'custom' || tagFilter !== 'all') return []
     const term = query.trim().toLowerCase()
     if (!term || 'reviewer used by auto-review'.includes(term)) return reviewerItems
     return []
-  }, [filter, query, reviewerItems])
+  }, [filter, query, reviewerItems, tagFilter])
 
   // Built-in Skills are app-managed and never participate in Specialist deletion. Keep this
   // renderer-side filter as a defensive boundary even though the main-side preview omits them.
@@ -587,27 +618,35 @@ const InstalledSpecialistsPanel = ({
     const specialist = customItems.find((item) => item.kind === 'custom' && item.id === view.id)
     if (specialist && specialist.kind === 'custom') {
       return (
-        <SpecialistEditor
-          key={specialist.id}
-          editSpecialist={specialist}
-          existingNames={customItems.filter((item) => item.id !== view.id).map((item) => item.name)}
-          onCancel={() => onNavigate({ kind: 'list' })}
-          onSave={async () => onNavigate({ kind: 'list' })}
-          onSaveEdit={async (input) => {
-            await updateSpecialist(input)
-            onNavigate({ kind: 'list' })
-          }}
-          onReload={async () => {
-            // Load the fresh list and read the result from the store directly —
-            // not from the render closure, which captured the pre-load items.
-            await load()
-            const refreshed = useSpecialistStore
-              .getState()
-              .items.find((item) => item.kind === 'custom' && item.id === view.id)
-            if (refreshed && refreshed.kind === 'custom') return refreshed
-            return undefined
-          }}
-        />
+        <div>
+          <ResourceTagSummary
+            reference={{ resourceType: 'catalog.specialist', resourceId: specialist.id }}
+            className="px-5 pt-5"
+          />
+          <SpecialistEditor
+            key={specialist.id}
+            editSpecialist={specialist}
+            existingNames={customItems
+              .filter((item) => item.id !== view.id)
+              .map((item) => item.name)}
+            onCancel={() => onNavigate({ kind: 'list' })}
+            onSave={async () => onNavigate({ kind: 'list' })}
+            onSaveEdit={async (input) => {
+              await updateSpecialist(input)
+              onNavigate({ kind: 'list' })
+            }}
+            onReload={async () => {
+              // Load the fresh list and read the result from the store directly —
+              // not from the render closure, which captured the pre-load items.
+              await load()
+              const refreshed = useSpecialistStore
+                .getState()
+                .items.find((item) => item.kind === 'custom' && item.id === view.id)
+              if (refreshed && refreshed.kind === 'custom') return refreshed
+              return undefined
+            }}
+          />
+        </div>
       )
     }
     // Profile no longer exists (deleted/stale) — fall through to the list.
@@ -1138,6 +1177,10 @@ const InstalledSpecialistsPanel = ({
               </p>
             </div>
           </div>
+          <ResourceTagSummary
+            reference={{ resourceType: 'catalog.specialist', resourceId: specialist.id }}
+            className="mt-4"
+          />
           <p className="mt-4 text-sm text-foreground">{specialist.description}</p>
           <div className="mt-5 rounded-lg border border-border bg-muted/30 p-3">
             <p className="text-sm font-medium text-foreground">{t('Read-only')}</p>
@@ -1199,6 +1242,7 @@ const InstalledSpecialistsPanel = ({
           semantics="tab"
           columnWidth="6.5rem"
         />
+        <TagFilter resourceType="catalog.specialist" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search specialists')}
           placeholder={t('Search specialists…')}
@@ -1469,6 +1513,12 @@ const InstalledSpecialistsPanel = ({
                             onToggle={() => void setEnabled(item.id, !item.enabled)}
                           />
                         )}
+                        <ResourceTagBadges
+                          reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
+                        />
+                        <ResourceTagMenu
+                          reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
+                        />
                         <DropdownMenu>
                           <TooltipProvider delayDuration={200}>
                             <Tooltip>
@@ -1591,6 +1641,12 @@ const InstalledSpecialistsPanel = ({
                         </span>
                       </div>
                     </button>
+                    <ResourceTagBadges
+                      reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
+                    />
+                    <ResourceTagMenu
+                      reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
+                    />
                   </li>
                 ))}
                 {visibleReviewerItems.map(() => (

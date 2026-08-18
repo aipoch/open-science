@@ -67,6 +67,11 @@ import {
   settingsRuntimeApplicationCommandGroup,
   type RuntimeSettingsApplicationCommandDependencies
 } from './settings/runtime-application-commands'
+import {
+  registerTagApplicationCommands,
+  tagApplicationCommandGroup,
+  type TagCommandOwner
+} from './tags/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -102,6 +107,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   settingsRuntime: RuntimeSettingsApplicationCommandDependencies
   compute: ComputeApplicationCommandDependencies
   permissionGrants: PermissionGrantDependencies
+  tags: TagCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -199,6 +205,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([permissionGrantApplicationCommandGroup], (registrar) =>
       registerPermissionGrantApplicationCommands(registrar, dependencies.permissionGrants)
+    ),
+    defineApplicationCommandModule([tagApplicationCommandGroup], (registrar) =>
+      registerTagApplicationCommands(registrar, dependencies.tags)
     ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)

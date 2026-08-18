@@ -205,7 +205,12 @@ describe('renderer contract catalog', () => {
       'projects.list',
       'projects.update',
       'projects.updateArchive',
-      'sessions.deleteSession'
+      'sessions.deleteSession',
+      'tags.create',
+      'tags.delete',
+      'tags.setAssignment',
+      'tags.snapshot',
+      'tags.update'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
       'projects:create',
@@ -214,7 +219,12 @@ describe('renderer contract catalog', () => {
       'projects:list',
       'projects:update',
       'projects:update-archive',
-      'sessions:delete-session'
+      'sessions:delete-session',
+      'tags:create',
+      'tags:delete',
+      'tags:set-assignment',
+      'tags:snapshot',
+      'tags:update'
     ])
   })
 })

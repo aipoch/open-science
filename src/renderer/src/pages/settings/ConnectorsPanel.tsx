@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { useTagStore } from '@/stores/tag-store'
 import { ConnectorGlyph } from './connector-icons'
 import {
   SettingsIconAction,
@@ -55,6 +56,7 @@ import {
   type ResourceScope,
   type SpecialistUsage
 } from './specialist-resource-scope'
+import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -147,6 +149,8 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [filter, setFilter] = useState<GroupFilter>('all')
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
   const [specialistFilter, setSpecialistFilter] = useState('all')
+  const [tagFilter, setTagFilter] = useState('all')
+  const tagAssignments = useTagStore((state) => state.assignments)
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<
     Partial<Record<'featured' | 'directory' | 'custom', boolean>>
@@ -223,6 +227,16 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       const scope = resourceScope(connector.enabled, usages)
       if (!includesScope(scopeFilter, specialistFilter, connector.enabled, usages, scope)) return []
       if (
+        tagFilter !== 'all' &&
+        !tagAssignments.some(
+          (assignment) =>
+            assignment.tagId === tagFilter &&
+            assignment.resourceType === 'catalog.connector' &&
+            assignment.resourceId === connector.id
+        )
+      )
+        return []
+      if (
         term &&
         !connector.displayName.toLowerCase().includes(term) &&
         !connector.description.toLowerCase().includes(term)
@@ -231,7 +245,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       }
       return [{ resource: connector, usages, scope }]
     })
-  }, [connectors, query, scopeFilter, specialistFilter, specialistItems])
+  }, [connectors, query, scopeFilter, specialistFilter, specialistItems, tagAssignments, tagFilter])
 
   const visibleCustomServers = useMemo<ConnectorResourceRow<CustomServerView>[]>(() => {
     const term = query.trim().toLowerCase()
@@ -239,6 +253,16 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       const usages = specialistsUsingConnector(specialistItems, server)
       const scope = resourceScope(server.enabled, usages)
       if (!includesScope(scopeFilter, specialistFilter, server.enabled, usages, scope)) return []
+      if (
+        tagFilter !== 'all' &&
+        !tagAssignments.some(
+          (assignment) =>
+            assignment.tagId === tagFilter &&
+            assignment.resourceType === 'catalog.connector' &&
+            assignment.resourceId === server.id
+        )
+      )
+        return []
       if (
         term &&
         !server.displayName.toLowerCase().includes(term) &&
@@ -249,7 +273,15 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       }
       return [{ resource: server, usages, scope }]
     })
-  }, [customServers, query, scopeFilter, specialistFilter, specialistItems])
+  }, [
+    customServers,
+    query,
+    scopeFilter,
+    specialistFilter,
+    specialistItems,
+    tagAssignments,
+    tagFilter
+  ])
 
   const startEditing = (): void => {
     setEmailField(ncbi.contactEmail ?? '')
@@ -437,6 +469,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       </span>
                     </button>
                     <div className="flex shrink-0 items-center gap-2">
+                      <ResourceTagBadges
+                        reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
+                      />
+                      <ResourceTagMenu
+                        reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
+                      />
                       <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
                       <SettingsToggle
                         enabled={connector.enabled}
@@ -592,6 +630,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             </SelectContent>
           </Select>
         ) : null}
+        <TagFilter resourceType="catalog.connector" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search connectors')}
           containerClassName="min-w-48 flex-1"
@@ -748,6 +787,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           label={t('Export {{name}}', { name: server.displayName })}
                           icon={Download}
                           onClick={() => onNavigate({ kind: 'export', id: server.id })}
+                        />
+                        <ResourceTagMenu
+                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
+                        />
+                        <ResourceTagBadges
+                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
                         />
                         <SettingsIconAction
                           label={t('Edit {{name}}', { name: server.displayName })}

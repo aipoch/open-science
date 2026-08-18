@@ -523,6 +523,14 @@ const api: OpenScienceAPI = {
     onUpdated: (listener) => electronRendererContracts.subscribe('projects.onUpdated', listener),
     onDeleted: (listener) => electronRendererContracts.subscribe('projects.onDeleted', listener)
   },
+  tags: {
+    snapshot: () => electronRendererContracts.invoke('tags.snapshot'),
+    create: (request) => electronRendererContracts.invoke('tags.create', request),
+    update: (request) => electronRendererContracts.invoke('tags.update', request),
+    delete: (request) => electronRendererContracts.invoke('tags.delete', request),
+    setAssignment: (request) => electronRendererContracts.invoke('tags.setAssignment', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('tags.onChanged', listener)
+  },
   // Files exposes metadata pages only. Thumbnail/full-preview bytes continue through the existing
   // artifact/upload APIs after a visible item has been selected or rendered.
   projectFiles: {

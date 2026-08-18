@@ -2067,11 +2067,13 @@ describe('SpecialistPackageService', () => {
       rollback: async () => undefined,
       recover: async () => undefined
     }
+    const onResourcesDeleted = vi.fn().mockResolvedValue(undefined)
     const service = new SpecialistPackageService({
       storageDir,
       repository,
       skillPort,
-      catalog: async () => catalog
+      catalog: async () => catalog,
+      onResourcesDeleted
     })
     const preview = await service.previewSpecialistDelete({ id: 'safe-owner' })
     await service.deleteSpecialist({
@@ -2083,6 +2085,7 @@ describe('SpecialistPackageService', () => {
     expect(journal).not.toContain('DO-NOT-LOG-THIS-PROMPT')
     expect(journal).not.toContain(storageDir)
     expect(journal).not.toContain('systemPrompt')
+    expect(onResourcesDeleted).toHaveBeenCalledWith('safe-owner', [])
   })
 
   it('rolls back prepared Skill deletion when the Specialist document swap fails', async () => {

@@ -271,7 +271,8 @@ const registerTestSettingsIpcHandlers = ({
       },
       skills: {
         requestSkillsReload: onSkillsChanged ?? (() => undefined),
-        notifySkillCatalogChanged: onSkillsChanged ?? (() => undefined)
+        notifySkillCatalogChanged: onSkillsChanged ?? (() => undefined),
+        removeTagsForSkill: async () => undefined
       },
       connectors: {
         invalidatePermissionProjection: onConnectorsChanged ?? (() => undefined),
@@ -284,6 +285,7 @@ const registerTestSettingsIpcHandlers = ({
                 await onCustomServerSecurityChanged(serverId)
               }
             : async () => undefined),
+        removeTagsForConnector: async () => undefined,
         beginCustomServerSecurityChange: () => undefined,
         clearCustomServerFailure: () => undefined,
         resetCustomServerClient: async () => undefined

@@ -65,6 +65,7 @@ type SpecialistPackageServiceOptions = {
   token?: () => string
   now?: () => Date
   onCommitted?: () => void
+  onResourcesDeleted?: (specialistId: string, skillIds: readonly string[]) => Promise<void>
   skillPort?: SpecialistPackageSkillPort
 }
 
@@ -367,6 +368,15 @@ export class SpecialistPackageService {
                 ? 'rollback-failed'
                 : 'commit-failed'
       }
+    }
+    try {
+      await this.options.onResourcesDeleted?.(request.id, selected)
+    } catch (error) {
+      log.warn('post-delete Tag cleanup failed', {
+        code: 'package-delete-tag-cleanup-failed',
+        specialistId: request.id,
+        error
+      })
     }
     try {
       this.options.onCommitted?.()

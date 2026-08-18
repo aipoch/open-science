@@ -61,6 +61,7 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     settingsRuntime: EMPTY_OWNER,
     compute: EMPTY_OWNER,
     permissionGrants: EMPTY_OWNER,
+    tags: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
   }) as ApplicationCommandCompositionDependencies
@@ -196,7 +197,12 @@ describe('application command composition', () => {
       'projects:list',
       'projects:update',
       'projects:update-archive',
-      'sessions:delete-session'
+      'sessions:delete-session',
+      'tags:create',
+      'tags:delete',
+      'tags:set-assignment',
+      'tags:snapshot',
+      'tags:update'
     ])
   })
 

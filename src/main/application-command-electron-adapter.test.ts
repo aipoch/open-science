@@ -25,7 +25,12 @@ const validatedChannels = [
   'projects:list',
   'projects:update',
   'projects:update-archive',
-  'sessions:delete-session'
+  'sessions:delete-session',
+  'tags:create',
+  'tags:delete',
+  'tags:set-assignment',
+  'tags:snapshot',
+  'tags:update'
 ] as const
 
 const eventWithLease = (): IpcMainInvokeEvent => {

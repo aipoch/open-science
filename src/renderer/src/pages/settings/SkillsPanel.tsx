@@ -25,6 +25,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useTagStore } from '@/stores/tag-store'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { SkillDetailView } from './SkillDetailView'
 import { SkillEditor, SkillEditLoader } from './SkillEditor'
@@ -46,6 +47,12 @@ import {
   specialistsUsingSkill,
   type ResourceScope
 } from './specialist-resource-scope'
+import {
+  ResourceTagBadges,
+  ResourceTagMenu,
+  ResourceTagSummary,
+  TagFilter
+} from './ResourceTagControls'
 
 // The skills panel sub-view, driven by the settings navigation history so each is a breadcrumb page.
 export type SkillsView =
@@ -138,6 +145,8 @@ const SkillsPanel = ({
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
   const [specialistFilter, setSpecialistFilter] = useState('all')
+  const [tagFilter, setTagFilter] = useState('all')
+  const tagAssignments = useTagStore((state) => state.assignments)
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
   const [deleteError, setDeleteError] = useState<{ id: string; message: string } | undefined>()
@@ -235,6 +244,17 @@ const SkillsPanel = ({
         return []
       }
       if (
+        tagFilter !== 'all' &&
+        !tagAssignments.some(
+          (assignment) =>
+            assignment.tagId === tagFilter &&
+            assignment.resourceType === 'catalog.skill' &&
+            assignment.resourceId === skill.id
+        )
+      ) {
+        return []
+      }
+      if (
         term &&
         !(
           skill.displayName.toLowerCase().includes(term) ||
@@ -245,9 +265,26 @@ const SkillsPanel = ({
         return []
       return [{ skill, usages, owners, scope }]
     })
-  }, [filter, query, scopeFilter, skills, specialistFilter, specialistItems])
+  }, [
+    filter,
+    query,
+    scopeFilter,
+    skills,
+    specialistFilter,
+    specialistItems,
+    tagAssignments,
+    tagFilter
+  ])
   if (view.kind === 'detail') {
-    return <SkillDetailView key={view.id} skillId={view.id} />
+    return (
+      <div>
+        <ResourceTagSummary
+          reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
+          className="px-5 pt-5"
+        />
+        <SkillDetailView key={view.id} skillId={view.id} />
+      </div>
+    )
   }
   if (view.kind === 'create') {
     return (
@@ -268,7 +305,15 @@ const SkillsPanel = ({
     )
   }
   if (view.kind === 'edit') {
-    return <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
+    return (
+      <div>
+        <ResourceTagSummary
+          reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
+          className="px-5 pt-5"
+        />
+        <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
+      </div>
+    )
   }
   if (view.kind === 'import') {
     return <SkillImportView onImported={() => undefined} />
@@ -393,6 +438,7 @@ const SkillsPanel = ({
             </SelectContent>
           </Select>
         ) : null}
+        <TagFilter resourceType="catalog.skill" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search skills')}
           placeholder={t('Search skills…')}
@@ -582,6 +628,12 @@ const SkillsPanel = ({
                               {exportStatus.message}
                             </span>
                           ) : null}
+                          <ResourceTagBadges
+                            reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
+                          />
+                          <ResourceTagMenu
+                            reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
+                          />
                           {skill.source !== 'featured' && canExportSkills ? (
                             <SettingsIconAction
                               label={t('Export {{name}}', { name: skill.displayName })}

@@ -32,6 +32,7 @@ type ConnectorSettingsWorkflowEffects = {
   refreshConnectorSkillDocs: (customServerId?: string) => Promise<unknown>
   requestSkillsReload: () => void
   pruneCustomServerPermissions: (serverId: string) => Promise<void>
+  removeTagsForConnector: (id: string) => Promise<void>
   beginCustomServerSecurityChange: (serverId: string) => CustomServerSecurityChangeGuard | undefined
   clearCustomServerFailure: (serverId: string) => void
   resetCustomServerClient: (serverId: string) => Promise<void>
@@ -91,6 +92,7 @@ class ConnectorSettingsWorkflows {
         await this.effects.resetCustomServerClient(serverId)
         this.effects.clearCustomServerFailure(serverId)
         await this.effects.pruneCustomServerPermissions(serverId)
+        await this.effects.removeTagsForConnector(serverId)
       })
       .finally(() => this.connectorsChanged())
   }

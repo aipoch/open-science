@@ -1,0 +1,115 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import type { TagSnapshot } from '../../shared/tags'
+import type { TagRepository } from './repository'
+import type { TagResourceCatalog } from './resource-catalog'
+import { TagService } from './service'
+
+const snapshot = (revision: number): TagSnapshot => ({ revision, tags: [], assignments: [] })
+
+describe('TagService', () => {
+  it('validates resources, advances revision, and publishes a convergence event', async () => {
+    const repository = {
+      setAssignment: vi.fn().mockResolvedValue(undefined),
+      snapshot: vi.fn((revision) => Promise.resolve(snapshot(revision)))
+    }
+    const resources = { exists: vi.fn().mockResolvedValue(true) }
+    const events = { publish: vi.fn() }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      resources as unknown as TagResourceCatalog,
+      events
+    )
+
+    await expect(
+      service.setAssignment({
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.skill',
+        resourceId: 'analysis',
+        assigned: true
+      })
+    ).resolves.toEqual(snapshot(1))
+    expect(resources.exists).toHaveBeenCalledOnce()
+    expect(events.publish).toHaveBeenCalledWith('tags:changed', { revision: 1 })
+  })
+
+  it('rejects assigning a stale resource without writing', async () => {
+    const repository = { setAssignment: vi.fn() }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      { exists: vi.fn().mockResolvedValue(false) } as unknown as TagResourceCatalog,
+      { publish: vi.fn() }
+    )
+
+    await expect(
+      service.setAssignment({
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.specialist',
+        resourceId: 'missing',
+        assigned: true
+      })
+    ).rejects.toThrow('Tag resource no longer exists.')
+    expect(repository.setAssignment).not.toHaveBeenCalled()
+  })
+
+  it('prunes stale references during snapshot reconciliation', async () => {
+    const repository = {
+      pruneStaleAssignments: vi.fn().mockResolvedValue(2),
+      snapshot: vi.fn((revision) => Promise.resolve(snapshot(revision)))
+    }
+    const events = { publish: vi.fn() }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      { snapshot: vi.fn().mockResolvedValue({}) } as unknown as TagResourceCatalog,
+      events
+    )
+
+    await expect(service.snapshot()).resolves.toEqual(snapshot(1))
+    expect(events.publish).toHaveBeenCalledWith('tags:changed', { revision: 1 })
+  })
+
+  it('removes assignments when the owning resource is deleted', async () => {
+    const repository = { removeResourceAssignments: vi.fn().mockResolvedValue(1) }
+    const events = { publish: vi.fn() }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      {} as TagResourceCatalog,
+      events
+    )
+
+    await service.removeResources([
+      { resourceType: 'catalog.specialist', resourceId: 'deleted-specialist' }
+    ])
+
+    expect(repository.removeResourceAssignments).toHaveBeenCalledWith([
+      { resourceType: 'catalog.specialist', resourceId: 'deleted-specialist' }
+    ])
+    expect(events.publish).toHaveBeenCalledWith('tags:changed', { revision: 1 })
+  })
+
+  it('retries failed deletion cleanup before resolving a reused resource id', async () => {
+    const repository = {
+      removeResourceAssignments: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('database busy'))
+        .mockResolvedValueOnce(1),
+      pruneStaleAssignments: vi.fn().mockResolvedValue(0),
+      snapshot: vi.fn((revision) => Promise.resolve(snapshot(revision)))
+    }
+    const resources = { snapshot: vi.fn().mockResolvedValue({}) }
+    const events = { publish: vi.fn() }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      resources as unknown as TagResourceCatalog,
+      events
+    )
+    const deleted = [{ resourceType: 'catalog.skill' as const, resourceId: 'reused-id' }]
+
+    await expect(service.removeResources(deleted)).rejects.toThrow('database busy')
+    await expect(service.snapshot()).resolves.toEqual(snapshot(2))
+
+    expect(repository.removeResourceAssignments).toHaveBeenNthCalledWith(2, deleted)
+    expect(events.publish).toHaveBeenNthCalledWith(1, 'tags:changed', { revision: 1 })
+    expect(events.publish).toHaveBeenNthCalledWith(2, 'tags:changed', { revision: 2 })
+  })
+})

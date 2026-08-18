@@ -455,6 +455,32 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "GrantedLocalRoot_access_check" CHECK ("access" IN ('ro', 'rw'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "Tag" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "systemKey" TEXT,
+    "name" TEXT,
+    "nameKey" TEXT,
+    "iconKey" TEXT,
+    "colorKey" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Tag_shape_check" CHECK ((("systemKey" IS NOT NULL AND "name" IS NULL AND "nameKey" IS NULL AND "iconKey" IS NULL AND "colorKey" IS NULL) OR ("systemKey" IS NULL AND "name" IS NOT NULL AND "nameKey" IS NOT NULL AND "iconKey" IS NOT NULL AND "colorKey" IS NOT NULL))),
+    CONSTRAINT "Tag_systemKey_check" CHECK ("systemKey" IS NULL OR "systemKey" = 'favorite'),
+    CONSTRAINT "Tag_name_check" CHECK ("name" IS NULL OR (length(trim("name")) BETWEEN 1 AND 64)),
+    CONSTRAINT "Tag_nameKey_check" CHECK ("nameKey" IS NULL OR (length("nameKey") BETWEEN 1 AND 64)),
+    CONSTRAINT "Tag_iconKey_check" CHECK ("iconKey" IS NULL OR "iconKey" IN ('tag', 'star', 'bookmark', 'flask-conical', 'book-open', 'database', 'code-2', 'bot')),
+    CONSTRAINT "Tag_colorKey_check" CHECK ("colorKey" IS NULL OR "colorKey" IN ('gray', 'red', 'orange', 'amber', 'green', 'blue', 'purple', 'pink'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "TagAssignment" (
+    "tagId" TEXT NOT NULL,
+    "resourceType" TEXT NOT NULL,
+    "resourceId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("tagId", "resourceType", "resourceId"),
+    CONSTRAINT "TagAssignment_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "Tag" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "TagAssignment_resourceId_check" CHECK (length(trim("resourceId")) BETWEEN 1 AND 256)
 );`
 ] as const
 
@@ -509,7 +535,10 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "ComputeJob_status_idx" ON "ComputeJob"("status");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeAuthOperation_providerId_idx" ON "ComputeAuthOperation"("providerId");`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`
+  `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_systemKey_key" ON "Tag"("systemKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_nameKey_key" ON "Tag"("nameKey");`,
+  `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -543,7 +572,9 @@ const RUNTIME_SCHEMA_TABLES = [
   'ComputeHost',
   'ComputeCredential',
   'ComputeAuthOperation',
-  'GrantedLocalRoot'
+  'GrantedLocalRoot',
+  'Tag',
+  'TagAssignment'
 ] as const
 
 export {

@@ -24,11 +24,13 @@ import {
 import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, AVATAR_ICONS } from './specialist-icons'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useTagStore } from '@/stores/tag-store'
 import { SettingsIconAction } from './SettingsLayout'
 import {
   getSettingsSearchKeyShortcuts,
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
+import { TagFilter } from './ResourceTagControls'
 
 type SpecialistEditorProps = {
   onCancel: () => void
@@ -166,6 +168,9 @@ const SpecialistEditor = ({
   const [activeCapTab, setActiveCapTab] = useState<'skills' | 'connectors'>('skills')
   const [skillSearchQuery, setSkillSearchQuery] = useState('')
   const [connectorSearchQuery, setConnectorSearchQuery] = useState('')
+  const [skillTagFilter, setSkillTagFilter] = useState('all')
+  const [connectorTagFilter, setConnectorTagFilter] = useState('all')
+  const tagAssignments = useTagStore((state) => state.assignments)
   const skillSearchRef = useRef<HTMLInputElement>(null)
   const connectorSearchRef = useRef<HTMLInputElement>(null)
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false)
@@ -338,24 +343,46 @@ const SpecialistEditor = ({
   }, [connectors, customServers, form.connectorIds])
 
   const filteredAddableSkills = useMemo(() => {
-    if (!skillSearchQuery.trim()) return addableSkills
+    const tagged =
+      skillTagFilter === 'all'
+        ? addableSkills
+        : addableSkills.filter((skill) =>
+            tagAssignments.some(
+              (assignment) =>
+                assignment.tagId === skillTagFilter &&
+                assignment.resourceType === 'catalog.skill' &&
+                assignment.resourceId === skill.id
+            )
+          )
+    if (!skillSearchQuery.trim()) return tagged
     const q = skillSearchQuery.toLowerCase()
-    return addableSkills.filter(
+    return tagged.filter(
       (skill) =>
         skill.name.toLowerCase().includes(q) ||
         (skill.description && skill.description.toLowerCase().includes(q))
     )
-  }, [addableSkills, skillSearchQuery])
+  }, [addableSkills, skillSearchQuery, skillTagFilter, tagAssignments])
 
   const filteredAddableConnectors = useMemo(() => {
-    if (!connectorSearchQuery.trim()) return addableConnectors
+    const tagged =
+      connectorTagFilter === 'all'
+        ? addableConnectors
+        : addableConnectors.filter((connector) =>
+            tagAssignments.some(
+              (assignment) =>
+                assignment.tagId === connectorTagFilter &&
+                assignment.resourceType === 'catalog.connector' &&
+                assignment.resourceId === connector.id
+            )
+          )
+    if (!connectorSearchQuery.trim()) return tagged
     const q = connectorSearchQuery.toLowerCase()
-    return addableConnectors.filter(
+    return tagged.filter(
       (connector) =>
         connector.name.toLowerCase().includes(q) ||
         (connector.description && connector.description.toLowerCase().includes(q))
     )
-  }, [addableConnectors, connectorSearchQuery])
+  }, [addableConnectors, connectorSearchQuery, connectorTagFilter, tagAssignments])
 
   const addSkill = (id: string): void =>
     setForm((prev) =>
@@ -1036,6 +1063,12 @@ const SpecialistEditor = ({
                             onChange={(e) => setSkillSearchQuery(e.target.value)}
                             className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
                           />
+                          <TagFilter
+                            resourceType="catalog.skill"
+                            value={skillTagFilter}
+                            onChange={setSkillTagFilter}
+                            className="mt-2 w-full"
+                          />
                         </div>
                         <div className="flex-1">
                           {filteredAddableSkills.length === 0 ? (
@@ -1091,6 +1124,12 @@ const SpecialistEditor = ({
                             value={connectorSearchQuery}
                             onChange={(e) => setConnectorSearchQuery(e.target.value)}
                             className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
+                          />
+                          <TagFilter
+                            resourceType="catalog.connector"
+                            value={connectorTagFilter}
+                            onChange={setConnectorTagFilter}
+                            className="mt-2 w-full"
                           />
                         </div>
                         <div className="flex-1">

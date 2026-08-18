@@ -269,6 +269,11 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['onCreated', 'project:created', EVENT], ['onDeleted', 'project:deleted', EVENT], ['onUpdated', 'project:updated', EVENT], ['create', 'projects:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['delete', 'projects:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['get', 'projects:get', WEB, undefined, undefined, RUNTIME_VALIDATED], ['list', 'projects:list', WEB, undefined, undefined, RUNTIME_VALIDATED], ['updateArchive', 'projects:update-archive', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'projects:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
   ]),
+  group('tags', 'tags', [
+    ['onChanged', 'tags:changed', EVENT], ['create', 'tags:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['delete', 'tags:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['setAssignment', 'tags:set-assignment', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['snapshot', 'tags:snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'tags:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
+  ]),
   group('remote-access', 'remoteAccess', [
     ['onChanged', 'remote-access:changed', EVENT], ['approve', 'remote-access:approve'], ['detect', 'remote-access:detect'],
     ['disable', 'remote-access:disable'], ['getSnapshot', 'remote-access:get-snapshot'], ['reject', 'remote-access:reject'],

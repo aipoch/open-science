@@ -550,3 +550,32 @@ model GrantedLocalRoot {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// User-defined cross-resource labels plus application-owned built-ins such as Favorites. System
+// labels derive their localized presentation from systemKey; custom labels persist their display
+// name and fixed-palette visual keys. nameKey is an internal comparison key and never crosses IPC.
+model Tag {
+  id          String          @id @default(cuid())
+  systemKey   String?         @unique
+  name        String?
+  nameKey     String?         @unique
+  iconKey     String?
+  colorKey    String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  assignments TagAssignment[]
+}
+
+// resourceType is intentionally a registry-backed string rather than a Prisma enum so later
+// resource adapters can be added without rebuilding this table. V1 validates the three catalog
+// resource types at the application boundary.
+model TagAssignment {
+  tagId        String
+  resourceType String
+  resourceId   String
+  createdAt    DateTime @default(now())
+  tag          Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([tagId, resourceType, resourceId])
+  @@index([resourceType, resourceId])
+}

@@ -6,6 +6,7 @@ export type SettingsPanelId =
   | 'skills'
   | 'connectors'
   | 'specialists'
+  | 'tags'
   | 'compute'
   | 'permissions'
   | 'archived'

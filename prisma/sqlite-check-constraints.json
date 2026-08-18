@@ -1,6 +1,41 @@
 {
   "constraints": [
     {
+      "tableName": "Tag",
+      "name": "Tag_shape_check",
+      "expression": "((\"systemKey\" IS NOT NULL AND \"name\" IS NULL AND \"nameKey\" IS NULL AND \"iconKey\" IS NULL AND \"colorKey\" IS NULL) OR (\"systemKey\" IS NULL AND \"name\" IS NOT NULL AND \"nameKey\" IS NOT NULL AND \"iconKey\" IS NOT NULL AND \"colorKey\" IS NOT NULL))"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_systemKey_check",
+      "expression": "\"systemKey\" IS NULL OR \"systemKey\" = 'favorite'"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_name_check",
+      "expression": "\"name\" IS NULL OR (length(trim(\"name\")) BETWEEN 1 AND 64)"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_nameKey_check",
+      "expression": "\"nameKey\" IS NULL OR (length(\"nameKey\") BETWEEN 1 AND 64)"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_iconKey_check",
+      "expression": "\"iconKey\" IS NULL OR \"iconKey\" IN ('tag', 'star', 'bookmark', 'flask-conical', 'book-open', 'database', 'code-2', 'bot')"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_colorKey_check",
+      "expression": "\"colorKey\" IS NULL OR \"colorKey\" IN ('gray', 'red', 'orange', 'amber', 'green', 'blue', 'purple', 'pink')"
+    },
+    {
+      "tableName": "TagAssignment",
+      "name": "TagAssignment_resourceId_check",
+      "expression": "length(trim(\"resourceId\")) BETWEEN 1 AND 256"
+    },
+    {
       "tableName": "NotificationInboxItem",
       "name": "NotificationInboxItem_source_check",
       "expression": "\"source\" IS NULL OR \"source\" IN ('agent-tool', 'agent-question', 'agent-runtime', 'connector', 'compute', 'skill-import', 'session-plan')"

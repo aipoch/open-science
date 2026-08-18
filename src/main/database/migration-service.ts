@@ -24,6 +24,7 @@ import { notificationAttentionMetadataMigration } from './migrations/0007-notifi
 import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 import { visionEvidenceMigration } from './migrations/0009-vision-evidence'
 import { computePasswordAuthMigration } from './migrations/0010-compute-password-auth'
+import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tags'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -202,6 +203,12 @@ const COMPUTE_PASSWORD_AUTH_CHECKSUM = checksumMigrationPayload(
   computePasswordAuthMigration.verifiers,
   computePasswordAuthMigration.operations
 )
+const CROSS_RESOURCE_TAGS_CHECKSUM = checksumMigrationPayload(
+  crossResourceTagsMigration.id,
+  crossResourceTagsMigration.statements,
+  crossResourceTagsMigration.verifiers,
+  crossResourceTagsMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -246,6 +253,15 @@ const COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints
         Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
       ])
   )
+const CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
+  crossResourceTagsMigration.verifiers
+    .filter((verifier) => verifier.kind === 'check-constraints-exist')
+    .flatMap((verifier) => verifier.tables)
+    .map(({ table, constraints }) => [
+      table,
+      Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+    ])
+)
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -315,6 +331,12 @@ const MIGRATION_MANIFEST = [
   {
     ...computePasswordAuthMigration,
     checksum: COMPUTE_PASSWORD_AUTH_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...crossResourceTagsMigration,
+    checksum: CROSS_RESOURCE_TAGS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1165,6 +1187,11 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === computePasswordAuthMigration.id &&
       candidate.checksum === COMPUTE_PASSWORD_AUTH_CHECKSUM
   )
+  const adoptsCrossResourceTags = manifest.some(
+    (candidate) =>
+      candidate.id === crossResourceTagsMigration.id &&
+      candidate.checksum === CROSS_RESOURCE_TAGS_CHECKSUM
+  )
   const applied: string[] = []
   const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
@@ -1172,7 +1199,8 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsNotificationAttentionMetadata ? NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS : {},
     adoptsDatabaseJsonConstraints ? DATABASE_JSON_ALLOWED_SUFFIX_CHECKS : {},
     adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount

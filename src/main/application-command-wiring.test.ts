@@ -112,6 +112,8 @@ describe('production application command wiring', () => {
     }
 
     expect(dependencyBlock).toContain('projects: projectHandlers')
+    expect(dependencyBlock).toContain('tags: tagService')
+    expect(compact(ipcSource)).toContain('const tagService = new TagService( new TagRepository')
     expect(dependencyBlock).toContain(
       'deleteSession: (request) => sessionDeletionOwner.delete(request)'
     )

@@ -761,6 +761,38 @@ colors communicate a successful or failed probe/migration result.
 - Specialist package schema v1 uses snake_case JSON keys (`display_name`, `system_prompt`, `skill_ids`, and `connector_ids`) while application-facing TypeScript objects remain camelCase. Package `name` stays the immutable invocation identity, the capability arrays contain portable names, and local Specialist persistence contains installation IDs. Import rejects the earlier camelCase JSON keys. Featured Skills are exported as references and are never copied into `skills/`.
 - Public JavaScript host APIs and their object fields use camelCase (`listSkills`, `listConnectors`, `attachSkill`, `displayName`, `systemPrompt`, and related fields). Internal transport operation names may remain snake_case behind that boundary.
 
+#### Cross-resource Tags
+
+- Settings -> Capabilities -> Tags is the shared organization surface for catalog resources. V1
+  adapters cover Skills, Connectors, and runnable Specialists; the Reviewer placeholder is excluded.
+  The left column manages Tags and the right column aggregates assigned resources with resource-type
+  and text filters. Selecting a result navigates through the existing Settings history to that
+  resource's detail or editor.
+- A Tag may belong to any number of resources and a resource may have any number of Tags. The same
+  Tag filter is available in the three catalog panels and in the Specialist capability picker, but
+  Specialist persistence continues to store concrete Skill and Connector IDs rather than a dynamic
+  Tag query.
+- Favorites is a protected built-in Tag. Its persisted row has the stable `systemKey` `favorite` and
+  fixed seed ID `tag-favorite`; application behavior checks `systemKey`, never the ID. Its localized
+  label, star icon, and amber color come from the renderer registry. Custom Tags persist one
+  user-entered display name plus fixed-palette icon and color keys; custom names are not translated.
+- Custom Tag IDs use Prisma CUID generation. `nameKey` is a main-process-only uniqueness key derived
+  from the cleaned display name with NFKC normalization and deterministic lowercase; it never crosses
+  the renderer contract. Names compare case-insensitively without changing the cleaned display value
+  shown to the user.
+- SQLite owns `Tag` definitions and `TagAssignment` edges. An assignment's composite identity is
+  `(tagId, resourceType, resourceId)`; deleting a custom Tag cascades its edges. `resourceType` stays a
+  registry-validated string so later resource adapters do not require a table rebuild. Catalog
+  reconciliation prunes references to deleted resources, while each V1 resource-deletion workflow
+  also removes its assignments before the deleted ID can be reused. Skill, Connector, and Specialist
+  file formats are unchanged, and no pin, bookmark, Group, import/export, or cloud-sync data is
+  migrated.
+- Resource rows and detail/editor surfaces share the same searchable assignment menu. Creating a Tag
+  from that menu assigns it immediately with the default visual; the Tags manager can then change its
+  icon or color. Assignment changes update optimistically and reload the authoritative snapshot after
+  a failure. The Tags browser keeps its selected Tag, resource filter, query, and scroll position when
+  Settings history opens a resource and returns.
+
 #### Specialist-scoped resources and Marketplace
 
 - A Skill or Connector's scope is a renderer-derived relationship, never a persisted scope enum. The four displayed states are **Main only**, **Specialist only**, **Shared with Main**, and **Not in use**, computed from the existing Main enablement preference plus durable Specialist capability memberships. Disabled Specialists still count because scope describes configuration, not current runnability.

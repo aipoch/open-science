@@ -16,6 +16,7 @@ import {
   ScrollText,
   Settings2,
   TerminalSquare,
+  Tags as TagsIcon,
   Users,
   X,
   Zap
@@ -42,6 +43,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { useTagStore } from '@/stores/tag-store'
 import { AgentPanel } from './AgentPanel'
 import { ProvidersPanel } from './ProvidersPanel'
 import { GeneralPanel } from './GeneralPanel'
@@ -52,6 +54,8 @@ import { RemoteControlPanel } from './RemoteControlPanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { SpecialistsPanel, type SpecialistsView } from './SpecialistsPanel'
+import { TagsPanel } from './TagsPanel'
+import { ResourceTagSummary } from './ResourceTagControls'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { ConnectorExportView } from './ConnectorExportView'
@@ -177,6 +181,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
       { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'specialists', labelKey: 'Specialists', Icon: Users },
+      { id: 'tags', labelKey: 'Tags', Icon: TagsIcon },
       { id: 'compute', labelKey: 'Compute', Icon: Zap },
       { id: 'network', labelKey: 'Network', Icon: Globe }
     ]
@@ -309,6 +314,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const customServers = useSettingsStore((state) => state.customServers)
   const computeHosts = useComputeStore((state) => state.hosts)
   const specialistItems = useSpecialistStore((state) => state.items)
+  const loadTags = useTagStore((state) => state.load)
+  const listenForTagChanges = useTagStore((state) => state.listen)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -324,6 +331,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useEffect(() => {
     if (open) void load()
   }, [open, load])
+
+  useEffect(() => {
+    if (!open) return
+    void loadTags()
+    return listenForTagChanges()
+  }, [listenForTagChanges, loadTags, open])
 
   useEffect(() => {
     if (isMobile && isMobileNavOpen) {
@@ -1168,13 +1181,58 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   />
                 ) : activePanel === 'specialists' ? (
                   <SpecialistsPanel view={specialistsView} onNavigate={navigateSpecialists} />
+                ) : activePanel === 'tags' ? (
+                  <TagsPanel
+                    onOpenResource={(reference) => {
+                      if (reference.resourceType === 'catalog.skill') {
+                        navigate({
+                          ...currentLocation,
+                          panel: 'skills',
+                          skills: { kind: 'detail', id: reference.resourceId }
+                        })
+                        return
+                      }
+                      if (reference.resourceType === 'catalog.connector') {
+                        navigate({
+                          ...currentLocation,
+                          panel: 'connectors',
+                          connectors: customServers.some(
+                            (server) => server.id === reference.resourceId
+                          )
+                            ? { kind: 'edit', id: reference.resourceId }
+                            : { kind: 'detail', id: reference.resourceId }
+                        })
+                        return
+                      }
+                      const specialist = specialistItems.find(
+                        (item) => item.id === reference.resourceId
+                      )
+                      navigate({
+                        ...currentLocation,
+                        panel: 'specialists',
+                        specialists:
+                          specialist?.kind === 'builtin'
+                            ? { kind: 'builtin', id: reference.resourceId }
+                            : { kind: 'edit', id: reference.resourceId }
+                      })
+                    }}
+                  />
                 ) : activePanel === 'connectors' ? (
                   connectorsView.kind === 'detail' ? (
-                    <ConnectorDetailView
-                      key={connectorsView.id}
-                      id={connectorsView.id}
-                      onManagePermissions={() => navigatePanel('permissions')}
-                    />
+                    <div>
+                      <ResourceTagSummary
+                        reference={{
+                          resourceType: 'catalog.connector',
+                          resourceId: connectorsView.id
+                        }}
+                        className="px-5 pt-5"
+                      />
+                      <ConnectorDetailView
+                        key={connectorsView.id}
+                        id={connectorsView.id}
+                        onManagePermissions={() => navigatePanel('permissions')}
+                      />
+                    </div>
                   ) : connectorsView.kind === 'add' ? (
                     <ConnectorAddForm
                       initialTransport={connectorsView.transport}
@@ -1200,11 +1258,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       onDone={() => navigateConnectors({ kind: 'list' })}
                     />
                   ) : connectorsView.kind === 'edit' ? (
-                    <ConnectorAddForm
-                      editServer={customServers.find((s) => s.id === connectorsView.id)}
-                      onDone={() => navigateConnectors({ kind: 'list' })}
-                      onCancel={() => navigateConnectors({ kind: 'list' })}
-                    />
+                    <div>
+                      <ResourceTagSummary
+                        reference={{
+                          resourceType: 'catalog.connector',
+                          resourceId: connectorsView.id
+                        }}
+                        className="px-5 pt-5"
+                      />
+                      <ConnectorAddForm
+                        editServer={customServers.find((s) => s.id === connectorsView.id)}
+                        onDone={() => navigateConnectors({ kind: 'list' })}
+                        onCancel={() => navigateConnectors({ kind: 'list' })}
+                      />
+                    </div>
                   ) : (
                     <ConnectorsPanel onNavigate={navigateConnectors} />
                   )
