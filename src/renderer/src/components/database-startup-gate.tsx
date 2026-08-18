@@ -9,6 +9,15 @@ import type { DatabaseStartupState } from '../../../shared/database-startup'
 
 type DatabaseStartupGateProps = { children: ReactNode }
 
+const unavailableStartupState = (message: string): DatabaseStartupState => ({
+  phase: 'blocked',
+  error: {
+    code: 'database_startup_unavailable',
+    message,
+    retryable: true
+  }
+})
+
 const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.Element => {
   const { t } = useTranslation()
   const databaseStartup = (window.api as Partial<Window['api']> | undefined)?.databaseStartup
@@ -25,14 +34,23 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
       receivedEvent = true
       if (!disposed) setState(next)
     })
-    void databaseStartup.getState().then((current) => {
-      if (!disposed && !receivedEvent) setState(current)
-    })
+    void databaseStartup
+      .getState()
+      .then((current) => {
+        if (!disposed && !receivedEvent) setState(current)
+      })
+      .catch(() => {
+        if (!disposed && !receivedEvent) {
+          setState(
+            unavailableStartupState(t('Open Science could not finish checking its database.'))
+          )
+        }
+      })
     return () => {
       disposed = true
       unsubscribe()
     }
-  }, [databaseStartup])
+  }, [databaseStartup, t])
 
   if (state.phase === 'ready') return <>{children}</>
 
@@ -42,6 +60,9 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
     void databaseStartup
       .retry()
       .then(setState)
+      .catch(() => {
+        setState(unavailableStartupState(t('Open Science could not finish checking its database.')))
+      })
       .finally(() => setRetrying(false))
   }
 

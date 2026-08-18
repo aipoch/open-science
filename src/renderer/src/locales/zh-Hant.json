@@ -1177,6 +1177,7 @@
   "Some Specialist data could not be read.": "部分 Specialist 資料無法讀取。",
   "Open Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later.": "Open Science 無法刪除未使用的副本。正常工作已恢復，你可以稍後刪除該副本。",
   "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again.": "Open Science 無法停止此會話的 Agent。會話未被刪除，請重試。",
+  "Open Science could not finish checking its database.": "Open Science 無法完成資料庫檢查。",
   "Open Science couldn't start": "Open Science 無法啟動",
   "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically.": "Open Science 正在停止背景工作，並將關閉以完成安裝。更新可能需要一些時間，請勿在此期間重新開啟應用程式。更新完成後應用程式會自動重新開啟。",
   "Open Science needs write access to its private configuration directory.": "Open Science 需要對其私有設定目錄的寫入權限。",

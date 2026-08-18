@@ -1118,6 +1118,7 @@
   "Some Specialist data could not be read.": "一部のスペシャリスト データを読み取れませんでした。",
   "Open Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later.": "Open Science は未使用のコピーを削除できませんでした。通常の作業が再開されました。コピーは後で削除できます。",
   "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again.": "Open Science は、このセッションの Agent を停止できませんでした。セッションは削除されませんでした。もう一度試してください。",
+  "Open Science could not finish checking its database.": "Open Science はデータベースの確認を完了できませんでした。",
   "Open Science couldn't start": "Open Science を開始できませんでした",
   "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically.": "Open Science はバックグラウンド タスクを停止しているため、インストールを完了するために終了します。更新には少し時間がかかる場合があります。このステップ中にアプリを再度開かないでください。更新されたアプリは自動的に再度開きます。",
   "Open Science needs write access to its private configuration directory.": "Open Science には、プライベート構成ディレクトリへの書き込みアクセスが必要です。",
