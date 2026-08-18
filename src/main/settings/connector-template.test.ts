@@ -298,7 +298,7 @@ describe('Connector configuration templates', () => {
     expect(result.contents).not.toContain('local-id')
   })
 
-  it('invalidates an export preview when the process key rotates', async () => {
+  it('invalidates an export preview when the process-local cache resets', async () => {
     const source: ConnectorTemplateSource = {
       id: 'local-id',
       name: 'example-server',
@@ -312,6 +312,23 @@ describe('Connector configuration templates', () => {
     const freshModule = await import('./connector-template')
 
     expect(freshModule.buildConnectorTemplateExport(source).preview.digest).not.toBe(digest)
+  })
+
+  it('bounds the process-local export preview cache', () => {
+    const source: ConnectorTemplateSource = {
+      id: 'local-id',
+      name: 'example-server',
+      displayName: 'Example Server',
+      transport: 'stdio',
+      command: 'npx'
+    }
+    const digest = buildConnectorTemplateExport(source).preview.digest
+
+    for (let index = 0; index < 64; index += 1) {
+      buildConnectorTemplateExport({ ...source, description: `Preview ${index}` })
+    }
+
+    expect(buildConnectorTemplateExport(source).preview.digest).not.toBe(digest)
   })
 
   it('exports OAuth field names in snake_case', () => {

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { basename } from 'node:path'
 
 import type {
@@ -70,8 +70,26 @@ const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\
 const SECRET_FLAG = /^--?(?:api[-_]?key|token|secret|password|credential|authorization)(?:=|$)/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
-// Keeps preview digests opaque to the renderer; restarting the app invalidates an open preview.
-const CONNECTOR_TEMPLATE_DIGEST_KEY = randomBytes(32)
+const CONNECTOR_TEMPLATE_DIGEST_CACHE_LIMIT = 64
+// Keeps preview digests opaque to the renderer without persisting exported connector metadata.
+const connectorTemplateDigests = new Map<string, string>()
+
+const connectorTemplateDigest = (contents: string): string => {
+  const existing = connectorTemplateDigests.get(contents)
+  if (existing) {
+    connectorTemplateDigests.delete(contents)
+    connectorTemplateDigests.set(contents, existing)
+    return existing
+  }
+
+  const digest = randomBytes(32).toString('hex')
+  connectorTemplateDigests.set(contents, digest)
+  if (connectorTemplateDigests.size > CONNECTOR_TEMPLATE_DIGEST_CACHE_LIMIT) {
+    const oldest = connectorTemplateDigests.keys().next()
+    if (!oldest.done) connectorTemplateDigests.delete(oldest.value)
+  }
+  return digest
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -601,9 +619,7 @@ export const buildConnectorTemplateExport = (
   }
   const contents = templateJson(definition)
   const parsed = parseConnectorTemplate(contents)
-  const digest = parsed.ready
-    ? createHmac('sha256', CONNECTOR_TEMPLATE_DIGEST_KEY).update(contents).digest('hex')
-    : undefined
+  const digest = parsed.ready ? connectorTemplateDigest(contents) : undefined
   return {
     preview: {
       ...parsed,
