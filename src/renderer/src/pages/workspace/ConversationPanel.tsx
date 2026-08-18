@@ -1635,7 +1635,6 @@ const ConversationPanel = ({
 
                         <ComposerSpecialistPicker
                           selectedId={specialistId}
-                          unavailable={specialistUnavailable}
                           readOnly={!canChangeAgentControls}
                           onChange={onSpecialistChange}
                         />

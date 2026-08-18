@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search } from 'lucide-react'
+import { Check, Search } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -12,7 +12,6 @@ type RunnableSpecialistItem = Exclude<SpecialistListItem, { kind: 'reviewer' }>
 
 type ComposerSpecialistPickerProps = {
   selectedId: string | undefined
-  unavailable?: boolean
   readOnly?: boolean
   onChange: (specialistId: string | undefined) => void
 }
@@ -27,7 +26,6 @@ type PickerOption = {
 
 const ComposerSpecialistPicker = ({
   selectedId,
-  unavailable = false,
   readOnly = false,
   onChange
 }: ComposerSpecialistPickerProps): React.JSX.Element | null => {
@@ -106,10 +104,7 @@ const ComposerSpecialistPicker = ({
         <button
           type="button"
           disabled={readOnly}
-          className={cn(
-            "relative flex h-8 min-w-0 max-w-40 shrink items-center gap-1.5 rounded-lg border bg-bg-200 px-1.5 text-left text-[12px] font-medium text-text-100 transition-colors before:absolute before:content-[''] hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:inset-x-0 @max-[32rem]/composer:w-8 @max-[32rem]/composer:shrink-0 @max-[32rem]/composer:justify-center @max-[32rem]/composer:px-0",
-            unavailable ? 'border-warning-100 text-warning-900' : 'border-border-200'
-          )}
+          className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 transition-colors before:absolute before:content-[''] hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:inset-x-0"
           aria-label={t('Choose Specialist: {{name}}', { name: selectedName })}
           data-testid="composer-specialist-picker-trigger"
         >
@@ -123,12 +118,6 @@ const ComposerSpecialistPicker = ({
               —
             </span>
           )}
-          <span className="min-w-0 truncate @max-[32rem]/composer:hidden">{selectedName}</span>
-          <ChevronDown
-            className="size-3.5 shrink-0 opacity-60 @max-[32rem]/composer:hidden"
-            strokeWidth={2}
-            aria-hidden="true"
-          />
         </button>
       </PopoverTrigger>
       <PopoverContent

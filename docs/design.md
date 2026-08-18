@@ -574,12 +574,11 @@ colors communicate a successful or failed probe/migration result.
   edge in the exact color of that Specialist's avatar tile. When the selection changes, fade only
   that edge from transparent to opaque; do not add a multicolor gradient, glow, or geometry motion.
   Under `prefers-reduced-motion`, show the final edge immediately.
-- Show the active Specialist as a compact, truncating toolbar control rather than a new composer row.
-  Its popover searches display name, stable name, and description; supports Arrow Up/Down, Home/End,
-  Enter, and ordinary pointer selection; fits within the viewport on narrow screens; and exposes the
-  full untruncated name through the control's accessible label. Cap the expanded control at `10rem`
-  and collapse it to the avatar alone when the composer container is `32rem` wide or narrower. Keep
-  the popover at or below `16rem` so it does not dominate compressed three-column layouts.
+- Show the active Specialist as its avatar tile in a standard `size-8` composer icon button, with no
+  separate label, arrow, border, or persistent gray container. The button's accessible label exposes
+  the full Specialist name. Its popover searches display name, stable name, and description; supports
+  Arrow Up/Down, Home/End, Enter, and ordinary pointer selection; fits within the viewport on narrow
+  screens; and stays at or below `16rem` so it does not dominate compressed three-column layouts.
 - During a normal running root turn, the primary composer submit action captures the current doc,
   attachments, permission profile, Specialist, Session, Agent Frame, and Message Branch into a
   renderer-memory queue instead of overlapping the active runtime prompt. The queue drains one item

@@ -82,7 +82,7 @@ afterEach(() => {
 })
 
 describe('ComposerSpecialistPicker', () => {
-  it('truncates the visual label while preserving the full accessible name', () => {
+  it('shows only the avatar while preserving the full accessible name', () => {
     renderPicker()
 
     const trigger = container.querySelector<HTMLButtonElement>(
@@ -91,9 +91,9 @@ describe('ComposerSpecialistPicker', () => {
     expect(trigger.getAttribute('aria-label')).toContain(
       'A deliberately long Specialist display name that must never widen the composer'
     )
-    expect(trigger.className).toContain('max-w-40')
-    expect(trigger.querySelector('.truncate')?.textContent).toContain('deliberately long')
-    expect(trigger.querySelector('.truncate')?.className).toContain('@max-[32rem]/composer:hidden')
+    expect(trigger.className).toContain('w-8')
+    expect(trigger.className.split(' ')).not.toContain('bg-bg-200')
+    expect(trigger.textContent).toBe('')
   })
 
   it('filters by Specialist metadata and selects the result with Enter', () => {
@@ -135,7 +135,6 @@ describe('ComposerSpecialistPicker', () => {
       '[data-testid="composer-specialist-picker-trigger"]'
     )!
     expect(trigger.className).toContain('h-8')
-    expect(trigger.className).toContain('@max-[32rem]/composer:w-8')
     expect(trigger.className).toContain('[@media(pointer:coarse)]:before:-inset-y-1.5')
   })
 
