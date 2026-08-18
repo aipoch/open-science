@@ -58,6 +58,7 @@ import {
 } from './permission-grants'
 import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatEntry } from './side-chat'
 import { sanitizeAgentUserChoiceRequest, type AgentUserChoicePrompt } from './elicitation'
+import { capToolDetailText, sanitizeToolContent } from './tool-detail-sanitizer'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 2
@@ -2340,113 +2341,13 @@ const sanitizeUploadedAttachment = (
   return sanitized
 }
 
-// Persisting more than the UI shows is wasteful, so bound the large text-bearing fields.
-const MAX_PERSISTED_TEXT_CHARS = 16_000
-const MAX_PERSISTED_TOOL_CONTENT_CHARS = 32_000
 const MAX_PERSISTED_RAW_CHARS = 8_000
 
-// Truncates oversized text with a trailing marker; a no-op when already within bounds (idempotent).
-const capText = (text: string, max: number): string =>
-  text.length > max ? `${text.slice(0, max)}\n…` : text
-
 // Reads a bounded string field, returning undefined when empty.
-const asCappedString = (value: unknown, max: number): string | undefined => {
+const asCappedString = (value: unknown): string | undefined => {
   const text = asString(value)
 
-  return text ? capText(text, max) : undefined
-}
-
-// Rebuilds a displayable content block (text/resource/link), dropping heavy binary payloads.
-const sanitizeContentBlock = (block: unknown): Record<string, unknown> | undefined => {
-  if (!isRecord(block)) return undefined
-
-  switch (asString(block.type)) {
-    case 'text': {
-      const text = asCappedString(block.text, MAX_PERSISTED_TEXT_CHARS)
-
-      return text !== undefined ? { type: 'text', text } : undefined
-    }
-    case 'resource_link': {
-      const uri = asString(block.uri)
-
-      if (!uri) return undefined
-
-      const link: Record<string, unknown> = { type: 'resource_link', uri }
-      const name = asString(block.name)
-      const title = asString(block.title)
-
-      if (name) link.name = name
-      if (title) link.title = title
-
-      return link
-    }
-    case 'resource': {
-      if (!isRecord(block.resource)) return undefined
-
-      const uri = asString(block.resource.uri)
-      const text = asCappedString(block.resource.text, MAX_PERSISTED_TEXT_CHARS)
-      const resource: Record<string, unknown> = {}
-
-      if (uri) resource.uri = uri
-      if (text !== undefined) resource.text = text
-
-      return Object.keys(resource).length > 0 ? { type: 'resource', resource } : undefined
-    }
-    default:
-      return undefined
-  }
-}
-
-// Rebuilds one ToolCallContent entry, keeping only the text/diff shapes the detail views read.
-const sanitizeToolContentEntry = (entry: unknown): Record<string, unknown> | undefined => {
-  if (!isRecord(entry)) return undefined
-
-  const type = asString(entry.type)
-
-  if (type === 'content') {
-    const content = sanitizeContentBlock(entry.content)
-
-    return content ? { type: 'content', content } : undefined
-  }
-  if (type === 'diff') {
-    const path = asString(entry.path)
-
-    if (!path) return undefined
-
-    const oldText = asString(entry.oldText)
-
-    return {
-      type: 'diff',
-      path,
-      oldText: oldText !== undefined ? capText(oldText, MAX_PERSISTED_TEXT_CHARS) : null,
-      newText: capText(asString(entry.newText) ?? '', MAX_PERSISTED_TEXT_CHARS)
-    }
-  }
-
-  // Terminal references carry no data in this app and other shapes are not rendered; drop them.
-  return undefined
-}
-
-// Sanitizes tool content into a bounded array, stopping once the total budget is exhausted.
-const sanitizeToolContent = (value: unknown): unknown[] | undefined => {
-  if (!Array.isArray(value)) return undefined
-
-  const entries: unknown[] = []
-  let usedChars = 0
-
-  for (const rawEntry of value) {
-    const entry = sanitizeToolContentEntry(rawEntry)
-
-    if (!entry) continue
-
-    usedChars += JSON.stringify(entry).length
-
-    if (usedChars > MAX_PERSISTED_TOOL_CONTENT_CHARS) break
-
-    entries.push(entry)
-  }
-
-  return entries.length > 0 ? entries : undefined
+  return text ? capToolDetailText(text) : undefined
 }
 
 // Keeps small raw input/output payloads verbatim but drops oversized ones (e.g. base64 file bytes).
@@ -2553,7 +2454,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
   const rawInput = sanitizeRawPayload(activity.rawInput)
   const rawOutput = sanitizeRawPayload(activity.rawOutput)
-  const terminalOutput = asCappedString(activity.terminalOutput, MAX_PERSISTED_TEXT_CHARS)
+  const terminalOutput = asCappedString(activity.terminalOutput)
   const terminalExitCode = asNumber(activity.terminalExitCode)
   const elicitation = sanitizeElicitationProjection(activity.elicitation)
   const toolDisposition = asToolActivityDisposition(activity.toolDisposition)

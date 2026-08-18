@@ -1,5 +1,6 @@
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
+import { capToolDetailText, sanitizeToolContent } from '../../shared/tool-detail-sanitizer'
 
 const ACP_RUNTIME_EVENT_RETENTION_LIMIT = 500
 // Amortized eviction: trim only after a full cap of slack accumulates, so steady-state appends are
@@ -59,6 +60,11 @@ class AcpRuntimeSnapshotOwner {
     let image = event.image
     let raw = event.raw
     let text = event.text
+    const toolContent = sanitizeToolContent(event.toolContent) as
+      AcpRuntimeEvent['toolContent'] | undefined
+    const terminalOutput = event.terminalOutput
+      ? capToolDetailText(event.terminalOutput)
+      : undefined
     if (image && event.sessionId) {
       const retainedBytes = this.retainedWindow()
         .filter((candidate) => candidate.sessionId === event.sessionId)
@@ -83,6 +89,8 @@ class AcpRuntimeSnapshotOwner {
       level: event.level ?? 'info',
       text,
       image,
+      toolContent,
+      terminalOutput,
       promptMessageId: event.promptMessageId,
       raw
     }
