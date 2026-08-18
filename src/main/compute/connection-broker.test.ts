@@ -875,6 +875,58 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     expect(passwordTarget.extraArgs.join(' ')).not.toContain('credential-consuming-helper')
   })
 
+  it('keeps the explicit password username when the SSH alias has the same value', async () => {
+    const sameAliasAndUserHost = {
+      ...host,
+      sshAlias: 'researcher',
+      sshOverrides: { user: 'researcher', port: 2222 }
+    }
+    const runner: SshRunner = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 255,
+          stdout: '',
+          stderr: 'Permission denied',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'connected',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+    }
+    const adapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operation: (password: string) => Promise<unknown>) => operation('secret')
+        }))
+      } as unknown as CredentialVault,
+      runner,
+      vi.fn(async () => ({
+        ...target,
+        host: 'researcher',
+        extraArgs: ['-p', '2222', '-o', 'ConnectTimeout=10']
+      })),
+      vi.fn(async () => ({ hostname: 'login.cluster.example' })),
+      vi.fn(async () => ({
+        env: { SSH_ASKPASS: '/constrained/helper' },
+        wasAnswered: () => true,
+        dispose: async () => undefined
+      }))
+    )
+
+    const lease = await adapter.acquire(sameAliasAndUserHost, { intent: 'direct_command' })
+    await lease.run('true', { timeoutMs: 1000 })
+
+    const passwordTarget = vi.mocked(runner.run).mock.calls[1]![0]
+    expect(passwordTarget.host).toBe('login.cluster.example')
+    expect(passwordTarget.extraArgs).toEqual(expect.arrayContaining(['-o', 'User=researcher']))
+  })
+
   it('rejects a resolved hostname that SSH could parse as an option before attaching askpass', async () => {
     const runner: SshRunner = {
       run: vi.fn()

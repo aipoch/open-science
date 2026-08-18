@@ -58,7 +58,8 @@ const PASSWORD_POLICY_OPTIONS = new Set([
   'proxycommand',
   'proxyjump',
   'pubkeyauthentication',
-  'stricthostkeychecking'
+  'stricthostkeychecking',
+  'user'
 ])
 
 const PASSWORD_SAFE_CONFIG_OPTIONS = new Map([
@@ -439,6 +440,8 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
     }
     const inheritedArgs = withoutInheritedAuthenticationOptions(base.extraArgs)
     const policy = [
+      '-o',
+      `User=${user}`,
       '-o',
       'ProxyJump=none',
       '-o',
