@@ -156,7 +156,7 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
         expectedRevision: current.revision,
         deleteSkillIds: []
       })
-      if (result.status === 'failed') throw new Error(result.code)
+      if (result.status === 'failed') throw agentsPublicError(result.code)
     } else {
       await profileService.delete(current.id, current.revision)
     }
