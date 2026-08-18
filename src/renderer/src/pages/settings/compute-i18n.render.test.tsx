@@ -124,7 +124,7 @@ describe('ComputePanel i18n', () => {
     expect(container.textContent).toContain('No SSH hosts yet')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('连接运行重型计算的地方')
+    expect(container.textContent).toContain('通过 SSH 连接你自己的服务器，为繁重任务提供算力')
     expect(container.textContent).toContain('SSH 主机')
     expect(container.textContent).toContain('添加 SSH 主机')
     expect(container.textContent).toContain('还没有 SSH 主机')

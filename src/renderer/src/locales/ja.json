@@ -2826,5 +2826,17 @@
   "Update from v{{current}} to v{{incoming}}": "v{{current}} から v{{incoming}} に更新",
   "Updating replaces this Specialist’s instructions and selected capabilities. Existing resources are kept unless removed separately.": "更新すると、このスペシャリストの指示と選択した能力が置き換えられます。既存のリソースは、別に削除しない限り保持されます。",
   "Local changes to this Specialist will be replaced by the Marketplace version.": "このスペシャリストへのローカル変更は、Marketplace バージョンに置き換えられます。",
-  "Update Specialist": "スペシャリストを更新"
+  "Update Specialist": "スペシャリストを更新",
+  "Finishing this recovered move will interrupt the running sessions below and restart the app.": "復旧したデータ移動を完了すると、以下の実行中のセッションが中断され、アプリが再起動します。",
+  "Continue to recovery": "復旧を続ける",
+  "Incomplete data copy found": "未完了のデータコピーが見つかりました",
+  "Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.": "Open Science はコピーの完了前に終了しました。現在のデータは変更されていません。この場所を再び使用するには、未完了のコピーを破棄してください。",
+  "Discard incomplete copy": "未完了のコピーを破棄",
+  "Verified data copy found": "検証済みのデータコピーが見つかりました",
+  "A completed copy from an interrupted move is ready. Finish the move to switch locations and restart, or discard the copy to stay where you are.": "中断されたデータ移動で作成された完了済みのコピーを使用できます。移動を完了して場所を切り替え、再起動するか、コピーを破棄して現在の場所を使い続けてください。",
+  "Discard copy": "コピーを破棄",
+  "Finish move": "データ移動を完了",
+  "A verified copy from an interrupted move was found here. You can finish the move without copying everything again, or discard it.": "中断されたデータ移動で作成された検証済みのコピーがここに見つかりました。すべてを再コピーせずに移動を完了するか、このコピーを破棄できます。",
+  "An incomplete copy from an interrupted move was found here. Discard it before using this location again.": "中断されたデータ移動による未完了のコピーがここに見つかりました。この場所を再び使用する前に破棄してください。",
+  "Resolve unfinished move": "未完了のデータ移動を解決"
 }

@@ -111,7 +111,7 @@ describe('PermissionUndoSnackbar', () => {
       await i18next.changeLanguage('zh-Hans')
     })
 
-    expect(container.textContent).toContain('已撤销 本地计算 · Shell')
+    expect(container.textContent).toContain('已撤销 本地算力 · Shell')
     expect(container.textContent).not.toContain('Revoked Local compute')
   })
 
