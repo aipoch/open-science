@@ -315,9 +315,7 @@ export class SwitchOperation {
       throw new SwitchError(error)
     }
     if (!profile.enabled) {
-      throw new SwitchError(
-        agentsPublicError(`Specialist "${targetName}" is not enabled`)
-      )
+      throw new SwitchError(agentsPublicError(`Specialist "${targetName}" is not enabled`))
     }
     return { kind: 'specialist', profile }
   }
