@@ -38,14 +38,14 @@ const createDefaultPreviewStateRepository = (): PreviewStateRepository =>
 
 type ProjectDeleteHandler = Pick<
   ProjectDeletionCoordinator,
-  'deleteProject' | 'recoverPendingDeletions'
+  'deleteProject' | 'waitForProjectOperations'
 >
 type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' | 'update'> &
   Partial<Pick<ProjectRepository, 'updateArchive'>>
 type ProjectArchiveHandler = Pick<ProjectHandlers, 'updateArchive'>
 
-// Adapts repository operations into thin handlers while enforcing one shared recovery gate. CRUD
-// cannot observe or mutate projects until every durable deletion intent has finished replaying.
+// Adapts repository operations into thin handlers while enforcing Project-scoped recovery admission.
+// A failed durable deletion intent remains closed without denying unrelated Project operations.
 const createProjectHandlers = (
   repository: ProjectCrudRepository,
   deletionCoordinator: ProjectDeleteHandler,
@@ -57,27 +57,27 @@ const createProjectHandlers = (
   }
 ): ProjectHandlers => ({
   list: async () => {
-    await deletionCoordinator.recoverPendingDeletions()
+    await deletionCoordinator.waitForProjectOperations([])
     return repository.list()
   },
   get: async (id) => {
-    await deletionCoordinator.recoverPendingDeletions()
+    await deletionCoordinator.waitForProjectOperations([id])
     return repository.get(id)
   },
   create: async (request) => {
-    await deletionCoordinator.recoverPendingDeletions()
+    await deletionCoordinator.waitForProjectOperations([])
     return repository.create(request)
   },
   update: async (request) => {
-    await deletionCoordinator.recoverPendingDeletions()
+    await deletionCoordinator.waitForProjectOperations([request.id])
     return repository.update(request)
   },
   updateArchive: async (request) => {
-    await deletionCoordinator.recoverPendingDeletions()
+    await deletionCoordinator.waitForProjectOperations([request.id])
     return archiveHandler.updateArchive(request)
   },
   delete: async (id) => {
-    await deletionCoordinator.recoverPendingDeletions()
+    await deletionCoordinator.waitForProjectOperations([id])
     await deletionCoordinator.deleteProject(id)
   }
 })

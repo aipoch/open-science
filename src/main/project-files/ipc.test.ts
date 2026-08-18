@@ -58,7 +58,7 @@ describe('project files IPC handlers', () => {
         repairProjectFiles: vi.fn().mockResolvedValue(undefined)
       },
       {
-        recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
+        waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
       }
     )
     const filesRequest = {
@@ -98,7 +98,7 @@ describe('project files IPC handlers', () => {
     }
     const repair = { repairProjectFiles: vi.fn().mockResolvedValue(undefined) }
     const handlers = createProjectFilesHandlers(repository, repair, {
-      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     })
 
     await handlers.repairIndex({ projectId: 'project-1' })
@@ -138,7 +138,7 @@ describe('project files IPC handlers', () => {
       })
     }
     const recovery = {
-      recoverPendingDeletions: vi.fn(async () => {
+      waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
     }
@@ -153,7 +153,7 @@ describe('project files IPC handlers', () => {
     await handlers.listArtifactGroups({ projectId: 'project-1', limit: 10 })
     await handlers.searchArtifacts({
       primaryProjectId: 'project-1',
-      otherProjectIds: [],
+      otherProjectIds: ['project-2'],
       primaryLimit: 8,
       otherLimit: 0
     })
@@ -171,6 +171,11 @@ describe('project files IPC handlers', () => {
       'recover',
       'repair'
     ])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(1, ['project-1'])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(2, ['project-1'])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(3, ['project-1'])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(4, ['project-1', 'project-2'])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(5, ['project-1'])
   })
 })
 
@@ -200,7 +205,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       })
     }
     repairBackend = { repairProjectFiles: vi.fn().mockResolvedValue(undefined) }
-    recoveryBackend = { recoverPendingDeletions: vi.fn().mockResolvedValue(undefined) }
+    recoveryBackend = { waitForProjectOperations: vi.fn().mockResolvedValue(undefined) }
   })
 
   it('registers every project-files IPC channel', () => {
@@ -236,7 +241,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     )
     expect(injected.getOverview).toHaveBeenCalledWith({ projectId: 'project-1' })
     expect(repository.getOverview).not.toHaveBeenCalled()
-    expect(recoveryBackend.recoverPendingDeletions).not.toHaveBeenCalled()
+    expect(recoveryBackend.waitForProjectOperations).not.toHaveBeenCalled()
   })
 
   it('preserves an injected handler identity when registration fails', async () => {
@@ -289,7 +294,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       repairProjectFiles: vi.fn()
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
-      recoverPendingDeletions: vi.fn(async () => {
+      waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
     }
@@ -316,7 +321,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       repairProjectFiles: vi.fn()
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
-      recoverPendingDeletions: vi.fn(async () => {
+      waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
     }
@@ -348,7 +353,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       repairProjectFiles: vi.fn()
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
-      recoverPendingDeletions: vi.fn(async () => {
+      waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
     }
@@ -375,7 +380,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       })
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
-      recoverPendingDeletions: vi.fn(async () => {
+      waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
     }
@@ -391,7 +396,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     // Each handler in the registered table must go through the same gate; this protects against
     // accidentally bypassing recovery by registering a handler that calls the backend directly.
     registerProjectFilesIpcHandlers(repository, repairBackend, recoveryBackend)
-    ;(recoveryBackend.recoverPendingDeletions as ReturnType<typeof vi.fn>).mockClear()
+    ;(recoveryBackend.waitForProjectOperations as ReturnType<typeof vi.fn>).mockClear()
 
     await invoke('project-files:get-overview', { projectId: 'p1' })
     await invoke('project-files:list-files', {
@@ -402,7 +407,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     await invoke('project-files:list-artifact-groups', { projectId: 'p1', limit: 1 })
     await invoke('project-files:repair-index', { projectId: 'p1' })
 
-    expect(recoveryBackend.recoverPendingDeletions).toHaveBeenCalledTimes(4)
+    expect(recoveryBackend.waitForProjectOperations).toHaveBeenCalledTimes(4)
   })
 })
 
