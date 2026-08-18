@@ -23,7 +23,7 @@ describe('runtimes panel describers', () => {
   it('localizes every provenance branch', () => {
     expect(providerType(env({ provenance: 'app-managed' }), en)).toBe('App-managed')
     expect(providerType(env({ provenance: 'app-managed' }), zh)).toBe('应用托管')
-    expect(providerType(env({ provenance: 'agent-created' }), zh)).toBe('Agent 创建')
+    expect(providerType(env({ provenance: 'agent-created' }), zh)).toBe('智能体创建')
     // 'System' is the fallback for a user-own interpreter with no conda env.
     expect(providerType(env(), zh)).toBe('系统')
   })

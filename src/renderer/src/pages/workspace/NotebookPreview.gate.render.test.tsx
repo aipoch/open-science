@@ -361,12 +361,10 @@ describe('NotebookPreview per-kernel tabs', () => {
   // the locale is what has to be asserted.
   it('translates the terminal header and the resize handle', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
-    act(() => {
-      void i18next.changeLanguage('zh-Hans')
-    })
+    await act(async () => i18next.changeLanguage('zh-Hans'))
 
     const header = container.querySelector('[data-testid="notebook-terminal-header"]')
-    expect(header?.textContent).toContain('Python 内核 · 与 Agent 共享')
+    expect(header?.textContent).toContain('Python 内核 · 与智能体共享')
     expect(header?.textContent).toContain('空闲')
     expect(header?.textContent).not.toContain('shared with the agent')
     expect(header?.textContent).not.toContain('idle')
@@ -374,9 +372,7 @@ describe('NotebookPreview per-kernel tabs', () => {
       container.querySelector<HTMLElement>('[data-separator]')?.getAttribute('aria-label')
     ).toBe('调整 Notebook 与终端大小')
 
-    act(() => {
-      void i18next.changeLanguage('en')
-    })
+    await act(async () => i18next.changeLanguage('en'))
   })
 
   it('shows a tab only for kernel kinds present in the runs (no default python/r tab)', async () => {

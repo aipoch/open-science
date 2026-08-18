@@ -403,16 +403,16 @@ describe('SpecialistsPanel', () => {
           <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={onNavigate} />
         )
       })
-      expect(document.body.textContent).toContain('Skill 名称重复')
-      expect(document.body.textContent).toContain('Skill 列表不得包含重复名称')
+      expect(document.body.textContent).toContain('技能名称重复')
+      expect(document.body.textContent).toContain('技能列表不得包含重复名称')
       expect(document.body.textContent).toContain('无效的描述')
       expect(document.body.textContent).toContain('描述必须是长度限制内的非空字符串')
 
       await act(async () => {
         await i18next.changeLanguage('zh-Hant')
       })
-      expect(document.body.textContent).toContain('Skill 名稱重複')
-      expect(document.body.textContent).toContain('Skill 清單不得包含重複名稱')
+      expect(document.body.textContent).toContain('技能名稱重複')
+      expect(document.body.textContent).toContain('技能清單不得包含重複名稱')
       expect(document.body.textContent).toContain('無效的描述')
       expect(document.body.textContent).toContain('描述必須是長度限制內的非空字串')
       expect(document.body.textContent).not.toContain('specialist.skillIds-duplicate')

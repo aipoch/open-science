@@ -95,16 +95,23 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term           | zh-Hans               | zh-Hant               | ja                     | Note                                                 |
-| -------------- | --------------------- | --------------------- | ---------------------- | ---------------------------------------------------- |
-| Skill / Skills | **Skill** / **Skill** | **Skill** / **Skill** | **Skill** / **Skill**  | Never translate to 技能/技巧 — keep the English word |
-| Agent          | **Agent**             | **Agent**             | **Agent**              | Keep as-is                                           |
-| Notebook       | **Notebook**          | **Notebook**          | **Notebook**           | Keep as-is                                           |
-| Specialist     | **专家**              | **專家**              | **スペシャリスト**     | Generic role; translate                              |
-| Marketplace    | **市场**              | **市集**              | **マーケットプレイス** | Generic surface; retain third-party product names    |
-| Connector      | **连接器**            | **連接器**            | **コネクタ**           | Generic domain noun; retain exact directory names    |
-| Main Agent     | **主 Agent**          | **主 Agent**          | **メイン Agent**       | Localize the qualifier, retain Agent                 |
-| Shell          | **Shell**             | **Shell**             | **シェル**             | Keep the precise technical term                      |
+| Term                 | zh-Hans      | zh-Hant      | ja                     | Note                                              |
+| -------------------- | ------------ | ------------ | ---------------------- | ------------------------------------------------- |
+| Skill / Skills       | **技能**     | **技能**     | **スキル**             | Translate user-visible prose                      |
+| Agent / Agents       | **智能体**   | **智能體**   | **エージェント**       | Translate user-visible prose                      |
+| Notebook             | **Notebook** | **Notebook** | **Notebook**           | Keep as-is                                        |
+| token (model usage)  | **词元**     | **詞元**     | **トークン**           | Model input, output, context, and usage counts    |
+| token (credential)   | **令牌**     | **權杖**     | **トークン**           | Authentication and personal access credentials    |
+| Specialist           | **专家**     | **專家**     | **スペシャリスト**     | Generic role; translate                           |
+| Marketplace          | **市场**     | **市集**     | **マーケットプレイス** | Generic surface; retain third-party product names |
+| Connector            | **连接器**   | **連接器**   | **コネクタ**           | Generic noun; retain exact directory names        |
+| Main Agent           | **主智能体** | **主智能體** | **メインエージェント** | Translate as a complete compound                  |
+| Subagent / Subagents | **子智能体** | **子智能體** | **サブエージェント**   | Translate as a complete compound                  |
+| Shell                | **命令行**   | **命令列**   | **シェル**             | User-facing label; `Notebook` remains English     |
+
+Exact technical identifiers are exempt from prose translation. Keep file names, extensions,
+commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`, `.skill`,
+`skill://`, `skills/`, `.agents/skills`, `AGENTS.md`, `ssh-agent`, and `setup-token`.
 
 ### Verifying your translations
 

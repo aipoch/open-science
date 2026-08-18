@@ -265,19 +265,13 @@ describe('dynamic counted lookup translations', () => {
 })
 
 describe('mandatory product glossary', () => {
-  const glossary = [
-    { term: 'Agent', source: /\b(?:sub)?agents?\b/i, ignore: /ssh-agent/i },
-    { term: 'Notebook', source: /\bnotebooks?\b/i },
-    { term: 'Skill', source: /\bskills?\b/i, ignore: /(?:\.skill|SKILL\.md|skill:\/\/)/ }
-  ]
+  const retainedGlossary = [{ term: 'Notebook', source: /\bnotebooks?\b/i }]
 
-  it.each(TRANSLATED)('%s keeps branded terms in English', (locale) => {
+  it.each(TRANSLATED)('%s keeps Notebook in English', (locale) => {
     const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
       const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
-      return glossary
-        .filter(({ term, source: pattern, ignore }) => {
-          return pattern.test(source) && !ignore?.test(source) && !value.includes(term)
-        })
+      return retainedGlossary
+        .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
         .map(({ term }) => `${key}: ${term}`)
     })
 
@@ -299,8 +293,7 @@ describe('mandatory product glossary', () => {
       { term: 'Star', source: /\bstars?\b/i },
       { term: 'Discord', source: /\bDiscord\b/ },
       { term: 'Python', source: /\bPython\b/ },
-      { term: 'Jupyter', source: /\bJupyter\b/ },
-      { term: 'token', source: /\btokens?\b/i }
+      { term: 'Jupyter', source: /\bJupyter\b/ }
     ]
     const offenders = Object.entries(catalog('ja')).flatMap(([key, value]) => {
       const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
@@ -314,34 +307,43 @@ describe('mandatory product glossary', () => {
 
   const chosenGenericTerms = {
     'zh-Hans': {
+      Agent: '智能体',
+      Skills: '技能',
       Specialist: '专家',
       Specialists: '专家',
       Marketplace: '市场',
       Connector: '连接器',
-      Main: '主 Agent',
-      Shell: 'Shell',
-      'Token usage': 'token 用量',
+      Main: '主智能体',
+      Shell: '命令行',
+      'Token usage': '词元用量',
+      'Claude setup token': 'Claude 设置令牌',
       'Token: {{masked}}': '令牌：{{masked}}'
     },
     'zh-Hant': {
+      Agent: '智能體',
+      Skills: '技能',
       Specialist: '專家',
       Specialists: '專家',
       Marketplace: '市集',
       Connector: '連接器',
-      Main: '主 Agent',
-      Shell: 'Shell',
-      'Token usage': 'token 用量',
+      Main: '主智能體',
+      Shell: '命令列',
+      'Token usage': '詞元用量',
+      'Claude setup token': 'Claude 設定權杖',
       'Token: {{masked}}': '權杖：{{masked}}'
     },
     ja: {
+      Agent: 'エージェント',
+      Skills: 'スキル',
       Specialist: 'スペシャリスト',
       Specialists: 'スペシャリスト',
       Marketplace: 'マーケットプレイス',
       Connector: 'コネクタ',
-      Main: 'メイン Agent',
+      Main: 'メインエージェント',
       Shell: 'シェル',
-      'Token usage': 'token 使用量',
-      'Token: {{masked}}': 'token：{{masked}}'
+      'Token usage': 'トークン使用量',
+      'Claude setup token': 'Claude セットアップトークン',
+      'Token: {{masked}}': 'トークン：{{masked}}'
     }
   } satisfies Record<TranslatedLocale, Record<string, string>>
 
@@ -355,7 +357,7 @@ describe('mandatory product glossary', () => {
   })
 
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
-    const expected = locale === 'ja' ? 'シェル' : 'Shell'
+    const expected = { 'zh-Hans': '命令行', 'zh-Hant': '命令列', ja: 'シェル' }[locale]
     const offenders = Object.entries(catalog(locale))
       .filter(([key]) => /\bshell\b/i.test(englishOf(key)))
       .filter(([, value]) => !value.includes(expected))
@@ -367,7 +369,11 @@ describe('mandatory product glossary', () => {
   it.each(TRANSLATED)(
     '%s uses the chosen Main Agent spelling in every Main role label',
     (locale) => {
-      const expected = locale === 'ja' ? 'メイン Agent' : '主 Agent'
+      const expected = {
+        'zh-Hans': '主智能体',
+        'zh-Hant': '主智能體',
+        ja: 'メインエージェント'
+      }[locale]
       const offenders = Object.entries(catalog(locale))
         .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
         .filter(([, value]) => !value.includes(expected))
@@ -377,26 +383,110 @@ describe('mandatory product glossary', () => {
     }
   )
 
-  it.each(['zh-Hans', 'zh-Hant'] as const)(
-    '%s translates credential tokens independently from model-usage token',
-    (locale) => {
-      const credentialTokenSource = [
-        /\b(?:Claude|GitHub|OAuth|setup|saved|replacement|access)\s+tokens?\b/i,
-        /\b(?:paste|save|remove|use|manage|prefer|exclude|read)\b[^.]*\btokens?\b/i,
-        /\btokens?\s+(?:verified|verification|excluded)\b/i,
-        /^Token:/
+  const exactTechnicalIdentifierPatterns = [
+    /SKILL\.md/g,
+    /\b[\w.-]+\.(?:md|txt|json|zip)\b/g,
+    /\.(?:md|zip)\b/g,
+    /\.skill\b/g,
+    /skill:\/\//g,
+    /host\.skill\b/g,
+    /AGENTS\.md/g,
+    /ssh-agent/g,
+    /setup-token/g,
+    /\bmax_tokens\b/g,
+    /\bskills\//g,
+    /(?:~\/|\.)[\w./-]*skills\b/g,
+    /Specialist Marketplace protocol/g,
+    /Claude Connectors Directory/g,
+    /<code>[^<]*(?:skills?|agents?)[^<]*<\/code>/gi
+  ]
+  const additionalRequiredIdentifiers = {
+    'The ZIP contains app metadata, the specialist.json you fill in, and a README.txt guide. Skills placed in the skills folder are discovered automatically.':
+      ['skills/']
+  } satisfies Record<string, string[]>
+  const exactTechnicalIdentifiers = (text: string): string[] =>
+    exactTechnicalIdentifierPatterns
+      .flatMap((identifier) => text.match(identifier) ?? [])
+      .sort((left, right) => left.localeCompare(right))
+  const withoutTechnicalIdentifiers = (text: string): string =>
+    [/\{\{\w+\}\}/g, ...exactTechnicalIdentifierPatterns].reduce(
+      (prose, identifier) => prose.replace(identifier, ''),
+      text
+    )
+
+  it.each(TRANSLATED)('%s preserves exact technical identifiers', (locale) => {
+    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+      const source = englishOf(key)
+      const expected = [
+        ...exactTechnicalIdentifiers(source),
+        ...(additionalRequiredIdentifiers[source] ?? [])
+      ].sort((left, right) => left.localeCompare(right))
+      const actual = exactTechnicalIdentifiers(value)
+
+      return JSON.stringify(actual) === JSON.stringify(expected)
+        ? []
+        : [`${key}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`]
+    })
+
+    expect(offenders).toEqual([])
+  })
+
+  const localizedFeatureTerms = {
+    'zh-Hans': { agent: '智能体', skill: '技能' },
+    'zh-Hant': { agent: '智能體', skill: '技能' },
+    ja: { agent: 'エージェント', skill: 'スキル' }
+  } satisfies Record<TranslatedLocale, { agent: string; skill: string }>
+
+  it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
+    const expected = localizedFeatureTerms[locale]
+    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+      const source = withoutTechnicalIdentifiers(englishOf(key))
+      const prose = withoutTechnicalIdentifiers(value)
+      return [
+        {
+          source: /\b(?:sub)?agents?\b/i,
+          untranslated: /\b(?:sub)?agents?\b/i,
+          expected: expected.agent
+        },
+        { source: /\bskills?\b/i, untranslated: /\bskills?\b/i, expected: expected.skill }
       ]
-      const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
-        const source = englishOf(key)
-        if (!credentialTokenSource.some((pattern) => pattern.test(source))) return []
+        .filter(
+          ({ source: pattern, untranslated, expected: term }) =>
+            pattern.test(source) && (!prose.includes(term) || untranslated.test(prose))
+        )
+        .map(({ expected: term }) => `${key}: ${term}`)
+    })
 
-        const prose = value.replace(/\bsetup-token\b/gi, '')
-        return /\btokens?\b/i.test(prose) ? [key] : []
-      })
+    expect(offenders).toEqual([])
+  })
 
-      expect(offenders).toEqual([])
-    }
-  )
+  const credentialTokenSource = [
+    /\b(?:Claude|GitHub|OAuth|setup|saved|replacement|access)\s+tokens?\b/i,
+    /\b(?:paste|save|remove|use|manage|prefer|exclude|read)\b[^.]*\btokens?\b/i,
+    /\btokens?\s+(?:verified|verification|excluded)\b/i,
+    /^Token:/
+  ]
+  const localizedTokenTerms = {
+    'zh-Hans': { credential: '令牌', model: '词元' },
+    'zh-Hant': { credential: '權杖', model: '詞元' },
+    ja: { credential: 'トークン', model: 'トークン' }
+  } satisfies Record<TranslatedLocale, { credential: string; model: string }>
+
+  it.each(TRANSLATED)('%s translates token according to credential or model context', (locale) => {
+    const expected = localizedTokenTerms[locale]
+    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+      const source = withoutTechnicalIdentifiers(englishOf(key))
+      if (!/\btokens?\b/i.test(source)) return []
+
+      const prose = withoutTechnicalIdentifiers(value)
+      const term = credentialTokenSource.some((pattern) => pattern.test(source))
+        ? expected.credential
+        : expected.model
+      return !prose.includes(term) || /\btokens?\b/i.test(prose) ? [`${key}: ${term}`] : []
+    })
+
+    expect(offenders).toEqual([])
+  })
 
   it.each(TRANSLATED)('%s localizes generic product nouns', (locale) => {
     const localizedGlossary = [

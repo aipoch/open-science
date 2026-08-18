@@ -6,76 +6,92 @@ rules in [`i18n-glossary.md`](i18n-glossary.md).
 
 ## Evidence used
 
-The review uses maintained localization projects and official localized documentation as evidence
-of established technical usage, rather than translating the words literally:
+The review separates community evidence from the final product decision:
 
+- GitHub's maintained [Simplified Chinese](https://docs.github.com/zh/copilot/concepts/agents/about-agent-skills)
+  Copilot docs use 技能 and include 智能体技能, but also use 代理 elsewhere on the same page. Its
+  [Japanese](https://docs.github.com/ja/copilot/concepts/agents/about-agent-skills) counterpart uses
+  エージェント and スキル consistently. This supports the native Skill choices and Japanese Agent
+  choice while documenting that Simplified Chinese Agent usage is not fully settled.
+- Traditional Chinese sources likewise vary among 代理, 代理程式, and 智能體. Microsoft uses
+  [智能體](https://learn.microsoft.com/zh-tw/startups/build/ai/agents/intro-agents) in AI-agent
+  explanatory prose, but not consistently across its catalog. The Chinese Agent choices are
+  therefore explicit Open Science product decisions, confirmed by the product owner, rather than a
+  claim of universal community consensus.
+- The [Agent Skills specification](https://agentskills.io/specification) defines `SKILL.md` as the
+  required file name. GitHub's localized pages preserve commands and paths such as `gh skill`,
+  `.github/skills`, `.claude/skills`, and `.agents/skills`; those protocol identifiers must remain
+  byte-for-byte unchanged even when surrounding prose is localized.
+- Traditional technical documentation uses
+  [詞元](https://learn.microsoft.com/zh-tw/azure/foundry/openai/latest) for model tokens.
+- Microsoft documents model tokens as
+  [词元](https://learn.microsoft.com/zh-cn/dotnet/ai/conceptual/understanding-tokens) in
+  Simplified Chinese, while Japanese model documentation uses
+  [トークン](https://learn.microsoft.com/ja-jp/azure/foundry/responsible-ai/openai/transparency-note).
+- GitHub uses [令牌](https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+  for Simplified Chinese credentials; Microsoft uses
+  [權杖](https://learn.microsoft.com/zh-tw/entra/identity-platform/id-tokens) in Traditional
+  Chinese; GitHub uses
+  [トークン](https://docs.github.com/ja/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+  in Japanese.
 - The public [VS Code localization repository](https://github.com/microsoft/vscode-loc) publishes
   Microsoft-managed language packs and accepts translation feedback through GitHub issues. Its
-  [Simplified Chinese](https://github.com/microsoft/vscode-loc/blob/main/i18n/vscode-language-pack-zh-hans/translations/main.i18n.json),
-  [Traditional Chinese](https://github.com/microsoft/vscode-loc/blob/main/i18n/vscode-language-pack-zh-hant/translations/main.i18n.json),
-  and [Japanese](https://github.com/microsoft/vscode-loc/blob/main/i18n/vscode-language-pack-ja/translations/main.i18n.json)
-  catalogs expose community-reviewed marketplace, shell, skill, and agent terminology, including
-  places where the locales deliberately differ.
-- [GitHub Docs in Simplified Chinese](https://docs.github.com/zh/copilot/concepts/agents/about-agent-skills)
-  and [Japanese](https://docs.github.com/ja/copilot/concepts/agents/about-agent-skills) translate
-  generic agent/skill concepts as 智能体 / 技能 and エージェント / スキル.
+  Simplified Chinese, Traditional Chinese, and Japanese catalogs provide comparison evidence for
+  marketplace, connector, shell, and other developer-tool terminology.
 - Japanese marketplace usage has two established spellings: AWS uses
   [マーケットプレイス](https://docs.aws.amazon.com/ja_jp/marketplace/latest/buyerguide/create-your-private-marketplace.html),
   while Microsoft uses
   [マーケットプレース](https://learn.microsoft.com/ja-jp/marketplace/what-is-commercial-marketplace).
-  The choice below is therefore a product consistency decision, not a claim that one spelling is
-  universally correct.
+  Open Science therefore records its selected spelling instead of claiming universal consensus.
 
-These sources establish candidate language, but the Open Science product glossary remains the
-final authority for first-class feature names.
-
-### Evidence by term
-
-| Term                | Locale evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Product resolution                                                                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Skill / Agent       | GitHub's Chinese and Japanese Copilot documentation uses 技能 / 智能体 and スキル / エージェント; VS Code language packs also vary by context.                                                                                                                                                                                                                                                                                                                                  | External usage does not converge across Chinese contexts. Open Science retains the existing English feature names in every locale.        |
-| Notebook            | Literal candidates include 笔记本, 筆記本, and ノートブック; [Jupyter Notebook](https://jupyter-notebook.readthedocs.io/en/stable/) supplies the product-category naming reference rather than a locale consensus.                                                                                                                                                                                                                                                              | Treat this as a product naming decision: retain the existing Open Science feature name and avoid the paper-notebook reading in Chinese.   |
-| token (model usage) | Microsoft model documentation uses mixed terms: the [Simplified Chinese reference](https://learn.microsoft.com/zh-cn/azure/foundry/openai/reference) mixes 代币, 令牌, 标记, and raw `token` field names; the [Traditional Chinese transparency note](https://learn.microsoft.com/zh-tw/azure/foundry/responsible-ai/openai/transparency-note) defines 代幣; Japanese uses [トークン](https://learn.microsoft.com/ja-jp/azure/foundry/responsible-ai/openai/transparency-note). | No cross-locale consensus is asserted. Retaining compact lowercase `token` in dense usage displays is an explicit product-style decision. |
-| token (credential)  | GitHub uses [令牌](https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) in Simplified Chinese; Microsoft uses [權杖](https://learn.microsoft.com/zh-tw/entra/identity-platform/id-tokens) in Traditional Chinese; GitHub uses [トークン](https://docs.github.com/ja/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) in Japanese.                                      | Adopt 令牌 / 權杖 for Chinese credentials. Keep the product's existing lowercase `token` style in Japanese.                               |
-| Specialist          | GitHub uses [专家](https://docs.github.com/zh/copilot/tutorials/customization-library/custom-agents/your-first-custom-agent) and [スペシャリスト](https://docs.github.com/ja/copilot/tutorials/customization-library/custom-agents/your-first-custom-agent); Microsoft uses [專家](https://learn.microsoft.com/zh-tw/shows/copilot-learning-hub/building-ai-agents-with-microsoft-azure-insights-from-the-experts).                                                             | Use the established generic role term independently in each locale.                                                                       |
-| Marketplace         | VS Code uses 市场 / 市集; Microsoft also uses [市集](https://learn.microsoft.com/zh-tw/marketplace/what-is-commercial-marketplace). Japanese sources split between マーケットプレイス and マーケットプレース.                                                                                                                                                                                                                                                                   | Use 市场 / 市集 and select the established AWS spelling マーケットプレイス; retain either spelling inside exact product names.            |
-| Connector           | Microsoft documentation uses [连接器](https://learn.microsoft.com/zh-cn/connectors/custom-connectors/), [連接器](https://learn.microsoft.com/zh-tw/connectors/), and [コネクタ](https://learn.microsoft.com/ja-jp/connectors/connectors).                                                                                                                                                                                                                                       | Use those exact generic domain terms.                                                                                                     |
-| Shell               | VS Code usage keeps `Shell` or `shell` in Simplified Chinese, sometimes uses 殼層 in Traditional Chinese, and consistently uses シェル in Japanese.                                                                                                                                                                                                                                                                                                                             | Retain the precise technical term `Shell` in both Chinese catalogs and use シェル in Japanese.                                            |
-| Main Agent          | This is a product compound rather than an independent community term.                                                                                                                                                                                                                                                                                                                                                                                                           | Translate the qualifier and apply the mandatory retained `Agent` spelling.                                                                |
+These sources establish native-language candidates. The confirmed Open Science product decision
+is the final authority where the sources vary.
 
 ## Candidate and final terminology
 
-| English term        | zh-Hans candidates   | zh-Hant candidates   | ja candidates                                  | Final choice (zh-Hans / zh-Hant / ja) | Decision                                                                                                                                         |
-| ------------------- | -------------------- | -------------------- | ---------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Skill / Skills      | Skill, 技能          | Skill, 技能          | Skill, スキル                                  | Skill / Skill / Skill                 | Retain the first-class Open Science feature name and preserve interoperability with package metadata and documentation.                          |
-| Agent               | Agent, 智能体, 代理  | Agent, 代理程式      | Agent, エージェント                            | Agent / Agent / Agent                 | Community sources do not converge on one Chinese term; retain the first-class product name in all locales.                                       |
-| Notebook            | Notebook, 笔记本     | Notebook, 筆記本     | Notebook, ノートブック                         | Notebook / Notebook / Notebook        | Retain the feature name and avoid the paper-notebook meaning in Chinese.                                                                         |
-| token (model usage) | token, 词元          | token, 詞元          | token, トークン                                | token / token / token                 | Retain the compact technical term used in model context and usage displays.                                                                      |
-| token (credential)  | 令牌, token          | 權杖, token          | token, トークン                                | 令牌 / 權杖 / token                   | Use the established Chinese credential terms; retain the existing Japanese technical spelling.                                                   |
-| Specialist          | 专家, 专业 Agent     | 專家, 專業 Agent     | スペシャリスト, 専門 Agent                     | 专家 / 專家 / スペシャリスト          | This is a generic role, and each final term is already established in the corresponding catalog or official technical documentation.             |
-| Marketplace         | 市场, 应用市场       | 市集, 應用市集       | マーケットプレイス, マーケットプレース, ストア | 市场 / 市集 / マーケットプレイス      | Translate the generic discovery surface. Japanese sources split; select the established AWS spelling and retain exact product names.             |
-| Connector           | 连接器, 连接项       | 連接器, 連線項目     | コネクタ, 接続                                 | 连接器 / 連接器 / コネクタ            | The project glossary already defines it as a generic domain noun. Proper directory names such as `Claude Connectors Directory` remain unchanged. |
-| Shell               | Shell, 命令行        | Shell, 命令列        | シェル, Shell                                  | Shell / Shell / シェル                | Chinese technical usage keeps the precise shell concept; Japanese has an unambiguous established transliteration.                                |
-| Main Agent          | 主 Agent, 主要 Agent | 主 Agent, 主要 Agent | メイン Agent, 主 Agent                         | 主 Agent / 主 Agent / メイン Agent    | Localize the role qualifier while retaining the mandatory `Agent` feature name. The short label `Main` expands to this full localized role.      |
+| English term         | zh-Hans candidates   | zh-Hant candidates      | ja candidates                                  | Final choice (zh-Hans / zh-Hant / ja)    | Why this choice                                                                                                                                    |
+| -------------------- | -------------------- | ----------------------- | ---------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Skill / Skills       | 技能, Skill, 技巧    | 技能, Skill, 技巧       | スキル, Skill                                  | 技能 / 技能 / スキル                     | GitHub's localized AI documentation uses these native generic nouns, and the product owner confirmed them. Exact identifiers remain English.       |
+| Agent / Agents       | 智能体, 代理, Agent  | 智能體, 代理程式, Agent | エージェント, Agent                            | 智能体 / 智能體 / エージェント           | 智能体 distinguishes an AI actor from software proxies in Chinese; Japanese community usage converges on エージェント.                             |
+| Main Agent           | 主智能体, 主要智能体 | 主智能體, 主要智能體    | メインエージェント, 主エージェント             | 主智能体 / 主智能體 / メインエージェント | Treat the role name as a complete localized compound; the short `Main` label expands to the same term.                                             |
+| Subagent / Subagents | 子智能体, 子 Agent   | 子智能體, 子 Agent      | サブエージェント, サブ Agent                   | 子智能体 / 子智能體 / サブエージェント   | Matches each locale's selected Agent term and reads naturally as a role label.                                                                     |
+| Notebook             | Notebook, 笔记本     | Notebook, 筆記本        | Notebook, ノートブック                         | Notebook / Notebook / Notebook           | Fixed feature name; retaining it avoids the paper-notebook reading in Chinese.                                                                     |
+| token (model usage)  | 词元, token, 标记    | 詞元, token, 語彙基元   | トークン, token                                | 词元 / 詞元 / トークン                   | Official model documentation supports the selected native terms; this meaning covers input, output, cache, context, and usage counts.              |
+| token (credential)   | 令牌, token          | 權杖, token, 令牌       | トークン, token                                | 令牌 / 權杖 / トークン                   | Credential terminology follows localized GitHub and Microsoft authentication documentation.                                                        |
+| Shell                | 命令行, Shell, 终端  | 命令列, Shell, 終端機   | シェル, コマンドライン, Shell                  | 命令行 / 命令列 / シェル                 | Chinese prioritizes a clear user-facing label; Japanese uses its established technical transliteration. `Notebook` remains unchanged in compounds. |
+| Specialist           | 专家, 专业智能体     | 專家, 專業智能體        | スペシャリスト, 専門エージェント               | 专家 / 專家 / スペシャリスト             | Short, established generic role terms fit dense UI.                                                                                                |
+| Marketplace          | 市场, 应用市场       | 市集, 應用市集          | マーケットプレイス, マーケットプレース, ストア | 市场 / 市集 / マーケットプレイス         | Translate the generic discovery surface; Japanese sources split, so Open Science selects one documented spelling consistently.                     |
+| Connector            | 连接器, 连接项       | 連接器, 連線項目        | コネクタ, 接続                                 | 连接器 / 連接器 / コネクタ               | Established generic domain terms; exact directory and product names remain unchanged.                                                              |
 
-File names, package names, protocol identifiers, URLs, and third-party product names are never
-rewritten merely because they contain one of these words. Examples include `specialist.json`,
+## Identifier exceptions
+
+File names, extensions, commands, paths, protocol identifiers, API fields, code spans, URLs, and
+fixed proper names recorded in the retained glossary are not rewritten merely because they contain
+one of these words. Examples include `SKILL.md`, `.skill`, `skill://`, `.agents/skills`,
+`AGENTS.md`, `ssh-agent`, `setup-token`, `max_tokens`, `specialist.json`,
 `openscience-specialist-template.zip`, `Specialist Marketplace protocol`, and
 `Claude Connectors Directory`.
 
 ## Decision tree
 
 ```text
-Does the text name a file, package, protocol identifier, URL, model, or third-party product?
+Does the text name a file, extension, command, path, protocol/API identifier, URL, or a fixed proper
+name recorded in the retained glossary?
 ├─ Yes → Retain the exact identifier or proper name.
 └─ No
-   └─ Is it a first-class Open Science feature with a mandatory glossary spelling?
-      ├─ Yes → Retain Skill, Agent, Notebook, or model-usage token exactly.
-      └─ No
-         └─ Is it a generic role, surface, or domain noun with established locale usage?
-            ├─ Yes → Translate independently in zh-Hans, zh-Hant, and ja.
-            └─ No → Record candidates and defer until evidence or product context resolves it.
+   ├─ Is the term Notebook?
+   │  └─ Yes → Retain Notebook in every locale.
+   ├─ Is the term token?
+   │  ├─ Authentication credential → 令牌 / 權杖 / トークン.
+   │  └─ Model input, output, context, or usage → 词元 / 詞元 / トークン.
+   ├─ Is it Skill, Agent, Shell, or a compound containing one of them?
+   │  └─ Yes → Use the complete native term from the final-choice table.
+   ├─ Is it another generic role, surface, or domain noun listed above?
+   │  └─ Yes → Translate independently for zh-Hans, zh-Hant, and ja.
+   └─ No → Record candidates and defer until evidence or product context resolves it.
 
-For compound labels, apply the tree to each part:
-Main Agent → localize Main + retain Agent → 主 Agent / 主 Agent / メイン Agent.
+Compound examples:
+Main Agent → 主智能体 / 主智能體 / メインエージェント
+Subagent → 子智能体 / 子智能體 / サブエージェント
+Notebook shell → Notebook 命令行 / Notebook 命令列 / Notebook シェル
 ```
