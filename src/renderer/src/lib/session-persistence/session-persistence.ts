@@ -672,13 +672,14 @@ const createStoreSaver = (
         const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
         const applyDurableSession = (
           durableSession: PersistedChatSession,
-          options: SaveSessionOptions | undefined
+          options: SaveSessionOptions | undefined,
+          recoveredRevisionConflict = false
         ): void => {
           useSessionStore.getState().applyDurableSessionProjection({
             source: session,
             session: durableSession,
             mode:
-              (options?.conflictRebaseFields?.length ?? 0) > 0
+              recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0
                 ? 'replace-persisted-if-current'
                 : 'merge-upload-identities'
           })
@@ -695,6 +696,7 @@ const createStoreSaver = (
                 persisted.revision =
                   acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                 let durableSession: PersistedChatSession
+                let recoveredRevisionConflict = false
                 try {
                   durableSession = saveOptions
                     ? await persistence.saveSession(persisted, saveOptions)
@@ -707,6 +709,7 @@ const createStoreSaver = (
                       saveOptions,
                       api.saveSession
                     )
+                    recoveredRevisionConflict = true
                   } catch (finalError) {
                     reportPersistenceError(finalError, 'session-save')
                     throw finalError
@@ -715,7 +718,7 @@ const createStoreSaver = (
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 acknowledgedSessions.set(session.id, durableSession)
                 observePersistencePhase('session-apply-durable', () =>
-                  applyDurableSession(durableSession, saveOptions)
+                  applyDurableSession(durableSession, saveOptions, recoveredRevisionConflict)
                 )
               }
             : () =>
@@ -728,6 +731,7 @@ const createStoreSaver = (
                     persisted.revision =
                       acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                     let durableSession: PersistedChatSession
+                    let recoveredRevisionConflict = false
                     try {
                       durableSession = coalescedOptions
                         ? await api.saveSession(persisted, coalescedOptions)
@@ -740,6 +744,7 @@ const createStoreSaver = (
                           coalescedOptions,
                           api.saveSession
                         )
+                        recoveredRevisionConflict = true
                       } catch (finalError) {
                         reportPersistenceError(finalError, 'session-save')
                         throw finalError
@@ -748,7 +753,11 @@ const createStoreSaver = (
                     acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                     acknowledgedSessions.set(session.id, durableSession)
                     observePersistencePhase('session-apply-durable', () =>
-                      applyDurableSession(durableSession, coalescedOptions)
+                      applyDurableSession(
+                        durableSession,
+                        coalescedOptions,
+                        recoveredRevisionConflict
+                      )
                     )
                     return durableSession
                   },

@@ -56,12 +56,16 @@ export type AppLifecycleDeps = {
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
-  flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
+  flushSessionPersistence: (
+    timeoutMs?: number
+  ) => Promise<RendererSessionPersistenceFlushOutcome | void>
   // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
   log?: Logger
   // Drains the logger's serialized write queue after the shutdown terminal record.
   flushLogs?: () => Promise<void>
   logFlushTimeoutMs?: number
+  // Shared timeout budget for the preflight and post-drain renderer persistence attempts.
+  rendererFlushTimeoutMs?: number
   // Classifies an orderly shutdown without changing its cleanup sequence.
   shutdownTrigger?: () => ApplicationShutdownTrigger
   // True while a data-root migration is copying; a quit during it is owned by the migration guard.
@@ -97,6 +101,9 @@ export const installAppLifecycle = (
 } => {
   const platform = deps.platform ?? process.platform
   const logFlushTimeoutMs = deps.logFlushTimeoutMs ?? 1_000
+  const rendererFlushTimeoutMs = Math.max(2, deps.rendererFlushTimeoutMs ?? 5_000)
+  const rendererPreflightTimeoutMs = Math.floor(rendererFlushTimeoutMs / 2)
+  const rendererFinalFlushTimeoutMs = rendererFlushTimeoutMs - rendererPreflightTimeoutMs
 
   let mainWindow: BrowserWindow | undefined
   const hiddenWindows = new WeakSet<BrowserWindow>()
@@ -310,14 +317,15 @@ export const installAppLifecycle = (
       let backendTeardownResult: ShutdownStepOutcome
       let shutdownAbortedForSessionConflict = false
       const flushRendererSessionPersistence = async (
-        phase: 'renderer-session-preflight' | 'renderer-session-flush'
+        phase: 'renderer-session-preflight' | 'renderer-session-flush',
+        timeoutMs: number
       ): Promise<{
         outcome: RendererSessionPersistenceFlushOutcome
         result: ShutdownStepOutcome
       }> => {
         diagnostics?.phase(phase)
         try {
-          const outcome = (await deps.flushSessionPersistence()) ?? 'completed'
+          const outcome = (await deps.flushSessionPersistence(timeoutMs)) ?? 'completed'
           const result = rendererStepOutcome(outcome)
           diagnostics?.phase(phase, { result })
           return { outcome, result }
@@ -327,7 +335,10 @@ export const installAppLifecycle = (
         }
       }
       try {
-        const preflight = await flushRendererSessionPersistence('renderer-session-preflight')
+        const preflight = await flushRendererSessionPersistence(
+          'renderer-session-preflight',
+          rendererPreflightTimeoutMs
+        )
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
         if (rendererPreflightOutcome === 'conflict') {
@@ -358,18 +369,12 @@ export const installAppLifecycle = (
           })
         }
 
-        if (rendererPreflightOutcome === 'timeout') {
-          rendererFlushOutcome = 'timeout'
-          rendererFlushResult = 'timeout'
-          diagnostics?.phase('renderer-session-flush', {
-            result: rendererFlushResult,
-            skippedAfterPreflightTimeout: true
-          })
-        } else {
-          const finalFlush = await flushRendererSessionPersistence('renderer-session-flush')
-          rendererFlushOutcome = finalFlush.outcome
-          rendererFlushResult = finalFlush.result
-        }
+        const finalFlush = await flushRendererSessionPersistence(
+          'renderer-session-flush',
+          rendererFinalFlushTimeoutMs
+        )
+        rendererFlushOutcome = finalFlush.outcome
+        rendererFlushResult = finalFlush.result
 
         diagnostics?.phase('backend-teardown')
         try {

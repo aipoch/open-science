@@ -68,8 +68,8 @@ export const requestRendererSessionPersistenceFlush = async (
 export const createElectronSessionPersistenceFlush = (
   getWindow: () => BrowserWindow | undefined,
   timeoutMs = DEFAULT_RENDERER_FLUSH_TIMEOUT_MS
-): (() => Promise<RendererSessionPersistenceFlushOutcome>) => {
-  return () => {
+): ((timeoutOverrideMs?: number) => Promise<RendererSessionPersistenceFlushOutcome>) => {
+  return (timeoutOverrideMs) => {
     const window = getWindow()
     const webContents = window?.webContents
     return requestRendererSessionPersistenceFlush({
@@ -95,7 +95,7 @@ export const createElectronSessionPersistenceFlush = (
         return () => webContents?.removeListener('render-process-gone', listener)
       },
       createRequestId: randomUUID,
-      timeoutMs
+      timeoutMs: timeoutOverrideMs ?? timeoutMs
     })
   }
 }

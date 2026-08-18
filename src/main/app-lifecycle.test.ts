@@ -123,7 +123,9 @@ type Harness = {
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
-  flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
+  flushSessionPersistence: (
+    timeoutMs?: number
+  ) => Promise<RendererSessionPersistenceFlushOutcome | void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
   getMainWindow: () => import('electron').BrowserWindow | undefined
@@ -142,6 +144,7 @@ const setup = (
       | 'log'
       | 'flushLogs'
       | 'logFlushTimeoutMs'
+      | 'rendererFlushTimeoutMs'
       | 'shutdownTrigger'
       | 'isMigrationInProgress'
       | 'platform'
@@ -195,6 +198,7 @@ const setup = (
     log: overrides.log,
     flushLogs: overrides.flushLogs,
     logFlushTimeoutMs: overrides.logFlushTimeoutMs,
+    rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
     shutdownTrigger: overrides.shutdownTrigger,
     isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
     quit,
@@ -437,7 +441,7 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('records a degraded renderer persistence flush and drains terminal logs before exit', async () => {
+  it('bounds both renderer persistence attempts and drains terminal logs before exit', async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     const flushLogs = vi.fn(async () => undefined)
     const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
@@ -463,7 +467,7 @@ describe('installAppLifecycle', () => {
       })
     )
     expect(flushLogs).toHaveBeenCalledOnce()
-    expect(flushSessionPersistence).toHaveBeenCalledOnce()
+    expect(flushSessionPersistence.mock.calls).toEqual([[2_500], [2_500]])
     expect(flushLogs.mock.invocationCallOrder[0]).toBeLessThan(app.exit.mock.invocationCallOrder[0])
   })
 

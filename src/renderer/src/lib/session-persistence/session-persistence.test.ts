@@ -310,14 +310,26 @@ describe('renderer session persistence bridge', () => {
   })
 
   it('recovers a forced revision conflict without re-entering the ordered save queue', async () => {
-    const persisted = createPersistedSession({
-      projectId: 'project-a',
-      revision: 1,
-      title: 'Original'
-    })
+    const persisted = materializeSessionConversationGraph(
+      createPersistedSession({ projectId: 'project-a', revision: 1, title: 'Original' })
+    )
     useSessionStore.getState().hydrateSessions([persisted])
     const durableBase = toPersistedSession(useSessionStore.getState().sessions[0])
-    const authoritative = { ...durableBase, revision: 2, updatedAt: persisted.updatedAt + 1 }
+    const remoteMessage = {
+      id: 'remote-message',
+      role: 'agent' as const,
+      content: 'Saved in another window',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: persisted.updatedAt + 1,
+      updatedAt: persisted.updatedAt + 1
+    }
+    const authoritative = materializeSessionConversationGraph({
+      ...durableBase,
+      revision: 2,
+      messages: [remoteMessage],
+      updatedAt: persisted.updatedAt + 1
+    })
     const saveSession = vi
       .fn<SessionPersistenceApi['saveSession']>()
       .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
@@ -339,6 +351,10 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1]).toEqual([
       expect.objectContaining({ revision: 2, title: 'Local rename' }),
       { conflictRebaseFields: ['title'] }
+    ])
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([remoteMessage])
+    expect(useSessionStore.getState().sessions[0].conversationGraph?.messages).toEqual([
+      expect.objectContaining(remoteMessage)
     ])
   })
 
