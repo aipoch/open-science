@@ -18,6 +18,7 @@ import type {
   RemoveMarketplaceSourceRequest
 } from '../../../shared/specialist-marketplace'
 import type { SpecialistPackageService } from '../package/service'
+import { compareSemver } from '../package/semver'
 import { filterMarketplaceSpecialistZip } from '../package/zip-adapter'
 import {
   marketplaceKeyFingerprint,
@@ -595,7 +596,9 @@ export class MarketplaceService {
       if (candidate.newSkillIds.length > 0) {
         await this.options.setSkillsMainEnabled(candidate.newSkillIds, false)
       }
-      result = await this.options.packages.install(request, ownerId)
+      result = await this.options.packages.install(request, ownerId, {
+        activateAfterInstall: true
+      })
     } catch (error) {
       await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
       throw error
@@ -800,7 +803,14 @@ export class MarketplaceService {
         summary: item.summary,
         publisher: item.publisher,
         version: item.latest.version,
-        ...(installed ? { installedVersion: provenance?.version } : {})
+        ...(installed
+          ? {
+              installedVersion: provenance?.version,
+              ...(compareSemver(item.latest.version, provenance!.version) === 1
+                ? { updateAvailable: true }
+                : {})
+            }
+          : {})
       }
     })
   }

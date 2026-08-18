@@ -160,8 +160,8 @@ describe('MarketplaceService', () => {
             name: 'EXAMPLE_SPECIALIST',
             description: 'Example',
             systemPrompt: 'Use the selected Skill.',
-            enabled: false,
-            setupPending: true,
+            enabled: true,
+            setupPending: false,
             capabilityMode: 'selected' as const,
             fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
             selectedCapabilities: {
@@ -307,6 +307,11 @@ describe('MarketplaceService', () => {
     const result = await service.install({ candidateToken: preview.package.candidateToken }, 17)
 
     expect(result).toMatchObject({ status: 'installed', provenanceLinked: true })
+    expect(packages.install).toHaveBeenCalledWith(
+      { candidateToken: preview.package.candidateToken },
+      17,
+      { activateAfterInstall: true }
+    )
     expect(downloadProgress[0]).toMatchObject({
       transferred: 0,
       total: archive.byteLength,
@@ -319,9 +324,57 @@ describe('MarketplaceService', () => {
     })
     expect(order).toEqual(['disable-main', 'install'])
     expect(disabled).toEqual(new Set(['personal-example-skill']))
-    await expect(service.list()).resolves.toMatchObject({
-      specialists: [{ id: 'example-specialist', installedVersion: '1.0.0' }]
+    const installedSnapshot = await service.list()
+    expect(installedSnapshot).toMatchObject({
+      specialists: [
+        {
+          id: 'example-specialist',
+          installedVersion: '1.0.0'
+        }
+      ]
     })
+    expect(installedSnapshot.specialists[0]).not.toHaveProperty('updateAvailable')
+
+    const newerRootDocument = JSON.parse(new TextDecoder().decode(root))
+    newerRootDocument.revision = '2'
+    newerRootDocument.specialists[0].latest.version = '1.1.0'
+    newerRootDocument.specialists[0].latest.release.path = 'releases/example-specialist/1.1.0.json'
+    const newerRoot = encoder.encode(JSON.stringify(newerRootDocument))
+    const newerSignature = encoder.encode(
+      JSON.stringify({
+        schema_version: 1,
+        algorithm: 'ed25519',
+        key_id: 'example-2026-01',
+        public_key: publicKeyBase64,
+        signature: sign(null, newerRoot, privateKey).toString('base64')
+      })
+    )
+    responses.set(
+      'https://raw.githubusercontent.com/example/marketplace/main/marketplace.json',
+      newerRoot
+    )
+    responses.set(
+      'https://raw.githubusercontent.com/example/marketplace/main/marketplace.json.sig',
+      newerSignature
+    )
+    await expect(service.list()).resolves.toMatchObject({
+      specialists: [
+        {
+          id: 'example-specialist',
+          version: '1.1.0',
+          installedVersion: '1.0.0',
+          updateAvailable: true
+        }
+      ]
+    })
+    responses.set(
+      'https://raw.githubusercontent.com/example/marketplace/main/marketplace.json',
+      root
+    )
+    responses.set(
+      'https://raw.githubusercontent.com/example/marketplace/main/marketplace.json.sig',
+      signature
+    )
 
     const [provenance] = (await repository.getAll()).installations
     if (!provenance) throw new Error('Expected Marketplace provenance')

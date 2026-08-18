@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
+  BadgeCheck,
   CheckCircle2,
+  ChevronDown,
   GitBranch,
   Loader2,
-  PackageOpen,
-  Plus,
+  RefreshCw,
+  Settings2,
   ShieldCheck,
   Trash2
 } from 'lucide-react'
@@ -25,6 +27,7 @@ import type {
 } from '../../../../shared/specialist-marketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SettingsIconAction } from './SettingsLayout'
+import { SettingsSegmentedControl } from './SettingsSegmentedControl'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
   skillConflictResolutionList,
@@ -35,7 +38,16 @@ import {
 export type SpecialistMarketplaceView =
   | { kind: 'marketplace' }
   | { kind: 'marketplace-sources' }
-  | { kind: 'marketplace-release'; sourceId: string; id: string; version: string }
+  | {
+      kind: 'marketplace-release'
+      sourceId: string
+      sourceName?: string
+      sourceTrust?: 'official' | 'user-approved'
+      id: string
+      version: string
+      installedVersion?: string
+      updateAvailable?: boolean
+    }
 
 type Props = {
   view: SpecialistMarketplaceView
@@ -49,6 +61,88 @@ const formatBytes = (value: number): string => {
   if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${value} B`
 }
+
+type MarketplacePresentationStatus =
+  'available' | 'installed' | 'update-available' | 'setup-incomplete'
+
+const identityTones = [
+  'bg-chart-1/15 text-chart-1 ring-chart-1/20',
+  'bg-chart-2/15 text-chart-2 ring-chart-2/20',
+  'bg-chart-3/15 text-chart-3 ring-chart-3/20',
+  'bg-chart-4/15 text-chart-4 ring-chart-4/20'
+] as const
+
+const specialistInitials = (displayName: string): string => {
+  const words = displayName.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return 'SP'
+  return words
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join('')
+}
+
+const SpecialistIdentity = ({
+  id,
+  displayName,
+  size = 'md'
+}: {
+  id: string
+  displayName: string
+  size?: 'md' | 'lg'
+}): React.JSX.Element => {
+  const tone =
+    identityTones[
+      [...id].reduce((total, character) => total + character.charCodeAt(0), 0) %
+        identityTones.length
+    ]
+  return (
+    <div
+      role="img"
+      aria-label={displayName}
+      className={`grid shrink-0 place-items-center font-semibold tracking-tight ring-1 ${tone} ${
+        size === 'lg' ? 'size-14 rounded-xl text-base' : 'size-10 rounded-lg text-xs'
+      }`}
+    >
+      {specialistInitials(displayName)}
+    </div>
+  )
+}
+
+const MarketplaceTabs = ({
+  active,
+  installedCount,
+  onNavigate,
+  t
+}: {
+  active: 'installed' | 'marketplace'
+  installedCount?: number
+  onNavigate: Props['onNavigate']
+  t: ReturnType<typeof useTranslation>['t']
+}): React.JSX.Element => (
+  <SettingsSegmentedControl
+    value={active}
+    options={[
+      {
+        value: 'installed',
+        label: (
+          <>
+            {t('Installed')}
+            {installedCount === undefined ? null : (
+              <span className="ml-1.5 tabular-nums text-muted-foreground">{installedCount}</span>
+            )}
+          </>
+        )
+      },
+      { value: 'marketplace', label: t('Marketplace') }
+    ]}
+    onValueChange={(value) =>
+      onNavigate(value === 'installed' ? { kind: 'list' } : { kind: 'marketplace' })
+    }
+    ariaLabel={t('Specialist library')}
+    semantics="tab"
+    columnWidth="7.5rem"
+  />
+)
 
 const MarketplaceError = ({
   message,
@@ -94,6 +188,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const [loading, setLoading] = useState(
     view.kind === 'marketplace' || view.kind === 'marketplace-sources'
   )
+  const [refreshing, setRefreshing] = useState(false)
   const [loadError, setLoadError] = useState<string>()
   const [query, setQuery] = useState('')
   const [repositoryUrl, setRepositoryUrl] = useState('')
@@ -105,7 +200,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const [releaseError, setReleaseError] = useState<string>()
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set())
   const [selectedConnectorIds, setSelectedConnectorIds] = useState<Set<string>>(new Set())
-  const [reviewing, setReviewing] = useState(false)
+  const [skillsExpanded, setSkillsExpanded] = useState(false)
+  const [connectorsExpanded, setConnectorsExpanded] = useState(false)
   const [installBusy, setInstallBusy] = useState(false)
   const [installPreview, setInstallPreview] = useState<MarketplaceInstallPreview>()
   const [installError, setInstallError] = useState<string>()
@@ -115,6 +211,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     useState<SkillConflictResolutionMap>({})
   const sourceCandidateTokenRef = useRef<string | undefined>(undefined)
   const installCandidateTokenRef = useRef<string | undefined>(undefined)
+  const installedSpecialists = useSpecialistStore((state) => state.items)
   const viewKey =
     view.kind === 'marketplace-release'
       ? `${view.kind}:${view.sourceId}:${view.id}:${view.version}`
@@ -143,22 +240,32 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     [cancelCandidate, viewKey]
   )
 
-  const loadMarketplace = useCallback(async (): Promise<void> => {
-    if (typeof window.api?.specialist?.listMarketplace !== 'function') {
-      setLoadError(t('Marketplace unavailable'))
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    setLoadError(undefined)
-    try {
-      setSnapshot(await window.api.specialist.listMarketplace())
-    } catch {
-      setLoadError(t('Marketplace unavailable'))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
+  const loadMarketplace = useCallback(
+    async ({ preserveContent = false }: { preserveContent?: boolean } = {}): Promise<void> => {
+      if (typeof window.api?.specialist?.listMarketplace !== 'function') {
+        setLoadError(t('Marketplace unavailable'))
+        setLoading(false)
+        setRefreshing(false)
+        return
+      }
+      if (preserveContent) setRefreshing(true)
+      else setLoading(true)
+      setLoadError(undefined)
+      try {
+        setSnapshot(await window.api.specialist.listMarketplace())
+      } catch {
+        setLoadError(
+          preserveContent
+            ? t('Could not refresh Marketplace. Showing the last available data.')
+            : t('Marketplace unavailable')
+        )
+      } finally {
+        if (preserveContent) setRefreshing(false)
+        else setLoading(false)
+      }
+    },
+    [t]
+  )
 
   useEffect(() => {
     if (typeof window.api?.specialist?.onMarketplaceDownloadProgress !== 'function') return
@@ -176,7 +283,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
   useEffect(() => {
     if (view.kind !== 'marketplace' && view.kind !== 'marketplace-sources') return
-    void Promise.resolve().then(loadMarketplace)
+    void Promise.resolve().then(() => loadMarketplace())
   }, [loadMarketplace, view.kind])
 
   useEffect(() => {
@@ -187,7 +294,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       setRelease(undefined)
       setReleaseError(undefined)
       setReleaseLoading(true)
-      setReviewing(false)
+      setSkillsExpanded(false)
+      setConnectorsExpanded(false)
       setInstallPreview(undefined)
       setInstallError(undefined)
       setInstallRecoveryPending(false)
@@ -286,6 +394,15 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     }
   }
 
+  const invalidateInstallPreview = (): void => {
+    cancelCandidate(installCandidateTokenRef.current)
+    installCandidateTokenRef.current = undefined
+    setInstallPreview(undefined)
+    setDownloadProgress(undefined)
+    setSkillConflictResolutions({})
+    setInstallError(undefined)
+  }
+
   const install = async (): Promise<void> => {
     if (!release || view.kind !== 'marketplace-release') return
     const startedViewKey = viewKey
@@ -319,7 +436,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         setInstallError(t('The downloaded package has blocking validation errors.'))
         return
       }
-      if (preparedNow) return
+      if (
+        preparedNow &&
+        (conflicts.length > 0 || preview.package.overwrite?.modifiedSinceImport === true)
+      ) {
+        return
+      }
       if (conflicts.some((skill) => skillConflictResolutions[skill.id] === undefined)) return
       const result = await window.api.specialist.installMarketplace({
         candidateToken: preview.package.candidateToken,
@@ -352,7 +474,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         )
         return
       }
-      onNavigate({ kind: 'edit', id: result.specialist.id })
+      onNavigate({ kind: 'list' })
     } catch {
       setDownloadProgress(undefined)
       setInstallError(t('Could not install this Specialist.'))
@@ -369,6 +491,23 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   )
   const marketplacePreviewBlocked =
     installPreview?.package.diagnostics.some((item) => item.severity === 'error') ?? false
+  const installedRelease =
+    view.kind === 'marketplace-release'
+      ? installedSpecialists.find((specialist) => specialist.id === view.id)
+      : undefined
+  const releaseStatus: MarketplacePresentationStatus =
+    view.kind !== 'marketplace-release' || !view.installedVersion
+      ? 'available'
+      : installedRelease?.kind !== 'reviewer' && installedRelease?.setupPending
+        ? 'setup-incomplete'
+        : view.updateAvailable
+          ? 'update-available'
+          : 'installed'
+  const installNeedsAttention =
+    installPreview !== undefined &&
+    (marketplacePreviewBlocked ||
+      marketplaceSkillConflicts.length > 0 ||
+      installPreview.package.overwrite?.modifiedSinceImport === true)
   const allSourcesUnavailable =
     !loading &&
     snapshot !== undefined &&
@@ -498,72 +637,216 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           </div>
         ) : null}
         {release ? (
-          <div>
-            <div className="flex items-start gap-3 border-b border-border pb-4">
-              <PackageOpen className="mt-1 size-5 shrink-0 text-primary" aria-hidden="true" />
-              <div className="min-w-0">
-                <h2 className="text-lg font-semibold text-foreground">{release.displayName}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{release.summary}</p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {release.publisher.name} · v{release.version} · {release.license} ·{' '}
-                  {formatBytes(release.compressedBytes)}
+          <div className="mx-auto max-w-4xl">
+            <div className="flex flex-wrap items-start gap-4 border-b border-border pb-5">
+              <SpecialistIdentity
+                id={release.specialistId}
+                displayName={release.displayName}
+                size="lg"
+              />
+              <div className="min-w-64 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                    {release.displayName}
+                  </h2>
+                  {releaseStatus === 'installed' ? (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      {t('Installed')}
+                    </span>
+                  ) : null}
+                  {releaseStatus === 'update-available' ? (
+                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                      {t('Update available')}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">
+                  {release.summary}
                 </p>
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px]">
+                  {view.sourceTrust === 'official' ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 font-medium text-primary">
+                      <BadgeCheck className="size-3.5" aria-hidden="true" />
+                      {t('Official')}
+                    </span>
+                  ) : null}
+                  <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
+                    {t('By {{publisher}}', { publisher: release.publisher.name })}
+                  </span>
+                  <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
+                    v{release.version}
+                  </span>
+                  <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
+                    {release.license}
+                  </span>
+                  <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
+                    {formatBytes(release.compressedBytes)}
+                  </span>
+                  {view.sourceName ? (
+                    <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
+                      {view.sourceName}
+                    </span>
+                  ) : null}
+                </div>
               </div>
+              <Button
+                type="button"
+                className="shrink-0"
+                variant={
+                  releaseStatus === 'installed' || releaseStatus === 'setup-incomplete'
+                    ? 'outline'
+                    : 'default'
+                }
+                disabled={
+                  installBusy ||
+                  marketplacePreviewBlocked ||
+                  (marketplaceSkillConflicts.length > 0 && !marketplaceConflictsResolved)
+                }
+                onClick={() => {
+                  if (releaseStatus === 'installed' || releaseStatus === 'setup-incomplete') {
+                    onNavigate({ kind: 'edit', id: release.specialistId })
+                    return
+                  }
+                  void install()
+                }}
+              >
+                {installBusy ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+                {installBusy
+                  ? t('Installing…')
+                  : releaseStatus === 'installed'
+                    ? t('Manage')
+                    : releaseStatus === 'setup-incomplete'
+                      ? t('Finish setup')
+                      : installNeedsAttention
+                        ? installPreview?.package.overwrite?.modifiedSinceImport
+                          ? t('Replace local changes')
+                          : t('Continue installation')
+                        : releaseStatus === 'update-available'
+                          ? t('Update Specialist')
+                          : t('Install Specialist')}
+              </Button>
             </div>
 
-            {!reviewing ? (
-              <>
-                <div className="mt-5 flex items-center justify-between gap-3">
-                  <div>
+            {installBusy && !installPreview ? (
+              <div className="mt-4 space-y-1.5" role="status" aria-live="polite">
+                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <span>{t('Downloading and verifying…')}</span>
+                  {downloadProgress ? (
+                    <span className="tabular-nums">
+                      {formatBytes(downloadProgress.transferred)} /{' '}
+                      {formatBytes(downloadProgress.total)} · {downloadProgress.percent}%
+                    </span>
+                  ) : null}
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label={t('Marketplace download progress')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={downloadProgress?.percent}
+                  data-indeterminate={downloadProgress ? undefined : 'true'}
+                  className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                >
+                  <div
+                    className={
+                      downloadProgress
+                        ? 'h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none'
+                        : 'install-progress-indeterminate h-full w-1/3 rounded-full bg-primary motion-reduce:animate-none'
+                    }
+                    style={downloadProgress ? { width: `${downloadProgress.percent}%` } : undefined}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-5 space-y-3">
+              <section className="overflow-hidden rounded-xl border border-border bg-background">
+                <button
+                  type="button"
+                  aria-expanded={skillsExpanded}
+                  onClick={() => setSkillsExpanded((expanded) => !expanded)}
+                  className="flex w-full items-center gap-3 p-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-foreground">{t('Skills')}</h3>
-                    <p className="text-xs text-muted-foreground">
-                      {t('Selected Skills are available only to this Specialist.')}
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t('{{selected}} of {{total}} included', {
+                        selected: selectedSkillIds.size,
+                        total: release.skills.length
+                      })}
                     </p>
                   </div>
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {t('{{selected}} of {{total}} selected', {
-                      selected: selectedSkillIds.size,
-                      total: release.skills.length
-                    })}
-                  </span>
-                </div>
-                <ul className="mt-2 max-h-80 divide-y divide-border overflow-y-auto rounded-lg border border-border px-3">
-                  {release.skills.map((skill) => (
-                    <li key={skill.id} className="flex items-start gap-3 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedSkillIds.has(skill.id)}
-                        aria-label={t('Select {{name}}', { name: skill.displayName })}
-                        className="mt-1 size-4 accent-primary"
-                        onChange={(event) => {
-                          setSelectedSkillIds((current) => {
-                            const next = new Set(current)
-                            if (event.target.checked) next.add(skill.id)
-                            else next.delete(skill.id)
-                            return next
-                          })
-                        }}
-                      />
-                      <div className="min-w-0">
-                        <p className="text-sm text-foreground">{skill.displayName}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{skill.description}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                {release.connectors.length ? (
-                  <div className="mt-5">
+                  <ChevronDown
+                    className={`size-4 text-muted-foreground transition-transform motion-reduce:transition-none ${skillsExpanded ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
+                  />
+                </button>
+                {skillsExpanded ? (
+                  <ul className="max-h-80 divide-y divide-border overflow-y-auto border-t border-border px-4">
+                    {release.skills.map((skill) => (
+                      <li key={skill.id} className="flex items-start gap-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedSkillIds.has(skill.id)}
+                          disabled={installBusy}
+                          aria-label={t('Select {{name}}', { name: skill.displayName })}
+                          className="mt-1 size-4 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+                          onChange={(event) => {
+                            invalidateInstallPreview()
+                            setSelectedSkillIds((current) => {
+                              const next = new Set(current)
+                              if (event.target.checked) next.add(skill.id)
+                              else next.delete(skill.id)
+                              return next
+                            })
+                          }}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm text-foreground">{skill.displayName}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {skill.description}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
+
+              <section className="overflow-hidden rounded-xl border border-border bg-background">
+                <button
+                  type="button"
+                  aria-expanded={connectorsExpanded}
+                  onClick={() => setConnectorsExpanded((expanded) => !expanded)}
+                  className="flex w-full items-center gap-3 p-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-foreground">{t('Connectors')}</h3>
-                    <ul className="mt-2 divide-y divide-border rounded-lg border border-border px-3">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t('{{selected}} of {{total}} included', {
+                        selected: selectedConnectorIds.size,
+                        total: release.connectors.length
+                      })}
+                    </p>
+                  </div>
+                  <ChevronDown
+                    className={`size-4 text-muted-foreground transition-transform motion-reduce:transition-none ${connectorsExpanded ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
+                  />
+                </button>
+                {connectorsExpanded ? (
+                  release.connectors.length ? (
+                    <ul className="divide-y divide-border border-t border-border px-4">
                       {release.connectors.map((connector) => (
                         <li key={connector.id} className="flex items-center gap-3 py-3">
                           <input
                             type="checkbox"
                             checked={selectedConnectorIds.has(connector.id)}
-                            disabled={connector.required}
+                            disabled={connector.required || installBusy}
                             aria-label={t('Select {{name}}', { name: connector.id })}
-                            className="size-4 accent-primary"
+                            className="size-4 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
                             onChange={(event) => {
+                              invalidateInstallPreview()
                               setSelectedConnectorIds((current) => {
                                 const next = new Set(current)
                                 if (event.target.checked) next.add(connector.id)
@@ -574,108 +857,51 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                           />
                           <span className="text-sm text-foreground">{connector.id}</span>
                           {connector.required ? (
-                            <span className="text-xs text-muted-foreground">{t('Required')}</span>
+                            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                              {t('Required')}
+                            </span>
                           ) : null}
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  ) : (
+                    <p className="border-t border-border p-4 text-xs text-muted-foreground">
+                      {t('No Connectors included.')}
+                    </p>
+                  )
                 ) : null}
-                <div className="mt-5 flex justify-end">
-                  <Button type="button" onClick={() => setReviewing(true)}>
-                    {t('Review installation')}
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <div className="mt-5">
-                <h3 className="text-sm font-semibold text-foreground">
-                  {t('Review installation')}
-                </h3>
-                <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 rounded-lg border border-border p-4 text-sm">
-                  <dt className="text-muted-foreground">{t('Skills')}</dt>
-                  <dd className="text-foreground">{selectedSkillIds.size}</dd>
-                  <dt className="text-muted-foreground">{t('Connectors')}</dt>
-                  <dd className="text-foreground">{selectedConnectorIds.size}</dd>
-                  <dt className="text-muted-foreground">{t('Download')}</dt>
-                  <dd className="text-foreground">{formatBytes(release.compressedBytes)}</dd>
-                  <dt className="text-muted-foreground">{t('Main Agent')}</dt>
-                  <dd className="font-medium text-foreground">{t('No changes')}</dd>
-                </dl>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  {t(
-                    'The archive will be downloaded, verified, and installed locally. Newly installed resources remain unavailable to Main Agent.'
-                  )}
-                </p>
-                {installBusy && !installPreview ? (
-                  <div className="mt-4 space-y-1.5" role="status" aria-live="polite">
-                    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                      <span>{t('Downloading package…')}</span>
-                      {downloadProgress ? (
-                        <span className="tabular-nums">
-                          {formatBytes(downloadProgress.transferred)} /{' '}
-                          {formatBytes(downloadProgress.total)} · {downloadProgress.percent}%
-                        </span>
-                      ) : null}
-                    </div>
-                    <div
-                      role="progressbar"
-                      aria-label={t('Marketplace download progress')}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={downloadProgress?.percent}
-                      data-indeterminate={downloadProgress ? undefined : 'true'}
-                      className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-                    >
-                      <div
-                        className={
-                          downloadProgress
-                            ? 'h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none'
-                            : 'install-progress-indeterminate h-full w-1/3 rounded-full bg-primary motion-reduce:animate-none'
-                        }
-                        style={
-                          downloadProgress ? { width: `${downloadProgress.percent}%` } : undefined
-                        }
-                      />
-                    </div>
-                  </div>
-                ) : null}
-                {installPreview && !marketplacePreviewBlocked && marketplaceConflictsResolved ? (
-                  <div
-                    role="status"
-                    className="mt-3 flex gap-2 rounded-md border border-status-success-accent/30 bg-status-success-surface p-3 text-xs text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground"
-                  >
-                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              </section>
+            </div>
+
+            {installNeedsAttention ? (
+              <div className="mt-4 rounded-xl border border-warning-100/50 bg-warning-100/10 p-4">
+                {!marketplacePreviewBlocked ? (
+                  <div className="flex gap-2 text-xs text-foreground">
+                    <CheckCircle2
+                      className="mt-0.5 size-3.5 shrink-0 text-primary"
+                      aria-hidden="true"
+                    />
                     <div>
                       <strong className="block">{t('Package verified')}</strong>
-                      <span className="opacity-80">
-                        {t(
-                          'The download, checksum, and package structure passed verification. You can continue with installation.'
-                        )}
+                      <span className="text-muted-foreground">
+                        {t('Resolve the items below to continue installation.')}
                       </span>
                     </div>
                   </div>
                 ) : null}
-                {installPreview?.package.overwrite ? (
-                  <div className="mt-3 rounded-lg border border-warning-100/50 bg-warning-100/10 p-3 text-xs text-foreground">
-                    <p className="font-medium">
+                {installPreview?.package.overwrite?.modifiedSinceImport ? (
+                  <div className="mt-3 text-xs">
+                    <p className="font-medium text-foreground">
                       {t('Update from v{{current}} to v{{incoming}}', {
                         current: installPreview.package.overwrite.currentVersion,
                         incoming: installPreview.package.overwrite.incomingVersion
                       })}
                     </p>
-                    <p className="mt-1 text-muted-foreground">
+                    <p className="mt-1 text-warning-900">
                       {t(
-                        'Updating replaces this Specialist’s instructions and selected capabilities. Existing resources are kept unless removed separately.'
+                        'Local changes to this Specialist will be replaced by the Marketplace version.'
                       )}
                     </p>
-                    {installPreview.package.overwrite.modifiedSinceImport ? (
-                      <p className="mt-2 text-warning-900">
-                        {t(
-                          'Local changes to this Specialist will be replaced by the Marketplace version.'
-                        )}
-                      </p>
-                    ) : null}
                   </div>
                 ) : null}
                 <div className="mt-3">
@@ -690,9 +916,9 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     }
                   />
                 </div>
-                {installPreview && marketplacePreviewBlocked ? (
+                {marketplacePreviewBlocked ? (
                   <ul className="mt-3 rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-xs text-danger-000">
-                    {installPreview.package.diagnostics
+                    {installPreview?.package.diagnostics
                       .filter((item) => item.severity === 'error')
                       .map((item) => (
                         <li key={`${item.code}-${item.path ?? ''}`}>
@@ -702,54 +928,25 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                       ))}
                   </ul>
                 ) : null}
-                {installError ? (
-                  <div className="mt-3">
-                    <MarketplaceError message={installError} />
-                  </div>
-                ) : null}
-                <div className="mt-5 flex justify-end gap-2">
+              </div>
+            ) : null}
+
+            {installError ? (
+              <div className="mt-4">
+                <MarketplaceError message={installError} />
+                {installRecoveryPending ? (
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={installBusy}
-                    onClick={() => {
-                      if (installRecoveryPending) {
-                        onNavigate({ kind: 'marketplace' })
-                        return
-                      }
-                      cancelCandidate(installCandidateTokenRef.current)
-                      installCandidateTokenRef.current = undefined
-                      setReviewing(false)
-                      setInstallPreview(undefined)
-                      setDownloadProgress(undefined)
-                      setSkillConflictResolutions({})
-                    }}
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => onNavigate({ kind: 'marketplace' })}
                   >
-                    {installRecoveryPending ? t('Back to Marketplace') : t('Back')}
+                    {t('Back to Marketplace')}
                   </Button>
-                  {!installRecoveryPending ? (
-                    <Button
-                      type="button"
-                      disabled={
-                        installBusy ||
-                        marketplacePreviewBlocked ||
-                        (marketplaceSkillConflicts.length > 0 && !marketplaceConflictsResolved)
-                      }
-                      onClick={() => void install()}
-                    >
-                      {installBusy ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-                      {installBusy
-                        ? t('Downloading and verifying…')
-                        : installPreview
-                          ? installPreview.package.overwrite
-                            ? t('Update Specialist')
-                            : t('Install Specialist')
-                          : t('Download and review')}
-                    </Button>
-                  ) : null}
-                </div>
+                ) : null}
               </div>
-            )}
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -758,24 +955,35 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
   return (
     <div className="p-5">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <MarketplaceTabs
+          active="marketplace"
+          installedCount={installedSpecialists.length}
+          onNavigate={onNavigate}
+          t={t}
+        />
+        <div className="flex items-center gap-1">
+          <SettingsIconAction
+            label={t('Refresh Marketplace')}
+            icon={RefreshCw}
+            disabled={loading || refreshing}
+            className={refreshing ? '[&_svg]:animate-spin motion-reduce:[&_svg]:animate-none' : ''}
+            onClick={() => void loadMarketplace({ preserveContent: true })}
+          />
+          <SettingsIconAction
+            label={t('Manage Marketplace sources')}
+            icon={Settings2}
+            onClick={() => onNavigate({ kind: 'marketplace-sources' })}
+          />
+        </div>
+      </div>
       <div className="mb-4 flex items-center gap-2">
-        <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'list' })}>
-          {t('Installed')}
-        </Button>
         <SettingsSearchInput
           aria-label={t('Search Marketplace')}
           placeholder={t('Search Marketplace…')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => onNavigate({ kind: 'marketplace-sources' })}
-        >
-          <Plus data-icon="inline-start" aria-hidden="true" />
-          {t('Manage sources')}
-        </Button>
       </div>
       {loading ? <MarketplaceLoading label={t('Loading Marketplace…')} /> : null}
       {!loading && loadError ? (
@@ -836,61 +1044,101 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         </div>
       ) : null}
       {!loading && visibleListings.length ? (
-        <ul className="divide-y divide-border">
+        <ul className="space-y-2">
           {visibleListings.map((item) => {
-            const installedCurrentVersion = item.installedVersion === item.version
+            const installedSpecialist = installedSpecialists.find(
+              (specialist) => specialist.id === item.id
+            )
+            const status: MarketplacePresentationStatus = !item.installedVersion
+              ? 'available'
+              : installedSpecialist?.kind !== 'reviewer' && installedSpecialist?.setupPending
+                ? 'setup-incomplete'
+                : item.updateAvailable
+                  ? 'update-available'
+                  : 'installed'
+            const opensDetails = status === 'available' || status === 'update-available'
+            const navigate = (): void => {
+              if (!opensDetails) {
+                onNavigate({ kind: 'edit', id: item.id })
+                return
+              }
+              onNavigate({
+                kind: 'marketplace-release',
+                sourceId: item.sourceId,
+                sourceName: item.sourceName,
+                sourceTrust: item.sourceTrust,
+                id: item.id,
+                version: item.version,
+                installedVersion: item.installedVersion,
+                updateAvailable: item.updateAvailable
+              })
+            }
             return (
               <li
                 key={`${item.sourceId}:${item.id}`}
-                className="flex min-h-16 items-center gap-3 py-3"
+                className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-background p-3 transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
               >
-                <PackageOpen className="size-5 shrink-0 text-primary" aria-hidden="true" />
                 <button
                   type="button"
-                  className="min-w-0 flex-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() =>
-                    onNavigate({
-                      kind: 'marketplace-release',
-                      sourceId: item.sourceId,
-                      id: item.id,
-                      version: item.version
-                    })
-                  }
+                  className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={navigate}
                 >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {item.displayName}
-                    </span>
-                    {item.installedVersion ? (
-                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                        {installedCurrentVersion ? t('Installed') : t('Update available')}
+                  <SpecialistIdentity id={item.id} displayName={item.displayName} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-foreground">
+                        {item.displayName}
                       </span>
-                    ) : null}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {item.summary}
-                  </span>
-                  <span className="mt-1 block text-[11px] text-muted-foreground">
-                    {item.sourceTrust === 'official' ? t('Official') : t('User-added source')} ·{' '}
-                    {item.sourceName} · {item.publisher.name} · v{item.version}
+                      {status !== 'available' ? (
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            status === 'update-available'
+                              ? 'bg-primary/10 text-primary'
+                              : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {status === 'update-available'
+                            ? t('Update available')
+                            : status === 'setup-incomplete'
+                              ? t('Setup incomplete')
+                              : t('Installed')}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="mt-0.5 line-clamp-2 block text-xs leading-5 text-muted-foreground">
+                      {item.summary}
+                    </span>
+                    <span className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
+                      {item.sourceTrust === 'official' ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
+                          <BadgeCheck className="size-3.5" aria-hidden="true" />
+                          {t('Official')}
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                          {t('Community')}
+                        </span>
+                      )}
+                      <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                        {item.publisher.name}
+                      </span>
+                      <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
+                        v{item.version}
+                      </span>
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        {item.sourceName}
+                      </span>
+                    </span>
                   </span>
                 </button>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() =>
-                    installedCurrentVersion
-                      ? onNavigate({ kind: 'edit', id: item.id })
-                      : onNavigate({
-                          kind: 'marketplace-release',
-                          sourceId: item.sourceId,
-                          id: item.id,
-                          version: item.version
-                        })
-                  }
+                  className="cursor-pointer"
+                  onClick={navigate}
                 >
-                  {installedCurrentVersion ? t('Open') : t('View')}
+                  {opensDetails ? t('View details') : t('Manage')}
                 </Button>
               </li>
             )
@@ -901,4 +1149,4 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   )
 }
 
-export { SpecialistMarketplace }
+export { MarketplaceTabs, SpecialistMarketplace }
