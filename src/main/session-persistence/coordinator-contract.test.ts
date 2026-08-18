@@ -205,6 +205,52 @@ describe('SessionPersistenceCoordinator contracts', () => {
     expect(repository.saveSession).toHaveBeenCalledOnce()
   })
 
+  it('holds deleted Session identities until Project cleanup finishes', async () => {
+    const projectCleanupGate = createDeferred()
+    const projectCleanupStarted = createDeferred()
+    const reusedSessionSaveStarted = createDeferred()
+    const { repository, sessions } = createRepository([
+      createSession({ id: 'shared-session', projectId: 'project-1' })
+    ])
+    repository.saveSession = vi.fn(async (session) => {
+      reusedSessionSaveStarted.resolve()
+      sessions.set(session.id, structuredClone(session))
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({
+        softDeleteProject: vi.fn(async () => {
+          projectCleanupStarted.resolve()
+          await projectCleanupGate.promise
+          return 'project-delete-token'
+        })
+      })
+    )
+    await coordinator.loadAll()
+    vi.mocked(repository.loadProjectWithDiagnostics).mockResolvedValueOnce({
+      sessions: [],
+      isComplete: false
+    })
+
+    const deletion = coordinator.deleteProjectSessions('project-1')
+    await projectCleanupStarted.promise
+    const reuse = coordinator.saveSession(
+      createSession({ id: 'shared-session', projectId: 'project-2' })
+    )
+    const outcome = await Promise.race([
+      reusedSessionSaveStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+
+    expect(outcome).toBe('blocked')
+    projectCleanupGate.resolve()
+    await expect(deletion).resolves.toEqual({ status: 'completed' })
+    await expect(reuse).resolves.toMatchObject({
+      id: 'shared-session',
+      projectId: 'project-2'
+    })
+  })
+
   it('publishes metadata only from queued durable state and marks degraded projections incomplete', async () => {
     const { repository } = createRepository()
     const syncSession = vi.fn(async () => [])

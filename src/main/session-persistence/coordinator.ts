@@ -833,10 +833,14 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     projectId: string,
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
-    return this.operationScheduler.runProject(projectId, async () => {
+    return this.operationScheduler.runProject(projectId, async (scope) => {
       this.deletedProjects.add(projectId)
       try {
-        return await this.deletionOwner.deleteProjectSessions(projectId, options)
+        return await this.deletionOwner.deleteProjectSessions(
+          projectId,
+          (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
+          options
+        )
       } catch (error) {
         try {
           const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)

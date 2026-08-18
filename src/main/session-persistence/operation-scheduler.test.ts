@@ -80,6 +80,85 @@ describe('SessionPersistenceOperationScheduler', () => {
     expect(secondStarted).toBe(true)
   })
 
+  it('holds a set of Session identities without blocking unrelated identities', async () => {
+    const scheduler = new SessionPersistenceOperationScheduler()
+    const batchGate = createDeferred()
+    const batchStarted = createDeferred()
+    const order: string[] = []
+
+    const batch = scheduler.runSessionIdentities(['session-1', 'session-2'], async () => {
+      order.push('batch:start')
+      batchStarted.resolve()
+      await batchGate.promise
+      order.push('batch:end')
+    })
+    await batchStarted.promise
+    const firstIdentity = scheduler.runSessionIdentity('session-1', async () => {
+      order.push('session-1')
+    })
+    const secondIdentity = scheduler.runSessionIdentity('session-2', async () => {
+      order.push('session-2')
+    })
+    const independentIdentity = scheduler.runSessionIdentity('session-3', async () => {
+      order.push('session-3')
+    })
+    await flushMicrotasks()
+    expect(order).toEqual(['batch:start', 'session-3'])
+
+    batchGate.resolve()
+    await Promise.all([batch, firstIdentity, secondIdentity, independentIdentity])
+    expect(order.slice(0, 3)).toEqual(['batch:start', 'session-3', 'batch:end'])
+    expect(new Set(order.slice(3))).toEqual(new Set(['session-1', 'session-2']))
+  })
+
+  it('lets an active Project extend its identity scope ahead of a later global barrier', async () => {
+    const scheduler = new SessionPersistenceOperationScheduler()
+    const activeIdentityGate = createDeferred()
+    const activeIdentityStarted = createDeferred()
+    const extendScope = createDeferred()
+    const projectStarted = createDeferred()
+    const order: string[] = []
+
+    const activeIdentity = scheduler.runSessionIdentity('session-1', async () => {
+      order.push('active-identity:start')
+      activeIdentityStarted.resolve()
+      await activeIdentityGate.promise
+      order.push('active-identity:end')
+    })
+    await activeIdentityStarted.promise
+    const project = scheduler.runProject('project-1', async (scope) => {
+      order.push('project:start')
+      projectStarted.resolve()
+      await extendScope.promise
+      await scope.runSessionIdentities(['session-1'], async () => {
+        order.push('project:identity-cleanup')
+      })
+      order.push('project:end')
+    })
+    await projectStarted.promise
+    const global = scheduler.runGlobal(async () => {
+      order.push('global')
+    })
+    const laterIdentity = scheduler.runSessionIdentity('session-1', async () => {
+      order.push('later-identity')
+    })
+
+    extendScope.resolve()
+    await flushMicrotasks()
+    expect(order).toEqual(['active-identity:start', 'project:start'])
+    activeIdentityGate.resolve()
+    await Promise.all([activeIdentity, project, global, laterIdentity])
+    expect(order).toEqual([
+      'active-identity:start',
+      'project:start',
+      'active-identity:end',
+      'project:identity-cleanup',
+      'project:end',
+      'global',
+      'later-identity'
+    ])
+  })
+
   it('makes global operations exclusive with earlier and later scoped work', async () => {
     const scheduler = new SessionPersistenceOperationScheduler()
     const projectGate = createDeferred()
