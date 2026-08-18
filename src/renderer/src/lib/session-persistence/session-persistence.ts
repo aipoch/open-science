@@ -596,10 +596,15 @@ const createStoreSaver = (
     if (!isSessionRevisionConflictError(error)) throw error
     const base = acknowledgedSessions.get(submitted.id)
     if (!base) throw error
-    const latest = await api.loadOne({
-      projectId: submitted.projectId,
-      sessionId: submitted.id
-    })
+    let latest: PersistedChatSession | undefined
+    try {
+      latest = await api.loadOne({
+        projectId: submitted.projectId,
+        sessionId: submitted.id
+      })
+    } catch {
+      throw error
+    }
     if (!latest) throw error
     const rebased = rebaseSessionAfterRevisionConflict(base, submitted, latest)
     if (!rebased) throw error
