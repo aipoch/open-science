@@ -89,7 +89,7 @@ describe('LocalFsService.listDir', () => {
     expect(listing.entries.some((entry) => entry.name === 'file-4999')).toBe(false)
   })
 
-  it('classifies directory symlinks before applying the entry cap', async () => {
+  it('keeps directory symlink candidates eligible before applying the entry cap', async () => {
     const fileDirents = Array.from({ length: LOCAL_DIR_ENTRY_CAP }, (_, index) => ({
       name: `file-${String(index).padStart(4, '0')}`,
       isDirectory: () => false,
