@@ -557,6 +557,47 @@ describe('AgentStep', () => {
     expect(document.activeElement).toBe(radios[1])
   })
 
+  it('does not reselect a framework when a roving key resolves to the current radio', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      setAgentFramework,
+      checkEnvironment,
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await renderStep()
+    setAgentFramework.mockClear()
+    checkEnvironment.mockClear()
+
+    const radio = container.querySelector<HTMLElement>('[role="radio"]')
+    radio?.focus()
+    await act(async () => {
+      radio?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      radio?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true })
+      )
+      await Promise.resolve()
+    })
+
+    expect(setAgentFramework).not.toHaveBeenCalled()
+    expect(checkEnvironment).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(radio)
+  })
+
   it('locks installed framework cards while detection is in flight', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',

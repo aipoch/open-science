@@ -513,8 +513,9 @@ const AgentPanel = ({
     if (nextIndex === undefined) return
 
     event.preventDefault()
-    radios[nextIndex].focus()
-    radios[nextIndex].click()
+    const nextRadio = radios[nextIndex]
+    nextRadio.focus()
+    if (nextRadio !== event.target) nextRadio.click()
   }
 
   // Maps one framework descriptor to its card, wiring in the panel-level concerns: radio selection
