@@ -421,6 +421,13 @@ describe('SpecialistPackageService', () => {
         }
       ]
     })
+    await expect(
+      service.export({
+        specialistId: 'draft-specialist',
+        expectedRevision: 1,
+        includedSkillIds: []
+      })
+    ).rejects.toThrow(/description.*system prompt/i)
   })
 
   it('exports builtin and owned Skills with exact IDs and editable capability references only', async () => {

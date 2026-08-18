@@ -68,6 +68,10 @@ const ALL_PACKAGE_CODES = [
   'skill.version-invalid',
   'skill.executable-content-present',
   'skill.existing-conflict',
+  // Export preview (package/service.ts)
+  'specialist.export-unbundled-skills',
+  'specialist.export-version-unchanged',
+  'specialist.export-validation-failed',
   // Overwrite preview (package/service.ts)
   'specialist.overwrite-same-version',
   'specialist.overwrite-downgrade',

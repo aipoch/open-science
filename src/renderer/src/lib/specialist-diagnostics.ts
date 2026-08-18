@@ -200,7 +200,7 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
   ),
   'specialist.system-prompt-invalid': plain(
     'Invalid system prompt',
-    'The system prompt must be a string within the length limit.'
+    'The system prompt must be a non-empty string within the length limit.'
   ),
   'specialist.skillIds-invalid': plain(
     'Skill list',
@@ -280,6 +280,20 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
   'skill.existing-conflict': plain(
     'Skill conflict',
     'A Skill with this name is already installed with different content or version. Resolve the conflict and rebuild the ZIP.'
+  ),
+
+  // ---- Export preview (package/service.ts) ----
+  'specialist.export-unbundled-skills': plain(
+    'Unbundled Skills omitted',
+    'Unchecked Skills are omitted. Capabilities are selected locally after import.'
+  ),
+  'specialist.export-version-unchanged': plain(
+    'Package version unchanged',
+    'Content changed but the package version was not increased. Update the version before publishing.'
+  ),
+  'specialist.export-validation-failed': plain(
+    'Export validation failed',
+    'The current Specialist or selected Skills contain blocking validation errors.'
   ),
 
   // ---- Overwrite preview (package/service.ts) ----

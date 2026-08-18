@@ -4,6 +4,7 @@ import { strToU8 } from 'fflate'
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
   specialistPackageReportFromPreview,
+  type PackageDiagnostic,
   type SpecialistPackageReport,
   type SpecialistPackageCandidatePreview,
   type SpecialistPackageCatalogSnapshot,
@@ -65,6 +66,33 @@ type SpecialistPackageServiceOptions = {
   now?: () => Date
   onCommitted?: () => void
   skillPort?: SpecialistPackageSkillPort
+}
+
+const specialistExportProfileDiagnostics = (
+  specialist: Pick<StoredSpecialist, 'description' | 'systemPrompt'>
+): PackageDiagnostic[] => {
+  const diagnostics: PackageDiagnostic[] = []
+  const descriptionError = !specialist.description.trim()
+    ? 'Complete the Specialist description before exporting a package.'
+    : validateSpecialistDescription(specialist.description)
+  if (descriptionError) {
+    diagnostics.push({
+      severity: 'error',
+      code: 'specialist.description-invalid',
+      message: descriptionError
+    })
+  }
+  const systemPromptError = !specialist.systemPrompt.trim()
+    ? 'Complete the Specialist system prompt before exporting a package.'
+    : validateSpecialistSystemPrompt(specialist.systemPrompt)
+  if (systemPromptError) {
+    diagnostics.push({
+      severity: 'error',
+      code: 'specialist.system-prompt-invalid',
+      message: systemPromptError
+    })
+  }
+  return diagnostics
 }
 
 export const specialistExportFileName = (
@@ -465,11 +493,7 @@ export class SpecialistPackageService {
       .sort((left, right) => left.id.localeCompare(right.id))
     const selectedSkills = skills
     const connectorIds = effectiveSpecialistConnectorIds(specialist, catalog)
-    const diagnostics: Array<{
-      severity: 'error' | 'warning' | 'info'
-      code: string
-      message: string
-    }> = []
+    const diagnostics: PackageDiagnostic[] = []
     if (selectedSkills.some((skill) => skill.kind === 'referenced')) {
       diagnostics.push({
         severity: 'info',
@@ -493,26 +517,7 @@ export class SpecialistPackageService {
         message: `Content changed but the package version remains ${specialist.packageVersion}.`
       })
     }
-    const descriptionError = !specialist.description.trim()
-      ? 'Complete the Specialist description before exporting a package.'
-      : validateSpecialistDescription(specialist.description)
-    if (descriptionError) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'specialist.description-invalid',
-        message: descriptionError
-      })
-    }
-    const systemPromptError = !specialist.systemPrompt.trim()
-      ? 'Complete the Specialist system prompt before exporting a package.'
-      : validateSpecialistSystemPrompt(specialist.systemPrompt)
-    if (systemPromptError) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'specialist.system-prompt-invalid',
-        message: systemPromptError
-      })
-    }
+    diagnostics.push(...specialistExportProfileDiagnostics(specialist))
     const includedSkillIds = selectedSkills
       .filter((skill) => skill.selected)
       .map((skill) => skill.id)
@@ -574,6 +579,10 @@ export class SpecialistPackageService {
     if (!specialist) throw new Error('Custom Specialist not found.')
     if (specialist.revision !== request.expectedRevision) {
       throw new Error('Specialist changed during export. Preview again and retry.')
+    }
+    const profileDiagnostics = specialistExportProfileDiagnostics(specialist)
+    if (profileDiagnostics.length) {
+      throw new Error(profileDiagnostics.map((item) => item.message).join(' '))
     }
 
     const requestedSkillIds = effectiveSpecialistSkillIds(specialist, catalog)

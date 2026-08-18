@@ -369,7 +369,8 @@ describe('SpecialistsPanel', () => {
       )
     })
     expect(document.body.textContent).toContain('Choose Skills to include')
-    expect(document.body.textContent).toContain('package.archive-file-size-exceeded')
+    expect(document.body.textContent).toContain('Single file too large')
+    expect(document.body.textContent).not.toContain('package.archive-file-size-exceeded')
   })
 
   it('falls back to the skill chooser with an error when the direct export save fails', async () => {
@@ -485,7 +486,9 @@ describe('SpecialistsPanel', () => {
     expect(checkboxFor('document-reader')).toMatchObject({ checked: true, disabled: false })
     expect(checkboxFor('analysis-tools')).toMatchObject({ checked: true, disabled: false })
     expect(checkboxFor('citation-manager')).toMatchObject({ checked: false, disabled: false })
-    expect(document.body.textContent).toContain('Content changed but the package version remains')
+    expect(document.body.textContent).toContain(
+      'Content changed but the package version was not increased.'
+    )
     expect(document.body.textContent).toContain('Only checked Skills are bundled')
 
     const exportButton = Array.from(document.body.querySelectorAll('button')).find(

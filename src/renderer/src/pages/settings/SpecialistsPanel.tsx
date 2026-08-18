@@ -443,16 +443,19 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         ) : null}
         {exportPreview ? (
           <div className="flex flex-col gap-4">
-            {exportPreview.diagnostics.map((diagnostic) => (
-              <div
-                key={diagnostic.code}
-                role={diagnostic.severity === 'error' ? 'alert' : 'status'}
-                className="rounded-lg border border-border p-3 text-sm"
-              >
-                <strong>{diagnostic.code}</strong>
-                <p className="text-muted-foreground">{diagnostic.message}</p>
-              </div>
-            ))}
+            {exportPreview.diagnostics.map((diagnostic) => {
+              const copy = specialistDiagnosticCopy(diagnostic)
+              return (
+                <div
+                  key={diagnostic.code}
+                  role={diagnostic.severity === 'error' ? 'alert' : 'status'}
+                  className="rounded-lg border border-border p-3 text-sm"
+                >
+                  <strong>{t(copy.title)}</strong>
+                  <p className="text-muted-foreground">{t(copy.body)}</p>
+                </div>
+              )
+            })}
             <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
               {exportPreview.skills.map((skill) => {
                 const checked = includedExportSkillIds.includes(skill.id)
@@ -831,8 +834,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                   aria-hidden="true"
                                 />
                                 <div className="min-w-0">
-                                  <strong className="block">{copy.title}</strong>
-                                  <span className="block opacity-80">{copy.body}</span>
+                                  <strong className="block">{t(copy.title)}</strong>
+                                  <span className="block opacity-80">{t(copy.body)}</span>
                                   {diagnostic.path || diagnostic.relatedId ? (
                                     <span className="mt-0.5 block font-mono text-[10px] opacity-60">
                                       {diagnostic.path}
