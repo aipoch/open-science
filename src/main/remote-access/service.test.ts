@@ -429,6 +429,103 @@ describe('RemoteAccessService', () => {
     expect(service.snapshot(true).error).toMatch(/web service stopped/i)
   })
 
+  it('does not republish running state when shutdown interrupts provider setup', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    let releaseProvider: (() => void) | undefined
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+    deps.enableRemoteIt.mockImplementation(async () => {
+      await providerGate
+      return {
+        installation: readyInstallation('app-service'),
+        appServiceId: 'app-service',
+        browserServiceId: 'browser-service'
+      }
+    })
+    const published: ReturnType<RemoteAccessService['snapshot']>[] = []
+    const serviceHolder: { current?: RemoteAccessService } = {}
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn(() => published.push(serviceHolder.current!.snapshot(true)))
+    })
+    serviceHolder.current = service
+    service.attachWebController(webController())
+
+    const starting = service.setMode('remoteit')
+    await vi.waitFor(() => expect(deps.enableRemoteIt).toHaveBeenCalledOnce())
+    let shutdownSettled = false
+    const shutdown = service.shutdown().then(() => {
+      shutdownSettled = true
+    })
+    const postShutdownPublication = published.length
+
+    await Promise.resolve()
+    expect(shutdownSettled).toBe(false)
+    releaseProvider?.()
+    await shutdown
+
+    await expect(starting).resolves.toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled'
+    })
+    expect(service.snapshot(true)).toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled'
+    })
+    expect(published.slice(postShutdownPublication)).not.toContainEqual(
+      expect.objectContaining({ enabled: true, lifecycle: 'running' })
+    )
+  })
+
+  it('does not restart remote access when shutdown interrupts detection', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const published: ReturnType<RemoteAccessService['snapshot']>[] = []
+    const serviceHolder: { current?: RemoteAccessService } = {}
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn(() => published.push(serviceHolder.current!.snapshot(true)))
+    })
+    serviceHolder.current = service
+    service.attachWebController(webController())
+    await service.setMode('remoteit')
+    let releaseDetection: (() => void) | undefined
+    const detectionGate = new Promise<void>((resolve) => {
+      releaseDetection = resolve
+    })
+    deps.detectRemoteIt.mockImplementationOnce(async () => {
+      await detectionGate
+      return readyInstallation('app-service')
+    })
+
+    const detecting = service.detect()
+    await vi.waitFor(() => expect(deps.detectRemoteIt).toHaveBeenCalledTimes(2))
+    const shutdown = service.shutdown()
+    const postShutdownPublication = published.length
+    releaseDetection?.()
+    await shutdown
+
+    await expect(detecting).resolves.toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled'
+    })
+    expect(service.snapshot(true)).toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled'
+    })
+    expect(published.slice(postShutdownPublication)).not.toContainEqual(
+      expect.objectContaining({ enabled: true, lifecycle: 'running' })
+    )
+  })
+
   it('fails closed and keeps the setup error attached to the selected mode', async () => {
     const repository = await createRepository()
     const service = await RemoteAccessService.create({

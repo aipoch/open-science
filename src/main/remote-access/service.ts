@@ -81,6 +81,8 @@ export class RemoteAccessService {
   private webController: WebServiceController | undefined
   private detachWebController: (() => void) | undefined
   private mutationQueue: Promise<void> = Promise.resolve()
+  private shutdownStarted = false
+  private shutdownPromise: Promise<void> | undefined
   private readonly log = createLogger('remote-access')
 
   private constructor(
@@ -130,6 +132,7 @@ export class RemoteAccessService {
     this.webController = controller
     this.detachWebController = controller.onStopped(() => {
       this.webStopGeneration += 1
+      if (this.shutdownStarted) return
       const shouldReportFailure = this.runtimeEnabled && this.activeMode !== 'off'
       this.invalidateExternalAccess(false)
       if (!shouldReportFailure) return
@@ -165,11 +168,18 @@ export class RemoteAccessService {
     })
   }
 
-  async detect(): Promise<RemoteAccessSnapshot> {
+  detect(): Promise<RemoteAccessSnapshot> {
+    return this.serialize(() => this.detectSerialized())
+  }
+
+  private async detectSerialized(): Promise<RemoteAccessSnapshot> {
+    if (this.shutdownStarted) return this.snapshot(true)
     try {
       await this.refreshInstallation()
+      if (this.shutdownStarted) return this.snapshot(true)
       if (this.activeMode !== 'off') this.assertProviderReady()
     } catch (error) {
+      if (this.shutdownStarted) return this.snapshot(true)
       this.invalidateExternalAccess()
       this.lifecycle = 'error'
       this.error = error instanceof Error ? error.message : String(error)
@@ -193,7 +203,7 @@ export class RemoteAccessService {
       routeNeedsRepair ||
       browserRouteNeedsRefresh
     ) {
-      return this.setMode(this.activeMode, {
+      return this.setModeSerialized(this.activeMode, {
         forceReconcile: routeNeedsRepair || browserRouteNeedsRefresh
       })
     }
@@ -211,89 +221,108 @@ export class RemoteAccessService {
       forceReconcile?: boolean
     } = {}
   ): Promise<RemoteAccessSnapshot> {
-    return this.serialize(async () => {
-      if (
-        mode === this.activeMode &&
-        this.lifecycle === 'running' &&
-        options.forceReconcile !== true
-      ) {
-        return this.snapshot(true)
-      }
-      if (mode === 'off') return this.stopActiveRoute(options.persistPreference !== false)
-      if (!this.webController) throw new Error('Remote access is not initialized yet.')
-      const webStopGeneration = this.webStopGeneration
+    return this.serialize(() => this.setModeSerialized(mode, options))
+  }
 
-      this.lifecycle = 'starting'
-      this.invalidateExternalAccess(this.runtimeEnabled)
-      this.error = undefined
+  private async setModeSerialized(
+    mode: RemoteAccessMode,
+    options: {
+      persistPreference?: boolean
+      forceReconcile?: boolean
+    }
+  ): Promise<RemoteAccessSnapshot> {
+    if (this.shutdownStarted) return this.snapshot(true)
+    if (
+      mode === this.activeMode &&
+      this.lifecycle === 'running' &&
+      options.forceReconcile !== true
+    ) {
+      return this.snapshot(true)
+    }
+    if (mode === 'off') return this.stopActiveRoute(options.persistPreference !== false)
+    if (!this.webController) throw new Error('Remote access is not initialized yet.')
+    const webStopGeneration = this.webStopGeneration
+
+    this.lifecycle = 'starting'
+    this.invalidateExternalAccess(this.runtimeEnabled)
+    this.error = undefined
+    this.notifyChanged()
+
+    try {
+      await this.refreshInstallation()
+      if (this.shutdownStarted) return this.snapshot(true)
+      this.assertProviderReady()
+
+      const web = await this.webController.ensureStarted(DEFAULT_WEB_PORT, { attached: true })
+      if (this.shutdownStarted) return this.snapshot(true)
+      const binaryPath = this.remoteIt.binaryPath
+      if (!binaryPath) throw new Error('The remote access app is unavailable.')
+
+      const enabled = await this.deps.enableRemoteIt(binaryPath, web.port, {
+        active: mode === 'remoteit' ? 'app' : 'browser',
+        appServiceId: this.remoteItAppServiceId,
+        browserServiceId: this.remoteItBrowserServiceId,
+        onServiceIdsDiscovered: async (services) => {
+          await this.rememberRemoteItServiceIds(services)
+        }
+      })
+      if (this.shutdownStarted) return this.snapshot(true)
+      this.remoteIt = enabled.installation
+      await this.rememberRemoteItServiceIds(enabled)
+      if (this.shutdownStarted) return this.snapshot(true)
+      // App is always private. App mode also closes Browser's Persistent Public URL so a link
+      // issued by an earlier Browser session cannot keep reaching the loopback service.
+      await this.deps.disableRemoteItLink(binaryPath, enabled.appServiceId)
+      if (this.shutdownStarted) return this.snapshot(true)
+
+      if (mode === 'remoteit-public') {
+        const connectLinkUrl = normalizeRemoteItPublicUrl(
+          await this.deps.ensureRemoteItLink(binaryPath, enabled.browserServiceId)
+        )
+        if (this.shutdownStarted) return this.snapshot(true)
+        if (this.pairing.preferences.remoteItPublicUrl !== connectLinkUrl) {
+          await this.pairing.setRemoteItPublicUrl(connectLinkUrl)
+          if (this.shutdownStarted) return this.snapshot(true)
+        }
+        this.accessUrl = connectLinkUrl
+        this.remoteHost = new URL(connectLinkUrl).hostname.toLowerCase()
+      } else {
+        await this.deps.disableRemoteItLink(binaryPath, enabled.browserServiceId)
+        if (this.shutdownStarted) return this.snapshot(true)
+      }
+
+      if (options.persistPreference !== false) await this.pairing.setModePreference(mode)
+      if (this.shutdownStarted) return this.snapshot(true)
+      if (webStopGeneration !== this.webStopGeneration || !this.webController.isRunning()) {
+        throw new Error('The local web service stopped. Detect again to restore remote access.')
+      }
+      this.activeMode = mode
+      this.runtimeEnabled = true
+      this.lifecycle = 'running'
+      this.log.info('Remote access enabled', {
+        mode,
+        accessUrl: this.accessUrl,
+        remoteItAppServiceId: enabled.appServiceId,
+        remoteItBrowserServiceId: enabled.browserServiceId,
+        port: web.port
+      })
       this.notifyChanged()
-
-      try {
-        await this.refreshInstallation()
-        this.assertProviderReady()
-
-        const web = await this.webController.ensureStarted(DEFAULT_WEB_PORT, { attached: true })
-        const binaryPath = this.remoteIt.binaryPath
-        if (!binaryPath) throw new Error('The remote access app is unavailable.')
-
-        const enabled = await this.deps.enableRemoteIt(binaryPath, web.port, {
-          active: mode === 'remoteit' ? 'app' : 'browser',
-          appServiceId: this.remoteItAppServiceId,
-          browserServiceId: this.remoteItBrowserServiceId,
-          onServiceIdsDiscovered: async (services) => {
-            await this.rememberRemoteItServiceIds(services)
-          }
-        })
-        this.remoteIt = enabled.installation
-        await this.rememberRemoteItServiceIds(enabled)
-        // App is always private. App mode also closes Browser's Persistent Public URL so a link
-        // issued by an earlier Browser session cannot keep reaching the loopback service.
-        await this.deps.disableRemoteItLink(binaryPath, enabled.appServiceId)
-
-        if (mode === 'remoteit-public') {
-          const connectLinkUrl = normalizeRemoteItPublicUrl(
-            await this.deps.ensureRemoteItLink(binaryPath, enabled.browserServiceId)
-          )
-          if (this.pairing.preferences.remoteItPublicUrl !== connectLinkUrl) {
-            await this.pairing.setRemoteItPublicUrl(connectLinkUrl)
-          }
-          this.accessUrl = connectLinkUrl
-          this.remoteHost = new URL(connectLinkUrl).hostname.toLowerCase()
-        } else {
-          await this.deps.disableRemoteItLink(binaryPath, enabled.browserServiceId)
-        }
-
-        if (options.persistPreference !== false) await this.pairing.setModePreference(mode)
-        if (webStopGeneration !== this.webStopGeneration || !this.webController.isRunning()) {
-          throw new Error('The local web service stopped. Detect again to restore remote access.')
-        }
-        this.activeMode = mode
-        this.runtimeEnabled = true
-        this.lifecycle = 'running'
-        this.log.info('Remote access enabled', {
-          mode,
-          accessUrl: this.accessUrl,
-          remoteItAppServiceId: enabled.appServiceId,
-          remoteItBrowserServiceId: enabled.browserServiceId,
-          port: web.port
-        })
-        this.notifyChanged()
-        return this.snapshot(true)
-      } catch (error) {
-        this.runtimeEnabled = false
-        this.activeMode = mode
-        this.remoteHost = undefined
-        this.accessUrl = undefined
-        if (options.persistPreference !== false) {
-          await this.pairing.setModePreference('off').catch(() => undefined)
-        }
-        this.lifecycle = 'error'
-        this.error = error instanceof Error ? error.message : String(error)
-        this.log.error(`Remote access ${mode} enable failed`, error)
-        this.notifyChanged()
-        return this.snapshot(true)
+      return this.snapshot(true)
+    } catch (error) {
+      if (this.shutdownStarted) return this.snapshot(true)
+      this.runtimeEnabled = false
+      this.activeMode = mode
+      this.remoteHost = undefined
+      this.accessUrl = undefined
+      if (options.persistPreference !== false) {
+        await this.pairing.setModePreference('off').catch(() => undefined)
       }
-    })
+      this.lifecycle = 'error'
+      this.error = error instanceof Error ? error.message : String(error)
+      this.log.error(`Remote access ${mode} enable failed`, error)
+      this.notifyChanged()
+      return this.snapshot(true)
+    }
   }
 
   disable(): Promise<RemoteAccessSnapshot> {
@@ -327,8 +356,19 @@ export class RemoteAccessService {
   }
 
   shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise
+    this.shutdownStarted = true
+    this.detachWebController?.()
+    this.detachWebController = undefined
     this.invalidateExternalAccess()
-    return Promise.resolve()
+    this.activeMode = 'off'
+    this.lifecycle = 'disabled'
+    this.error = undefined
+    this.notifyChanged()
+    this.shutdownPromise = this.serialize(async () => {
+      this.webController = undefined
+    })
+    return this.shutdownPromise
   }
 
   private notifyChanged(): void {
