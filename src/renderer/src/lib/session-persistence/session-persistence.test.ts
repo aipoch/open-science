@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   materializeSessionConversationGraph,
   SESSION_MANIFEST_VERSION,
+  SessionRevisionConflictError,
   type LoadAllSessionsResult,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
@@ -45,6 +46,7 @@ const createLoadResult = (
 
 const createApi = (overrides: Partial<SessionPersistenceApi> = {}): SessionPersistenceApi => ({
   loadAll: vi.fn().mockResolvedValue(createLoadResult()),
+  loadOne: vi.fn().mockResolvedValue(undefined),
   saveSession: vi.fn(async (session: PersistedChatSession) => session),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   saveManifest: vi.fn().mockResolvedValue(undefined),
@@ -782,6 +784,121 @@ describe('renderer session persistence bridge', () => {
       revision: 5,
       title: 'Second queued'
     })
+  })
+
+  it('retries a local graph save over a concurrent main-owned permission revision', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 1,
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run the command',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const authoritative = {
+      ...base,
+      revision: 2,
+      status: 'waiting-permission' as const,
+      runtimeContext: {
+        version: 1 as const,
+        revision: 1,
+        permission: {
+          state: 'pending' as const,
+          request: {
+            requestId: 'permission-1',
+            sessionId: base.id,
+            toolCallId: 'tool-1',
+            title: 'Run the command',
+            options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' as const }]
+          },
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: 'a'.repeat(64),
+          createdAt: 2
+        }
+      },
+      updatedAt: base.updatedAt + 1
+    }
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 3 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: base.id,
+      content: 'Keep this local graph update',
+      cwd: base.cwd,
+      projectId: base.projectId
+    })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(api.loadOne).toHaveBeenCalledWith({ projectId: base.projectId, sessionId: base.id })
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 2,
+      status: 'waiting-permission',
+      runtimeContext: authoritative.runtimeContext
+    })
+    expect(saveSession.mock.calls[1][0].messages.map(({ content }) => content)).toEqual([
+      'Run the command',
+      'Keep this local graph update'
+    ])
+  })
+
+  it('does not retry when both the local and authoritative conversation graphs changed', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({ projectId: 'project-a', revision: 1 })
+    )
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 2,
+      messages: [
+        {
+          id: 'remote-message',
+          role: 'user',
+          content: 'Changed in another window',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      updatedAt: base.updatedAt + 1
+    })
+    const conflict = new SessionRevisionConflictError(1, 2)
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>().mockRejectedValue(conflict)
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: base.id,
+      content: 'Different local update',
+      cwd: base.cwd,
+      projectId: base.projectId
+    })
+
+    await expect(save(useSessionStore.getState())).rejects.toBe(conflict)
+    expect(api.loadOne).toHaveBeenCalledOnce()
+    expect(saveSession).toHaveBeenCalledOnce()
   })
 
   it('reports an earlier failed write even when a later queued write succeeds', async () => {

@@ -9,6 +9,7 @@ import {
   sessionRevision,
   type DeleteSessionRequest,
   type LoadAllSessionsResult,
+  type LoadSessionRequest,
   type PersistedChatSession,
   type SaveSessionOptions,
   type SessionConflictRebaseField,
@@ -27,6 +28,7 @@ import { projectRendererFailure } from '../../renderer-diagnostics'
 
 type SessionPersistenceApi = {
   loadAll: () => Promise<LoadAllSessionsResult>
+  loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
     options?: SaveSessionOptions
@@ -62,6 +64,83 @@ const conflictRebaseFieldChanged = (
   field: SessionConflictRebaseField
 ): boolean => {
   return previous[field] !== next[field]
+}
+
+const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
+  'revision',
+  'runtimeContext',
+  'archivedAt',
+  'branchSource',
+  'delegationPolicy',
+  'enabledComputeHosts',
+  'specialistId',
+  'specialistBindingPending'
+])
+
+const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => jsonValuesEqual(value, right[index]))
+    )
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  const rightKeys = Object.keys(rightRecord)
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) => Object.hasOwn(rightRecord, key) && jsonValuesEqual(leftRecord[key], rightRecord[key])
+    )
+  )
+}
+
+const rebaseSessionAfterRevisionConflict = (
+  base: PersistedChatSession,
+  submitted: PersistedChatSession,
+  latest: PersistedChatSession
+): PersistedChatSession | undefined => {
+  const rebased: PersistedChatSession = structuredClone(latest)
+  const keys = new Set([
+    ...Object.keys(base),
+    ...Object.keys(submitted),
+    ...Object.keys(latest)
+  ] as Array<keyof PersistedChatSession>)
+  const mainOwnsStatus =
+    latest.runtimeContext?.permission?.state === 'pending' ||
+    latest.status === 'waiting-plan-approval'
+
+  for (const key of keys) {
+    if (
+      MAIN_OWNED_SESSION_FIELDS.has(key) ||
+      key === 'updatedAt' ||
+      (key === 'status' && mainOwnsStatus)
+    ) {
+      continue
+    }
+    const baseValue = base[key]
+    const submittedValue = submitted[key]
+    const latestValue = latest[key]
+    const localChanged = !jsonValuesEqual(submittedValue, baseValue)
+    if (!localChanged) continue
+    const remoteChanged = !jsonValuesEqual(latestValue, baseValue)
+    if (remoteChanged && !jsonValuesEqual(submittedValue, latestValue)) return undefined
+
+    if (Object.hasOwn(submitted, key)) {
+      Object.assign(rebased, { [key]: structuredClone(submittedValue) })
+    } else {
+      Reflect.deleteProperty(rebased, key)
+    }
+  }
+
+  rebased.revision = sessionRevision(latest)
+  rebased.updatedAt = Math.max(base.updatedAt, submitted.updatedAt, latest.updatedAt) + 1
+  return rebased
 }
 
 const mergeSaveSessionOptions = (
@@ -444,6 +523,28 @@ const createStoreSaver = (
   const acknowledgedRevisions = new Map(
     initial.sessions.map((session) => [session.id, sessionRevision(session)])
   )
+  const acknowledgedSessions = new Map(
+    initial.sessions.map((session) => [session.id, toPersistedSession(session)])
+  )
+
+  const recoverRevisionConflict = async (
+    error: unknown,
+    submitted: PersistedChatSession,
+    options: SaveSessionOptions | undefined,
+    save: SessionPersistenceApi['saveSession']
+  ): Promise<PersistedChatSession> => {
+    if (!isSessionRevisionConflictError(error)) throw error
+    const base = acknowledgedSessions.get(submitted.id)
+    if (!base) throw error
+    const latest = await api.loadOne({
+      projectId: submitted.projectId,
+      sessionId: submitted.id
+    })
+    if (!latest) throw error
+    const rebased = rebaseSessionAfterRevisionConflict(base, submitted, latest)
+    if (!rebased) throw error
+    return options ? save(rebased, options) : save(rebased)
+  }
 
   return (state, options) => {
     const nextSessions = state.sessions
@@ -518,12 +619,24 @@ const createStoreSaver = (
                   acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                 let durableSession: PersistedChatSession
                 try {
-                  durableSession = await persistence.saveSession(persisted, saveOptions)
+                  durableSession = saveOptions
+                    ? await persistence.saveSession(persisted, saveOptions)
+                    : await persistence.saveSession(persisted)
                 } catch (error) {
-                  reportPersistenceError(error, 'session-save')
-                  throw error
+                  try {
+                    durableSession = await recoverRevisionConflict(
+                      error,
+                      persisted,
+                      saveOptions,
+                      persistence.saveSession
+                    )
+                  } catch (finalError) {
+                    reportPersistenceError(finalError, 'session-save')
+                    throw finalError
+                  }
                 }
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
+                acknowledgedSessions.set(session.id, durableSession)
                 observePersistencePhase('session-apply-durable', () =>
                   applyDurableSession(durableSession, saveOptions)
                 )
@@ -539,14 +652,24 @@ const createStoreSaver = (
                       acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                     let durableSession: PersistedChatSession
                     try {
-                      durableSession = await (coalescedOptions
-                        ? api.saveSession(persisted, coalescedOptions)
-                        : api.saveSession(persisted))
+                      durableSession = coalescedOptions
+                        ? await api.saveSession(persisted, coalescedOptions)
+                        : await api.saveSession(persisted)
                     } catch (error) {
-                      reportPersistenceError(error, 'session-save')
-                      throw error
+                      try {
+                        durableSession = await recoverRevisionConflict(
+                          error,
+                          persisted,
+                          coalescedOptions,
+                          api.saveSession
+                        )
+                      } catch (finalError) {
+                        reportPersistenceError(finalError, 'session-save')
+                        throw finalError
+                      }
                     }
                     acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
+                    acknowledgedSessions.set(session.id, durableSession)
                     observePersistencePhase('session-apply-durable', () =>
                       applyDurableSession(durableSession, coalescedOptions)
                     )
