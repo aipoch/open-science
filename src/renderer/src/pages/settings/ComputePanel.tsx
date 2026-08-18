@@ -14,7 +14,14 @@ import { FileBrowserModal } from './FileBrowserModal'
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
 // are separate components owned by SettingsPage; this panel renders the list + header banner only.
 export type ComputeView =
-  { kind: 'list' } | { kind: 'add' } | { kind: 'detail'; providerId: string }
+  | { kind: 'list' }
+  | { kind: 'add' }
+  | {
+      kind: 'detail'
+      providerId: string
+      authenticationFocus?: import('../../../../shared/compute').ComputeAuthenticationErrorCode
+      authenticationRequestId?: number
+    }
 
 type ComputePanelProps = {
   onNavigate: (view: ComputeView) => void

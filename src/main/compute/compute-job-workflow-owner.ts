@@ -11,6 +11,7 @@ import type {
 } from '../../shared/compute'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
+import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
@@ -19,9 +20,7 @@ import type { ComputeJobRepository } from './job-repository'
 import { getJobHarvestDir } from './harvest-engine'
 import { validateHarvestConfig } from './harvest-classifier'
 import type { ComputeHostRepository } from './repository'
-import type { ScpRunner } from './scp-runner'
-import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './scp-runner'
-import type { SshRunner } from './ssh-runner'
+import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './remote-path-security'
 import { workspaceRelativePath } from './workspace-path'
 
 const COMMAND_PREVIEW_MAX_LEN = 120
@@ -133,10 +132,9 @@ const queueFullError = (): Error & { computeCallError: ComputeCallError } => {
 
 export class ComputeJobWorkflowOwner {
   constructor(
-    private readonly runner: SshRunner,
+    private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
     private readonly hostRepository: ComputeHostRepository,
     private readonly approvalBroker: ComputeApprovalBroker | undefined,
-    private readonly scpRunner: ScpRunner,
     private readonly jobRepository: ComputeJobRepository | undefined,
     private readonly publishJobUpdated: ((job: ComputeJob) => void) | undefined,
     private readonly artifactResolver: ArtifactResolver | undefined,
@@ -322,8 +320,7 @@ export class ComputeJobWorkflowOwner {
 
       if (initialStatus === 'submitted') {
         void dispatchJob(jobId, {
-          runner: this.runner,
-          scpRunner: this.scpRunner,
+          connectionBroker: this.connectionBroker,
           hostRepository: this.hostRepository,
           jobRepository: this.jobRepository,
           onJobUpdated: this.handleJobUpdated

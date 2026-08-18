@@ -95,7 +95,7 @@ describe('ComputeService host profile facade', () => {
     })
     const { repo, updateProbeResult, updateDetails, updateScratchPinned, updateConcurrencyLimit } =
       makeRepo(sampleHost({ detailsDoc: 'current details' }))
-    const service = new ComputeService(runner, repo)
+    const service = new ComputeService({ runner, repository: repo })
 
     await expect(service.probe('ssh:biowulf')).resolves.toMatchObject({
       ok: true,
@@ -170,15 +170,25 @@ describe('ComputeService remote operation facade', () => {
         copy: vi.fn(async (_binary, args) => {
           await writeFile(args.at(-1) as string, 'data')
           return { exitCode: 0, stderr: '', timedOut: false }
+        }),
+        copyFromRemoteBounded: vi.fn(async (_target, _remotePath, localPath) => {
+          await writeFile(localPath, 'data')
+          return {
+            exitCode: 0,
+            stderr: '',
+            timedOut: false,
+            bytesWritten: 4,
+            exceeded: false
+          }
         })
       }
-      const service = new ComputeService(
+      const service = new ComputeService({
         runner,
-        repo,
-        makeApprovalBroker('once'),
+        repository: repo,
+        approvalBroker: makeApprovalBroker('once'),
         scpRunner,
-        tempDir
-      )
+        overrideDownloadsDir: tempDir
+      })
 
       await expect(service.listDir('ssh:biowulf', '/work')).resolves.toMatchObject({
         resolvedPath: '/work',
@@ -211,12 +221,43 @@ describe('ComputeService.list', () => {
     })
     const { repo } = makeRepo()
     ;(repo.list as ReturnType<typeof vi.fn>).mockResolvedValue(hosts)
-    const service = new ComputeService(runner, repo)
+    const service = new ComputeService({ runner, repository: repo })
 
     const result = await service.list()
     expect(result).toHaveLength(2)
     expect(result[0].providerId).toBe('ssh:biowulf')
     expect(result[1].providerId).toBe('ssh:lab-gpu')
+  })
+
+  it('projects the configured Vault credential for password Hosts', async () => {
+    const passwordHost = sampleHost({
+      authentication: {
+        mode: 'password',
+        credentialStatus: 'missing',
+        revision: 1,
+        lastVerifiedAt: undefined
+      }
+    })
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    ;(repo.list as ReturnType<typeof vi.fn>).mockResolvedValue([passwordHost])
+    const credentialVault = {
+      credentialStatus: vi.fn(async () => 'configured' as const)
+    }
+    const service = new ComputeService({ runner, repository: repo, credentialVault })
+
+    await expect(service.list()).resolves.toEqual([
+      expect.objectContaining({
+        authentication: expect.objectContaining({ credentialStatus: 'configured' })
+      })
+    ])
+    expect(credentialVault.credentialStatus).toHaveBeenCalledWith(passwordHost.id)
   })
 })
 
@@ -287,18 +328,14 @@ describe('ComputeService job workflow facade', () => {
       })),
       handleJobUpdated
     } as unknown as ConcurrencyManager
-    const service = new ComputeService(
+    const service = new ComputeService({
       runner,
-      repo,
-      makeApprovalBroker('once'),
-      { copy: vi.fn() },
-      undefined,
+      repository: repo,
+      approvalBroker: makeApprovalBroker('once'),
+      scpRunner: { copy: vi.fn() },
       jobRepository,
-      undefined,
-      undefined,
-      undefined,
       concurrencyManager
-    )
+    })
 
     const submitted = await service.submitJob(
       'ssh:biowulf',

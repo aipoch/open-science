@@ -3,8 +3,12 @@ import { randomBytes } from 'node:crypto'
 import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import type { SshRunner } from './ssh-runner'
-import { resolveSshTarget } from './ssh-runner'
+import {
+  classifyConnectionFailure,
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from './connection-broker'
 import { quoteRemotePath, type RemoteHandle } from './job-dispatcher'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { emitJobNotification } from './job-notifier'
@@ -50,7 +54,7 @@ const HARVEST_CONCURRENCY_LIMIT = 2
 export type HarvestFn = (job: ComputeJob) => Promise<void>
 
 export type JobPollerDeps = {
-  runner: SshRunner
+  connectionBroker: ComputeConnectionBrokerAcquirer
   hostRepository: ComputeHostRepository
   jobRepository: ComputeJobRepository
   // Optional broadcast hook for Phase 3d renderer IPC; no-op when omitted.
@@ -324,14 +328,12 @@ export class JobPoller {
 
     if (withHandle.length === 0) return
 
-    const host = await this.deps.hostRepository.get(providerId)
-    if (!host) return // host deleted
-
-    let target
+    let connection: ComputeConnectionLease
     try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
-    } catch {
-      // Can't reach host — do not flip job status (design.md §8 boundary 2).
+      connection = await this.deps.connectionBroker.acquire(providerId, { intent: 'job_poll' })
+    } catch (error) {
+      const errorCode = error instanceof ComputeConnectionError ? error.code : 'host_unreachable'
+      await this._recordPollError(withHandle, errorCode)
       return
     }
 
@@ -340,16 +342,13 @@ export class JobPoller {
     // avoid a fan-out of concurrent ssh processes per provider.
     for (let i = 0; i < withHandle.length; i += POLL_BATCH_MAX_JOBS) {
       const batch = withHandle.slice(i, i + POLL_BATCH_MAX_JOBS)
-      await this._pollBatch(batch, target)
+      await this._pollBatch(batch, connection)
     }
   }
 
   // Polls one sub-batch of jobs (all with handles) in a single SSH round-trip, sizing the output cap
   // to the batch so no job's section is truncated away.
-  private async _pollBatch(
-    jobs: ComputeJob[],
-    target: import('./ssh-runner').ResolvedSshTarget
-  ): Promise<void> {
+  private async _pollBatch(jobs: ComputeJob[], connection: ComputeConnectionLease): Promise<void> {
     // Per-tick random nonce prefixed onto every structural marker. Job stdout/stderr tails are
     // interleaved into the same stream, so bare markers (JOB_START:/alive:/STDOUT_END:/...) printed
     // by the job could otherwise hijack section splitting or field parsing. An unpredictable nonce
@@ -390,23 +389,22 @@ export class JobPoller {
     const pollCmd = parts.join('\n')
     let runResult
     try {
-      runResult = await this.deps.runner.run(target, pollCmd, {
+      runResult = await connection.run(pollCmd, {
         timeoutMs: POLL_TIMEOUT_MS,
         loginShell: false,
         maxOutputBytes
       })
     } catch (err) {
       // SSH threw — record lastPollError for each job but do NOT flip status (design.md §8 boundary 2).
-      const msg = err instanceof Error ? err.message : String(err)
-      await this._recordPollError(batched, msg)
+      const errorCode = err instanceof ComputeConnectionError ? err.code : 'host_unreachable'
+      await this._recordPollError(batched, errorCode)
       return
     }
 
-    if (runResult.timedOut || runResult.exitCode === 255) {
+    const connectionFailure = classifyConnectionFailure(runResult, false)
+    if (connectionFailure) {
       // Host unreachable — record error per job but do NOT flip status (design.md §8 boundary 2).
-      const msg =
-        runResult.stderr || (runResult.timedOut ? 'SSH connection timed out' : 'SSH exit 255')
-      await this._recordPollError(batched, msg)
+      await this._recordPollError(batched, connectionFailure.code)
       return
     }
 
@@ -414,7 +412,7 @@ export class JobPoller {
     // A truncated result should be impossible now that the cap is sized to the batch, but if it ever
     // happens the head is kept, so leading jobs still parse; any job whose section was dropped simply
     // stays non-terminal and is re-polled next tick (its remote exit_code file persists).
-    await this._parsePollOutput(runResult.stdout, batched, nonce, target)
+    await this._parsePollOutput(runResult.stdout, batched, nonce, connection)
   }
 
   private _parseHandle(raw: string | undefined): RemoteHandle | null {
@@ -442,7 +440,7 @@ export class JobPoller {
     output: string,
     jobs: ComputeJob[],
     nonce: string,
-    target: import('./ssh-runner').ResolvedSshTarget
+    connection: ComputeConnectionLease
   ): Promise<void> {
     // Split output into per-job sections by the nonce-prefixed JOB_START marker.
     const escapedNonce = nonce.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -491,7 +489,7 @@ export class JobPoller {
       await this._applyPollResult(
         job,
         { alive, exitCode, hasExitCode, stdoutTail, stderrTail },
-        target
+        connection
       )
     }
   }
@@ -505,12 +503,12 @@ export class JobPoller {
       stdoutTail: string
       stderrTail: string
     },
-    target: import('./ssh-runner').ResolvedSshTarget
+    connection: ComputeConnectionLease
   ): Promise<void> {
     const previous = this.pollResultChains.get(job.job_id) ?? Promise.resolve()
     const current = previous
       .catch(() => undefined)
-      .then(() => this._applyPollResultExclusive(job, result, target))
+      .then(() => this._applyPollResultExclusive(job, result, connection))
     this.pollResultChains.set(job.job_id, current)
 
     try {
@@ -531,7 +529,7 @@ export class JobPoller {
       stdoutTail: string
       stderrTail: string
     },
-    target: import('./ssh-runner').ResolvedSshTarget
+    connection: ComputeConnectionLease
   ): Promise<void> {
     const { alive, exitCode, hasExitCode, stdoutTail, stderrTail } = result
 
@@ -619,8 +617,7 @@ export class JobPoller {
         if (handle) {
           // Best-effort kill; ignore errors (process may have already exited).
           try {
-            await this.deps.runner.run(
-              target,
+            await connection.run(
               `kill ${handle.pid} 2>/dev/null; kill -9 ${handle.pid} 2>/dev/null; true`,
               {
                 timeoutMs: 10_000,

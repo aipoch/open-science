@@ -31,6 +31,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
+import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
 import {
   decodeRemoteFsError,
   resolveRemotePath,
@@ -42,6 +43,11 @@ import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import {
+  computeRuntimeRecoveryAction,
+  computeRuntimeRecoveryCopy
+} from './compute-runtime-recovery'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -124,7 +130,12 @@ const parentPath = (p: string): string => {
 type BrowserState =
   | { kind: 'loading' }
   | { kind: 'ok'; listing: DirListing; providerId: string }
-  | { kind: 'error'; detail: string; kind_hint?: string }
+  | {
+      kind: 'error'
+      detail: string
+      kind_hint?: string
+      authenticationCode?: ComputeAuthenticationErrorCode
+    }
 
 type SelectedRemoteFile = {
   entry: RemoteDirEntry
@@ -152,6 +163,7 @@ type DetailPanelProps = {
   // The project name to import into (undefined when no project is active).
   activeProjectId?: string
   onClose: () => void
+  onManageCredentials: (providerId: string, errorCode: ComputeAuthenticationErrorCode) => void
 }
 
 // Short-lived action status shown in the detail panel after Download / Add to project.
@@ -164,14 +176,19 @@ type ActionStatus =
       name: string
       filePath?: string
     }
-  | { kind: 'error'; message: string }
+  | {
+      kind: 'error'
+      message: string
+      authenticationCode?: ComputeAuthenticationErrorCode
+    }
 
 function DetailPanel({
   entry,
   resolvedDir,
   providerId,
   activeProjectId,
-  onClose
+  onClose,
+  onManageCredentials
 }: DetailPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
@@ -198,10 +215,19 @@ function DetailPanel({
         filePath: result.path
       })
     } catch (err) {
-      const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
+      const e = err as Error & {
+        remoteFsError?: {
+          detail: string
+          remoteKind: string
+          authenticationCode?: ComputeAuthenticationErrorCode
+        }
+      }
       const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
-      const detail = fsErr?.detail ?? e.message ?? t('Download failed')
-      setActionStatus({ kind: 'error', message: detail })
+      const authenticationCode = fsErr?.authenticationCode
+      const detail = authenticationCode
+        ? computeRuntimeRecoveryCopy(authenticationCode, t)
+        : (fsErr?.detail ?? e.message ?? t('Download failed'))
+      setActionStatus({ kind: 'error', message: detail, authenticationCode })
     }
   }
 
@@ -275,7 +301,18 @@ function DetailPanel({
             role="alert"
             className="rounded bg-destructive/10 border border-destructive/30 px-2 py-1.5 text-xs text-destructive"
           >
-            {actionStatus.message}
+            <p>{actionStatus.message}</p>
+            {actionStatus.authenticationCode ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-1.5 text-xs"
+                onClick={() => onManageCredentials(providerId, actionStatus.authenticationCode!)}
+              >
+                {computeRuntimeRecoveryAction(actionStatus.authenticationCode, t)}
+              </Button>
+            ) : null}
           </div>
         )}
 
@@ -359,6 +396,9 @@ export function FileBrowserModal({
   const { t } = useTranslation()
   const hosts = useComputeStore((s) => s.hosts)
   const probeHost = useComputeStore((s) => s.probeHost)
+  const openSettingsToComputeAuthentication = useSettingsStore(
+    (state) => state.openSettingsToComputeAuthentication
+  )
   // Active project for "Add to project" — derived from navigation state.
   const activeProjectId = useNavigationStore((s) => s.activeProjectId)
   const projects = useProjectStore((s) => s.projects)
@@ -424,10 +464,24 @@ export function FileBrowserModal({
         setAddressInput(listing.resolvedPath)
       } catch (err) {
         if (!isCurrent()) return
-        const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
+        const e = err as Error & {
+          remoteFsError?: {
+            detail: string
+            remoteKind: string
+            authenticationCode?: ComputeAuthenticationErrorCode
+          }
+        }
         const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
-        const detail = fsErr?.detail ?? e.message ?? 'Unknown error'
-        setBrowserState({ kind: 'error', detail, kind_hint: fsErr?.remoteKind })
+        const authenticationCode = fsErr?.authenticationCode
+        const detail = authenticationCode
+          ? computeRuntimeRecoveryCopy(authenticationCode, t)
+          : (fsErr?.detail ?? e.message ?? t('Unknown error'))
+        setBrowserState({
+          kind: 'error',
+          detail,
+          kind_hint: fsErr?.remoteKind,
+          authenticationCode
+        })
         // Connection failure means the probe result is stale — re-probe in the background so
         // the host chip reflects the current unreachable state (green → grey).
         if (fsErr?.remoteKind === 'connection') {
@@ -435,7 +489,7 @@ export function FileBrowserModal({
         }
       }
     },
-    [host, cwd, probeHost]
+    [host, cwd, probeHost, t]
   )
 
   const invalidatePendingRequests = useCallback((): void => {
@@ -851,6 +905,25 @@ export function FileBrowserModal({
                     <p className="mt-0.5 text-muted-foreground">{browserState.detail}</p>
                   </div>
                   <div className="flex gap-1.5">
+                    {host &&
+                    (browserState.authenticationCode || browserState.kind_hint === 'connection') ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => {
+                          const errorCode = browserState.authenticationCode ?? 'host_unreachable'
+                          onClose()
+                          openSettingsToComputeAuthentication(host.providerId, errorCode)
+                        }}
+                      >
+                        {computeRuntimeRecoveryAction(
+                          browserState.authenticationCode ?? 'host_unreachable',
+                          t
+                        )}
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       variant="ghost"
@@ -955,6 +1028,10 @@ export function FileBrowserModal({
                 providerId={selected.providerId}
                 activeProjectId={activeProject?.id}
                 onClose={() => setSelected(null)}
+                onManageCredentials={(targetProviderId, errorCode) => {
+                  onClose()
+                  openSettingsToComputeAuthentication(targetProviderId, errorCode)
+                }}
               />
             )}
           </div>

@@ -17,49 +17,77 @@ import {
 } from './compute-job-workflow-owner'
 import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
+import type { ComputeConnectionBroker } from './connection-broker'
+import type { CredentialVault } from './credential-vault'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ScpRunner } from './scp-runner'
-import { SystemScpRunner } from './scp-runner'
 import type { SshRunner } from './ssh-runner'
+import {
+  createSshConfigCompatibilityBroker,
+  projectComputeCredentialStatus
+} from './authentication-runtime'
 
 export { parseProbeOutput } from './compute-host-profile-owner'
 export type { ProbeScriptOutput } from './compute-host-profile-owner'
 export { resolveInputs } from './compute-job-workflow-owner'
 export type { ArtifactResolver, RawInputSpec } from './compute-job-workflow-owner'
 
+export type ComputeServiceDependencies = Readonly<{
+  runner: SshRunner
+  repository: ComputeHostRepository
+  approvalBroker?: ComputeApprovalBroker
+  scpRunner?: ScpRunner
+  overrideDownloadsDir?: string
+  jobRepository?: ComputeJobRepository
+  onJobUpdated?: (job: ComputeJob) => void
+  artifactResolver?: ArtifactResolver
+  storageRoot?: string
+  concurrencyManager?: ConcurrencyManager
+  connectionBroker?: ComputeConnectionBroker
+  credentialVault?: Pick<CredentialVault, 'credentialStatus'>
+}>
+
 // Stable facade composed from private host-profile, remote-operation and job workflows.
 export class ComputeService {
   private readonly hostProfiles: ComputeHostProfileOwner
   private readonly remoteOperations: ComputeRemoteOperationOwner
   private readonly jobWorkflow: ComputeJobWorkflowOwner
+  private readonly repository: ComputeHostRepository
+  private readonly concurrencyManager?: ConcurrencyManager
+  private readonly credentialVault?: Pick<CredentialVault, 'credentialStatus'>
 
-  constructor(
-    runner: SshRunner,
-    private readonly repository: ComputeHostRepository,
-    approvalBroker?: ComputeApprovalBroker,
-    scpRunner?: ScpRunner,
-    overrideDownloadsDir?: string,
-    jobRepository?: ComputeJobRepository,
-    onJobUpdated?: (job: ComputeJob) => void,
-    artifactResolver?: ArtifactResolver,
-    storageRoot?: string,
-    private readonly concurrencyManager?: ConcurrencyManager
-  ) {
-    const effectiveScpRunner = scpRunner ?? new SystemScpRunner()
-    this.hostProfiles = new ComputeHostProfileOwner(runner, repository)
-    this.remoteOperations = new ComputeRemoteOperationOwner(
+  constructor(dependencies: ComputeServiceDependencies) {
+    const {
       runner,
       repository,
       approvalBroker,
-      effectiveScpRunner,
+      scpRunner,
+      overrideDownloadsDir,
+      jobRepository,
+      onJobUpdated,
+      artifactResolver,
+      storageRoot,
+      concurrencyManager,
+      connectionBroker,
+      credentialVault
+    } = dependencies
+    this.repository = repository
+    this.concurrencyManager = concurrencyManager
+    this.credentialVault = credentialVault
+    const effectiveConnectionBroker =
+      connectionBroker ?? createSshConfigCompatibilityBroker(repository, runner, scpRunner)
+    this.hostProfiles = new ComputeHostProfileOwner(effectiveConnectionBroker, repository)
+    this.remoteOperations = new ComputeRemoteOperationOwner(
+      effectiveConnectionBroker,
+      repository,
+      approvalBroker,
       overrideDownloadsDir
     )
     this.jobWorkflow = new ComputeJobWorkflowOwner(
-      runner,
+      effectiveConnectionBroker,
       repository,
       approvalBroker,
-      effectiveScpRunner,
       jobRepository,
       onJobUpdated,
       artifactResolver,
@@ -68,12 +96,15 @@ export class ComputeService {
     )
   }
 
-  async probe(providerId: string): Promise<ProbeResult> {
-    return this.hostProfiles.probe(providerId)
+  async probe(providerId: string, signal?: AbortSignal): Promise<ProbeResult> {
+    return this.hostProfiles.probe(providerId, signal)
   }
 
   async list(): Promise<ComputeHost[]> {
-    return this.repository.list()
+    const hosts = await this.repository.list()
+    const credentialVault = this.credentialVault
+    if (!credentialVault) return hosts
+    return Promise.all(hosts.map((host) => projectComputeCredentialStatus(host, credentialVault)))
   }
 
   async getDetails(providerId: string): Promise<{ doc: string; isSkeleton: boolean }> {

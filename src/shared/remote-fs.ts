@@ -3,6 +3,7 @@
 // No I/O: all functions are pure and directly unit-testable.
 
 import type { ComputeBookmarkStore } from './settings'
+import type { ComputeAuthenticationErrorCode } from './compute'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,6 +55,7 @@ export type LocalFile = {
 export type RemoteFsError = {
   detail: string
   remoteKind: RemoteKind
+  authenticationCode?: ComputeAuthenticationErrorCode
 }
 
 // Taxonomy of remote error kinds, aligned with the reference product (§7.4 of design.md).

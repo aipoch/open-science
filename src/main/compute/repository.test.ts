@@ -9,6 +9,9 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
   shape: 'direct_ssh',
   sshAlias: 'biowulf',
   sshOverrides: null,
+  authenticationMode: 'ssh_config',
+  authenticationRevision: 1,
+  lastVerifiedAt: null,
   scratchRoot: null,
   scratchPinned: false,
   concurrencyLimit: null,
@@ -50,6 +53,12 @@ describe('compute host repository', () => {
         shape: 'direct_ssh',
         sshAlias: 'biowulf',
         sshOverrides: undefined,
+        authentication: {
+          mode: 'ssh_config',
+          credentialStatus: 'missing',
+          revision: 1,
+          lastVerifiedAt: undefined
+        },
         scratchRoot: undefined,
         scratchPinned: false,
         concurrencyLimit: undefined,
@@ -180,6 +189,22 @@ describe('compute host repository', () => {
     expect(computeHost.create).not.toHaveBeenCalled()
   })
 
+  it('rejects a duplicate password-host alias during creation preparation', async () => {
+    const client = {
+      computeAuthOperation: { findUnique: vi.fn(async () => null) },
+      computeHost: { findUnique: vi.fn(async () => createRow()) }
+    } as unknown as ComputeHostClient
+    const repository = new ComputeHostRepository(async () => client)
+
+    await expect(
+      repository.preparePasswordCreate({
+        operationId: 'create-password-operation',
+        requestFingerprint: 'test-protected-fingerprint',
+        sshAlias: 'biowulf'
+      })
+    ).rejects.toThrow(/already (registered|exists)/i)
+  })
+
   it('rejects a details doc over the 32768-char limit', async () => {
     const { client, computeHost } = createMockClient({
       findUnique: () => Promise.resolve(null)
@@ -193,13 +218,252 @@ describe('compute host repository', () => {
   })
 
   it('deletes a host by provider id', async () => {
-    const { client, computeHost } = createMockClient({
-      delete: () => Promise.resolve(createRow())
-    })
+    const computeHost = {
+      findUnique: vi.fn(async () => createRow()),
+      delete: vi.fn(async () => createRow())
+    }
+    const computeCredential = { deleteMany: vi.fn(async () => ({ count: 1 })) }
+    const computeAuthOperation = { deleteMany: vi.fn(async () => ({ count: 1 })) }
+    const $executeRawUnsafe = vi.fn(async () => 1)
+    const transaction = { computeHost, computeCredential, computeAuthOperation, $executeRawUnsafe }
+    const client = {
+      computeHost,
+      computeCredential,
+      computeAuthOperation,
+      $transaction: vi.fn(async (operation: (tx: typeof transaction) => unknown) =>
+        operation(transaction)
+      )
+    } as unknown as ComputeHostClient
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
     await repository.delete('ssh:biowulf')
 
+    expect(computeCredential.deleteMany).toHaveBeenCalledWith({
+      where: { computeHostId: 'host-1' }
+    })
+    expect(computeAuthOperation.deleteMany).toHaveBeenCalledWith({
+      where: { providerId: 'ssh:biowulf' }
+    })
+    expect($executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM "PermissionGrant"'),
+      'execution',
+      'exec:compute/ssh:biowulf/%'
+    )
+    expect($executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      computeHost.delete.mock.invocationCallOrder[0]
+    )
     expect(computeHost.delete).toHaveBeenCalledWith({ where: { providerId: 'ssh:biowulf' } })
+  })
+
+  it('rejects an operation id from password-host creation instead of replaying a reset', async () => {
+    const client = {
+      computeAuthOperation: {
+        findUnique: vi.fn(async () => ({
+          id: 'create-operation',
+          providerId: 'ssh:biowulf',
+          resultRevision: 1
+        }))
+      },
+      computeHost: {
+        findUnique: vi.fn(async () =>
+          createRow({ authenticationMode: 'password', authenticationRevision: 1 })
+        )
+      }
+    } as unknown as ComputeHostClient
+    const repository = new ComputeHostRepository(async () => client)
+
+    await expect(
+      repository.preparePasswordReset({
+        providerId: 'ssh:biowulf',
+        operationId: 'create-operation',
+        requestFingerprint: 'test-protected-fingerprint',
+        expectedAuthenticationRevision: 1
+      })
+    ).rejects.toMatchObject({ code: 'credential_conflict' })
+  })
+
+  it('rejects replay when a later rotation has superseded the operation result', async () => {
+    const client = {
+      computeAuthOperation: {
+        findUnique: vi.fn(async () => ({
+          id: 'old-reset',
+          providerId: 'ssh:biowulf',
+          resultRevision: 2
+        }))
+      },
+      computeHost: {
+        findUnique: vi.fn(async () =>
+          createRow({ authenticationMode: 'password', authenticationRevision: 3 })
+        )
+      }
+    } as unknown as ComputeHostClient
+    const repository = new ComputeHostRepository(async () => client)
+
+    await expect(
+      repository.preparePasswordReset({
+        providerId: 'ssh:biowulf',
+        operationId: 'old-reset',
+        requestFingerprint: 'test-protected-fingerprint',
+        expectedAuthenticationRevision: 1
+      })
+    ).rejects.toMatchObject({ code: 'credential_conflict' })
+  })
+
+  it('atomically upserts a missing Credential while advancing the reset revision', async () => {
+    const current = createRow({
+      authenticationMode: 'password',
+      authenticationRevision: 1
+    })
+    const updated = createRow({
+      authenticationMode: 'password',
+      authenticationRevision: 2,
+      lastVerifiedAt: new Date('2026-08-17T01:00:00.000Z'),
+      probeResult: null
+    })
+    const upsert = vi.fn(async () => undefined)
+    const transaction = {
+      computeAuthOperation: {
+        findUnique: vi.fn(async () => null),
+        create: vi.fn(async () => undefined)
+      },
+      computeHost: {
+        findUnique: vi.fn(async () => current),
+        update: vi.fn(async () => updated)
+      },
+      computeCredential: { upsert }
+    }
+    const client = {
+      $transaction: vi.fn(async (operation: (value: typeof transaction) => unknown) =>
+        operation(transaction)
+      )
+    } as unknown as ComputeHostClient
+    const repository = new ComputeHostRepository(async () => client)
+
+    await expect(
+      repository.resetPasswordHost({
+        providerId: 'ssh:biowulf',
+        operationId: 'reset-operation',
+        requestFingerprint: 'test-protected-fingerprint',
+        expectedAuthenticationRevision: 1,
+        ciphertext: Buffer.from('replacement'),
+        verifiedAt: new Date('2026-08-17T01:00:00.000Z')
+      })
+    ).resolves.toMatchObject({ authentication: { revision: 2 }, probeResult: undefined })
+    expect(upsert).toHaveBeenCalledWith({
+      where: { computeHostId: 'host-1' },
+      create: {
+        computeHostId: 'host-1',
+        ciphertext: new Uint8Array(Buffer.from('replacement'))
+      },
+      update: { ciphertext: new Uint8Array(Buffer.from('replacement')) }
+    })
+    expect(transaction.computeAuthOperation.create).toHaveBeenCalledWith({
+      data: {
+        id: 'reset-operation',
+        providerId: 'ssh:biowulf',
+        operationKind: 'reset_password',
+        requestFingerprint: 'test-protected-fingerprint',
+        resultRevision: 2
+      }
+    })
+  })
+
+  it('does not record a reset operation when the credential transaction fails', async () => {
+    const current = createRow({
+      authenticationMode: 'password',
+      authenticationRevision: 1
+    })
+    const createOperation = vi.fn()
+    const transaction = {
+      computeAuthOperation: {
+        findUnique: vi.fn(async () => null),
+        create: createOperation
+      },
+      computeHost: {
+        findUnique: vi.fn(async () => current),
+        update: vi.fn(async () => {
+          throw new Error('transaction rolled back')
+        })
+      },
+      computeCredential: { upsert: vi.fn(async () => undefined) }
+    }
+    const client = {
+      $transaction: vi.fn(async (operation: (value: typeof transaction) => unknown) =>
+        operation(transaction)
+      )
+    } as unknown as ComputeHostClient
+    const repository = new ComputeHostRepository(async () => client)
+
+    await expect(
+      repository.resetPasswordHost({
+        providerId: 'ssh:biowulf',
+        operationId: 'failed-reset',
+        requestFingerprint: 'test-protected-fingerprint',
+        expectedAuthenticationRevision: 1,
+        ciphertext: Buffer.from('candidate'),
+        verifiedAt: new Date('2026-08-17T01:00:00.000Z')
+      })
+    ).rejects.toThrow('transaction rolled back')
+    expect(createOperation).not.toHaveBeenCalled()
+  })
+
+  it('persists an authentication failure only while its authentication revision is current', async () => {
+    const updateMany = vi.fn(async () => ({ count: 0 }))
+    const repository = new ComputeHostRepository(
+      async () => ({ computeHost: { updateMany } }) as unknown as ComputeHostClient
+    )
+    const failure = {
+      ok: false as const,
+      probedAt: '2026-08-17T01:00:00.000Z',
+      exitCode: null,
+      errorTail: 'Authentication failed. Verify the username and password.',
+      authenticationCode: 'authentication_failed' as const,
+      authenticationRevision: 1
+    }
+
+    await expect(
+      repository.updateAuthenticationFailure('ssh:biowulf', 1, failure, 'direct_ssh')
+    ).resolves.toBe(false)
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { providerId: 'ssh:biowulf', authenticationRevision: 1 },
+      data: { probeResult: JSON.stringify(failure), shape: 'direct_ssh' }
+    })
+  })
+
+  it('does not let a stale Probe overwrite a newer authentication identity', async () => {
+    const update = vi.fn()
+    const updateMany = vi.fn(async () => ({ count: 0 }))
+    const repository = new ComputeHostRepository(
+      async () => ({ computeHost: { update, updateMany } }) as unknown as ComputeHostClient
+    )
+    const staleProbe = {
+      ok: true as const,
+      probedAt: '2026-08-17T01:00:00.000Z',
+      exitCode: 0,
+      errorTail: null,
+      os: 'Linux',
+      authenticationRevision: 1
+    }
+
+    await expect(
+      repository.updateProbeResult('ssh:biowulf', staleProbe, 'direct_ssh')
+    ).resolves.toBeUndefined()
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { providerId: 'ssh:biowulf', authenticationRevision: 1 },
+      data: { probeResult: JSON.stringify(staleProbe), shape: 'direct_ssh' }
+    })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('removes orphan Credentials during startup recovery', async () => {
+    const execute = vi.fn(async () => 2)
+    const repository = new ComputeHostRepository(() =>
+      Promise.resolve({ $executeRawUnsafe: execute } as unknown as ComputeHostClient)
+    )
+
+    await expect(repository.cleanupOrphanCredentials()).resolves.toBe(2)
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringMatching(/DELETE FROM "ComputeCredential"[\s\S]*NOT EXISTS/)
+    )
   })
 })

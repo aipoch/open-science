@@ -5,12 +5,20 @@ import { join } from 'node:path'
 import { BrowserWindow, shell } from 'electron'
 
 import type {
+  ChangeComputeHostAuthenticationRequest,
+  ChangeComputeHostAuthenticationResult,
   ComputeApprovalDecision,
   ComputeHost,
   ComputeApprovalRequest,
+  ComputePasswordCapability,
+  ComputeHostDeletionStatus,
   ComputeJob,
   JobSummary,
   CreateComputeHostRequest,
+  CreatePasswordComputeHostRequest,
+  CreatePasswordComputeHostResult,
+  ResetPasswordComputeHostRequest,
+  ResetPasswordComputeHostResult,
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
@@ -32,10 +40,10 @@ import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { createComputeJobDeletionOwner, type ComputeJobDeletionOwner } from './job-deletion-owner'
 import { readSshConfigHostAliases } from './ssh-config'
-import { SystemSshRunner } from './ssh-runner'
-import { SystemScpRunner } from './scp-runner'
+import { ComputeConnectionError, type ComputeConnectionBroker } from './connection-broker'
 import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
+import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
 import { getJobHarvestDir } from './harvest-engine'
 import { workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -44,6 +52,12 @@ import {
   type LegacyComputeGrantPort
 } from './permission-grant-adapter'
 import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from './skill-doc'
+import {
+  createComputeAuthenticationRuntime,
+  projectComputeCredentialStatus,
+  type ComputeAuthenticationDependencies,
+  type ComputeHostLifecycle
+} from './authentication-runtime'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 const log = createLogger('compute')
@@ -108,6 +122,7 @@ export const toJobSummary = async (
     finished_at: job.finished_at,
     exit_code: job.exit_code,
     error_code: job.error_code,
+    last_poll_error: job.last_poll_error,
     remote_workdir: job.remote_workdir,
     stdout_tail: job.stdout_tail,
     stderr_tail: job.stderr_tail,
@@ -123,18 +138,23 @@ export const toJobSummary = async (
   }
 }
 
-// The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
-// ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
-// host record CRUD + ssh-config alias listing. Issue 02 adds probe. Issue 03 adds
-// details/scratch/concurrency. Issue 04 adds callCommand + the approval broker wiring.
-// Issue 05 (browse) adds listDir. Issue 06 adds list (via ComputeService) and skill doc sync.
-// Issue 03 (file-preview) adds download (os-downloads + artifact).
-// Issue 05 (renderer-job-feed): jobsList (compute:jobs:list IPC).
+// Renderer-callable Compute commands; transport and credential details remain behind their owners.
 type ComputeHandlers = {
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
   create: (request: CreateComputeHostRequest) => Promise<ComputeHost>
-  delete: (providerId: string) => Promise<void>
+  createPassword: (
+    request: CreatePasswordComputeHostRequest
+  ) => Promise<CreatePasswordComputeHostResult>
+  resetPassword: (
+    request: ResetPasswordComputeHostRequest
+  ) => Promise<ResetPasswordComputeHostResult>
+  changeAuthentication: (
+    request: ChangeComputeHostAuthenticationRequest
+  ) => Promise<ChangeComputeHostAuthenticationResult>
+  passwordCapability: () => Promise<ComputePasswordCapability>
+  delete: (providerId: string, options?: DeleteComputeHostOptions) => Promise<void>
+  deletionStatus: (providerId: string) => Promise<ComputeHostDeletionStatus>
   // Selectable Host aliases parsed from ~/.ssh/config (patterns and Match blocks excluded).
   sshConfigAliases: () => Promise<string[]>
   // Runs the probe bundle against the host and persists the result. Returns the ProbeResult.
@@ -164,6 +184,7 @@ type ComputeHandlers = {
   revealInFolder: (filePath: string) => void
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
+  connectionBroker: ComputeConnectionBroker
   concurrencyManager?: ConcurrencyManager
   // Responds to a pending approval request from the renderer. Decision now includes
   // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
@@ -180,12 +201,6 @@ type ComputeHandlers = {
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
 }
 
-type ComputeHostLifecycle = Readonly<{
-  pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
-  requestSkillRuntimeReload?: () => void
-}>
-
-// Adapts a repository into thin handlers.
 const createComputeHandlers = (
   repository: ComputeHostRepository,
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
@@ -202,7 +217,8 @@ const createComputeHandlers = (
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
   syncComputeSkillDocument?: () => Promise<void>,
-  hostLifecycle?: ComputeHostLifecycle
+  hostLifecycle?: ComputeHostLifecycle,
+  authenticationDependencies?: ComputeAuthenticationDependencies
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -278,18 +294,21 @@ const createComputeHandlers = (
     return result
   }
 
-  // Construct the production service with the full job dependency set so agent submit_job works and
-  // dispatcher status transitions (submitted→running/error) broadcast to the renderer. Positional
-  // args match the ComputeService constructor: (runner, repository, broker, scpRunner,
-  // overrideDownloadsDir, jobRepository, onJobUpdated, artifactResolver, storageRoot,
-  // concurrencyManager).
-  //
   // The ConcurrencyManager enforces session limits + provider ceilings and auto-dispatches queued
   // jobs when a slot frees up. It is wired here (not in ComputeService) because it needs a
   // dispatchJob closure carrying the same runner/scp/repository deps the dispatcher uses. Only built
   // for the production path — tests inject their own service and drive the manager directly.
-  const sshRunner = new SystemSshRunner()
-  const scpRunner = new SystemScpRunner()
+  const { sshRunner, scpRunner, credentialVault, connectionBroker, authentication } =
+    createComputeAuthenticationRuntime({
+      repository,
+      approvalBroker: broker,
+      jobRepository,
+      hostLifecycle,
+      permissionGrantRegistry,
+      authenticationDependencies,
+      reportAuthenticationFailurePersistenceError: (error) =>
+        log.warn('compute authentication breaker persistence failed', errorLogFields(error))
+    })
   const concurrencyManager =
     !injectedService && jobRepository
       ? new ConcurrencyManager(
@@ -297,8 +316,7 @@ const createComputeHandlers = (
           repository,
           (queuedJobId, handleJobUpdated) =>
             dispatchJob(queuedJobId, {
-              runner: sshRunner,
-              scpRunner,
+              connectionBroker,
               hostRepository: repository,
               jobRepository,
               onJobUpdated: handleJobUpdated
@@ -308,78 +326,107 @@ const createComputeHandlers = (
       : undefined
   const service =
     injectedService ??
-    new ComputeService(
-      sshRunner,
+    new ComputeService({
+      runner: sshRunner,
       repository,
-      broker,
+      approvalBroker: broker,
       scpRunner,
-      undefined,
       jobRepository,
-      undefined,
       artifactResolver,
       storageRoot,
-      concurrencyManager
-    )
+      concurrencyManager,
+      connectionBroker,
+      credentialVault
+    })
+
+  const createHostWithLifecycle = <Request extends { sshAlias: string }>(
+    request: Request,
+    createHost: () => Promise<ComputeHost>
+  ): Promise<ComputeHost> =>
+    runHostLifecycleMutation(async () => {
+      if (permissionGrantRegistry || hostLifecycle) {
+        const providerId = computeProviderId(request.sshAlias)
+        const existing = await repository.get(providerId)
+        if (!existing) {
+          await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+          await hostLifecycle?.pruneSessionEnabledHosts(providerId)
+        }
+      }
+      const host = await createHost()
+      try {
+        await syncComputeSkillDocument?.()
+      } finally {
+        hostLifecycle?.requestSkillRuntimeReload?.()
+      }
+      return host
+    })
 
   return {
-    list: () => repository.list(),
-    get: (providerId) => repository.get(providerId),
-    create: (request) =>
-      runHostLifecycleMutation(async () => {
-        if (permissionGrantRegistry || hostLifecycle) {
-          const providerId = computeProviderId(request.sshAlias)
-          const existing = await repository.get(providerId)
-          if (!existing) {
-            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
-            await hostLifecycle?.pruneSessionEnabledHosts(providerId)
-          }
+    list: () => service.list(),
+    get: async (providerId) => {
+      const host = await repository.get(providerId)
+      return host ? projectComputeCredentialStatus(host, credentialVault) : null
+    },
+    create: (request) => createHostWithLifecycle(request, () => repository.create(request)),
+    createPassword: async (request) => {
+      try {
+        return {
+          ok: true,
+          host: await createHostWithLifecycle(request, () => authentication.createPassword(request))
         }
-        const host = await repository.create(request)
+      } catch (error) {
+        return {
+          ok: false,
+          errorCode: error instanceof ComputeConnectionError ? error.code : 'create_failed'
+        }
+      }
+    },
+    resetPassword: async (request) => {
+      try {
+        return { ok: true, host: await authentication.resetPassword(request) }
+      } catch (error) {
+        return {
+          ok: false,
+          errorCode: error instanceof ComputeConnectionError ? error.code : 'reset_failed'
+        }
+      }
+    },
+    changeAuthentication: async (request) => {
+      try {
+        const host = await authentication.changeAuthentication(request)
         try {
           await syncComputeSkillDocument?.()
         } finally {
           hostLifecycle?.requestSkillRuntimeReload?.()
         }
-        return host
-      }),
-    delete: (providerId) =>
-      runHostLifecycleMutation(async () => {
-        if (jobRepository) {
-          const hasActive = await jobRepository.hasActiveJobsForProvider(providerId)
-          if (hasActive) {
-            throw new Error(
-              `Cannot delete host "${providerId}": it has submitted or running jobs. ` +
-                `Wait for those jobs to reach a terminal state before deleting the host.`
-            )
-          }
+        return { ok: true, host }
+      } catch (error) {
+        return {
+          ok: false,
+          errorCode: error instanceof ComputeConnectionError ? error.code : 'create_failed'
         }
-        await broker.invalidateProvider(providerId)
-        try {
-          const deleteProvider = (): Promise<void> => repository.delete(providerId)
-          if (hostLifecycle) {
-            await hostLifecycle.pruneSessionEnabledHosts(providerId, deleteProvider)
-          } else {
-            await deleteProvider()
-          }
-          try {
-            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
-          } catch (error) {
-            log.warn(
-              'compute permission grant cleanup after host deletion failed',
-              errorLogFields(error)
-            )
-          }
-          try {
-            await syncComputeSkillDocument?.()
-          } catch (error) {
-            log.warn('compute skill sync after host deletion failed', errorLogFields(error))
-          } finally {
-            hostLifecycle?.requestSkillRuntimeReload?.()
-          }
-        } finally {
-          broker.completeProviderInvalidation(providerId)
-        }
-      }),
+      }
+    },
+    passwordCapability: async () => credentialVault.capability(),
+    deletionStatus: async (providerId) => ({
+      blockedByJobs: (await jobRepository?.hasDeletionBlockingJobsForProvider(providerId)) ?? false
+    }),
+    delete: (providerId, options = { allowPasswordCredentialDeletion: true }) =>
+      runHostLifecycleMutation(() =>
+        deleteComputeHost(
+          {
+            repository,
+            approvalBroker: broker,
+            connectionBroker,
+            jobRepository,
+            permissionGrantRegistry,
+            hostLifecycle,
+            syncComputeSkillDocument
+          },
+          providerId,
+          options
+        )
+      ),
     sshConfigAliases: () => listSshAliases(),
     probe: async (providerId) => {
       // Probe failures such as an unreachable host are persisted ProbeResult values, not rejected
@@ -409,6 +456,7 @@ const createComputeHandlers = (
       shell.showItemInFolder(filePath)
     },
     computeService: service,
+    connectionBroker,
     concurrencyManager,
     approvalRespond: (id, decision) => broker.respond(id, decision),
     approvalReplay: (id) => broker.getPending(id),
@@ -503,6 +551,7 @@ export const createJobUpdatedBroadcaster =
 type ComputeIpcModule = {
   handlers: ComputeHandlers
   computeService: ComputeService
+  connectionBroker: ComputeConnectionBroker
   jobDeletionOwner: ComputeJobDeletionOwner
   jobRepository: ComputeJobRepository
   hostRepository: ComputeHostRepository
@@ -531,6 +580,9 @@ const createComputeIpcModule = (
 ): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
+  void repository
+    .cleanupOrphanCredentials?.()
+    .catch((error) => log.warn('orphan Compute Credential cleanup failed', errorLogFields(error)))
   const effectiveLegacyComputeGrants =
     legacyComputeGrants ?? createSettingsComputeGrantPort(storageRoot)
 
@@ -554,13 +606,14 @@ const createComputeIpcModule = (
   const jobDeletionOwner = createComputeJobDeletionOwner({
     jobRepository,
     hostRepository: repository,
-    runner: new SystemSshRunner(),
+    connectionBroker: handlers.connectionBroker,
     queueManager: handlers.concurrencyManager
   })
 
   return {
     handlers,
     computeService: handlers.computeService,
+    connectionBroker: handlers.connectionBroker,
     jobDeletionOwner,
     jobRepository,
     hostRepository: repository,

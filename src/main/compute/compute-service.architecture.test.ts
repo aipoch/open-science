@@ -33,6 +33,7 @@ const mainRoot = resolve(projectRoot, 'src/main')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 const architectureTestPath = 'src/main/compute/compute-service.architecture.test.ts'
 const computePaths = {
+  connectionBroker: resolve(mainRoot, 'compute/connection-broker.ts'),
   facade: resolve(mainRoot, 'compute/compute-service.ts'),
   hostOwner: resolve(mainRoot, 'compute/compute-host-profile-owner.ts'),
   remoteOwner: resolve(mainRoot, 'compute/compute-remote-operation-owner.ts'),
@@ -224,6 +225,16 @@ describe('Compute service architecture', () => {
     }
     expect(rawLineCount(readSource(computePaths.ipc))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(computePaths.electronIpcAdapter))).toBeLessThanOrEqual(660)
+  })
+
+  it('wires facade collaborators by name instead of positional optional arguments', () => {
+    const facade = readSource(computePaths.facade)
+    expect(facade).toContain('constructor(dependencies: ComputeServiceDependencies)')
+    expect(facade).not.toMatch(/constructor\(\s*runner:/)
+
+    const ipc = readSource(computePaths.ipc)
+    expect(ipc).toContain('new ComputeService({')
+    expect(ipc).not.toMatch(/new ComputeService\(\s*sshRunner,/)
   })
 
   it('keeps lifecycle state ownership behind the narrow intent interface', () => {
@@ -467,12 +478,16 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(26)
+    expect(computeContracts).toHaveLength(31)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )
     expect(remoteRestricted.map(({ channel }) => channel).sort()).toEqual([
+      'compute:change-authentication',
+      'compute:create-password',
       'compute:download',
+      'compute:password-capability',
+      'compute:reset-password',
       'compute:reveal-in-folder'
     ])
     for (const contract of remoteRestricted) {
@@ -509,9 +524,13 @@ describe('Compute service architecture', () => {
       'src/main/compute/enabled-hosts-registry.ts',
       'src/main/compute/session-enabled-hosts-owner.ts',
       'src/main/compute/permission-grant-adapter.ts',
+      'src/main/compute/compute-auth-owner.ts',
+      'src/main/compute/connection-adapters.ts',
+      'src/main/compute/credential-vault.ts',
       'src/main/compute/compute-service.ts'
     ])
     expect(computeService.interfacePaths).toEqual([
+      'src/main/compute/connection-broker.ts',
       'src/main/compute/compute-service.ts',
       'src/main/compute/ipc.ts',
       'src/main/compute/electron-ipc-adapter.ts'
@@ -519,6 +538,7 @@ describe('Compute service architecture', () => {
     expect(computeService.testFiles.owner).toEqual(
       expect.arrayContaining([
         architectureTestPath,
+        'src/main/compute/connection-broker.test.ts',
         'src/main/compute/compute-job-lifecycle.test.ts',
         'src/main/compute/job-deletion-owner.test.ts',
         'src/main/compute/session-enabled-hosts-owner.test.ts',
@@ -526,7 +546,10 @@ describe('Compute service architecture', () => {
         'src/main/compute/compute-job-workflow-owner.test.ts',
         'src/main/compute/compute-remote-operation-owner.test.ts',
         'src/main/compute/permission-grant-adapter.test.ts',
-        'src/main/compute/compute-service.test.ts'
+        'src/main/compute/compute-service.test.ts',
+        'src/main/compute/compute-auth-owner.test.ts',
+        'src/main/compute/credential-vault.test.ts',
+        'src/main/compute/compute-password-auth.architecture.test.ts'
       ])
     )
     expect(computeService.testFiles.contract).toEqual(
@@ -547,5 +570,17 @@ describe('Compute service architecture', () => {
         'src/main/compute/job-runtime.test.ts'
       ])
     )
+  })
+
+  it('keeps Probe transport and SSH configuration selection behind the Broker seam', () => {
+    const owner = readSource(computePaths.hostOwner)
+    expect(owner).toContain("intent: 'probe'")
+    expect(owner).toContain('connectionBroker.acquire')
+    expect(owner).not.toContain("from './ssh-runner'")
+    expect(owner).not.toContain('resolveSshTarget')
+
+    const broker = readSource(computePaths.connectionBroker)
+    expect(broker).toContain('resolveSshTarget')
+    expect(broker).toContain('runner.run')
   })
 })

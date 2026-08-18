@@ -5,8 +5,7 @@ import type { ComputeJobDeletionOwner } from './job-deletion-owner'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeService } from './compute-service'
-import { SystemScpRunner, type ScpRunner } from './scp-runner'
-import { SystemSshRunner, type SshRunner } from './ssh-runner'
+import type { ComputeConnectionBroker } from './connection-broker'
 
 type ComputeJobRuntime = Pick<JobPoller, 'start' | 'stop'>
 
@@ -15,12 +14,11 @@ type ComputeJobRuntimeDeps = {
   jobDeletionOwner?: Pick<ComputeJobDeletionOwner, 'bindRuntime'>
   hostRepository: ComputeHostRepository
   jobRepository: ComputeJobRepository
+  connectionBroker: ComputeConnectionBroker
   storageRoot: string
 }
 
 type ComputeJobRuntimeAdapters = {
-  runner?: SshRunner
-  scpRunner?: ScpRunner
   broadcast?: typeof broadcastJobUpdated
   harvest?: typeof harvestJob
   createPoller?: (deps: JobPollerDeps) => ComputeJobRuntime & Pick<JobPoller, 'pause' | 'resume'>
@@ -33,12 +31,10 @@ export const createComputeJobRuntime = (
   deps: ComputeJobRuntimeDeps,
   adapters: ComputeJobRuntimeAdapters = {}
 ): ComputeJobRuntime => {
-  const runner = adapters.runner ?? new SystemSshRunner()
-  const scpRunner = adapters.scpRunner ?? new SystemScpRunner()
   const broadcast = adapters.broadcast ?? broadcastJobUpdated
   const harvest = adapters.harvest ?? harvestJob
   const pollerDeps: JobPollerDeps = {
-    runner,
+    connectionBroker: deps.connectionBroker,
     hostRepository: deps.hostRepository,
     jobRepository: deps.jobRepository,
     onJobUpdated: deps.computeService.handleJobUpdated,
@@ -46,8 +42,7 @@ export const createComputeJobRuntime = (
     storageRoot: deps.storageRoot,
     harvestFn: (job) =>
       harvest(job, {
-        sshRunner: runner,
-        scpRunner,
+        connectionBroker: deps.connectionBroker,
         hostRepository: deps.hostRepository,
         jobRepository: deps.jobRepository,
         storageRoot: deps.storageRoot,

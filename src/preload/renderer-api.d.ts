@@ -76,7 +76,15 @@ import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
+  ComputeHostDeletionStatus,
+  ComputePasswordCapability,
   CreateComputeHostRequest,
+  CreatePasswordComputeHostRequest,
+  CreatePasswordComputeHostResult,
+  ResetPasswordComputeHostRequest,
+  ResetPasswordComputeHostResult,
+  ChangeComputeHostAuthenticationRequest,
+  ChangeComputeHostAuthenticationResult,
   DeleteComputeHostRequest,
   DetailsAuthor,
   JobSummary,
@@ -704,6 +712,15 @@ export interface OpenScienceAPI {
     list(): Promise<ComputeHost[]>
     get(providerId: string): Promise<ComputeHost | null>
     create(request: CreateComputeHostRequest): Promise<ComputeHost>
+    createPassword(
+      request: CreatePasswordComputeHostRequest
+    ): Promise<CreatePasswordComputeHostResult>
+    resetPassword(request: ResetPasswordComputeHostRequest): Promise<ResetPasswordComputeHostResult>
+    changeAuthentication(
+      request: ChangeComputeHostAuthenticationRequest
+    ): Promise<ChangeComputeHostAuthenticationResult>
+    passwordCapability(): Promise<ComputePasswordCapability>
+    deletionStatus(request: DeleteComputeHostRequest): Promise<ComputeHostDeletionStatus>
     delete(request: DeleteComputeHostRequest): Promise<void>
     // Selectable Host aliases parsed from ~/.ssh/config (patterns / Match blocks excluded).
     sshConfigAliases(): Promise<string[]>

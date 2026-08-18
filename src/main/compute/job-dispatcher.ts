@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto'
 
 import type { ComputeJob } from '../../shared/compute'
+import {
+  classifyConnectionFailure,
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from './connection-broker'
+import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import type { SshRunner } from './ssh-runner'
-import { resolveSshTarget } from './ssh-runner'
-import type { ScpRunner } from './scp-runner'
-import { SystemScpRunner, runScpUpload } from './scp-runner'
-import { shellSingleQuote } from './scp-runner'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 
@@ -61,12 +63,7 @@ export const computeRemoteWorkdir = (scratchRoot: string | undefined, jobId: str
 // expanded by bash, so the `~/` prefix is left unquoted and only the remainder is single-quoted
 // (single quotes also neutralise $, backticks, spaces, etc. for injection safety). Paths without a
 // leading tilde are single-quoted wholesale.
-export const quoteRemotePath = (path: string): string => {
-  const singleQuote = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`
-  if (path === '~') return '~'
-  if (path.startsWith('~/')) return `~/${singleQuote(path.slice(2))}`
-  return singleQuote(path)
-}
+export { quoteRemotePath } from './remote-path-security'
 
 // One entry in the stored input manifest. Created by ComputeService (validation/resolution)
 // and consumed by the dispatcher (staging).
@@ -80,28 +77,26 @@ export type StagedInputEntry =
 export const stageInputs = async (
   entries: StagedInputEntry[],
   workdir: string,
-  runner: SshRunner,
-  target: import('./ssh-runner').ResolvedSshTarget,
-  scpRunner: ScpRunner
+  connection: ComputeConnectionLease
 ): Promise<void> => {
   for (const entry of entries) {
     if (entry.kind === 'upload') {
       const remoteDest = `${workdir}/${entry.dstFilename}`
-      await runScpUpload(scpRunner, target, entry.localPath, remoteDest)
+      await connection.upload(entry.localPath, remoteDest)
     } else {
       // Remote symlink: ln -s /abs/path workdir/dst_filename
       const quoted = shellSingleQuote(entry.remotePath)
       const destQ = quoteRemotePath(`${workdir}/${entry.dstFilename}`)
       const lnCmd = `ln -s ${quoted} ${destQ}`
-      const result = await runner.run(target, lnCmd, {
+      const result = await connection.run(lnCmd, {
         timeoutMs: 30_000,
         loginShell: false,
         maxOutputBytes: 4 * 1024
       })
+      const connectionFailure = classifyConnectionFailure(result, false)
+      if (connectionFailure) throw connectionFailure
       if (result.exitCode !== 0) {
-        throw new Error(
-          `ln -s failed for ${entry.label}: ${result.stderr.trim() || `exit ${result.exitCode ?? 'null'}`}`
-        )
+        throw new Error(`ln -s failed for ${entry.label}.`)
       }
     }
   }
@@ -109,8 +104,7 @@ export const stageInputs = async (
 
 // Dependency interface for the dispatcher. Tests inject a fake SshRunner.
 export type DispatcherDeps = {
-  runner: SshRunner
-  scpRunner?: ScpRunner
+  connectionBroker: ComputeConnectionBrokerAcquirer
   hostRepository: ComputeHostRepository
   jobRepository: ComputeJobRepository
   // Optional broadcast hook for Phase 3d renderer IPC; no-op when omitted (Phase 3a).
@@ -128,15 +122,23 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
   // as untracked while its dispatch is genuinely running. Cleared in the finally below.
   tracker.begin(jobId)
   try {
-    await dispatchJobInner(jobId, deps)
+    try {
+      await dispatchJobInner(jobId, deps)
+    } catch (error) {
+      if (!(error instanceof ComputeConnectionError)) throw error
+      const lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
+      await lifecycle.dispatchError(jobId, {
+        errorCode: error.code,
+        stderrTail: error.message
+      })
+    }
   } finally {
     tracker.end(jobId)
   }
 }
 
 async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<void> {
-  const { runner, hostRepository, jobRepository, onJobUpdated } = deps
-  const scpRunner = deps.scpRunner ?? new SystemScpRunner()
+  const { connectionBroker, hostRepository, jobRepository, onJobUpdated } = deps
   const lifecycle = new ComputeJobLifecycle(jobRepository, onJobUpdated)
 
   const job = await jobRepository.get(jobId)
@@ -148,15 +150,18 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     return
   }
 
-  // Resolve SSH target (runs ssh -G). Failure = host_unreachable.
-  let target
+  // The lease captures one Host/authentication-revision snapshot for this entire dispatch.
+  let connection: ComputeConnectionLease
   try {
-    target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
+    connection = await connectionBroker.acquire(job.provider_id, { intent: 'job_dispatch' })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const failure =
+      err instanceof ComputeConnectionError
+        ? { code: err.code, message: err.message }
+        : { code: 'host_unreachable', message: 'The Compute Host could not be reached.' }
     await lifecycle.dispatchError(jobId, {
-      errorCode: 'host_unreachable',
-      stderrTail: msg
+      errorCode: failure.code,
+      stderrTail: failure.message
     })
     return
   }
@@ -178,23 +183,25 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     }
 
     // Mkdir workdir first so symlinks and uploads have a destination.
-    const mkdirResult = await runner.run(target, `mkdir -p ${quoteRemotePath(workdir)}`, {
+    const mkdirResult = await connection.run(`mkdir -p ${quoteRemotePath(workdir)}`, {
       timeoutMs: 30_000,
       loginShell: false,
       maxOutputBytes: 4 * 1024
     })
+    const mkdirConnectionFailure = classifyConnectionFailure(mkdirResult, false)
+    if (mkdirConnectionFailure) throw mkdirConnectionFailure
     if (mkdirResult.exitCode !== 0) {
-      const tail = mkdirResult.stderr || `mkdir exit ${mkdirResult.exitCode ?? 'null'}`
       await lifecycle.dispatchError(jobId, {
         errorCode: 'dispatch_failed',
-        stderrTail: tail
+        stderrTail: 'Could not prepare the remote Compute Job directory.'
       })
       return
     }
 
     try {
-      await stageInputs(entries, workdir, runner, target, scpRunner)
+      await stageInputs(entries, workdir, connection)
     } catch (err) {
+      if (err instanceof ComputeConnectionError) throw err
       const msg = err instanceof Error ? err.message : String(err)
       await lifecycle.dispatchError(jobId, {
         errorCode: 'dispatch_failed',
@@ -230,28 +237,20 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     `echo $LAUNCHED_PID`
   ].join('\n')
 
-  const runResult = await runner.run(target, dispatchCmd, {
+  const runResult = await connection.run(dispatchCmd, {
     timeoutMs: DISPATCH_TIMEOUT_MS,
     loginShell: false,
     maxOutputBytes: DISPATCH_MAX_OUTPUT_BYTES
   })
 
-  // Connection-level failure.
-  if (runResult.timedOut || runResult.exitCode === 255) {
-    const tail = runResult.stderr || 'SSH connection failed'
-    await lifecycle.dispatchError(jobId, {
-      errorCode: 'host_unreachable',
-      stderrTail: tail
-    })
-    return
-  }
+  const connectionFailure = classifyConnectionFailure(runResult, false)
+  if (connectionFailure) throw connectionFailure
 
   // Non-connection failure (mkdir, base64, etc.)
   if (runResult.exitCode !== 0) {
-    const tail = runResult.stderr || `exit code ${runResult.exitCode ?? 'null'}`
     await lifecycle.dispatchError(jobId, {
       errorCode: 'dispatch_failed',
-      stderrTail: tail
+      stderrTail: 'The remote Compute Job launcher failed.'
     })
     return
   }

@@ -1,10 +1,13 @@
 import { create } from 'zustand'
 
 import type {
+  ChangeComputeHostAuthenticationRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
   CreateComputeHostRequest,
+  CreatePasswordComputeHostRequest,
+  ResetPasswordComputeHostRequest,
   DeleteComputeHostRequest,
   ProbeResult
 } from '../../../shared/compute'
@@ -25,6 +28,9 @@ type ComputeStore = ComputeStoreData & {
   loadHosts: () => Promise<void>
   loadSshAliases: () => Promise<void>
   createHost: (request: CreateComputeHostRequest) => Promise<ComputeHost>
+  createPasswordHost: (request: CreatePasswordComputeHostRequest) => Promise<ComputeHost>
+  resetPassword: (request: ResetPasswordComputeHostRequest) => Promise<ComputeHost>
+  changeAuthentication: (request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>
   deleteHost: (providerId: string) => Promise<void>
   // Runs the probe bundle and updates the cached host with the returned probeResult.
   probeHost: (providerId: string) => Promise<ProbeResult>
@@ -103,10 +109,62 @@ export const useComputeStore = create<ComputeStore>((set) => ({
     return host
   },
 
+  createPasswordHost: async (request) => {
+    const result = await window.api.compute.createPassword(request)
+    if (!result.ok) {
+      throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
+    }
+    const host = result.host
+    set((state) => ({
+      hosts: sortByCreatedDesc([
+        host,
+        ...state.hosts.filter((candidate) => candidate.providerId !== host.providerId)
+      ]),
+      loadError: undefined
+    }))
+    return host
+  },
+
+  resetPassword: async (request) => {
+    const result = await window.api.compute.resetPassword(request)
+    if (!result.ok) {
+      throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
+    }
+    set((state) => ({
+      hosts: state.hosts.map((host) =>
+        host.providerId === result.host.providerId ? result.host : host
+      )
+    }))
+    return result.host
+  },
+
+  changeAuthentication: async (request) => {
+    const result = await window.api.compute.changeAuthentication(request)
+    if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
+    const host = result.host
+    set((state) => ({
+      hosts: state.hosts.map((candidate) =>
+        candidate.providerId === host.providerId ? host : candidate
+      ),
+      loadError: undefined
+    }))
+    return host
+  },
+
   // Removes a host by provider id and drops it from the cache.
   deleteHost: async (providerId) => {
     const request: DeleteComputeHostRequest = { providerId }
-    await window.api.compute.delete(request)
+    try {
+      await window.api.compute.delete(request)
+    } catch (error) {
+      let host: ComputeHost | null
+      try {
+        host = await window.api.compute.get(providerId)
+      } catch {
+        throw error
+      }
+      if (host) throw error
+    }
 
     set((state) => ({ hosts: state.hosts.filter((host) => host.providerId !== providerId) }))
   },

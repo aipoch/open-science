@@ -9,7 +9,7 @@ import { ComputeJobWorkflowOwner, resolveInputs } from './compute-job-workflow-o
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
-import type { ScpRunner } from './scp-runner'
+import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import type { ConcurrencyManager } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 
@@ -95,7 +95,19 @@ vi.mock('./ssh-runner', async (importOriginal) => {
   }
 })
 
-const makeScpRunner = (): ScpRunner => ({ copy: vi.fn() })
+const brokerFromRunner = (runner: SshRunner): ComputeConnectionBrokerAcquirer => ({
+  acquire: vi.fn(async () => ({
+    run: (command, options) => runner.run(fakeTarget, command, options),
+    upload: vi.fn(async () => undefined),
+    download: vi.fn(async () => ({
+      exitCode: 0,
+      stderr: '',
+      timedOut: false,
+      bytesWritten: 0,
+      exceeded: false
+    }))
+  }))
+})
 
 const makeOwner = (
   runner: SshRunner,
@@ -108,10 +120,9 @@ const makeOwner = (
   concurrencyManager?: ConcurrencyManager
 ): ComputeJobWorkflowOwner =>
   new ComputeJobWorkflowOwner(
-    runner,
+    brokerFromRunner(runner),
     repository,
     approvalBroker,
-    makeScpRunner(),
     jobRepository,
     publishJobUpdated,
     artifactResolver,

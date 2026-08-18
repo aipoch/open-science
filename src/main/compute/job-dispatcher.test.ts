@@ -10,7 +10,12 @@ import type { ComputeJob } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
 import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
-import type { ScpRunner } from './scp-runner'
+import { runScpUpload, type ScpRunner } from './scp-runner'
+import {
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from './connection-broker'
 import {
   dispatchJob,
   buildLauncherScript,
@@ -43,6 +48,34 @@ vi.mock('./ssh-runner', async (importOriginal) => {
 
 const makeSshRunner = (result: Awaited<ReturnType<SshRunner['run']>>): SshRunner => ({
   run: vi.fn(() => Promise.resolve(result))
+})
+
+const fakeTarget: ResolvedSshTarget = {
+  sshBinary: '/usr/bin/ssh',
+  host: 'biowulf.nih.gov',
+  extraArgs: ['-o', 'BatchMode=yes']
+}
+
+const leaseFromRunners = (runner: SshRunner, scpRunner?: ScpRunner): ComputeConnectionLease => ({
+  run: (command, options) => runner.run(fakeTarget, command, options),
+  upload: async (localPath, remotePath) => {
+    if (!scpRunner) throw new Error('upload unavailable')
+    await runScpUpload(scpRunner, fakeTarget, localPath, remotePath)
+  },
+  download: vi.fn(async () => ({
+    exitCode: 0,
+    stderr: '',
+    timedOut: false,
+    bytesWritten: 0,
+    exceeded: false
+  }))
+})
+
+const brokerFromRunners = (
+  runner: SshRunner,
+  scpRunner?: ScpRunner
+): ComputeConnectionBrokerAcquirer => ({
+  acquire: vi.fn(async () => leaseFromRunners(runner, scpRunner))
 })
 
 const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
@@ -299,37 +332,70 @@ describe('quoteRemotePath', () => {
 // ---------------------------------------------------------------------------
 
 describe('dispatchJob', () => {
-  it('transitions to running and records pid on success', async () => {
+  it('persists a safe authentication classification when a password lease rejects dispatch', async () => {
     const job = makeJob()
-    const runner = makeSshRunner({
-      exitCode: 0,
-      stdout: '12345\n',
-      stderr: '',
-      truncated: false,
-      timedOut: false
-    })
     const { repo, transition } = makeJobRepo(job)
-    const onJobUpdated = vi.fn()
+    const connectionBroker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => ({
+        run: vi.fn(async () => {
+          throw new ComputeConnectionError('authentication_failed')
+        }),
+        upload: vi.fn(async () => undefined),
+        download: vi.fn()
+      }))
+    }
 
     await dispatchJob(job.job_id, {
-      runner,
+      connectionBroker,
       hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
-      jobRepository: repo as unknown as ComputeJobRepository,
-      onJobUpdated
+      jobRepository: repo as unknown as ComputeJobRepository
     })
 
-    // Should have been called with status=running and a remoteHandle.
-    expect(transition).toHaveBeenCalledWith(
-      'job-1',
-      ['submitted'],
-      expect.objectContaining({ status: 'running' })
-    )
-    const updateCall = transition.mock.calls[0]![2]
-    expect(updateCall).toHaveProperty('remoteHandle')
-    const handle = JSON.parse(updateCall.remoteHandle as string)
-    expect(handle.pid).toBe(12345)
-    expect(onJobUpdated).toHaveBeenCalled()
+    expect(connectionBroker.acquire).toHaveBeenCalledWith(job.provider_id, {
+      intent: 'job_dispatch'
+    })
+    expect(transition).toHaveBeenCalledWith('job-1', ['submitted'], {
+      status: 'error',
+      errorCode: 'authentication_failed',
+      stderrTail: 'Authentication failed. Verify the username and password.',
+      finishedAt: expect.any(Date)
+    })
   })
+
+  it.each(['ssh_config', 'password'] as const)(
+    'transitions to running through the %s broker lease',
+    async () => {
+      const job = makeJob()
+      const runner = makeSshRunner({
+        exitCode: 0,
+        stdout: '12345\n',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      const { repo, transition } = makeJobRepo(job)
+      const onJobUpdated = vi.fn()
+
+      await dispatchJob(job.job_id, {
+        connectionBroker: brokerFromRunners(runner),
+        hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+        jobRepository: repo as unknown as ComputeJobRepository,
+        onJobUpdated
+      })
+
+      // Should have been called with status=running and a remoteHandle.
+      expect(transition).toHaveBeenCalledWith(
+        'job-1',
+        ['submitted'],
+        expect.objectContaining({ status: 'running' })
+      )
+      const updateCall = transition.mock.calls[0]![2]
+      expect(updateCall).toHaveProperty('remoteHandle')
+      const handle = JSON.parse(updateCall.remoteHandle as string)
+      expect(handle.pid).toBe(12345)
+      expect(onJobUpdated).toHaveBeenCalled()
+    }
+  )
 
   it('marks the job in-flight in the tracker during dispatch and clears it afterward', async () => {
     const job = makeJob()
@@ -354,7 +420,7 @@ describe('dispatchJob', () => {
     } as unknown as ComputeJobRepository
 
     await dispatchJob(job.job_id, {
-      runner,
+      connectionBroker: brokerFromRunners(runner),
       hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
       jobRepository: repo,
       dispatchTracker: tracker
@@ -373,7 +439,7 @@ describe('dispatchJob', () => {
 
     await expect(
       dispatchJob(job.job_id, {
-        runner,
+        connectionBroker: brokerFromRunners(runner),
         hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
         jobRepository: repo as unknown as ComputeJobRepository,
         dispatchTracker: tracker
@@ -395,7 +461,7 @@ describe('dispatchJob', () => {
     const { repo } = makeJobRepo(job)
 
     await dispatchJob(job.job_id, {
-      runner,
+      connectionBroker: brokerFromRunners(runner),
       hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
       jobRepository: repo as unknown as ComputeJobRepository
     })
@@ -421,7 +487,7 @@ describe('dispatchJob', () => {
     const onJobUpdated = vi.fn()
 
     await dispatchJob(job.job_id, {
-      runner,
+      connectionBroker: brokerFromRunners(runner),
       hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
       jobRepository: repo as unknown as ComputeJobRepository,
       onJobUpdated
@@ -430,8 +496,41 @@ describe('dispatchJob', () => {
     expect(transition).toHaveBeenCalledWith(
       'job-1',
       ['submitted'],
-      expect.objectContaining({ status: 'error', errorCode: 'host_unreachable' })
+      expect.objectContaining({
+        status: 'error',
+        errorCode: 'host_unreachable',
+        stderrTail: 'The Compute Host could not be reached.'
+      })
     )
+    expect(JSON.stringify(transition.mock.calls)).not.toContain('Connection refused')
+  })
+
+  it('classifies returned authentication stderr without persisting transport output', async () => {
+    const job = makeJob()
+    const runner = makeSshRunner({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'Permission denied (publickey,password). raw-server-detail',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo, transition } = makeJobRepo(job)
+
+    await dispatchJob(job.job_id, {
+      connectionBroker: brokerFromRunners(runner),
+      hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+      jobRepository: repo as unknown as ComputeJobRepository
+    })
+
+    expect(transition).toHaveBeenCalledWith(
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({
+        errorCode: 'authentication_failed',
+        stderrTail: 'Authentication failed. Verify the username and password.'
+      })
+    )
+    expect(JSON.stringify(transition.mock.calls)).not.toContain('raw-server-detail')
   })
 
   it('transitions to error with dispatch_failed when mkdir/launch fails (non-zero exit)', async () => {
@@ -446,7 +545,7 @@ describe('dispatchJob', () => {
     const { repo, transition } = makeJobRepo(job)
 
     await dispatchJob(job.job_id, {
-      runner,
+      connectionBroker: brokerFromRunners(runner),
       hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
       jobRepository: repo as unknown as ComputeJobRepository
     })
@@ -471,7 +570,7 @@ describe('dispatchJob', () => {
     // Should return without throwing.
     await expect(
       dispatchJob('unknown-job', {
-        runner,
+        connectionBroker: brokerFromRunners(runner),
         hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
         jobRepository: repo as unknown as ComputeJobRepository
       })
@@ -484,12 +583,6 @@ describe('dispatchJob', () => {
 // ---------------------------------------------------------------------------
 
 describe('stageInputs', () => {
-  const fakeTarget: ResolvedSshTarget = {
-    sshBinary: '/usr/bin/ssh',
-    host: 'biowulf.nih.gov',
-    extraArgs: ['-o', 'BatchMode=yes']
-  }
-
   const makeScpRunner = (exitCode = 0): ScpRunner => ({
     copy: vi.fn(async () => ({ exitCode, stderr: exitCode !== 0 ? 'error' : '', timedOut: false }))
   })
@@ -512,9 +605,7 @@ describe('stageInputs', () => {
         { kind: 'upload', localPath: '/local/data.csv', dstFilename: 'data.csv', label: 'data.csv' }
       ],
       '/remote/workdir',
-      runner,
-      fakeTarget,
-      scpRunner
+      leaseFromRunners(runner, scpRunner)
     )
     expect((scpRunner.copy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
     const [, args] = (scpRunner.copy as ReturnType<typeof vi.fn>).mock.calls[0] as [
@@ -538,9 +629,7 @@ describe('stageInputs', () => {
         }
       ],
       '/remote/workdir',
-      runner,
-      fakeTarget,
-      scpRunner
+      leaseFromRunners(runner, scpRunner)
     )
     expect((scpRunner.copy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
     expect((runner.run as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
@@ -560,9 +649,7 @@ describe('stageInputs', () => {
       stageInputs(
         [{ kind: 'upload', localPath: '/local/a.csv', dstFilename: 'a.csv', label: 'a.csv' }],
         '/remote/workdir',
-        runner,
-        fakeTarget,
-        scpRunner
+        leaseFromRunners(runner, scpRunner)
       )
     ).rejects.toThrow()
   })
@@ -581,9 +668,7 @@ describe('stageInputs', () => {
           }
         ],
         '/remote/workdir',
-        runner,
-        fakeTarget,
-        scpRunner
+        leaseFromRunners(runner, scpRunner)
       )
     ).rejects.toThrow(/ln -s failed/)
   })
@@ -611,8 +696,7 @@ describe('dispatchJob — staging integration', () => {
     const { repo, transition } = makeJobRepo(job)
 
     await dispatchJob(job.job_id, {
-      runner,
-      scpRunner,
+      connectionBroker: brokerFromRunners(runner, scpRunner),
       hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
       jobRepository: repo as unknown as ComputeJobRepository
     })

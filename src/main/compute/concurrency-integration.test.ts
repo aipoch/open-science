@@ -81,18 +81,15 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     onJobUpdatedSpy = vi.fn()
     concurrencyManager = new ConcurrencyManager(jobRepo, hostRepo, mockDispatch, onJobUpdatedSpy)
 
-    service = new ComputeService(
-      makeFakeRunner(),
-      hostRepo,
-      makeFakeBroker(),
-      makeFakeScp(),
-      undefined,
-      jobRepo,
-      undefined,
-      undefined,
+    service = new ComputeService({
+      runner: makeFakeRunner(),
+      repository: hostRepo,
+      approvalBroker: makeFakeBroker(),
+      scpRunner: makeFakeScp(),
+      jobRepository: jobRepo,
       storageRoot,
       concurrencyManager
-    )
+    })
   })
 
   afterEach(async () => {

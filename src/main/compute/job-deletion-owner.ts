@@ -8,7 +8,10 @@ import type {
   ComputeJobSessionOwner
 } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import { resolveSshTarget, type ResolvedSshTarget, type SshRunner } from './ssh-runner'
+import {
+  classifyConnectionFailure,
+  type ComputeConnectionBrokerAcquirer
+} from './connection-broker'
 
 type ComputeJobDeletionRepository = Pick<ComputeJobRepository, 'findByOwner' | 'listOwners'>
 type ComputeJobOwnerLiveness = boolean | 'unknown'
@@ -30,7 +33,7 @@ type ComputeJobRuntimePause = {
 
 type PreparedRemoteCleanup = {
   jobId: string
-  target: ResolvedSshTarget
+  providerId: string
   command: string
 }
 
@@ -48,12 +51,8 @@ type ComputeJobDeletionOwnerDeps = {
   lifecycle: ComputeJobDeletionLifecycle
   queueManager?: ComputeJobQueuePause
   hostRepository: Pick<ComputeHostRepository, 'get'>
-  runner: SshRunner
+  connectionBroker: ComputeConnectionBrokerAcquirer
   dispatchTracker?: Pick<DispatchTracker, 'waitFor'>
-  resolveTarget?: (
-    alias: string,
-    overrides: Parameters<typeof resolveSshTarget>[1]
-  ) => Promise<ResolvedSshTarget>
 }
 
 const ACTIVE_STATUSES = new Set<ComputeJob['status']>(['submitted', 'running'])
@@ -72,14 +71,6 @@ const validatedRemoteWorkdir = (job: ComputeJob, fallback?: string): string => {
     throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)
   }
   return workdir
-}
-
-const sshAliasFromProviderId = (providerId: string): string => {
-  const alias = providerId.startsWith('ssh:') ? providerId.slice(4).trim() : ''
-  if (!alias || /[\0\r\n]/.test(alias)) {
-    throw new Error(`Invalid Compute Job provider ${providerId}.`)
-  }
-  return alias
 }
 
 const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | undefined => {
@@ -148,11 +139,9 @@ class ComputeJobDeletionOwner {
   private readonly armedOwners = new Map<string, ComputeJobOwner>()
   private readonly retainedOwners = new Set<string>()
   private readonly dispatchTracker: Pick<DispatchTracker, 'waitFor'>
-  private readonly resolveTarget: NonNullable<ComputeJobDeletionOwnerDeps['resolveTarget']>
 
   constructor(private readonly deps: ComputeJobDeletionOwnerDeps) {
     this.dispatchTracker = deps.dispatchTracker ?? sharedDispatchTracker
-    this.resolveTarget = deps.resolveTarget ?? resolveSshTarget
   }
 
   bindRuntime(runtime: ComputeJobRuntimePause): () => void {
@@ -400,22 +389,26 @@ class ComputeJobDeletionOwner {
     const fallbackWorkdir = host ? computeRemoteWorkdir(host.scratchRoot, job.job_id) : undefined
     const workdir = validatedRemoteWorkdir(job, fallbackWorkdir)
     const handle = activeRemoteHandle(job, workdir)
-    const target = await this.resolveTarget(
-      host?.sshAlias ?? sshAliasFromProviderId(job.provider_id),
-      host?.sshOverrides
-    )
-    return { jobId: job.job_id, target, command: cleanupCommand(workdir, handle) }
+    return {
+      jobId: job.job_id,
+      providerId: job.provider_id,
+      command: cleanupCommand(workdir, handle)
+    }
   }
 
   private async runRemoteCleanup(cleanup: PreparedRemoteCleanup): Promise<void> {
-    const result = await this.deps.runner.run(cleanup.target, cleanup.command, {
+    const connection = await this.deps.connectionBroker.acquire(cleanup.providerId, {
+      intent: 'job_cleanup'
+    })
+    const result = await connection.run(cleanup.command, {
       timeoutMs: 30_000,
       loginShell: false,
       maxOutputBytes: 4 * 1024
     })
+    const connectionFailure = classifyConnectionFailure(result, false)
+    if (connectionFailure) throw connectionFailure
     if (result.timedOut || result.exitCode !== 0) {
-      const detail = result.stderr.trim() || `exit ${result.exitCode ?? 'null'}`
-      throw new Error(`Remote Compute Job cleanup failed for ${cleanup.jobId}: ${detail}`)
+      throw new Error(`Remote Compute Job cleanup failed for ${cleanup.jobId}.`)
     }
   }
 }

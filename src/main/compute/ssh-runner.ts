@@ -40,6 +40,8 @@ export interface SshRunner {
       timeoutMs: number
       loginShell?: boolean
       maxOutputBytes?: number
+      signal?: AbortSignal
+      env?: NodeJS.ProcessEnv
     }
   ): Promise<{
     exitCode: number | null
@@ -109,7 +111,7 @@ const parseSshG = (output: string): Record<string, string> => {
 // key→value map. Returns an empty map on failure (e.g. no ~/.ssh/config) so the caller can still
 // build a usable connection from overrides and defaults. Extracted so resolveSshTarget can inject a
 // fake in tests without spawning ssh.
-const readEffectiveConfig = async (
+export const readEffectiveConfig = async (
   alias: string,
   sshBinary: string
 ): Promise<Record<string, string>> => {
@@ -243,6 +245,8 @@ export class SystemSshRunner implements SshRunner {
       timeoutMs: number
       loginShell?: boolean
       maxOutputBytes?: number
+      signal?: AbortSignal
+      env?: NodeJS.ProcessEnv
     }
   ): Promise<{
     exitCode: number | null
@@ -270,17 +274,32 @@ export class SystemSshRunner implements SshRunner {
 
     const args = [...target.extraArgs, target.host, finalCommand]
 
-    return new Promise((resolve) => {
+    opts.signal?.throwIfAborted()
+    return new Promise((resolve, reject) => {
       const stdoutBuf = new CappedOutput(maxBytes)
       const stderrBuf = new CappedOutput(maxBytes)
       let timedOut = false
 
-      const child = execFile(target.sshBinary, args, { timeout: 0, encoding: 'buffer' })
-
+      const child = execFile(target.sshBinary, args, {
+        timeout: 0,
+        encoding: 'buffer',
+        env: opts.env
+      })
       const timer = setTimeout(() => {
         timedOut = true
         child.kill('SIGTERM')
       }, opts.timeoutMs)
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', abort)
+      }
+
+      const abort = (): void => {
+        cleanup()
+        child.kill('SIGTERM')
+        reject(opts.signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
+      }
+      opts.signal?.addEventListener('abort', abort, { once: true })
 
       child.stdout?.on('data', (chunk: Buffer) => {
         stdoutBuf.push(chunk)
@@ -291,7 +310,7 @@ export class SystemSshRunner implements SshRunner {
       })
 
       child.on('close', (code) => {
-        clearTimeout(timer)
+        cleanup()
         resolve({
           exitCode: code,
           stdout: stdoutBuf.toString(),
@@ -302,7 +321,7 @@ export class SystemSshRunner implements SshRunner {
       })
 
       child.on('error', (err) => {
-        clearTimeout(timer)
+        cleanup()
         resolve({
           exitCode: null,
           stdout: '',

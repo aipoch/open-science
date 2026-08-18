@@ -14,7 +14,10 @@ import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs
 import { decodeRemoteFsError } from '../../shared/remote-fs'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ComputeService } from './compute-service'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
+import type { PasswordSshAdapter } from './connection-adapters'
+import { ComputeConnectionError, SshConfigComputeConnectionBroker } from './connection-broker'
+import type { CredentialVault } from './credential-vault'
+import { ComputeApprovalBroker } from './compute-approval-broker'
 import {
   COMPUTE_JOB_UPDATED_CHANNEL,
   COMPUTE_JOBS_LIST_CHANNEL,
@@ -131,6 +134,438 @@ describe('compute handlers', () => {
     const handlers = createComputeHandlers(mockRepository({ create }))
 
     await expect(handlers.create({ sshAlias: 'biowulf' })).rejects.toThrow(/already registered/i)
+  })
+
+  it.each([
+    [
+      new ComputeConnectionError('authentication_failed', 'private ssh stderr'),
+      'authentication_failed'
+    ],
+    [new Error('private helper path'), 'create_failed']
+  ] as const)('returns only a stable password-creation error code', async (failure, errorCode) => {
+    const handlers = createComputeHandlers(
+      mockRepository({
+        get: vi.fn(async () => null),
+        getAuthenticationOperation: vi.fn(async () => null),
+        preparePasswordCreate: vi.fn(async () => ({ kind: 'ready' as const }))
+      }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        vault: {
+          encrypt: vi.fn(() => Buffer.from('ciphertext')),
+          bindOperationIntent: vi.fn(() => 'test-protected-fingerprint'),
+          capability: vi.fn(() => ({ available: true }))
+        } as unknown as CredentialVault,
+        passwordAdapter: {
+          acquireWithPassword: vi.fn(async () => {
+            throw failure
+          })
+        } as unknown as PasswordSshAdapter
+      }
+    )
+
+    const result = await handlers.createPassword({
+      sshAlias: 'cluster',
+      authenticationMode: 'password',
+      username: 'researcher',
+      port: 22,
+      password: 'secret',
+      operationId: 'operation-1'
+    })
+
+    expect(result).toEqual({ ok: false, errorCode })
+    expect(JSON.stringify(result)).not.toContain(failure.message)
+  })
+
+  it('resets a same-username password while jobs exist without pruning Session or grants', async () => {
+    const current = sampleHost({
+      sshOverrides: { user: 'researcher', port: 22 },
+      authentication: {
+        mode: 'password',
+        credentialStatus: 'configured',
+        revision: 3,
+        lastVerifiedAt: undefined
+      }
+    })
+    const updated = sampleHost({
+      ...current,
+      authentication: { ...current.authentication!, revision: 4 }
+    })
+    const preparePasswordReset = vi.fn(async () => ({ kind: 'ready' as const, host: current }))
+    const resetPasswordHost = vi.fn(async () => updated)
+    const pruneSessionEnabledHosts = vi.fn()
+    const prune = vi.fn()
+    const transportRun = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    }))
+    const passwordAdapter = {
+      acquire: vi.fn(async () => ({ run: transportRun, upload: vi.fn(), download: vi.fn() })),
+      acquireWithPassword: vi.fn(async () => ({
+        run: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        }))
+      }))
+    } as unknown as PasswordSshAdapter
+    const connectionBroker = new SshConfigComputeConnectionBroker({
+      getHost: vi.fn(async () => current),
+      runner: { run: vi.fn() },
+      passwordAdapter
+    })
+    const oldLease = await connectionBroker.acquire(current.providerId, {
+      intent: 'direct_command'
+    })
+    const jobRepository = mockJobRepo({
+      hasActiveJobsForProvider: vi.fn(async () => true)
+    })
+    const handlers = createComputeHandlers(
+      mockRepository({
+        get: vi.fn(async () => current),
+        getAuthenticationOperation: vi.fn(async () => null),
+        preparePasswordReset,
+        resetPasswordHost
+      }),
+      undefined,
+      mockService({}),
+      undefined,
+      undefined,
+      jobRepository,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { prune } as unknown as PermissionGrantRegistry,
+      undefined,
+      { pruneSessionEnabledHosts },
+      {
+        vault: {
+          encrypt: vi.fn(() => Buffer.from('replacement ciphertext')),
+          bindOperationIntent: vi.fn(() => 'test-protected-fingerprint'),
+          capability: vi.fn(() => ({ available: true }))
+        } as unknown as CredentialVault,
+        passwordAdapter,
+        connectionBroker
+      }
+    )
+
+    const result = await handlers.resetPassword({
+      providerId: current.providerId,
+      password: 'replacement secret',
+      operationId: 'reset-operation-1',
+      expectedAuthenticationRevision: 3
+    })
+
+    expect(result).toEqual({ ok: true, host: updated })
+    expect(resetPasswordHost).toHaveBeenCalledOnce()
+    expect(jobRepository.hasActiveJobsForProvider).not.toHaveBeenCalled()
+    expect(pruneSessionEnabledHosts).not.toHaveBeenCalled()
+    expect(prune).not.toHaveBeenCalled()
+    await expect(oldLease.run('old work', { timeoutMs: 1000 })).rejects.toMatchObject({
+      code: 'credential_conflict'
+    })
+    expect(transportRun).not.toHaveBeenCalled()
+  })
+
+  it('commits an identity change inside Session pruning, then invalidates generation and Permission Grants', async () => {
+    const current = sampleHost({
+      sshOverrides: { user: 'old-user', port: 22 },
+      authentication: {
+        mode: 'ssh_config',
+        credentialStatus: 'missing',
+        revision: 1,
+        lastVerifiedAt: undefined
+      }
+    })
+    const changed = sampleHost({
+      sshOverrides: { user: 'new-user', port: 22 },
+      authentication: {
+        mode: 'password',
+        credentialStatus: 'configured',
+        revision: 2,
+        lastVerifiedAt: 200
+      }
+    })
+    const changeAuthentication = vi.fn(async () => changed)
+    const invalidateAuthenticationIdentity = vi.fn()
+    const invalidateProvider = vi.fn(async () => undefined)
+    const completeProviderInvalidation = vi.fn()
+    const finalizeGrantCleanup = vi.fn(async () => undefined)
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, commit?: () => Promise<void>) => commit?.()
+    )
+    const handlers = createComputeHandlers(
+      mockRepository({
+        get: vi.fn(async () => current),
+        getAuthenticationOperation: vi.fn(async () => null),
+        changeAuthentication
+      }),
+      undefined,
+      undefined,
+      { invalidateProvider, completeProviderInvalidation } as unknown as ComputeApprovalBroker,
+      undefined,
+      mockJobRepo({ hasIdentityChangeBlockingJobsForProvider: vi.fn(async () => false) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { finalizeOwnerDeletion: finalizeGrantCleanup } as unknown as PermissionGrantRegistry,
+      undefined,
+      { pruneSessionEnabledHosts },
+      {
+        vault: {
+          encrypt: vi.fn(() => Buffer.from('ciphertext')),
+          bindOperationIntent: vi.fn(() => 'test-protected-fingerprint'),
+          capability: vi.fn(() => ({ available: true }))
+        } as unknown as CredentialVault,
+        passwordAdapter: {
+          acquireWithPassword: vi.fn(async () => ({
+            run: vi.fn(async () => ({
+              exitCode: 0,
+              stdout: '',
+              stderr: '',
+              truncated: false,
+              timedOut: false
+            }))
+          }))
+        } as unknown as PasswordSshAdapter,
+        connectionBroker: {
+          acquire: vi.fn(),
+          invalidateAuthenticationIdentity,
+          beginHostDeletion: vi.fn(async () => undefined),
+          abortHostDeletion: vi.fn(),
+          completeHostDeletion: vi.fn()
+        }
+      }
+    )
+
+    const result = await handlers.changeAuthentication({
+      providerId: current.providerId,
+      expectedRevision: 1,
+      operationId: 'change-1',
+      authenticationMode: 'password',
+      username: 'new-user',
+      port: 22,
+      password: 'candidate'
+    })
+
+    expect(result).toEqual({ ok: true, host: changed })
+    expect(pruneSessionEnabledHosts).toHaveBeenCalledWith(current.providerId, expect.any(Function))
+    expect(changeAuthentication.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateProvider.mock.invocationCallOrder[0]
+    )
+    expect(invalidateAuthenticationIdentity).toHaveBeenCalledWith(current.providerId)
+    expect(changeAuthentication.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateAuthenticationIdentity.mock.invocationCallOrder[0]
+    )
+    expect(invalidateAuthenticationIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+      invalidateProvider.mock.invocationCallOrder[0]
+    )
+    expect(invalidateProvider).toHaveBeenCalledWith(current.providerId)
+    expect(finalizeGrantCleanup).toHaveBeenCalledWith({
+      kind: 'compute_provider',
+      providerId: current.providerId
+    })
+    expect(completeProviderInvalidation).toHaveBeenCalledWith(current.providerId)
+  })
+
+  it('fences remembered approvals as soon as an authentication identity change commits', async () => {
+    const current = sampleHost({
+      sshOverrides: { user: 'old-user', port: 22 },
+      authentication: {
+        mode: 'ssh_config',
+        credentialStatus: 'missing',
+        revision: 1,
+        lastVerifiedAt: undefined
+      }
+    })
+    const changed = sampleHost({
+      sshOverrides: { user: 'new-user', port: 22 },
+      authentication: {
+        mode: 'password',
+        credentialStatus: 'configured',
+        revision: 2,
+        lastVerifiedAt: 200
+      }
+    })
+    let releasePrune!: () => void
+    const pruneMayFinish = new Promise<void>((resolve) => {
+      releasePrune = resolve
+    })
+    let observeCommit!: () => void
+    const committed = new Promise<void>((resolve) => {
+      observeCommit = resolve
+    })
+    const approvalBroker = new ComputeApprovalBroker({
+      broadcast: vi.fn(),
+      generateId: () => 'approval-after-authentication-change',
+      permissionGrants: {
+        migrateLegacy: vi.fn(async () => undefined),
+        resolve: vi.fn(async () => 'global' as const),
+        remember: vi.fn(async () => undefined)
+      }
+    })
+    const handlers = createComputeHandlers(
+      mockRepository({
+        get: vi.fn(async () => current),
+        getAuthenticationOperation: vi.fn(async () => null),
+        changeAuthentication: vi.fn(async () => {
+          observeCommit()
+          return changed
+        })
+      }),
+      undefined,
+      undefined,
+      approvalBroker,
+      undefined,
+      mockJobRepo({ hasIdentityChangeBlockingJobsForProvider: vi.fn(async () => false) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { finalizeOwnerDeletion: vi.fn(async () => undefined) } as unknown as PermissionGrantRegistry,
+      undefined,
+      {
+        pruneSessionEnabledHosts: async (_providerId, commit) => {
+          await commit?.()
+          await pruneMayFinish
+        }
+      },
+      {
+        vault: {
+          encrypt: vi.fn(() => Buffer.from('ciphertext')),
+          bindOperationIntent: vi.fn(() => 'test-protected-fingerprint')
+        } as unknown as CredentialVault,
+        passwordAdapter: {
+          acquireWithPassword: vi.fn(async () => ({
+            run: vi.fn(async () => ({
+              exitCode: 0,
+              stdout: '',
+              stderr: '',
+              truncated: false,
+              timedOut: false
+            }))
+          }))
+        } as unknown as PasswordSshAdapter
+      }
+    )
+
+    const changing = handlers.changeAuthentication({
+      providerId: current.providerId,
+      expectedRevision: 1,
+      operationId: 'change-fence',
+      authenticationMode: 'password',
+      username: 'new-user',
+      port: 22,
+      password: 'candidate'
+    })
+    await committed
+
+    const decision = await approvalBroker.requestWithContext(
+      {
+        provider_id: current.providerId,
+        provider_name: current.displayName,
+        shape: current.shape ?? 'direct_ssh',
+        intent: 'call_command',
+        command_preview: 'hostname'
+      },
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        ownerId: current.id
+      }
+    )
+
+    expect(decision).toBe('deny')
+    releasePrune()
+    await expect(changing).resolves.toEqual({ ok: true, host: changed })
+  })
+
+  it('does not invalidate generation or grants when the identity transaction fails', async () => {
+    const current = sampleHost({
+      sshOverrides: { user: 'old-user', port: 22 },
+      authentication: {
+        mode: 'password',
+        credentialStatus: 'configured',
+        revision: 2,
+        lastVerifiedAt: 100
+      }
+    })
+    const invalidateProvider = vi.fn(async () => undefined)
+    const finalizeGrantCleanup = vi.fn(async () => undefined)
+    const handlers = createComputeHandlers(
+      mockRepository({
+        get: vi.fn(async () => current),
+        changeAuthentication: vi.fn(async () => {
+          throw new Error('transaction rolled back')
+        })
+      }),
+      undefined,
+      undefined,
+      {
+        invalidateProvider,
+        completeProviderInvalidation: vi.fn()
+      } as unknown as ComputeApprovalBroker,
+      undefined,
+      mockJobRepo({ hasIdentityChangeBlockingJobsForProvider: vi.fn(async () => false) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { finalizeOwnerDeletion: finalizeGrantCleanup } as unknown as PermissionGrantRegistry,
+      undefined,
+      {
+        pruneSessionEnabledHosts: async (_providerId, commit) => commit?.()
+      },
+      {
+        vault: {
+          encrypt: vi.fn(() => Buffer.from('ciphertext'))
+        } as unknown as CredentialVault,
+        passwordAdapter: {
+          acquireWithPassword: vi.fn(async () => ({
+            run: vi.fn(async () => ({
+              exitCode: 0,
+              stdout: '',
+              stderr: '',
+              truncated: false,
+              timedOut: false
+            }))
+          }))
+        } as unknown as PasswordSshAdapter
+      }
+    )
+
+    const result = await handlers.changeAuthentication({
+      providerId: current.providerId,
+      expectedRevision: 2,
+      operationId: 'change-2',
+      authenticationMode: 'password',
+      username: 'new-user',
+      port: 22,
+      password: 'candidate'
+    })
+
+    expect(result).toEqual({ ok: false, errorCode: 'create_failed' })
+    expect(invalidateProvider).not.toHaveBeenCalled()
+    expect(finalizeGrantCleanup).not.toHaveBeenCalled()
   })
 
   it('persists project grants through the legacy port when no Registry is available', async () => {
@@ -512,53 +947,118 @@ describe('compute handlers — jobsList', () => {
 // ---------------------------------------------------------------------------
 
 describe('host delete guard', () => {
+  it('rejects password Credential deletion when the application caller is not local', async () => {
+    const del = vi.fn(async () => undefined)
+    const passwordHost = sampleHost({
+      authentication: {
+        mode: 'password',
+        credentialStatus: 'configured',
+        revision: 1,
+        lastVerifiedAt: undefined
+      }
+    })
+    const handlers = createComputeHandlers(
+      mockRepository({ get: vi.fn(async () => passwordHost), delete: del })
+    )
+
+    await expect(
+      handlers.delete('ssh:biowulf', { allowPasswordCredentialDeletion: false })
+    ).rejects.toThrow('Channel only available from the local app: compute:delete')
+    expect(del).not.toHaveBeenCalled()
+  })
+
   it('rejects deletion when host has submitted/running jobs', async () => {
     const del = vi.fn(() => Promise.resolve())
     const list = vi.fn(() => Promise.resolve([]))
-    const hasActive = vi.fn(() => Promise.resolve(true))
+    const hasBlocking = vi.fn(() => Promise.resolve(true))
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, list }),
       undefined,
       undefined,
       undefined,
       undefined,
-      mockJobRepo({ hasActiveJobsForProvider: hasActive })
+      mockJobRepo({ hasDeletionBlockingJobsForProvider: hasBlocking })
     )
 
-    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow(
-      /cannot delete.*submitted.*running/i
-    )
+    await expect(handlers.delete('ssh:biowulf')).rejects.toMatchObject({
+      code: 'credential_change_blocked_by_jobs'
+    })
     expect(del).not.toHaveBeenCalled()
-    expect(hasActive).toHaveBeenCalledWith('ssh:biowulf')
+    expect(hasBlocking).toHaveBeenCalledWith('ssh:biowulf')
   })
 
-  it('allows deletion when host has only terminal jobs (job rows are preserved)', async () => {
+  it('blocks deletion while any Job still needs harvesting or remote cleanup', async () => {
     const del = vi.fn(() => Promise.resolve())
     const list = vi.fn(() => Promise.resolve([]))
-    const hasActive = vi.fn(() => Promise.resolve(false))
-    const invalidateProvider = vi.fn()
-    const completeProviderInvalidation = vi.fn()
-    const broker = {
-      invalidateProvider,
-      completeProviderInvalidation
-    } as unknown as ComputeApprovalBroker
+    const hasBlocking = vi.fn(() => Promise.resolve(true))
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, list }),
       undefined,
       undefined,
-      broker,
       undefined,
-      mockJobRepo({ hasActiveJobsForProvider: hasActive })
+      undefined,
+      mockJobRepo({ hasDeletionBlockingJobsForProvider: hasBlocking })
     )
 
-    await handlers.delete('ssh:biowulf')
-    expect(del).toHaveBeenCalledWith('ssh:biowulf')
-    expect(hasActive).toHaveBeenCalledWith('ssh:biowulf')
-    expect(invalidateProvider).toHaveBeenCalledWith('ssh:biowulf')
-    expect(invalidateProvider.mock.invocationCallOrder[0]).toBeLessThan(
+    await expect(handlers.delete('ssh:biowulf')).rejects.toMatchObject({
+      code: 'credential_change_blocked_by_jobs'
+    })
+    expect(del).not.toHaveBeenCalled()
+    expect(hasBlocking).toHaveBeenCalledWith('ssh:biowulf')
+  })
+
+  it('arms the connection Broker before deletion and unblocks it after a retryable failure', async () => {
+    const del = vi.fn().mockRejectedValue(new Error('database busy'))
+    const beginHostDeletion = vi.fn()
+    const abortHostDeletion = vi.fn()
+    const completeHostDeletion = vi.fn()
+    const beginProviderDeletion = vi.fn(async () => undefined)
+    const abortProviderDeletion = vi.fn(async () => undefined)
+    const completeProviderDeletion = vi.fn(async () => undefined)
+    const hasDeletionBlockingJobsForProvider = vi.fn(async () => false)
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({
+        beginProviderDeletion,
+        abortProviderDeletion,
+        completeProviderDeletion,
+        hasDeletionBlockingJobsForProvider
+      }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        connectionBroker: {
+          acquire: vi.fn(),
+          invalidateAuthenticationIdentity: vi.fn(),
+          beginHostDeletion,
+          abortHostDeletion,
+          completeHostDeletion
+        }
+      }
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow('database busy')
+    expect(beginHostDeletion).toHaveBeenCalledWith('ssh:biowulf')
+    expect(beginProviderDeletion).toHaveBeenCalledWith('ssh:biowulf')
+    expect(beginProviderDeletion.mock.invocationCallOrder[0]).toBeLessThan(
+      hasDeletionBlockingJobsForProvider.mock.invocationCallOrder[0]
+    )
+    expect(beginHostDeletion.mock.invocationCallOrder[0]).toBeLessThan(
       del.mock.invocationCallOrder[0]
     )
-    expect(completeProviderInvalidation).toHaveBeenCalledWith('ssh:biowulf')
+    expect(abortHostDeletion).toHaveBeenCalledWith('ssh:biowulf')
+    expect(abortProviderDeletion).toHaveBeenCalledWith('ssh:biowulf')
+    expect(completeHostDeletion).not.toHaveBeenCalled()
+    expect(completeProviderDeletion).not.toHaveBeenCalled()
   })
 
   it('allows deletion when no jobRepository is provided (backward compatibility)', async () => {
@@ -652,10 +1152,72 @@ describe('host delete guard', () => {
     expect(prune).not.toHaveBeenCalled()
   })
 
-  it('treats permission grant cleanup as repairable after host deletion', async () => {
+  it('commits deletion and finalizes the in-memory Grant projection after durable cleanup', async () => {
     const del = vi.fn().mockResolvedValue(undefined)
-    const prune = vi.fn().mockRejectedValue(new Error('Grant cleanup failed'))
-    const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const finalizeOwnerDeletion = vi.fn().mockRejectedValue(new Error('Listener failed'))
+    const abortHostDeletion = vi.fn()
+    const completeHostDeletion = vi.fn()
+    const abortProviderDeletion = vi.fn(async () => undefined)
+    const completeProviderDeletion = vi.fn(async () => undefined)
+    const permissionGrantRegistry = {
+      finalizeOwnerDeletion
+    } as unknown as PermissionGrantRegistry
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({
+        beginProviderDeletion: vi.fn(async () => undefined),
+        hasDeletionBlockingJobsForProvider: vi.fn(async () => false),
+        abortProviderDeletion,
+        completeProviderDeletion
+      }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      permissionGrantRegistry,
+      undefined,
+      undefined,
+      {
+        connectionBroker: {
+          acquire: vi.fn(),
+          invalidateAuthenticationIdentity: vi.fn(),
+          beginHostDeletion: vi.fn(async () => undefined),
+          abortHostDeletion,
+          completeHostDeletion
+        }
+      }
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).resolves.toBeUndefined()
+
+    expect(del).toHaveBeenCalledOnce()
+    expect(finalizeOwnerDeletion).toHaveBeenCalledWith({
+      kind: 'compute_provider',
+      providerId: 'ssh:biowulf'
+    })
+    expect(del.mock.invocationCallOrder[0]).toBeLessThan(
+      finalizeOwnerDeletion.mock.invocationCallOrder[0]
+    )
+    expect(completeHostDeletion).toHaveBeenCalledOnce()
+    expect(completeProviderDeletion).toHaveBeenCalledOnce()
+    expect(abortHostDeletion).not.toHaveBeenCalled()
+    expect(abortProviderDeletion).not.toHaveBeenCalled()
+  })
+
+  it('commits deletion when enabled Session cleanup fails after the Host delete callback', async () => {
+    const del = vi.fn().mockResolvedValue(undefined)
+    const abortHostDeletion = vi.fn()
+    const completeHostDeletion = vi.fn()
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, deleteProvider?: () => Promise<void>) => {
+        await deleteProvider?.()
+        throw new Error('Session projection failed')
+      }
+    )
     const handlers = createComputeHandlers(
       mockRepository({ delete: del }),
       undefined,
@@ -667,26 +1229,36 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       undefined,
-      permissionGrantRegistry
+      undefined,
+      undefined,
+      { pruneSessionEnabledHosts },
+      {
+        connectionBroker: {
+          acquire: vi.fn(),
+          invalidateAuthenticationIdentity: vi.fn(),
+          beginHostDeletion: vi.fn(async () => undefined),
+          abortHostDeletion,
+          completeHostDeletion
+        }
+      }
     )
 
     await expect(handlers.delete('ssh:biowulf')).resolves.toBeUndefined()
 
     expect(del).toHaveBeenCalledOnce()
-    expect(prune).toHaveBeenCalledOnce()
-    expect(del.mock.invocationCallOrder[0]).toBeLessThan(prune.mock.invocationCallOrder[0])
+    expect(completeHostDeletion).toHaveBeenCalledWith('ssh:biowulf')
+    expect(abortHostDeletion).not.toHaveBeenCalled()
   })
 
-  it('does not expose a replacement provider id until deletion grant cleanup completes', async () => {
-    let releaseDeletePrune: (() => void) | undefined
-    let pruneCalls = 0
-    const prune = vi.fn(() => {
-      pruneCalls += 1
-      if (pruneCalls === 1) {
-        return new Promise<[]>((resolve) => {
-          releaseDeletePrune = () => resolve([])
+  it('does not expose a replacement provider id until deletion Grant finalization completes', async () => {
+    let releaseDeleteFinalization: (() => void) | undefined
+    const finalizeOwnerDeletion = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDeleteFinalization = resolve
         })
-      }
+    )
+    const prune = vi.fn(() => {
       return Promise.resolve([])
     })
     const del = vi.fn().mockResolvedValue(undefined)
@@ -698,7 +1270,10 @@ describe('host delete guard', () => {
       invalidateProvider,
       completeProviderInvalidation
     } as unknown as ComputeApprovalBroker
-    const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const permissionGrantRegistry = {
+      prune,
+      finalizeOwnerDeletion
+    } as unknown as PermissionGrantRegistry
     const pruneSessionEnabledHosts = vi.fn(
       async (_providerId: string, afterPrune?: () => Promise<void>) => afterPrune?.()
     )
@@ -719,19 +1294,19 @@ describe('host delete guard', () => {
     )
 
     const deleting = handlers.delete('ssh:biowulf')
-    await vi.waitFor(() => expect(prune).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(finalizeOwnerDeletion).toHaveBeenCalledTimes(1))
     const creating = handlers.create({ sshAlias: 'biowulf' })
     await Promise.resolve()
 
     expect(create).not.toHaveBeenCalled()
-    releaseDeletePrune?.()
+    releaseDeleteFinalization?.()
     await deleting
     await expect(creating).resolves.toMatchObject({ id: 'replacement-host' })
-    expect(prune).toHaveBeenNthCalledWith(1, {
+    expect(finalizeOwnerDeletion).toHaveBeenCalledWith({
       kind: 'compute_provider',
       providerId: 'ssh:biowulf'
     })
-    expect(prune).toHaveBeenNthCalledWith(2, {
+    expect(prune).toHaveBeenCalledWith({
       kind: 'compute_provider',
       providerId: 'ssh:biowulf'
     })
@@ -1560,6 +2135,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:get',
       'compute:create',
       'compute:delete',
+      'compute:deletion-status',
       'compute:ssh-config-aliases',
       'compute:probe',
       'compute:details:get',
@@ -1581,6 +2157,14 @@ describe('installComputeIpcHandlers', () => {
     for (const channel of expected) {
       expect(handlers.has(channel)).toBe(true)
     }
+  })
+
+  it('starts defensive orphan Credential recovery when the Compute module is created', async () => {
+    const cleanupOrphanCredentials = vi.fn(async () => 1)
+
+    createComputeIpcModule(mockRepository({ cleanupOrphanCredentials }), mockJobRepo({}))
+
+    await vi.waitFor(() => expect(cleanupOrphanCredentials).toHaveBeenCalledOnce())
   })
 
   it('keeps the default no-Registry factory backed by persistent project grants', async () => {
