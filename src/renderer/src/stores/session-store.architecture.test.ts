@@ -109,6 +109,7 @@ const publicValueExports = [
   'isSessionWaitReason',
   'projectSessionActionability',
   'resolveRootPermissionPending',
+  'sessionAwaitsHistoryReplay',
   'toPersistedSession',
   'useSessionStore'
 ].sort()

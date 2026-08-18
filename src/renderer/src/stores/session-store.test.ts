@@ -180,7 +180,31 @@ describe('session store', () => {
     expect(actionability.actions).toMatchObject({
       startTurn: { allowed: false, disabledReason: 'session-pending' },
       revise: { allowed: true },
-      branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
+      branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
+      startSideChat: { allowed: false, disabledReason: 'session-pending' },
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+    })
+  })
+
+  it('keeps a new Turn available while history replay is pending and blocks other Session actions', () => {
+    const actionability = projectSessionActionability({
+      id: 'session-replay',
+      projectId: 'project-1',
+      title: 'Replay pending',
+      cwd: '/workspace',
+      status: 'idle',
+      pendingHistoryReplay: { kind: 'all' },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    } as ChatSession)
+
+    expect(actionability.actions).toMatchObject({
+      startTurn: { allowed: true },
+      revise: { allowed: true },
+      branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
+      startSideChat: { allowed: false, disabledReason: 'session-pending' },
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
     })
   })
 
@@ -5275,6 +5299,30 @@ describe('branchInNewSession', () => {
       useSessionStore.getState().branchInNewSession({
         sourceSessionId: 'source-session',
         content: 'bypass the pending Plan'
+      })
+    ).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toEqual([sourceBefore])
+  })
+
+  it('refuses a source that still needs history replay', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'stable source'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'source-session'
+          ? { ...session, pendingHistoryReplay: { kind: 'all' as const } }
+          : session
+      )
+    }))
+    const sourceBefore = structuredClone(useSessionStore.getState().sessions[0])
+
+    expect(
+      useSessionStore.getState().branchInNewSession({
+        sourceSessionId: 'source-session',
+        content: 'must not nest an unreplayed Session'
       })
     ).toBeUndefined()
     expect(useSessionStore.getState().sessions).toEqual([sourceBefore])

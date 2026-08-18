@@ -1783,6 +1783,49 @@ describe('ConversationPanel composer intake', () => {
     ).toBe(false)
   })
 
+  it('keeps send and Plan first available while Branch stays disabled for a pending replay', () => {
+    const session: ChatSession = {
+      id: 'session-replay',
+      projectId: 'project-a',
+      title: 'Replay pending',
+      cwd: '/workspace',
+      status: 'idle',
+      pendingHistoryReplay: { kind: 'all' },
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      conversation: {
+        availability: {
+          submit: true,
+          branch: false
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ planFirst: vi.fn(), branch: vi.fn() })
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'continue from this branch' }] }
+        }
+      }
+    })
+
+    expect(
+      (container.querySelector('[data-testid="menu-plan-first"]') as HTMLButtonElement).disabled
+    ).toBe(false)
+    expect(
+      (container.querySelector('[data-testid="menu-branch-in-new-session"]') as HTMLButtonElement)
+        .disabled
+    ).toBe(true)
+  })
+
   it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
     const onStartSideChat = vi.fn()
     const session: ChatSession = {

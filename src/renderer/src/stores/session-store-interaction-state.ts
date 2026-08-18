@@ -61,6 +61,7 @@ type SessionInteractionSource = Readonly<{
   activeRun?: unknown
   agentPromptInFlight?: boolean
   isPending?: boolean
+  pendingHistoryReplay?: unknown
 }>
 
 type SessionPermissionRequest = Readonly<{
@@ -82,6 +83,10 @@ export const isSessionWaitReason = (status: string): status is SessionWaitReason
   status === 'waiting-permission' ||
   status === 'waiting-for-user' ||
   status === 'waiting-plan-approval'
+
+export const sessionAwaitsHistoryReplay = (
+  session: Pick<SessionInteractionSource, 'isPending' | 'pendingHistoryReplay'> | undefined
+): boolean => Boolean(session?.isPending || session?.pendingHistoryReplay)
 
 const hasPendingDurableElicitation = (session: SessionInteractionSource): boolean =>
   (session.status === 'waiting-for-user' || session.status === 'waiting-permission') &&
@@ -153,6 +158,8 @@ export const projectSessionActionability = (
         ? 'plan'
         : undefined
   const interactionDisabledReason = disabledReasonForInteraction(blockingInteraction)
+  const historyReplayPending = Boolean(session.pendingHistoryReplay)
+  const sessionPending = Boolean(session.isPending) || historyReplayPending
   const turnDisabledReason =
     session.isPending && !facts.allowPendingSessionRetry
       ? 'session-pending'
@@ -167,6 +174,7 @@ export const projectSessionActionability = (
         ? 'elicitation-pending'
         : 'plan-approval-pending'
     : undefined
+  const replayOrPendingReason = sessionPending ? 'session-pending' : undefined
   const activity = waitReason ? 'waiting' : running ? 'running' : 'inactive'
 
   return {
@@ -179,15 +187,12 @@ export const projectSessionActionability = (
       startTurn: actionAvailability(turnDisabledReason),
       revise: actionAvailability(revisionDisabledReason),
       branchFromMessage: actionAvailability(
-        session.isPending
-          ? 'session-pending'
-          : running
-            ? 'session-running'
-            : attentionDisabledReason
+        replayOrPendingReason ?? (running ? 'session-running' : attentionDisabledReason)
       ),
-      startSideChat: actionAvailability(attentionDisabledReason),
+      startSideChat: actionAvailability(replayOrPendingReason ?? attentionDisabledReason),
       changeAgentControls: actionAvailability(
-        running ? 'session-running' : (attentionDisabledReason ?? interactionDisabledReason)
+        replayOrPendingReason ??
+          (running ? 'session-running' : (attentionDisabledReason ?? interactionDisabledReason))
       ),
       archive: actionAvailability(running ? 'session-running' : attentionDisabledReason)
     }

@@ -41,6 +41,7 @@ export {
   isSessionWaitReason,
   projectSessionActionability,
   resolveRootPermissionPending,
+  sessionAwaitsHistoryReplay,
   type SessionActionabilityFacts,
   type SessionActionabilityProjection,
   type SessionActionAvailability,

@@ -683,7 +683,7 @@ const ConversationPanel = ({
   }
 
   const handleBranchInNewSession = (): void => {
-    if (!effectiveCanSend || !onBranchInNewSession) return
+    if (!effectiveCanSend || !onBranchInNewSession || !canBranchInNewSession) return
     onBranchInNewSession(docToSkillIds(draftDoc))
   }
 
@@ -1788,7 +1788,9 @@ const ConversationPanel = ({
                                           !canPlanFirst &&
                                           !canStartSideChat &&
                                           !canRetrySideChatHydration &&
-                                          (!effectiveCanSend || !onBranchInNewSession)
+                                          (!effectiveCanSend ||
+                                            !onBranchInNewSession ||
+                                            !canBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
                                         aria-label={t('More send options')}
@@ -1844,7 +1846,11 @@ const ConversationPanel = ({
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-branch-in-new-session"
-                                    disabled={!effectiveCanSend || !onBranchInNewSession}
+                                    disabled={
+                                      !effectiveCanSend ||
+                                      !onBranchInNewSession ||
+                                      !canBranchInNewSession
+                                    }
                                     onSelect={handleBranchInNewSession}
                                     className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
                                   >
