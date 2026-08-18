@@ -1,5 +1,4 @@
-import type { ProjectFilesChangedEvent } from '../../shared/project-files'
-import type { ProjectFileSource } from '../../shared/project-files'
+import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
 import type {
   DelegationPolicy,
   LoadAllSessionsResult,
