@@ -23,6 +23,7 @@ type ProjectFilesRepairBackend = {
 }
 
 type ProjectFilesRecoveryBackend = {
+  recoverPendingDeletions(): Promise<void>
   waitForProjectOperations(projectIds: readonly string[]): Promise<void>
 }
 
@@ -61,7 +62,9 @@ const createProjectFilesHandlers = (
     return repository.searchArtifacts(request)
   },
   repairIndex: async ({ projectId }) => {
-    await recoveryBackend.waitForProjectOperations([projectId])
+    // repairProjectFiles performs a complete Session scan and global projection reconciliation.
+    // Keep it behind strict recovery so it cannot touch another Project with a failed deletion tail.
+    await recoveryBackend.recoverPendingDeletions()
     return repairBackend.repairProjectFiles(projectId)
   }
 })

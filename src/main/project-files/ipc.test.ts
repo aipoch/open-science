@@ -58,6 +58,7 @@ describe('project files IPC handlers', () => {
         repairProjectFiles: vi.fn().mockResolvedValue(undefined)
       },
       {
+        recoverPendingDeletions: vi.fn().mockResolvedValue(undefined),
         waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
       }
     )
@@ -98,12 +99,34 @@ describe('project files IPC handlers', () => {
     }
     const repair = { repairProjectFiles: vi.fn().mockResolvedValue(undefined) }
     const handlers = createProjectFilesHandlers(repository, repair, {
+      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined),
       waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     })
 
     await handlers.repairIndex({ projectId: 'project-1' })
 
     expect(repair.repairProjectFiles).toHaveBeenCalledWith('project-1')
+  })
+
+  it('keeps global index repair behind strict deletion recovery', async () => {
+    const recoveryFailure = new Error('another Project deletion is incomplete')
+    const repository = {
+      getOverview: vi.fn(),
+      listFiles: vi.fn(),
+      listArtifactGroups: vi.fn(),
+      searchArtifacts: vi.fn()
+    }
+    const repair = { repairProjectFiles: vi.fn().mockResolvedValue(undefined) }
+    const recovery = {
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined),
+      recoverPendingDeletions: vi.fn().mockRejectedValue(recoveryFailure)
+    }
+    const handlers = createProjectFilesHandlers(repository, repair, recovery)
+
+    await expect(handlers.repairIndex({ projectId: 'project-1' })).rejects.toBe(recoveryFailure)
+
+    expect(recovery.waitForProjectOperations).not.toHaveBeenCalled()
+    expect(repair.repairProjectFiles).not.toHaveBeenCalled()
   })
 
   it('waits for deletion recovery before every files query or repair', async () => {
@@ -138,6 +161,9 @@ describe('project files IPC handlers', () => {
       })
     }
     const recovery = {
+      recoverPendingDeletions: vi.fn(async () => {
+        order.push('recover')
+      }),
       waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
@@ -175,7 +201,7 @@ describe('project files IPC handlers', () => {
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(2, ['project-1'])
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(3, ['project-1'])
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(4, ['project-1', 'project-2'])
-    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(5, ['project-1'])
+    expect(recovery.recoverPendingDeletions).toHaveBeenCalledOnce()
   })
 })
 
@@ -205,7 +231,10 @@ describe('registerProjectFilesIpcHandlers', () => {
       })
     }
     repairBackend = { repairProjectFiles: vi.fn().mockResolvedValue(undefined) }
-    recoveryBackend = { waitForProjectOperations: vi.fn().mockResolvedValue(undefined) }
+    recoveryBackend = {
+      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined),
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
+    }
   })
 
   it('registers every project-files IPC channel', () => {
@@ -294,6 +323,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       repairProjectFiles: vi.fn()
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
+      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined),
       waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
@@ -321,6 +351,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       repairProjectFiles: vi.fn()
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
+      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined),
       waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
@@ -353,6 +384,7 @@ describe('registerProjectFilesIpcHandlers', () => {
       repairProjectFiles: vi.fn()
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
+      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined),
       waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
@@ -380,9 +412,10 @@ describe('registerProjectFilesIpcHandlers', () => {
       })
     }
     const localRecovery: ProjectFilesRecoveryBackend = {
-      waitForProjectOperations: vi.fn(async () => {
+      recoverPendingDeletions: vi.fn(async () => {
         order.push('recover')
-      })
+      }),
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     registerProjectFilesIpcHandlers(localRepository, localRepair, localRecovery)
 
@@ -397,6 +430,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     // accidentally bypassing recovery by registering a handler that calls the backend directly.
     registerProjectFilesIpcHandlers(repository, repairBackend, recoveryBackend)
     ;(recoveryBackend.waitForProjectOperations as ReturnType<typeof vi.fn>).mockClear()
+    ;(recoveryBackend.recoverPendingDeletions as ReturnType<typeof vi.fn>).mockClear()
 
     await invoke('project-files:get-overview', { projectId: 'p1' })
     await invoke('project-files:list-files', {
@@ -407,7 +441,8 @@ describe('registerProjectFilesIpcHandlers', () => {
     await invoke('project-files:list-artifact-groups', { projectId: 'p1', limit: 1 })
     await invoke('project-files:repair-index', { projectId: 'p1' })
 
-    expect(recoveryBackend.waitForProjectOperations).toHaveBeenCalledTimes(4)
+    expect(recoveryBackend.waitForProjectOperations).toHaveBeenCalledTimes(3)
+    expect(recoveryBackend.recoverPendingDeletions).toHaveBeenCalledOnce()
   })
 })
 
