@@ -36,6 +36,17 @@ class SessionPersistenceOperationScheduler {
     return this.runScoped([projectScope(projectId), sessionScope(sessionId)], operation)
   }
 
+  runSessionThenGlobal<Result, FinalResult>(
+    projectId: string,
+    sessionId: string,
+    operation: ScopedOperation<Result>,
+    globalOperation: (result: Result) => Promise<FinalResult>
+  ): Promise<FinalResult> {
+    return this.runSession(projectId, sessionId, operation).then((result) =>
+      this.runGlobal(() => globalOperation(result))
+    )
+  }
+
   runSessionIdentity<Result>(
     sessionId: string,
     operation: ScopedOperation<Result>

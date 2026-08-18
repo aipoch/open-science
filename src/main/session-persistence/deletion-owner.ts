@@ -286,60 +286,61 @@ class SessionPersistenceDeletionOwner {
       ])
     ]
 
-    if (this.uploads && deletionState !== 'prepared') {
-      if (!scan.isComplete) {
-        if (options.requireExistingUploadAuthority) {
-          throw new Error(
-            'Cannot adopt a legacy Project tombstone with incomplete Session authority.'
-          )
-        }
-        this.fileIndex.markReconciliationIncomplete()
-      }
-      for (const session of scan.sessions) {
-        let cleanup: { hasUnsafeResidual: boolean }
-        try {
-          cleanup = await this.prepareProjectSessionUploadsForTerminalDelete(
-            session,
-            deletionState === 'legacy-committed'
-              ? (upgraded) => this.repository.saveCommittedProjectSession(upgraded)
-              : undefined,
-            options.requireExistingUploadAuthority === true
-          )
-        } catch (error) {
-          if (
-            options.requireExistingUploadAuthority &&
-            error instanceof OrphanLegacyUploadAuthorityMissingError
-          ) {
-            await this.computeJobs?.commitProjectJobDeletion(projectId)
+    return runWithSessionIdentities(
+      affectedSessionIds,
+      async (): Promise<ProjectSessionDeletionResult> => {
+        if (this.uploads && deletionState !== 'prepared') {
+          if (!scan.isComplete) {
+            if (options.requireExistingUploadAuthority) {
+              throw new Error(
+                'Cannot adopt a legacy Project tombstone with incomplete Session authority.'
+              )
+            }
             this.fileIndex.markReconciliationIncomplete()
-            await runWithSessionIdentities(affectedSessionIds, async () => {
-              await this.fileIndex.softDeleteProject(projectId)
-              await this.notifySessionsDeleted(deletedSessionIds)
-            })
-            return { status: 'orphan-retained', reason: 'missing-upload-authority' }
           }
-          throw error
+          for (const session of scan.sessions) {
+            let cleanup: { hasUnsafeResidual: boolean }
+            try {
+              cleanup = await this.prepareProjectSessionUploadsForTerminalDelete(
+                session,
+                deletionState === 'legacy-committed'
+                  ? (upgraded) => this.repository.saveCommittedProjectSession(upgraded)
+                  : undefined,
+                options.requireExistingUploadAuthority === true
+              )
+            } catch (error) {
+              if (
+                options.requireExistingUploadAuthority &&
+                error instanceof OrphanLegacyUploadAuthorityMissingError
+              ) {
+                await this.computeJobs?.commitProjectJobDeletion(projectId)
+                this.fileIndex.markReconciliationIncomplete()
+                await this.fileIndex.softDeleteProject(projectId)
+                await this.notifySessionsDeleted(deletedSessionIds)
+                return { status: 'orphan-retained', reason: 'missing-upload-authority' }
+              }
+              throw error
+            }
+            if (cleanup.hasUnsafeResidual) this.fileIndex.markReconciliationIncomplete()
+          }
         }
-        if (cleanup.hasUnsafeResidual) this.fileIndex.markReconciliationIncomplete()
-      }
-    }
-    await runWithSessionIdentities(affectedSessionIds, async () => {
-      if (deletionState === 'legacy-committed') {
-        await this.repository.markCommittedProjectSessionsPrepared(projectId)
-      }
-      await this.repository.deleteProjectSessions(projectId)
-      await this.computeJobs?.commitProjectJobDeletion(projectId)
-      this.stateOwner.removeProject(projectId, deletedSessionIds)
-      await this.fileIndex.softDeleteProject(projectId)
+        if (deletionState === 'legacy-committed') {
+          await this.repository.markCommittedProjectSessionsPrepared(projectId)
+        }
+        await this.repository.deleteProjectSessions(projectId)
+        await this.computeJobs?.commitProjectJobDeletion(projectId)
+        this.stateOwner.removeProject(projectId, deletedSessionIds)
+        await this.fileIndex.softDeleteProject(projectId)
 
-      this.notifyFilesChanged({
-        projectId,
-        sources: ['artifact', 'upload'],
-        kind: 'reset'
-      })
-      await this.notifySessionsDeleted(deletedSessionIds)
-    })
-    return { status: 'completed' }
+        this.notifyFilesChanged({
+          projectId,
+          sources: ['artifact', 'upload'],
+          kind: 'reset'
+        })
+        await this.notifySessionsDeleted(deletedSessionIds)
+        return { status: 'completed' }
+      }
+    )
   }
 
   getProjectSessionDeletionState(projectId: string): Promise<ProjectSessionDeletionState> {
@@ -358,7 +359,10 @@ class SessionPersistenceDeletionOwner {
     return this.repository.listLegacyProjectSessionTombstones()
   }
 
-  async deleteSession(projectId: string, sessionId: string): Promise<void> {
+  async deleteSession(
+    projectId: string,
+    sessionId: string
+  ): Promise<SessionDeletionReceipt['kind']> {
     let token: ManagedFileSoftDeleteToken | undefined
     let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
     let jsonDeleted = false
@@ -388,7 +392,6 @@ class SessionPersistenceDeletionOwner {
       if (this.computeJobs) {
         await this.computeJobs.commitSessionJobDeletion(projectId, sessionId)
       }
-      this.stateOwner.removeSession(projectId, sessionId)
       await this.provenance?.completeSessionDeletion(receipt)
     } catch (error) {
       try {
@@ -411,6 +414,17 @@ class SessionPersistenceDeletionOwner {
       throw error
     }
 
+    return receipt.kind
+  }
+
+  async reconcileSessionDeletion(
+    projectId: string,
+    sessionId: string,
+    receiptKind: SessionDeletionReceipt['kind']
+  ): Promise<void> {
+    // Retain the metadata identity tombstone until the global phase starts so a cross-Project reuse
+    // cannot be admitted between authoritative deletion and ID-only projection cleanup.
+    this.stateOwner.removeSession(projectId, sessionId)
     const survivorChanges: Array<{ sessionId: string; sources: ProjectFileSource[] }> = []
     try {
       const scan = await this.repository.loadAllWithDiagnostics()
@@ -445,7 +459,7 @@ class SessionPersistenceDeletionOwner {
       projectId,
       sessionId,
       sources: ['artifact', 'upload'],
-      kind: receipt.kind === 'retained' ? 'upsert' : 'delete'
+      kind: receiptKind === 'retained' ? 'upsert' : 'delete'
     })
     await this.notifySessionsDeleted([sessionId])
   }

@@ -111,6 +111,56 @@ describe('SessionPersistenceOperationScheduler', () => {
     expect(new Set(order.slice(3))).toEqual(new Set(['session-1', 'session-2']))
   })
 
+  it('promotes a Session continuation to a global barrier', async () => {
+    const scheduler = new SessionPersistenceOperationScheduler()
+    const unrelatedGate = createDeferred()
+    const unrelatedStarted = createDeferred()
+    const globalGate = createDeferred()
+    const globalStarted = createDeferred()
+    const order: string[] = []
+
+    const unrelated = scheduler.runProject('project-2', async () => {
+      order.push('unrelated:start')
+      unrelatedStarted.resolve()
+      await unrelatedGate.promise
+      order.push('unrelated:end')
+    })
+    await unrelatedStarted.promise
+    const transition = scheduler.runSessionThenGlobal(
+      'project-1',
+      'session-1',
+      async () => {
+        order.push('session')
+        return 'deleted'
+      },
+      async (result) => {
+        order.push(`global:${result}`)
+        globalStarted.resolve()
+        await globalGate.promise
+      }
+    )
+    await flushMicrotasks()
+    expect(order).toEqual(['unrelated:start', 'session'])
+
+    unrelatedGate.resolve()
+    await globalStarted.promise
+    const laterProject = scheduler.runProject('project-3', async () => {
+      order.push('later-project')
+    })
+    await flushMicrotasks()
+    expect(order).toEqual(['unrelated:start', 'session', 'unrelated:end', 'global:deleted'])
+
+    globalGate.resolve()
+    await Promise.all([unrelated, transition, laterProject])
+    expect(order).toEqual([
+      'unrelated:start',
+      'session',
+      'unrelated:end',
+      'global:deleted',
+      'later-project'
+    ])
+  })
+
   it('lets an active Project extend its identity scope ahead of a later global barrier', async () => {
     const scheduler = new SessionPersistenceOperationScheduler()
     const activeIdentityGate = createDeferred()

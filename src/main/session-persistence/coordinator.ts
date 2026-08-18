@@ -933,21 +933,27 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    * deleted-owner event so already loaded renderer pages invalidate in the same operation.
    */
   deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      const key = sessionKey(projectId, sessionId)
-      this.deletedSessions.add(key)
-      try {
-        await this.deletionOwner.deleteSession(projectId, sessionId)
-      } catch (error) {
+    return this.operationScheduler.runSessionThenGlobal(
+      projectId,
+      sessionId,
+      async () => {
+        const key = sessionKey(projectId, sessionId)
+        this.deletedSessions.add(key)
         try {
-          const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
-          if (authority.status === 'found') this.deletedSessions.delete(key)
-        } catch {
-          // Authority cannot be proven live, so retain the tombstone fail-closed.
+          return await this.deletionOwner.deleteSession(projectId, sessionId)
+        } catch (error) {
+          try {
+            const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+            if (authority.status === 'found') this.deletedSessions.delete(key)
+          } catch {
+            // Authority cannot be proven live, so retain the tombstone fail-closed.
+          }
+          throw error
         }
-        throw error
-      }
-    })
+      },
+      (receiptKind) =>
+        this.deletionOwner.reconcileSessionDeletion(projectId, sessionId, receiptKind)
+    )
   }
 
   // Renderer notifications are derived state. They must never change the result of an authoritative
