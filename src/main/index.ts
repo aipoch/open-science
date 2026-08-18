@@ -409,6 +409,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           taskControls,
           detectActiveSessions,
           prepareForQuit,
+          abortQuitPreparation,
           dispose: disposeApplicationRuntime
         } = await registerIpcHandlers({
           mainEntryPath,
@@ -514,6 +515,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           disposeApplicationRuntime,
           detectActiveSessions,
           prepareForQuit,
+          abortQuitPreparation,
           createSessionPersistenceFlush: (
             getWindow: () => InstanceType<typeof BrowserWindow> | undefined
           ) => createElectronSessionPersistenceFlush(getWindow),
@@ -606,6 +608,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             createInitialWindow: !ctx.webMode.headless,
             detectActiveSessions: ctx.detectActiveSessions,
             prepareForQuit: ctx.prepareForQuit,
+            abortQuitPreparation: ctx.abortQuitPreparation,
             flushSessionPersistence: ctx.createSessionPersistenceFlush(() =>
               ctx.mainWindowGetterBox.current?.()
             ),

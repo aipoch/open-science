@@ -55,6 +55,8 @@ export type AppLifecycleDeps = {
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  // Reopens runtime admission when a persistence conflict aborts the quit before backend teardown.
+  abortQuitPreparation: () => void
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
   flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
   // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
@@ -378,6 +380,11 @@ export const installAppLifecycle = (
         }
       } finally {
         if (shutdownAbortedForSessionConflict) {
+          try {
+            deps.abortQuitPreparation()
+          } catch (error) {
+            deps.log?.warn('failed to abort quit preparation', diagnosticErrorFields(error))
+          }
           shutdownStarted = false
           quitConfirmed = false
           clearApplicationShutdownTrigger()

@@ -461,6 +461,12 @@ class AcpRuntimeCoordinator {
     })
   }
 
+  abortQuitPreparation(): void {
+    if (this.providerShutdownStartedForQuit) return
+    this.promptAdmissionClosedForQuit = false
+    this.durableQuitDetachedSessionIds.clear()
+  }
+
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()

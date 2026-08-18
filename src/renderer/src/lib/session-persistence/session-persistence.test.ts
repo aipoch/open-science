@@ -704,8 +704,7 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession).toHaveBeenCalledTimes(1)
 
     firstSave.resolve(saveSession.mock.calls[0][0])
-    await flushMicrotasks()
-    expect(saveSession).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledTimes(2))
 
     secondSave.resolve(saveSession.mock.calls[1][0])
     await flushMicrotasks()
@@ -903,6 +902,69 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession).toHaveBeenCalledOnce()
   })
 
+  it('rebases from the exact externally published authority after a later revision conflict', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({ projectId: 'project-a', revision: 1 })
+    )
+    const published = materializeSessionConversationGraph({
+      ...base,
+      revision: 2,
+      messages: [
+        {
+          id: 'published-message',
+          role: 'agent',
+          content: 'Published by Main',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      updatedAt: base.updatedAt + 1
+    })
+    const latest = materializeSessionConversationGraph({
+      ...published,
+      revision: 3,
+      messages: [
+        ...published.messages,
+        {
+          id: 'latest-message',
+          role: 'agent',
+          content: 'Newer authoritative graph',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      updatedAt: published.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(2, 3))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 4 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(latest),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertPersistedSession(published)
+    await save(useSessionStore.getState())
+    expect(toPersistedSession(useSessionStore.getState().sessions[0]).conversationGraph).toEqual(
+      published.conversationGraph
+    )
+    useSessionStore.getState().renameSession(base.id, 'Local title')
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[0][0]).toMatchObject({ revision: 2, title: 'Local title' })
+    expect(saveSession.mock.calls[1][0]).toMatchObject({ revision: 3, title: 'Local title' })
+    expect(saveSession.mock.calls[1][0].messages).toEqual(latest.messages)
+  })
+
   it('reports an earlier failed write even when a later queued write succeeds', async () => {
     const api = createApi({
       saveSession: vi.fn().mockRejectedValue(new Error('disk full')),
@@ -958,6 +1020,27 @@ describe('renderer session persistence bridge', () => {
 
     expect(saveSession).toHaveBeenCalledTimes(3)
     expect(durableTitle).toBe('Artifact latest')
+  })
+
+  it('stamps an explicit queued save with the last durable revision', async () => {
+    const firstSave = createDeferred<PersistedChatSession>()
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>(async (submitted) => ({
+      ...submitted,
+      revision: 3
+    }))
+    const persistence = createOrderedSessionPersistence(createApi({ saveSession }))
+    const session = createPersistedSession({ revision: 1 })
+
+    const storeSave = persistence.saveLatestSession('session:session-1', () => firstSave.promise)
+    const explicitSave = persistence.saveSession({ ...session, title: 'Explicit latest' })
+    firstSave.resolve({ ...session, revision: 2 })
+    await Promise.all([storeSave, explicitSave])
+
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveSession.mock.calls[0][0]).toMatchObject({
+      revision: 2,
+      title: 'Explicit latest'
+    })
   })
 
   it('flushes only after explicit and coalesced queued writes settle', async () => {

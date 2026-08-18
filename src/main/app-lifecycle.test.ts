@@ -123,6 +123,7 @@ type Harness = {
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  abortQuitPreparation: ReturnType<typeof vi.fn>
   flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
@@ -138,6 +139,7 @@ const setup = (
       AppLifecycleDeps,
       | 'shutdownBackends'
       | 'prepareForQuit'
+      | 'abortQuitPreparation'
       | 'flushSessionPersistence'
       | 'log'
       | 'flushLogs'
@@ -166,6 +168,7 @@ const setup = (
   let trayHandlers: TrayHandlers | undefined
   const shutdownBackends = overrides.shutdownBackends ?? vi.fn(async () => undefined)
   const prepareForQuit = overrides.prepareForQuit ?? vi.fn(async () => undefined)
+  const abortQuitPreparation = vi.fn(overrides.abortQuitPreparation ?? (() => undefined))
   const flushSessionPersistence =
     overrides.flushSessionPersistence ?? vi.fn(async () => 'completed' as const)
   const quit = vi.fn()
@@ -191,6 +194,7 @@ const setup = (
     },
     shutdownBackends,
     prepareForQuit,
+    abortQuitPreparation,
     flushSessionPersistence,
     log: overrides.log,
     flushLogs: overrides.flushLogs,
@@ -212,6 +216,7 @@ const setup = (
     trayHandlers,
     shutdownBackends,
     prepareForQuit,
+    abortQuitPreparation,
     flushSessionPersistence,
     quit,
     showMainWindow,
@@ -355,6 +360,7 @@ describe('installAppLifecycle', () => {
       createTray: () => ({ destroy: vi.fn() }) as unknown as import('electron').Tray,
       shutdownBackends,
       prepareForQuit: async () => undefined,
+      abortQuitPreparation: () => undefined,
       flushSessionPersistence: async () => undefined,
       isMigrationInProgress: (): boolean => false,
       quit: vi.fn(),
@@ -531,7 +537,7 @@ describe('installAppLifecycle', () => {
 
   it('keeps the app open when the renderer reports an unresolved Session revision conflict', async () => {
     const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
-    const { app, closeOpts, shutdownBackends, tray, windows } = setup({
+    const { app, closeOpts, shutdownBackends, abortQuitPreparation, tray, windows } = setup({
       flushSessionPersistence
     })
     closeOpts[0].requestQuit()
@@ -541,6 +547,7 @@ describe('installAppLifecycle', () => {
 
     expect(flushSessionPersistence).toHaveBeenCalledOnce()
     expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(abortQuitPreparation).toHaveBeenCalledOnce()
     expect(tray?.destroy).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
     expect(windows[0].visible).toBe(true)

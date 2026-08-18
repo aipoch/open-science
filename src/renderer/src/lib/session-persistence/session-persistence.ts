@@ -19,6 +19,7 @@ import {
 } from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
+  getExternallyHydratedSessionAuthority,
   isExternallyHydratedSession,
   toPersistedSession,
   useSessionStore
@@ -100,6 +101,32 @@ const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
   )
 }
 
+const conversationGraphsEqualIgnoringBranchTimestamps = (
+  left: PersistedChatSession['conversationGraph'],
+  right: PersistedChatSession['conversationGraph']
+): boolean => {
+  if (!left || !right) return left === right
+  const withoutBranchTimestamps = (
+    graph: NonNullable<PersistedChatSession['conversationGraph']>
+  ): PersistedChatSession['conversationGraph'] => ({
+    ...graph,
+    branches: graph.branches.map((branch) => ({ ...branch, updatedAt: 0 }))
+  })
+  return jsonValuesEqual(withoutBranchTimestamps(left), withoutBranchTimestamps(right))
+}
+
+const sessionFieldValuesEqual = (
+  key: keyof PersistedChatSession,
+  left: unknown,
+  right: unknown
+): boolean =>
+  key === 'conversationGraph'
+    ? conversationGraphsEqualIgnoringBranchTimestamps(
+        left as PersistedChatSession['conversationGraph'],
+        right as PersistedChatSession['conversationGraph']
+      )
+    : jsonValuesEqual(left, right)
+
 const rebaseSessionAfterRevisionConflict = (
   base: PersistedChatSession,
   submitted: PersistedChatSession,
@@ -126,10 +153,11 @@ const rebaseSessionAfterRevisionConflict = (
     const baseValue = base[key]
     const submittedValue = submitted[key]
     const latestValue = latest[key]
-    const localChanged = !jsonValuesEqual(submittedValue, baseValue)
+    const localChanged = !sessionFieldValuesEqual(key, submittedValue, baseValue)
     if (!localChanged) continue
-    const remoteChanged = !jsonValuesEqual(latestValue, baseValue)
-    if (remoteChanged && !jsonValuesEqual(submittedValue, latestValue)) return undefined
+    const remoteChanged = !sessionFieldValuesEqual(key, latestValue, baseValue)
+    if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue))
+      return undefined
 
     if (Object.hasOwn(submitted, key)) {
       Object.assign(rebased, { [key]: structuredClone(submittedValue) })
@@ -160,6 +188,7 @@ const createOrderedSessionPersistence = (
   api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
+  const acknowledgedRevisions = new Map<string, number>()
   let pendingLatest:
     | {
         target: string
@@ -197,7 +226,13 @@ const createOrderedSessionPersistence = (
         pendingLatest = undefined
         pendingLatestPromise = undefined
       }
-      return entry.task(entry.options)
+      return entry.task(entry.options).then((durable) => {
+        acknowledgedRevisions.set(
+          durable.id,
+          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
+        )
+        return durable
+      })
     }
     const run = queue.then(runTask, runTask)
     pendingLatest = entry
@@ -212,7 +247,21 @@ const createOrderedSessionPersistence = (
   return {
     saveLatestSession,
     saveSession: (session, options) =>
-      enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
+      enqueue(async () => {
+        const submitted = structuredClone(session)
+        submitted.revision = Math.max(
+          sessionRevision(submitted),
+          acknowledgedRevisions.get(submitted.id) ?? 0
+        )
+        const durable = options
+          ? await api.saveSession(submitted, options)
+          : await api.saveSession(submitted)
+        acknowledgedRevisions.set(
+          durable.id,
+          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
+        )
+        return durable
+      }),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
     flush: () => queue.then(() => undefined)
   }
@@ -576,10 +625,20 @@ const createStoreSaver = (
       const target = `session:${session.id}`
       const isForced = options?.forceTargets?.has(target) === true
       if (isExternallyHydratedSession(session)) {
-        acknowledgedRevisions.set(
-          session.id,
-          Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(session))
-        )
+        const authority = getExternallyHydratedSessionAuthority(session)
+        if (authority) {
+          const previousAuthority = acknowledgedSessions.get(session.id)
+          const authorityIsNewer =
+            !previousAuthority ||
+            sessionRevision(authority) > sessionRevision(previousAuthority) ||
+            (sessionRevision(authority) === sessionRevision(previousAuthority) &&
+              authority.updatedAt >= previousAuthority.updatedAt)
+          acknowledgedRevisions.set(
+            session.id,
+            Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(authority))
+          )
+          if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
+        }
       }
 
       if (

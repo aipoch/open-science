@@ -105,6 +105,7 @@ const publicStoreTarget = modulePath(facadePath)
 const publicValueExports = [
   'createInitialSessionState',
   'createSessionStore',
+  'getExternallyHydratedSessionAuthority',
   'isExternallyHydratedSession',
   'isSessionWaitReason',
   'projectSessionActionability',
