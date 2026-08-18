@@ -27,7 +27,13 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { DataRootKind, StorageInfo, UsageCategoryKey } from '../../../../shared/storage'
+import type {
+  DataRootKind,
+  DataRootInspection,
+  DataRootRecoveryStatus,
+  StorageInfo,
+  UsageCategoryKey
+} from '../../../../shared/storage'
 import { SettingsSection } from './SettingsLayout'
 import { isAgentRepairCheck } from './settings-navigation'
 import { StorageMigrationModal } from './StorageMigrationModal'
@@ -80,7 +86,8 @@ const PATH_PILL =
 // "Change location" (opens StorageMigrationModal, which detects running sessions, confirms the
 // interrupt+restart when needed, and drives the actual move); a folder that already contains our
 // data offers "Use this folder" instead, which only switches the dataRoot pointer and relaunches -
-// no files are moved. An invalid target shows an inline error and disables both actions.
+// no files are moved. A marker-bearing target offers explicit recovery; an invalid target shows an
+// inline error and disables both actions.
 type StoragePanelProps = {
   onContinueToAgent?: () => void
 }
@@ -102,13 +109,11 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
   // buttons. `dataRoot` is the derived `<newPath>/OpenScience` the app will actually use.
-  const [inspection, setInspection] = useState<{
+  const [inspection, setInspection] = useState<(DataRootInspection & { path: string }) | null>(null)
+  const [migrationTarget, setMigrationTarget] = useState<{
     path: string
-    kind: DataRootKind
-    dataRoot: string
-    error?: string
+    recoveryStatus?: DataRootRecoveryStatus
   } | null>(null)
-  const [migrationTarget, setMigrationTarget] = useState<string | null>(null)
   const [adoptConfirmOpen, setAdoptConfirmOpen] = useState(false)
   const [isAdopting, setIsAdopting] = useState(false)
   const [adoptError, setAdoptError] = useState<string | undefined>(undefined)
@@ -221,7 +226,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setDefaultError(undefined)
     const result = await window.api.storage.inspectDataRoot(info.defaultParent)
     if (result.kind === 'move') {
-      setMigrationTarget(info.defaultParent)
+      setMigrationTarget({ path: info.defaultParent })
       return
     }
     if (result.kind === 'adopt') {
@@ -229,6 +234,13 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       setInspection({ path: info.defaultParent, ...result })
       setIsEditing(true)
       setAdoptConfirmOpen(true)
+      return
+    }
+    if (result.kind === 'recover' && result.recoveryStatus) {
+      setMigrationTarget({
+        path: info.defaultParent,
+        recoveryStatus: result.recoveryStatus
+      })
       return
     }
     setDefaultError(result.error ?? t('The default location is not usable.'))
@@ -403,7 +415,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                   </p>
                 ) : null}
 
-                {(kind === 'move' || kind === 'adopt') && inspection ? (
+                {(kind === 'move' || kind === 'adopt' || kind === 'recover') && inspection ? (
                   <p className="mt-2 text-xs text-muted-foreground">
                     <Trans
                       i18nKey="Data will be stored in <path>{{path}}</path>"
@@ -420,7 +432,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       components={{ em: <strong className="font-semibold text-foreground" /> }}
                     />
                   </p>
-                ) : (
+                ) : kind === 'move' ? (
                   <>
                     <p className="mt-2 text-xs text-muted-foreground">
                       <Trans
@@ -435,7 +447,17 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       )}
                     </p>
                   </>
-                )}
+                ) : kind === 'recover' ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {inspection?.recoveryStatus === 'verified'
+                      ? t(
+                          'A verified copy from an interrupted move was found here. You can finish the move without copying everything again, or discard it.'
+                        )
+                      : t(
+                          'An incomplete copy from an interrupted move was found here. Discard it before using this location again.'
+                        )}
+                  </p>
+                ) : null}
 
                 {kind === 'invalid' && inspection?.error ? (
                   <p className="mt-2 text-xs text-destructive" role="alert">
@@ -459,11 +481,24 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       <FolderInput className="size-4" aria-hidden="true" />
                       {isAdopting ? t('Switching…') : t('Use this folder')}
                     </Button>
+                  ) : kind === 'recover' && inspection?.recoveryStatus ? (
+                    <Button
+                      type="button"
+                      onClick={() =>
+                        setMigrationTarget({
+                          path: trimmedNewPath,
+                          recoveryStatus: inspection.recoveryStatus
+                        })
+                      }
+                    >
+                      <FolderInput className="size-4" aria-hidden="true" />
+                      {t('Resolve unfinished move')}
+                    </Button>
                   ) : (
                     <Button
                       type="button"
                       disabled={!canChangeLocation}
-                      onClick={() => setMigrationTarget(trimmedNewPath)}
+                      onClick={() => setMigrationTarget({ path: trimmedNewPath })}
                     >
                       <FolderInput className="size-4" aria-hidden="true" />
                       {t('Change location')}
@@ -682,7 +717,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
 
       {migrationTarget !== null ? (
         <StorageMigrationModal
-          targetPath={migrationTarget}
+          targetPath={migrationTarget.path}
+          recoveryStatus={migrationTarget.recoveryStatus}
           onClose={() => setMigrationTarget(null)}
         />
       ) : null}

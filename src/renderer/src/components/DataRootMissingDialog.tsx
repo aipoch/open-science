@@ -67,7 +67,7 @@ const DataRootMissingDialog = ({
 
       setIsChoosing(true)
       const inspection = await window.api.storage.inspectDataRoot(picked)
-      if (inspection.kind === 'invalid') {
+      if (inspection.kind !== 'move' && inspection.kind !== 'adopt') {
         setOperationError(inspection.error ?? t('The selected folder is not usable.'))
         return
       }

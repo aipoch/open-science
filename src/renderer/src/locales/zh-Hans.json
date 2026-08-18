@@ -2743,6 +2743,18 @@
   "Content changed but the package version was not increased. Update the version before publishing.": "内容已更改，但软件包版本未提升。发布前请更新版本。",
   "Export validation failed": "导出验证失败",
   "The current Specialist or selected Skills contain blocking validation errors.": "当前 Specialist 或所选 Skill 存在阻断性验证错误。",
+  "Finishing this recovered move will interrupt the running sessions below and restart the app.": "完成此恢复的迁移会中断以下运行中的会话并重启应用。",
+  "Continue to recovery": "继续恢复",
+  "Incomplete data copy found": "发现未完成的数据副本",
+  "Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.": "Open Science 在复制完成前退出了。当前数据未受影响。请丢弃未完成的副本，以便再次使用此位置。",
+  "Discard incomplete copy": "丢弃未完成的副本",
+  "Verified data copy found": "发现已验证的数据副本",
+  "A completed copy from an interrupted move is ready. Finish the move to switch locations and restart, or discard the copy to stay where you are.": "中断的迁移留下了一个已完成的副本。完成迁移即可切换位置并重启，或丢弃副本并保留当前位置。",
+  "Discard copy": "丢弃副本",
+  "Finish move": "完成迁移",
+  "A verified copy from an interrupted move was found here. You can finish the move without copying everything again, or discard it.": "此处发现了中断迁移留下的已验证副本。你可以直接完成迁移，无需重新复制全部数据，也可以将其丢弃。",
+  "An incomplete copy from an interrupted move was found here. Discard it before using this location again.": "此处发现了中断迁移留下的未完成副本。再次使用此位置前，请先将其丢弃。",
+  "Resolve unfinished move": "处理未完成的迁移",
   "tokens": "tokens",
   "/ {{size}} tokens": "/ {{size}} 个 token"
 }
