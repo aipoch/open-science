@@ -19,7 +19,8 @@ import { LANGUAGE_PREFERENCES, type Locale, type LanguagePreference } from '../.
 const LANGUAGE_NAMES = {
   en: 'English',
   'zh-Hans': '简体中文',
-  'zh-Hant': '繁體中文'
+  'zh-Hant': '繁體中文',
+  ja: '日本語'
 } as const satisfies Record<Locale, string>
 
 // Only the 'System' option follows the interface language. Order puts 'System' first, then the
@@ -38,7 +39,7 @@ const useOptions = (): { value: LanguagePreference; label: string; description?:
   )
 }
 
-// Language picker for Settings > Appearance. A Select rather than a segmented control: four options
+// Language picker for Settings > Appearance. A Select rather than a segmented control: five options
 // with CJK labels overflow the row width the theme control fits into.
 export const LanguageSelect = (): React.JSX.Element => {
   const { t } = useTranslation()

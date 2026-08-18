@@ -412,7 +412,7 @@ const PermissionImpactTip = ({
             <Info className="size-3.5" aria-hidden="true" />
           </button>
         </TooltipTrigger>
-        <TooltipContent className="max-w-none whitespace-nowrap">
+        <TooltipContent>
           <div className="space-y-1">
             {detail ? <p>{detail}</p> : null}
             <p className={detail ? 'text-muted-foreground' : undefined}>{description}</p>
@@ -462,9 +462,7 @@ const PermissionHeaderBadges = ({
               <Info className="size-3.5" aria-hidden="true" />
             </button>
           </TooltipTrigger>
-          <TooltipContent className="max-w-none whitespace-nowrap">
-            {scopeDescription}
-          </TooltipContent>
+          <TooltipContent>{scopeDescription}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </span>

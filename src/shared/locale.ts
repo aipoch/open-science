@@ -5,7 +5,7 @@
 // The locales that actually paint. Script subtags are the canonical form: 'zh-Hans' / 'zh-Hant'
 // rather than 'zh-CN' / 'zh-TW', because the script is what selects the catalog — a Traditional
 // reader in Singapore and one in Taiwan get the same copy.
-export const LOCALES = ['en', 'zh-Hans', 'zh-Hant'] as const
+export const LOCALES = ['en', 'zh-Hans', 'zh-Hant', 'ja'] as const
 export type Locale = (typeof LOCALES)[number]
 
 // The fallback when nothing matches, and the source language every catalog is authored against.
@@ -32,7 +32,7 @@ const SIMPLIFIED_REGIONS = new Set(['cn', 'sg', 'my'])
 // Regions written in Traditional script.
 const TRADITIONAL_REGIONS = new Set(['tw', 'hk', 'mo'])
 
-// Maps one language tag onto a supported locale, or undefined when it isn't Chinese or English.
+// Maps one language tag onto a supported locale, or undefined when it isn't supported.
 // Handles the three shapes seen in the wild: an explicit script subtag ('zh-Hant-HK'), a region that
 // implies a script ('zh-TW'), and the legacy Windows two-letter forms ('zh-CHS' / 'zh-CHT').
 const matchTag = (tag: string): Locale | undefined => {
@@ -40,6 +40,7 @@ const matchTag = (tag: string): Locale | undefined => {
   const [language, ...rest] = parts
 
   if (language === 'en') return 'en'
+  if (language === 'ja') return 'ja'
   if (language !== 'zh') return undefined
 
   if (rest.includes('hant') || rest.includes('cht')) return 'zh-Hant'
@@ -52,7 +53,7 @@ const matchTag = (tag: string): Locale | undefined => {
 }
 
 // Resolves a *prioritized* list of host language tags to the locale to use, walking the list in
-// order so a user whose languages are ['ja', 'zh-CN', 'en'] lands on zh-Hans rather than skipping
+// order so a user whose languages are ['fr', 'zh-CN', 'en'] lands on zh-Hans rather than skipping
 // straight to the default. This is standard BCP-47 lookup behavior, and the reason we read the whole
 // list instead of only navigator.language. Falls back to English when nothing matches.
 export const resolveLocaleFromTags = (tags: readonly string[]): Locale => {

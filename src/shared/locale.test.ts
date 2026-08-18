@@ -11,6 +11,12 @@ import {
 } from './locale'
 
 describe('resolveLocaleFromTags', () => {
+  it('matches Japanese and its regional tags', () => {
+    expect(resolveLocaleFromTags(['ja'])).toBe('ja')
+    expect(resolveLocaleFromTags(['ja-JP'])).toBe('ja')
+    expect(resolveLocaleFromTags(['JA_jp'])).toBe('ja')
+  })
+
   it('matches English', () => {
     expect(resolveLocaleFromTags(['en'])).toBe('en')
     expect(resolveLocaleFromTags(['en-US'])).toBe('en')
@@ -51,7 +57,7 @@ describe('resolveLocaleFromTags', () => {
 
   it('walks the whole list so an unsupported first entry does not shadow a supported later one', () => {
     // The bug this guards: reading only navigator.language would return 'en' here, not zh-Hans.
-    expect(resolveLocaleFromTags(['ja', 'zh-CN', 'en'])).toBe('zh-Hans')
+    expect(resolveLocaleFromTags(['fr', 'zh-CN', 'en'])).toBe('zh-Hans')
     expect(resolveLocaleFromTags(['ko-KR', 'de', 'zh-TW'])).toBe('zh-Hant')
   })
 
@@ -61,7 +67,7 @@ describe('resolveLocaleFromTags', () => {
   })
 
   it('falls back to English when nothing matches', () => {
-    expect(resolveLocaleFromTags(['ja', 'ko', 'de-DE'])).toBe('en')
+    expect(resolveLocaleFromTags(['fr', 'ko', 'de-DE'])).toBe('en')
     expect(resolveLocaleFromTags([])).toBe('en')
     expect(resolveLocaleFromTags([''])).toBe('en')
   })
@@ -70,11 +76,12 @@ describe('resolveLocaleFromTags', () => {
 describe('resolveLocale', () => {
   it('consults the host list for the system preference', () => {
     expect(resolveLocale('system', ['zh-TW'])).toBe('zh-Hant')
-    expect(resolveLocale('system', ['ja'])).toBe('en')
+    expect(resolveLocale('system', ['ja-JP'])).toBe('ja')
   })
 
   it('returns an explicit preference verbatim, ignoring the host list', () => {
     expect(resolveLocale('en', ['zh-TW'])).toBe('en')
+    expect(resolveLocale('ja', ['en-US'])).toBe('ja')
     expect(resolveLocale('zh-Hant', ['en-US'])).toBe('zh-Hant')
     expect(resolveLocale('zh-Hans', [])).toBe('zh-Hans')
   })
@@ -83,11 +90,13 @@ describe('resolveLocale', () => {
 describe('guards and constants', () => {
   it('recognizes locales and preferences', () => {
     expect(isLocale('zh-Hans')).toBe(true)
+    expect(isLocale('ja')).toBe(true)
     expect(isLocale('zh-CN')).toBe(false)
     expect(isLocale('system')).toBe(false)
     expect(isLocale(undefined)).toBe(false)
     expect(isLanguagePreference('system')).toBe(true)
     expect(isLanguagePreference('zh-Hant')).toBe(true)
+    expect(isLanguagePreference('ja')).toBe(true)
     expect(isLanguagePreference('fr')).toBe(false)
   })
 
@@ -98,6 +107,7 @@ describe('guards and constants', () => {
 
   it('emits valid BCP-47 html lang values', () => {
     expect(htmlLang('en')).toBe('en')
+    expect(htmlLang('ja')).toBe('ja')
     expect(htmlLang('zh-Hans')).toBe('zh-Hans')
     expect(htmlLang('zh-Hant')).toBe('zh-Hant')
   })

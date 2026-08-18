@@ -563,6 +563,20 @@ describe('PermissionApprovalControls', () => {
     }
   })
 
+  it('renders the one-call permission action precisely in Japanese', async () => {
+    await i18next.changeLanguage('ja')
+    try {
+      const html = renderToStaticMarkup(
+        <PermissionApprovalControls requests={[noInputRequest]} onRespond={() => undefined} />
+      )
+      expect(html).toContain('>許可する</span>')
+      expect(html).toContain('>一度</span>')
+      expect(html).not.toContain('>Allow</span>')
+    } finally {
+      await i18next.changeLanguage('en')
+    }
+  })
+
   it('renders no code block when rawInput is absent', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[noInputRequest]} onRespond={() => undefined} />

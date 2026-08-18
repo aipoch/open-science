@@ -14,6 +14,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger } from './select'
 import { Switch } from './switch'
 import { Textarea } from './textarea'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -162,5 +163,23 @@ describe('shared control interaction styling', () => {
     expect(badge?.className).toContain('motion-reduce:transition-none')
     expect(badge?.className).toContain('focus-visible:ring-[3px]')
     expect(badge?.className).not.toContain('transition-all')
+  })
+
+  it('wraps long tooltip copy within the viewport', async () => {
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <Tooltip open>
+            <TooltipTrigger>Details</TooltipTrigger>
+            <TooltipContent>Long localized guidance that must remain readable.</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )
+    })
+
+    const tooltip = document.body.querySelector<HTMLElement>('[data-slot="tooltip-content"]')
+    expect(tooltip?.className).toContain('max-w-[min(20rem,calc(100vw-1rem))]')
+    expect(tooltip?.className).toContain('whitespace-normal')
+    expect(tooltip?.className).toContain('break-words')
   })
 })
