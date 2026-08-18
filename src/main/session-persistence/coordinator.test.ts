@@ -2459,6 +2459,56 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
+  it('keeps startup cleanup closed after quarantining corrupt Session authority', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-corrupt-session-reconciliation-'))
+    const projectDir = join(root, 'sessions', 'project-1')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(join(projectDir, 'corrupt-session.json'), '{broken json', 'utf8')
+    const repository = new SessionRepository(root)
+    const fileIndex = createFileIndex()
+    const provenance = createProvenancePersistence()
+    const permissionGrants = { reconcileSessions: vi.fn().mockResolvedValue(undefined) }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      provenance,
+      undefined,
+      undefined,
+      permissionGrants
+    )
+    const deletionHandlers = createSessionDeletionHandlers()
+    coordinator.setSessionDeletionHandlers(deletionHandlers)
+
+    try {
+      const loaded = await coordinator.loadAll()
+
+      expect(loaded.sessions).toEqual([])
+      expect(loaded.diagnostics).toMatchObject({
+        isComplete: true,
+        warnings: [
+          {
+            kind: 'corrupt',
+            projectId: 'project-1',
+            fileName: 'corrupt-session.json',
+            recovered: true
+          }
+        ]
+      })
+      expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
+      await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+        sessions: [],
+        isComplete: false
+      })
+      expect(deletionHandlers.reconcile).not.toHaveBeenCalled()
+      expect(permissionGrants.reconcileSessions).not.toHaveBeenCalled()
+      expect(provenance.reconcileSessionDeletions).not.toHaveBeenCalled()
+      expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('preserves a main-owned permission wait when another client hydrates in the same process', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-live-permission-hydration-'))
     const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => true })

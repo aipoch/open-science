@@ -375,7 +375,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         operation.fail(error, { status: 'failed', hydrationAvailable: false })
         throw error
       }
-      this.stateOwner.replaceMetadata(scan.result.sessions, scan.isComplete)
+      const hasAuthoritativeSessionCatalog =
+        scan.isComplete && !scan.warnings?.some((warning) => warning.kind === 'corrupt')
+      this.stateOwner.replaceMetadata(scan.result.sessions, hasAuthoritativeSessionCatalog)
       operation.phase('authority-loaded', {
         sessionCount: scan.result.sessions.length,
         warningCount: scan.warnings?.length ?? 0,
@@ -389,9 +391,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       let result = scan.result
       let sessions = scan.result.sessions
 
-      if (!scan.isComplete) {
-        // Without the full active-session set, syncing could let a readable duplicate steal a row from
-        // a soft-deleted owner whose JSON was merely unreadable during this scan.
+      if (!hasAuthoritativeSessionCatalog) {
+        // Without the full active-session set, absent rows may still be owned by unreadable or
+        // quarantined JSON, so every derived owner must remain incomplete and untouched.
         this.fileIndex.markReconciliationIncomplete()
         operation.complete({
           status: 'partial',
