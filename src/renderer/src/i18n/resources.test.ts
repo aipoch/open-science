@@ -284,9 +284,22 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
-  it('keeps the Japanese Star and token terms in English', () => {
+  it('keeps Japanese product and technical terms in English', () => {
     const japaneseOnlyGlossary = [
+      { term: 'Open Science', source: /\bOpen Science\b/ },
+      { term: 'Claude', source: /\bClaude\b/ },
+      { term: 'Codex', source: /\bCodex\b/ },
+      { term: 'opencode', source: /\bOpenCode\b/ },
+      { term: 'MCP', source: /\bMCP\b/ },
+      { term: 'ACP', source: /\bACP\b/ },
+      { term: 'API', source: /\bAPI\b/ },
+      { term: 'CLI', source: /\bCLI\b/ },
+      { term: 'SSH', source: /\bSSH\b/ },
+      { term: 'GitHub', source: /\bGitHub\b/ },
       { term: 'Star', source: /\bstars?\b/i },
+      { term: 'Discord', source: /\bDiscord\b/ },
+      { term: 'Python', source: /\bPython\b/ },
+      { term: 'Jupyter', source: /\bJupyter\b/ },
       { term: 'token', source: /\btokens?\b/i }
     ]
     const offenders = Object.entries(catalog('ja')).flatMap(([key, value]) => {
@@ -303,6 +316,8 @@ describe('mandatory product glossary', () => {
 describe('Japanese safety copy', () => {
   it.each([
     ['Allow globally', 'すべてのプロジェクトで許可'],
+    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
+    ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', '承認はこのツール呼び出しにのみ適用されます。'],
     ['This call only', 'このツール呼び出しのみ'],
     [

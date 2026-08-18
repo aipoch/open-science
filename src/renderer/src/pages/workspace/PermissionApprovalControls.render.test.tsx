@@ -563,15 +563,19 @@ describe('PermissionApprovalControls', () => {
     }
   })
 
-  it('renders the one-call permission action precisely in Japanese', async () => {
+  it('renders complete permission actions in natural Japanese word order', async () => {
     await i18next.changeLanguage('ja')
     try {
-      const html = renderToStaticMarkup(
+      const onceHtml = renderToStaticMarkup(
         <PermissionApprovalControls requests={[noInputRequest]} onRespond={() => undefined} />
       )
-      expect(html).toContain('>許可する</span>')
-      expect(html).toContain('>一度</span>')
-      expect(html).not.toContain('>Allow</span>')
+      expect(onceHtml).toContain('>今回のみ許可</span>')
+
+      const sessionHtml = renderToStaticMarkup(
+        <PermissionApprovalControls requests={[permissionRequest]} onRespond={() => undefined} />
+      )
+      expect(sessionHtml).toContain('>この会話で許可</span>')
+      expect(sessionHtml).not.toContain('許可する この会話のために')
     } finally {
       await i18next.changeLanguage('en')
     }

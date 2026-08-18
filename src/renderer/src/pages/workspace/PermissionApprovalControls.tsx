@@ -649,13 +649,12 @@ const PermissionApprovalCard = ({
   }
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
-  // The trailing clause of the Allow button ("Allow for this project"). Kept as a per-scope key so
-  // translations can reorder the phrase instead of appending an English-shaped suffix.
-  const scopeLabel: Record<PermissionScope, string> = {
-    once: t('once'),
-    session: t('for this conversation'),
-    project: t('for this project'),
-    global: t('globally')
+  // Translate the complete action so languages can choose their own verb and scope order.
+  const allowLabel: Record<PermissionScope, string> = {
+    once: t('Allow once'),
+    session: t('Allow for this conversation'),
+    project: t('Allow for this project'),
+    global: t('Allow globally')
   }
   const notebookRuntimeLabel: Partial<Record<NotebookRuntime, string>> = {
     python: t('Python'),
@@ -912,10 +911,7 @@ const PermissionApprovalCard = ({
                   {isDeleteRequest ? (
                     <span className="font-semibold">{t('Delete')}</span>
                   ) : (
-                    <>
-                      <span className="font-semibold">{t('Allow')}</span>{' '}
-                      <span className="font-normal">{scopeLabel[effectiveScope]}</span>
-                    </>
+                    <span className="font-semibold">{allowLabel[effectiveScope]}</span>
                   )}
                 </button>
                 {hasScopePicker ? (
