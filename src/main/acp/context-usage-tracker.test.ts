@@ -1010,6 +1010,24 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('accepts a fresh zero provider reading after context compaction', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const input = { frameworkId: 'opencode' as const, model: 'glm-5.3' }
+    tracker.beginSession('s1', input)
+    tracker.appendText('s1', 'messages', 'conversation before compaction')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+    const compactionCheckpoint = tracker.checkpointSession('s1')
+
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+    tracker.resetAfterCompaction('s1', input, compactionCheckpoint, 1_000_000)
+
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 0,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled', estimatedTokens: 0 }
+    })
+  })
+
   it('keeps only a fresh provider reading after context compaction', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     const input = { frameworkId: 'claude-code' as const, model: 'claude-sonnet-4-5' }
