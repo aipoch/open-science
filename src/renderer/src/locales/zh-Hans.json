@@ -2037,6 +2037,7 @@
   "Choose another Specialist before sending a message.": "请先切换到其他 Specialist，再发送消息。",
   "Your draft is preserved.": "你的草稿已保留。",
   "Choose Specialist": "选择 Specialist",
+  "Choose Specialist: {{name}}": "选择 Specialist：{{name}}",
   "Package verified": "包验证成功",
   "The download, checksum, and package structure passed verification. You can continue with installation.": "下载内容、校验和与包结构均已通过验证，可以继续安装。",
   "Verify and save": "验证并保存",

@@ -1976,6 +1976,7 @@
   "Choose another Specialist before sending a message.": "メッセージを送信する前に、別のスペシャリストを選択してください。",
   "Your draft is preserved.": "下書きは保持されています。",
   "Choose Specialist": "スペシャリストを選択",
+  "Choose Specialist: {{name}}": "Specialist を選択：{{name}}",
   "Package verified": "パッケージを検証済み",
   "The download, checksum, and package structure passed verification. You can continue with installation.": "ダウンロード、チェックサム、パッケージ構造の検証に合格しました。インストールを続行できます。",
   "Verify and save": "確認して保存する",
