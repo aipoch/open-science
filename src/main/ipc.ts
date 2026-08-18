@@ -31,7 +31,8 @@ import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import {
   LIFECYCLE_CHANNELS,
-  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
+  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
 
 import { createAcpRuntime } from './acp/runtime-composition'
@@ -711,7 +712,14 @@ const createApplicationModules = async (
     },
     undefined,
     computeJobDeletionPort,
-    (session) => {
+    (session, owner) => {
+      if (owner === 'runtime-context') {
+        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+          session,
+          originClientId: MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
+        })
+        return
+      }
       delegatedActivity.recordSession(session)
       broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
         session,

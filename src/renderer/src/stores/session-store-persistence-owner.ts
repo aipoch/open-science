@@ -119,6 +119,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'merge-upload-identities'
     | 'replace-persisted-if-current'
     | 'permission-authority'
+    | 'runtime-context-authority'
     | 'enabled-compute-hosts-authority'
     | 'delegated-authority'
 }
@@ -547,6 +548,50 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
+          updatedAt: Math.max(current.updatedAt, session.updatedAt)
+        }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        } as Partial<State>
+      }
+
+      if (mode === 'runtime-context-authority') {
+        const currentRevision = current.runtimeContext?.revision
+        const incomingRevision = session.runtimeContext?.revision
+        if (
+          currentRevision !== undefined &&
+          incomingRevision !== undefined &&
+          incomingRevision < currentRevision
+        ) {
+          return state
+        }
+
+        const interactionState = {
+          ...inferSessionInteractionState(current),
+          permission: session.runtimeContext?.permission?.state === 'pending',
+          plan: session.runtimeContext?.plan?.approval === 'pending'
+        }
+        const status = current.compacting
+          ? current.status
+          : resolveSessionInteractionStatus(
+              { ...current, runtimeContext: session.runtimeContext },
+              interactionState
+            )
+        const projected: ChatSession = {
+          ...current,
+          revision: Math.max(sessionRevision(current), sessionRevision(session)),
+          status,
+          interactionState,
+          runtimeContext: session.runtimeContext,
+          activePlanProjection: matchesPersistedPlanProjection(
+            current.activePlanProjection,
+            session
+          )
+            ? current.activePlanProjection
+            : undefined,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         externallyHydratedSessions.add(projected)

@@ -86,6 +86,7 @@ type SessionPersistenceStateOwnerOptions = {
   fileIndex: SessionStateFileIndex
   assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
+  notifyRuntimeContextSessionUpdated(session: PersistedChatSession): void
   provenance?: SessionStateProvenance
   uploads?: SessionStateUploads
   log: Logger
@@ -346,12 +347,14 @@ class SessionPersistenceStateOwner {
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
 
-    await saveSessionWithRevision(this.options.repository, {
+    const persisted = await saveSessionWithRevision(this.options.repository, {
       ...session,
       ...(sessionStatus ? { status: sessionStatus } : {}),
       runtimeContext,
       updatedAt: Math.max(session.updatedAt + 1, Date.now())
     })
+    this.recordSession(persisted)
+    this.options.notifyRuntimeContextSessionUpdated(persisted)
     return cloneRuntimeContext(runtimeContext)
   }
 
@@ -418,6 +421,7 @@ class SessionPersistenceStateOwner {
     })
     const persisted = await saveSessionWithRevision(this.options.repository, durable)
     this.recordSession(persisted)
+    if (runtimeContextPatch) this.options.notifyRuntimeContextSessionUpdated(persisted)
     return message
   }
 

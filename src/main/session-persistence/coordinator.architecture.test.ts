@@ -521,7 +521,6 @@ describe('Session persistence coordinator architecture', () => {
         'fileIndex',
         'log',
         'delegatedWorkOwner',
-        'onDelegatedWorkSessionUpdated',
         'onFilesChanged',
         'operationScheduler',
         'reconciliationOwner',

@@ -478,7 +478,19 @@ describe('SessionPersistenceCoordinator', () => {
         durable = structuredClone(session)
       })
     })
-    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const publishRuntimeContextSession = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      publishRuntimeContextSession
+    )
 
     const message = await coordinator.appendUserMessageToInteraction({
       projectId: 'project-1',
@@ -507,6 +519,14 @@ describe('SessionPersistenceCoordinator', () => {
       }
     })
     expect(durable.status).toBe('waiting-plan-approval')
+    expect(publishRuntimeContextSession).toHaveBeenCalledOnce()
+    expect(publishRuntimeContextSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [expect.objectContaining({ content: 'Split the analysis by cohort.' })],
+        runtimeContext: expect.objectContaining({ revision: 3 })
+      }),
+      'runtime-context'
+    )
   })
 
   it('persists Side chat projection and relays without overwriting concurrent authority', async () => {
@@ -781,10 +801,26 @@ describe('SessionPersistenceCoordinator', () => {
         session: durable
       })),
       saveSession: vi.fn(async (session) => {
-        durable = structuredClone(session)
+        durable = {
+          ...structuredClone(session),
+          revision: (session.revision ?? 0) + 1
+        }
+        return structuredClone(durable)
       })
     })
-    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const publishRuntimeContextSession = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      publishRuntimeContextSession
+    )
 
     await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).resolves.toEqual({
       version: 1,
@@ -808,6 +844,15 @@ describe('SessionPersistenceCoordinator', () => {
       plan: createRuntimePlan()
     })
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+    expect(publishRuntimeContextSession).toHaveBeenCalledOnce()
+    expect(publishRuntimeContextSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'session-1',
+        revision: 1,
+        runtimeContext: expect.objectContaining({ revision: 1 })
+      }),
+      'runtime-context'
+    )
   })
 
   it('does not persist a runtime context patch when its commit precondition fails', async () => {

@@ -17,8 +17,10 @@ import {
 import {
   createOrderedSessionPersistence,
   createStoreSaver,
+  flushSessionPersistence,
   loadPersistedSessions,
   reconcilePendingArtifacts,
+  saveSessionInOrder,
   type SessionPersistenceApi
 } from './session-persistence'
 
@@ -985,6 +987,36 @@ describe('renderer session persistence bridge', () => {
     await savingLatest
     await flushing
     expect(flushed).toBe(true)
+  })
+
+  it('keeps an explicit save revision conflict unresolved until that Session saves successfully', async () => {
+    const session = createPersistedSession({ revision: 1 })
+    const conflict = new SessionRevisionConflictError(1, 2)
+    const saveSession = vi
+      .fn()
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ ...session, revision: 3 })
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          saveSession,
+          saveManifest: vi.fn().mockResolvedValue(undefined)
+        }
+      }
+    })
+    try {
+      await expect(saveSessionInOrder(session)).rejects.toBe(conflict)
+      await expect(flushSessionPersistence()).rejects.toMatchObject({
+        code: 'session-revision-conflict'
+      })
+
+      await expect(saveSessionInOrder({ ...session, revision: 2 })).resolves.toMatchObject({
+        revision: 3
+      })
+      await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

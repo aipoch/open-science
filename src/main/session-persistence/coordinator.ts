@@ -73,6 +73,10 @@ import {
 } from './delegated-work-owner'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 import { isSessionCatalogAuthoritative } from './catalog-authority'
+import {
+  createSafeSessionUpdatePublisher as safeSessionUpdates,
+  type SessionUpdatePublisher
+} from './session-update-publication'
 
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -200,8 +204,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence'),
     private readonly computeJobs?: ComputeJobDeletionParticipant,
-    private readonly onDelegatedWorkSessionUpdated?: (session: PersistedChatSession) => void
+    onDelegatedWorkSessionUpdated?: SessionUpdatePublisher
   ) {
+    const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     const assertMutable = (
       projectId: string,
       sessionId: string,
@@ -221,7 +226,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       uploads,
       log,
       assertMutable,
-      notifyFilesChanged: (event) => this.notifyFilesChanged(event)
+      notifyFilesChanged: (event) => this.notifyFilesChanged(event),
+      notifyRuntimeContextSessionUpdated: (session) =>
+        publishSessionUpdate(session, 'runtime-context')
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
@@ -264,15 +271,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
       },
-      notifySessionUpdated: (session) => {
-        try {
-          this.onDelegatedWorkSessionUpdated?.(session)
-        } catch (error) {
-          this.log.warn('delegated work Session publication failed', {
-            errorCategory: error instanceof Error ? error.name : typeof error
-          })
-        }
-      }
+      notifySessionUpdated: (session) => publishSessionUpdate(session, 'delegated-work')
     })
   }
 

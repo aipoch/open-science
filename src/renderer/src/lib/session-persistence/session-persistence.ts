@@ -228,10 +228,21 @@ const liveSessionPersistence = createOrderedSessionPersistence({
   saveManifest: (request) => window.api.sessions.saveManifest(request)
 })
 
-const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
-  liveSessionPersistence.saveSession(session)
-
 const unresolvedSessionRevisionConflictTargets = new Set<string>()
+
+const saveSessionInOrder = async (session: PersistedChatSession): Promise<PersistedChatSession> => {
+  const target = `session:${session.id}`
+  try {
+    const durable = await liveSessionPersistence.saveSession(session)
+    unresolvedSessionRevisionConflictTargets.delete(target)
+    return durable
+  } catch (error) {
+    if (isSessionRevisionConflictError(error)) {
+      unresolvedSessionRevisionConflictTargets.add(target)
+    }
+    throw error
+  }
+}
 
 class SessionPersistenceFlushConflictError extends Error {
   readonly code = 'session-revision-conflict' as const
