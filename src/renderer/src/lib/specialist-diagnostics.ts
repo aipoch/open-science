@@ -202,6 +202,30 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
     'Invalid system prompt',
     'The system prompt must be a string within the length limit.'
   ),
+  'specialist.skillIds-invalid': plain(
+    'Skill list',
+    'skill_ids must be an array of portable Skill names. Fix the field and rebuild the ZIP.'
+  ),
+  'specialist.skillIds-entry-invalid': plain(
+    'Invalid Skill name',
+    'skill_ids may contain only non-empty strings. Fix or remove the invalid entry and rebuild the ZIP.'
+  ),
+  'specialist.skillIds-duplicate': plain(
+    'Duplicate Skill name',
+    'skill_ids must not contain duplicate names. Remove duplicates and rebuild the ZIP.'
+  ),
+  'specialist.connectorIds-invalid': plain(
+    'Connector list',
+    'connector_ids must be an array of portable Connector names. Fix the field and rebuild the ZIP.'
+  ),
+  'specialist.connectorIds-entry-invalid': plain(
+    'Invalid Connector name',
+    'connector_ids may contain only non-empty strings. Fix or remove the invalid entry and rebuild the ZIP.'
+  ),
+  'specialist.connectorIds-duplicate': plain(
+    'Duplicate Connector name',
+    'connector_ids must not contain duplicate names. Remove duplicates and rebuild the ZIP.'
+  ),
   'specialist.name-protected': plain(
     'Reserved Specialist name',
     'This name is reserved by the application and cannot be contributed. Rename the Specialist and rebuild the ZIP.'
