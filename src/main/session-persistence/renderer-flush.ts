@@ -17,7 +17,7 @@ type RendererSessionPersistenceFlushDeps = {
   timeoutMs: number
 }
 
-const DEFAULT_RENDERER_FLUSH_TIMEOUT_MS = 1_500
+const DEFAULT_RENDERER_FLUSH_TIMEOUT_MS = 5_000
 
 export type RendererSessionPersistenceFlushOutcome =
   'completed' | 'unavailable' | 'renderer-gone' | 'send-failed' | 'timeout'

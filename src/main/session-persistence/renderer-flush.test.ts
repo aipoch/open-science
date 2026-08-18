@@ -122,6 +122,41 @@ describe('requestRendererSessionPersistenceFlush', () => {
 })
 
 describe('createElectronSessionPersistenceFlush', () => {
+  it('uses a five-second default timeout for a live renderer that never acknowledges', async () => {
+    vi.useFakeTimers()
+    electronMocks.on.mockClear()
+    electronMocks.removeListener.mockClear()
+
+    try {
+      const webContents = {
+        isDestroyed: vi.fn(() => false),
+        send: vi.fn(),
+        on: vi.fn(),
+        removeListener: vi.fn()
+      }
+      const window = {
+        isDestroyed: vi.fn(() => false),
+        webContents
+      }
+      const flush = createElectronSessionPersistenceFlush(() => window as never)
+      const request = flush()
+      let settled = false
+      void request.then(() => {
+        settled = true
+      })
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(request).resolves.toBe('timeout')
+      expect(electronMocks.removeListener).toHaveBeenCalledOnce()
+      expect(webContents.removeListener).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('accepts only the target renderer acknowledgement with the matching request ID', async () => {
     electronMocks.on.mockClear()
     electronMocks.removeListener.mockClear()
