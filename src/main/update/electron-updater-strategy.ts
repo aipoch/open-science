@@ -446,10 +446,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // isSilent=true bypasses the assisted NSIS wizard and isForceRunAfter=true relaunches into the new
   // version. Other updaters ignore isSilent.
   async apply(): Promise<UpdateStatus> {
-    // Claim the update synchronously so repeat clicks or concurrent renderers cannot start a second
-    // teardown/install. The broadcast also gives the renderer immediate feedback during the shutdown
-    // gate, which can take up to 15 seconds on Windows.
-    if (this.applying) return this.status
+    // Ignore stale/out-of-order renderer calls until electron-updater reports a completed download,
+    // then claim the update synchronously so repeat clicks or concurrent renderers cannot start a
+    // second teardown/install. The broadcast also gives the renderer immediate feedback during the
+    // shutdown gate, which can take up to 15 seconds on Windows.
+    if (this.status.state !== 'ready' || this.applying) return this.status
     this.applying = true
     this.installerStarted = false
     this.setStatus({ ...this.status, state: 'applying' })

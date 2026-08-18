@@ -65,6 +65,10 @@ class FakeUpdater extends EventEmitter {
   quitAndInstall = vi.fn()
 }
 
+const markUpdateReady = (updater: FakeUpdater): void => {
+  updater.emit('update-downloaded', { version: '0.3.0' })
+}
+
 // Fake fetch returning a version.json manifest, so notes hydration never touches the network.
 const manifestFetch = (manifest: object): typeof fetch =>
   vi.fn(async () => ({ ok: true, json: async () => manifest })) as unknown as typeof fetch
@@ -379,6 +383,44 @@ describe('ElectronUpdaterStrategy', () => {
     expect(JSON.stringify(records)).not.toContain('raw provider diagnostic detail')
   })
 
+  it.each([
+    ['idle', () => {}],
+    ['checking', (updater: FakeUpdater) => updater.emit('checking-for-update')],
+    ['up-to-date', (updater: FakeUpdater) => updater.emit('update-not-available', {})],
+    ['available', (updater: FakeUpdater) => updater.emit('update-available', {})],
+    [
+      'downloading',
+      (updater: FakeUpdater) =>
+        updater.emit('download-progress', { percent: 10, transferred: 1000, total: 10000 })
+    ],
+    ['error', (updater: FakeUpdater) => updater.emit('error', new Error('download failed'))]
+  ])('ignores apply while the update state is %s', async (state, enterState) => {
+    const updater = new FakeUpdater()
+    const broadcast = vi.fn()
+    const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const markUpdateShutdown = vi.fn(() => vi.fn())
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast,
+      installGate,
+      markUpdateShutdown
+    })
+    enterState(updater)
+    expect(strategy.getStatus().state).toBe(state)
+    const statusBeforeApply = strategy.getStatus()
+    broadcast.mockClear()
+
+    const status = await strategy.apply()
+
+    expect(status).toBe(statusBeforeApply)
+    expect(strategy.getStatus()).toBe(statusBeforeApply)
+    expect(broadcast).not.toHaveBeenCalled()
+    expect(installGate).not.toHaveBeenCalled()
+    expect(markUpdateShutdown).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
   it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
     const updater = new FakeUpdater()
     const log = createLogSpy()
@@ -388,6 +430,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       log
     })
+    markUpdateReady(updater)
     await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
@@ -413,6 +456,7 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       broadcast: vi.fn()
     })
+    markUpdateReady(updater)
 
     const status = await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
@@ -430,6 +474,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: gate
     })
+    markUpdateReady(updater)
 
     await strategy.apply()
 
@@ -446,6 +491,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: createDelegatedSafeInstallGate(() => true, backendTeardownGate)
     })
+    markUpdateReady(updater)
 
     const status = await strategy.apply()
 
@@ -473,6 +519,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast,
       installGate: gate
     })
+    markUpdateReady(updater)
 
     const applying = strategy.apply()
     expect(strategy.getStatus().state).toBe('applying')
@@ -507,6 +554,7 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: gate,
       log
     })
+    markUpdateReady(updater)
 
     const status = await strategy.apply()
 
@@ -536,6 +584,7 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: () => Promise.reject(new Error('private teardown diagnostic detail')),
       log
     })
+    markUpdateReady(updater)
 
     const status = await strategy.apply()
 
@@ -567,6 +616,7 @@ describe('ElectronUpdaterStrategy', () => {
           finishGate = () => resolve({ completed: true, reaped: true })
         })
     })
+    markUpdateReady(updater)
 
     const applying = strategy.apply()
     updater.emit('error', new Error('stale download failure'))
@@ -587,6 +637,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       log
     })
+    markUpdateReady(updater)
 
     await strategy.apply()
     expect(currentApplicationShutdownTrigger()).toBe('update')
@@ -617,6 +668,7 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       broadcast: vi.fn()
     })
+    markUpdateReady(updater)
 
     const status = await strategy.apply()
 
@@ -634,6 +686,7 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: vi.fn(async () => Promise.reject(new Error('teardown failed')))
     })
     await strategy.check()
+    markUpdateReady(updater)
 
     const status = await strategy.apply()
 
@@ -652,6 +705,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: gate
     })
+    markUpdateReady(updater)
 
     const status = await strategy.apply()
 
