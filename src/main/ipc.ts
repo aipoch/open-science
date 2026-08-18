@@ -351,7 +351,6 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
-  abortQuitPreparation: () => void
 }
 
 type ApplicationModuleInterfaces = ApplicationRuntimeInterfaces & {
@@ -3093,7 +3092,6 @@ const createApplicationModules = async (
         notebook: notebookService
       }),
     prepareForQuit: () => runtime.prepareForQuit(),
-    abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,
       compute: {

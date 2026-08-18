@@ -98,6 +98,13 @@ describe('requestRendererSessionPersistenceFlush', () => {
     await expect(request).resolves.toBe('conflict')
   })
 
+  it('fails closed when the renderer returns an invalid status', async () => {
+    const harness = createHarness()
+    const request = harness.request()
+    harness.respond('flush-1', 'invalid' as SessionPersistenceFlushResponse['status'])
+    await expect(request).resolves.toBe('renderer-failed')
+  })
+
   it('releases the quit when the renderer disappears', async () => {
     const harness = createHarness()
     const request = harness.request()

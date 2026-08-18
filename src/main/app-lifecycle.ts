@@ -55,8 +55,6 @@ export type AppLifecycleDeps = {
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
-  // Reopens runtime admission when a persistence conflict aborts the quit before backend teardown.
-  abortQuitPreparation: () => void
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
   flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
   // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
@@ -305,11 +303,49 @@ export const installAppLifecycle = (
           })
         : undefined
       let usageDrainResult: ShutdownStepOutcome
+      let rendererPreflightOutcome: RendererSessionPersistenceFlushOutcome
+      let rendererPreflightResult: ShutdownStepOutcome
       let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
       let rendererFlushResult: ShutdownStepOutcome
       let backendTeardownResult: ShutdownStepOutcome
       let shutdownAbortedForSessionConflict = false
+      const flushRendererSessionPersistence = async (
+        phase: 'renderer-session-preflight' | 'renderer-session-flush'
+      ): Promise<{
+        outcome: RendererSessionPersistenceFlushOutcome
+        result: ShutdownStepOutcome
+      }> => {
+        diagnostics?.phase(phase)
+        try {
+          const outcome = (await deps.flushSessionPersistence()) ?? 'completed'
+          const result = rendererStepOutcome(outcome)
+          diagnostics?.phase(phase, { result })
+          return { outcome, result }
+        } catch (error) {
+          diagnostics?.phase(phase, { result: 'failed', ...diagnosticErrorFields(error) })
+          return { outcome: 'send-failed', result: 'failed' }
+        }
+      }
       try {
+        const preflight = await flushRendererSessionPersistence('renderer-session-preflight')
+        rendererPreflightOutcome = preflight.outcome
+        rendererPreflightResult = preflight.result
+        if (rendererPreflightOutcome === 'conflict') {
+          shutdownAbortedForSessionConflict = true
+          diagnostics?.complete({
+            degraded: true,
+            rendererPreflightOutcome,
+            rendererPreflightResult,
+            usageDrainResult: 'degraded',
+            rendererFlushResult: 'degraded',
+            backendTeardownResult: 'degraded'
+          })
+          if (deps.flushLogs) {
+            await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
+          }
+          return
+        }
+
         diagnostics?.phase('usage-drain')
         try {
           usageDrainResult = normalizeStepOutcome(await deps.prepareForQuit())
@@ -322,34 +358,9 @@ export const installAppLifecycle = (
           })
         }
 
-        diagnostics?.phase('renderer-session-flush')
-        try {
-          rendererFlushOutcome = (await deps.flushSessionPersistence()) ?? 'completed'
-          rendererFlushResult = rendererStepOutcome(rendererFlushOutcome)
-          diagnostics?.phase('renderer-session-flush', { result: rendererFlushResult })
-        } catch (error) {
-          rendererFlushOutcome = 'send-failed'
-          rendererFlushResult = 'failed'
-          diagnostics?.phase('renderer-session-flush', {
-            result: rendererFlushResult,
-            ...diagnosticErrorFields(error)
-          })
-        }
-
-        if (rendererFlushOutcome === 'conflict') {
-          shutdownAbortedForSessionConflict = true
-          diagnostics?.complete({
-            degraded: true,
-            usageDrainResult,
-            rendererFlushResult,
-            rendererFlushOutcome,
-            backendTeardownResult: 'degraded'
-          })
-          if (deps.flushLogs) {
-            await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
-          }
-          return
-        }
+        const finalFlush = await flushRendererSessionPersistence('renderer-session-flush')
+        rendererFlushOutcome = finalFlush.outcome
+        rendererFlushResult = finalFlush.result
 
         diagnostics?.phase('backend-teardown')
         try {
@@ -368,6 +379,8 @@ export const installAppLifecycle = (
           backendTeardownResult !== 'completed'
         diagnostics?.complete({
           degraded,
+          rendererPreflightResult,
+          rendererPreflightOutcome,
           usageDrainResult,
           rendererFlushResult,
           rendererFlushOutcome,
@@ -380,11 +393,6 @@ export const installAppLifecycle = (
         }
       } finally {
         if (shutdownAbortedForSessionConflict) {
-          try {
-            deps.abortQuitPreparation()
-          } catch (error) {
-            deps.log?.warn('failed to abort quit preparation', diagnosticErrorFields(error))
-          }
           shutdownStarted = false
           quitConfirmed = false
           clearApplicationShutdownTrigger()

@@ -49,7 +49,11 @@ export const requestRendererSessionPersistenceFlush = async (
     const timer = setTimeout(() => finish('timeout'), deps.timeoutMs)
     removeResponse = deps.onResponse((response) => {
       if (response.requestId !== requestId) return
-      finish(response.status === 'failed' ? 'renderer-failed' : response.status)
+      if (response.status === 'completed' || response.status === 'conflict') {
+        finish(response.status)
+        return
+      }
+      finish('renderer-failed')
     })
     removeRendererGone = deps.onRendererGone(() => finish('renderer-gone'))
 
