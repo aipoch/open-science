@@ -61,9 +61,9 @@ export const buildContributionTemplateZip = (input: {
   const specialist = {
     name: '',
     description: '',
-    systemPrompt: '',
-    skillIds: [],
-    connectorIds: []
+    system_prompt: '',
+    skill_ids: [],
+    connector_ids: []
   }
   return buildDeterministicSpecialistZip({
     'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),

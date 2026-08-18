@@ -1,5 +1,7 @@
 {
   "name": "Invalid Fixture",
   "description": "Contains forbidden root content.",
-  "systemPrompt": "Do not execute package code."
+  "system_prompt": "Do not execute package code.",
+  "skill_ids": [],
+  "connector_ids": []
 }

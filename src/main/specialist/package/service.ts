@@ -610,11 +610,11 @@ export class SpecialistPackageService {
     }
     const payload = {
       name: specialist.name,
-      ...(specialist.displayName ? { displayName: specialist.displayName } : {}),
+      ...(specialist.displayName ? { display_name: specialist.displayName } : {}),
       description: specialist.description,
-      systemPrompt: specialist.systemPrompt,
-      skillIds: [...new Set(requestedSkillIds.map((id) => skillNameByLocalId.get(id) ?? id))],
-      connectorIds
+      system_prompt: specialist.systemPrompt,
+      skill_ids: [...new Set(requestedSkillIds.map((id) => skillNameByLocalId.get(id) ?? id))],
+      connector_ids: connectorIds
     }
     const files: Record<string, Uint8Array> = {
       'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),

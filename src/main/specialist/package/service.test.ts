@@ -52,8 +52,9 @@ const validZip = (
       JSON.stringify({
         name: 'Research Synthesizer',
         description: overrides.description ?? 'Synthesizes research.',
-        systemPrompt: 'Private imported instructions.',
-        ...(overrides.connectorIds ? { connectorIds: overrides.connectorIds } : {})
+        system_prompt: 'Private imported instructions.',
+        skill_ids: [],
+        connector_ids: overrides.connectorIds ?? []
       })
     )
   })
@@ -72,7 +73,9 @@ const bundledZip = (): Uint8Array =>
       JSON.stringify({
         name: 'Research Synthesizer',
         description: 'Synthesizes research.',
-        systemPrompt: 'Private imported instructions.'
+        system_prompt: 'Private imported instructions.',
+        skill_ids: [],
+        connector_ids: []
       })
     ),
     'skills/analysis-tools/SKILL.md': encoder.encode(
@@ -461,15 +464,15 @@ describe('SpecialistPackageService', () => {
     const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as Record<string, unknown>
 
     expect(Object.keys(payload).sort()).toEqual([
-      'connectorIds',
+      'connector_ids',
       'description',
-      'displayName',
+      'display_name',
       'name',
-      'skillIds',
-      'systemPrompt'
+      'skill_ids',
+      'system_prompt'
     ])
-    expect(payload.skillIds).toEqual(['document-reader', 'analysis-tools'])
-    expect(payload.connectorIds).toEqual(['reference-library'])
+    expect(payload.skill_ids).toEqual(['document-reader', 'analysis-tools'])
+    expect(payload.connector_ids).toEqual(['reference-library'])
     expect(archive['skills/document-reader/SKILL.md']).toBeUndefined()
     expect(archive['skills/analysis-tools/SKILL.md']).toBeDefined()
     expect(archive['skills/os-document-reader/SKILL.md']).toBeUndefined()
@@ -524,10 +527,10 @@ describe('SpecialistPackageService', () => {
     })
     const archive = unzipSync(exported.archiveBytes)
     const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as {
-      skillIds: string[]
+      skill_ids: string[]
     }
 
-    expect(payload.skillIds).toEqual(['literature-review'])
+    expect(payload.skill_ids).toEqual(['literature-review'])
     expect(archive['skills/literature-review/SKILL.md']).toBeDefined()
     expect(archive['skills/personal-literature-review/SKILL.md']).toBeUndefined()
   })

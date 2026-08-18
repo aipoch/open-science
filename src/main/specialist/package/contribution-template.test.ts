@@ -37,13 +37,30 @@ describe('contribution template ZIP', () => {
       version: '0.1.0',
       exported_with_app_version: '0.9.2'
     })
+    expect(JSON.parse(strFromU8(archive['specialist.json']))).toEqual({
+      name: '',
+      description: '',
+      system_prompt: '',
+      skill_ids: [],
+      connector_ids: []
+    })
     expect(strFromU8(archive['README.txt'])).toContain('中文指南')
     expect(strFromU8(archive['README.txt'])).toContain('English guide')
 
     const result = validateSpecialistZip(archiveBytes, catalog)
-    expect(result.preview.diagnostics).toEqual([
-      expect.objectContaining({ code: 'specialist.name-invalid', path: 'specialist.json' })
-    ])
+    expect(result.preview.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'specialist.name-invalid', path: 'specialist.json' }),
+        expect.objectContaining({
+          code: 'specialist.description-invalid',
+          path: 'specialist.json'
+        }),
+        expect.objectContaining({
+          code: 'specialist.system-prompt-invalid',
+          path: 'specialist.json'
+        })
+      ])
+    )
   })
 
   it('returns quietly without reading or writing template content when save is cancelled', async () => {

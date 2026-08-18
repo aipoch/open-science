@@ -47,11 +47,11 @@ const packageFromTemplate = (input: {
   const specialist = JSON.parse(strFromU8(template['specialist.json'])) as {
     name: string
     description: string
-    systemPrompt: string
+    system_prompt: string
   }
   specialist.name = input.id.toUpperCase().replaceAll('-', '_')
   specialist.description = `Portable ${input.id}`
-  specialist.systemPrompt = `Identity for ${input.id}`
+  specialist.system_prompt = `Identity for ${input.id}`
   const files: Record<string, Uint8Array> = {
     ...template,
     'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
