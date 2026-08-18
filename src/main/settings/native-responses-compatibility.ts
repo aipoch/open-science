@@ -36,7 +36,9 @@ type NativeResponsesCompatibilityTarget = {
 }
 
 type NativeResponsesCompatibilityOptions = {
+  responseHeaderTimeoutMs?: number
   skillSelectorTimeoutMs?: number
+  streamIdleTimeoutMs?: number
 }
 
 export type NativeResponsesToolIdentity = {
@@ -49,6 +51,8 @@ export type NativeResponsesToolAliases = Map<string, NativeResponsesToolIdentity
 type NativeFetch = typeof fetch
 
 const log = createLogger('native-responses-compatibility')
+const DEFAULT_RESPONSE_HEADER_TIMEOUT_MS = 2 * 60_000
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000
 const SAFE_NETWORK_ERROR_CODES = new Set([
   'EAI_AGAIN',
   'ECONNREFUSED',
@@ -58,6 +62,15 @@ const SAFE_NETWORK_ERROR_CODES = new Set([
   'ESOCKETTIMEDOUT',
   'ETIMEDOUT'
 ])
+
+class NativeResponsesTimeoutError extends Error {
+  readonly code = 'ETIMEDOUT'
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'TimeoutError'
+  }
+}
 
 const safeRead = (value: object, key: string): unknown => {
   try {
@@ -270,13 +283,15 @@ const rewriteSseLine = (line: string, aliases: NativeResponsesToolAliases): stri
 const streamResponse = async (
   upstream: Response,
   response: ServerResponse,
-  aliases: NativeResponsesToolAliases
+  aliases: NativeResponsesToolAliases,
+  onActivity: () => void
 ): Promise<void> => {
   if (!upstream.body) throw new Error('native Responses upstream returned no body')
   response.writeHead(upstream.status, copyResponseHeaders(upstream))
   const decoder = new TextDecoder()
   let buffered = ''
   for await (const chunk of upstream.body) {
+    onActivity()
     buffered += decoder.decode(chunk, { stream: true })
     const lines = buffered.split('\n')
     buffered = lines.pop() ?? ''
@@ -516,6 +531,26 @@ export class NativeResponsesCompatibilityProxy {
 
     const requestId = randomUUID()
     const startedAt = Date.now()
+    const upstreamAbort = new AbortController()
+    let upstreamTimer: ReturnType<typeof setTimeout> | undefined
+    let timeoutError: NativeResponsesTimeoutError | undefined
+    const clearUpstreamTimeout = (): void => {
+      if (upstreamTimer) clearTimeout(upstreamTimer)
+      upstreamTimer = undefined
+    }
+    const armUpstreamTimeout = (timeoutMs: number, message: string): void => {
+      clearUpstreamTimeout()
+      upstreamTimer = setTimeout(() => {
+        timeoutError = new NativeResponsesTimeoutError(message)
+        upstreamAbort.abort(timeoutError)
+      }, timeoutMs)
+      upstreamTimer.unref?.()
+    }
+    const armStreamIdleTimeout = (): void =>
+      armUpstreamTimeout(
+        this.options.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+        'Native Responses upstream stream became idle.'
+      )
     let phase = 'read-request'
 
     try {
@@ -562,12 +597,17 @@ export class NativeResponsesCompatibilityProxy {
         toolLessScoped
       })
       phase = 'upstream-fetch'
+      armUpstreamTimeout(
+        this.options.responseHeaderTimeoutMs ?? DEFAULT_RESPONSE_HEADER_TIMEOUT_MS,
+        'Native Responses upstream did not return response headers in time.'
+      )
       const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: upstreamHeaders(request, this.target.key),
         body: JSON.stringify(upstreamRequest),
-        signal: request.signal
+        signal: AbortSignal.any([request.signal, upstreamAbort.signal])
       })
+      clearUpstreamTimeout()
       const contentType = upstream.headers.get('content-type') ?? ''
       const responseType = upstreamResponseType(contentType)
       log.info('native Responses compatibility upstream response', {
@@ -578,7 +618,8 @@ export class NativeResponsesCompatibilityProxy {
       })
       phase = 'forward-response'
       if (responseType === 'event-stream') {
-        await streamResponse(upstream, response, aliases)
+        armStreamIdleTimeout()
+        await streamResponse(upstream, response, aliases, armStreamIdleTimeout)
       } else if (responseType === 'json') {
         const payload = restoreNativeResponsesPayload(await upstream.json(), aliases)
         response.writeHead(upstream.status, copyResponseHeaders(upstream))
@@ -593,16 +634,19 @@ export class NativeResponsesCompatibilityProxy {
         durationMs: Math.max(0, Date.now() - startedAt)
       })
     } catch (error) {
-      const errorCode = safeNetworkErrorCode(error)
+      const failure = timeoutError ?? error
+      const errorCode = safeNetworkErrorCode(failure)
       log.warn('native Responses compatibility request failed', {
         requestId,
         phase,
         outcome: request.signal.aborted ? 'aborted' : 'error',
         durationMs: Math.max(0, Date.now() - startedAt),
-        ...diagnosticErrorFields(error),
+        ...diagnosticErrorFields(failure),
         ...(errorCode ? { errorCode } : {})
       })
-      throw error
+      throw failure
+    } finally {
+      clearUpstreamTimeout()
     }
   }
 }
