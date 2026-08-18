@@ -167,6 +167,11 @@ const classifyPasswordConnectionFailure = (
 const redactPassword = (value: string, password: string): string =>
   password ? value.replaceAll(password, '[redacted]') : value
 
+const scpUploadTarget = (target: ResolvedSshTarget): ResolvedSshTarget =>
+  target.host.includes(':') && !(target.host.startsWith('[') && target.host.endsWith(']'))
+    ? { ...target, host: `[${target.host}]` }
+    : target
+
 // Password-mode children receive only the operating-system context needed to locate OpenSSH,
 // resolve the user's SSH configuration/known_hosts, and create temporary files. Copying the whole
 // parent environment would turn every unrelated application secret into a generic child variable.
@@ -374,7 +379,7 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
           if (!this.scpRunner) throw new ComputeConnectionError('unsupported_auth_configuration')
           const result = await this.scpRunner.copy(
             resolveScpBinary(),
-            buildScpUploadArgs(target, localPath, remotePath),
+            buildScpUploadArgs(scpUploadTarget(target), localPath, remotePath),
             30 * 60 * 1000,
             { env: askpass.env, signal: request.signal }
           )

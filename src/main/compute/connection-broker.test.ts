@@ -1144,6 +1144,46 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     )
   })
 
+  it('brackets a resolved IPv6 hostname in password-mode SCP upload specs', async () => {
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async () => ({ exitCode: 0, stderr: '', timedOut: false }))
+    }
+    const adapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operation: (password: string) => Promise<unknown>) => operation('secret')
+        }))
+      } as unknown as CredentialVault,
+      {
+        run: vi.fn(async () => ({
+          exitCode: 255,
+          stdout: '',
+          stderr: 'Permission denied',
+          truncated: false,
+          timedOut: false
+        }))
+      },
+      vi.fn(async () => target),
+      vi.fn(async () => ({ hostname: '2001:db8::1' })),
+      vi.fn(async () => ({
+        env: { SSH_ASKPASS: '/constrained/helper' },
+        wasAnswered: () => true,
+        dispose: async () => undefined
+      })),
+      scpRunner
+    )
+
+    const lease = await adapter.acquire(host, { intent: 'direct_upload' })
+    await lease.upload('/local/input.csv', '/remote/input.csv')
+
+    expect(scpRunner.copy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining(['/local/input.csv', '[2001:db8::1]:/remote/input.csv']),
+      expect.any(Number),
+      expect.anything()
+    )
+  })
+
   it('fails closed after rejecting any interactive variant or repeated target prompt', async () => {
     const secret = 'distinctive target-only secret'
     const responses: Array<Record<string, string>> = []
