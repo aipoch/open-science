@@ -75,6 +75,15 @@ type PreviewFileSurfaceHandle = {
 
 const previewHeaderActionClassName = 'text-text-000 hover:text-text-000'
 
+const isDiffModeSourceTextVersion = (inspect: ManagedFileVersionInspectResult): boolean => {
+  const selectedVersion = inspect.versions.find(
+    (version) => version.id === inspect.selectedVersionId
+  )
+  return (
+    selectedVersion !== undefined && !selectedVersion.basedOnVersionId && inspect.text !== undefined
+  )
+}
+
 const PreviewProvenanceButton = ({
   item,
   onOpenProvenance,
@@ -592,6 +601,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       )
         ? { ...previousManagedInspect, selectedVersionId: previewItem.selectedVersionId }
         : undefined)
+    const managedControlsInspect =
+      managedInspect ?? (mode === 'diff' ? managedNavigationInspect : undefined)
+    const isSelectedManagedSourceText =
+      managedInspect !== undefined && isDiffModeSourceTextVersion(managedInspect)
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
     const invalidateSave = (): void => {
       saveGenerationRef.current += 1
@@ -653,7 +666,12 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             return
           }
           setManagedInspectResult({ key: managedRequestKey, value: result.value })
-          if (!result.value.canDiff) leaveDiffMode()
+          const isSourceTextVersion = isDiffModeSourceTextVersion(result.value)
+          if (!result.value.canDiff && !isSourceTextVersion) leaveDiffMode()
+          else if (!result.value.canDiff) {
+            setDiffResult(undefined)
+            setDiffError(undefined)
+          }
         })
         .catch(() => {
           if (active) leaveDiffMode()
@@ -767,7 +785,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         void window.api.managedFileVersions.cancelDiff({ requestId: activeDiffRequestId.current })
         activeDiffRequestId.current = undefined
       }
-      setMode(mode === 'diff' && version.basedOnVersionId ? 'diff' : 'view')
+      setMode((current) => (current === 'diff' ? 'diff' : 'view'))
       setDiffResult(undefined)
       setDiffError(undefined)
     }
@@ -840,13 +858,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     }
 
     const toggleDiff = (): void => {
-      if (!managedIdentity || !managedInspect?.canDiff) return
+      if (!managedIdentity) return
       if (mode === 'diff') {
         setMode('view')
         setDiffResult(undefined)
         setDiffError(undefined)
         return
       }
+      if (!managedInspect?.canDiff) return
       if (!confirmLeave()) return
       invalidateSave()
       setDiffResult(undefined)
@@ -899,7 +918,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           tooltipClassName={tooltipClassName}
           managedControlsOnly={mode === 'edit'}
           managedControls={
-            managedInspect ? (
+            managedControlsInspect ? (
               mode === 'edit' ? (
                 <div className="flex h-7 shrink-0 items-center gap-1">
                   <Button
@@ -939,7 +958,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           size="icon-xs"
                           className={previewHeaderActionClassName}
                           aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
-                          disabled={!managedInspect.canEdit}
+                          disabled={!managedInspect?.canEdit}
                           onClick={beginEdit}
                         >
                           <Pencil aria-hidden="true" />
@@ -965,16 +984,18 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                                   name: resolvedPreviewItem.name
                                 })
                           }
-                          disabled={!managedInspect.canDiff}
+                          disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
                           onClick={toggleDiff}
                         >
                           <FileDiff aria-hidden="true" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent className={tooltipClassName}>
-                        {managedInspect.canDiff
-                          ? t('Compare with source version')
-                          : t('No source version to compare')}
+                        {mode === 'diff'
+                          ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
+                          : managedControlsInspect.canDiff
+                            ? t('Compare with source version')
+                            : t('No source version to compare')}
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -1045,7 +1066,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               ) : null}
             </div>
           ) : mode === 'diff' ? (
-            diffResult ? (
+            managedInspect && !managedInspect.canDiff && isSelectedManagedSourceText ? (
+              renderContent ? (
+                <PreviewFileContent
+                  key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
+                  item={resolvedPreviewItem}
+                />
+              ) : null
+            ) : diffResult ? (
               <ManagedVersionDiffContent
                 result={diffResult}
                 format={resolvedPreviewItem.format}

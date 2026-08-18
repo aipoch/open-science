@@ -595,13 +595,21 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledWith({
       requestId: expect.any(String)
     })
-    resolveDiff({
-      ok: true,
-      value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+    await act(async () => {
+      resolveDiff({
+        ok: true,
+        value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+      })
+      await Promise.resolve()
     })
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Compare README.md with its source version"]')
+    ).not.toBeNull()
   })
 
-  it('leaves diff mode and cancels the old request when switching to a version without a base', async () => {
+  it('keeps diff mode active on the source version without requesting an unavailable diff', async () => {
     let resolveDiff!: (value: unknown) => void
     window.api.managedFileVersions.diffText = vi.fn().mockReturnValue(
       new Promise((resolve) => {
@@ -636,10 +644,108 @@ describe('PreviewFileSurface managed text versions', () => {
     })
     expect(container.textContent).not.toContain('Comparing versions...')
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
-    resolveDiff({
-      ok: true,
-      value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+    const stopComparing = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Stop comparing README.md"]'
+    )
+    expect(stopComparing).not.toBeNull()
+    expect(stopComparing?.disabled).toBe(false)
+    expect(window.api.managedFileVersions.diffText).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolveDiff({
+        ok: true,
+        value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+      })
+      await Promise.resolve()
     })
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Stop comparing README.md"]')).not.toBeNull()
+  })
+
+  it('keeps Stop comparing available while the source version inspect is pending', async () => {
+    type InspectResult = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+    let resolveSourceInspect!: (value: InspectResult) => void
+    window.api.managedFileVersions.inspect = vi.fn((request) =>
+      request.versionId === 'upload-v1'
+        ? new Promise<InspectResult>((resolve) => {
+            resolveSourceInspect = resolve
+          })
+        : Promise.resolve({ ok: true as const, value: managedInspect })
+    )
+    window.api.managedFileVersions.diffText = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<typeof window.api.managedFileVersions.diffText>>>(
+          () => undefined
+        )
+    )
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+
+    const stopComparing = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Stop comparing README.md"]'
+    )
+    expect(stopComparing).not.toBeNull()
+    expect(stopComparing?.disabled).toBe(false)
+    await click(stopComparing)
+
+    await act(async () => {
+      resolveSourceInspect({
+        ok: true,
+        value: {
+          ...managedInspect,
+          selectedVersionId: 'upload-v1',
+          canDiff: false,
+          text: '# Original\n'
+        }
+      })
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+  })
+
+  it('leaves diff mode when the source version itself has no text preview', async () => {
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
+      ok: true as const,
+      value:
+        request.versionId === 'upload-v1'
+          ? {
+              ...managedInspect,
+              headVersionId: 'upload-v2',
+              selectedVersionId: 'upload-v1',
+              canEdit: false,
+              canDiff: false,
+              text: undefined,
+              textFormat: undefined,
+              unavailableReason: 'NATIVE_WRITE_REQUIRED' as const
+            }
+          : managedInspect
+    }))
+    window.api.managedFileVersions.diffText = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<typeof window.api.managedFileVersions.diffText>>>(
+          () => undefined
+        )
+    )
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
+    expect(container.textContent).not.toContain('Comparing versions...')
   })
 
   it('leaves diff mode when the selected historical version has a base but is not diff-eligible', async () => {
@@ -986,7 +1092,7 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.textContent).not.toContain('Stale connected v3 diff')
   })
 
-  it('leaves diff mode through a connected store switch to the version without a base', async () => {
+  it('keeps diff mode through a connected store switch to the source version', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
     window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
       ok: true as const,
@@ -1031,7 +1137,11 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledWith({
       requestId: expect.any(String)
     })
-    expect(container.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
+    const stopComparing = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Stop comparing README.md"]'
+    )
+    expect(stopComparing).not.toBeNull()
+    expect(stopComparing?.disabled).toBe(false)
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
   })
 

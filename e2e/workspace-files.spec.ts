@@ -171,10 +171,20 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
 
   await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
   await expect(versionNavigation.getByText('v1', { exact: true })).toBeVisible()
-  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toHaveCount(0)
+  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toBeVisible()
   await expect(differences).toBeHidden()
   await expect(preview.getByText('Deterministic preview content.', { exact: true })).toBeVisible()
   await expect(preview.locator('[data-diff-kind]')).toHaveCount(0)
+
+  await versionNavigation.getByRole('button', { name: 'Next file version' }).click()
+  await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toBeVisible()
+  await expect(differences).toBeVisible()
+  await expect(versionTwoParagraph).toBeVisible()
+  expect(await reconstructedDiffText(versionTwoParagraph)).toEqual({
+    before: 'Deterministic preview content.',
+    after: 'First edited version.'
+  })
 
   await preview.getByRole('button', { name: `Close preview of ${FILE_NAME}` }).click()
   await expect(preview).toBeHidden()

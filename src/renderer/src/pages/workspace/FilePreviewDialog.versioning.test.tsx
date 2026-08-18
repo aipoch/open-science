@@ -232,7 +232,7 @@ describe('FilePreviewDialog managed version transitions', () => {
     ).toBe('v3')
   })
 
-  it('keeps diff mode through the real controlled Dialog and store chain from v3 to v2', async () => {
+  it('keeps diff mode through the controlled Dialog from v3 to v1 and back to v2', async () => {
     await act(async () => {
       root.render(<StoreConnectedDialog />)
       await Promise.resolve()
@@ -268,9 +268,31 @@ describe('FilePreviewDialog managed version transitions', () => {
       versionNumber: 1
     })
     expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledTimes(2)
-    expect(document.body.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
+    const stopComparing = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Stop comparing README.md"]'
+    )
+    expect(stopComparing).not.toBeNull()
+    expect(stopComparing?.disabled).toBe(false)
     expect(document.body.querySelector('[data-testid="preview-content"]')?.textContent).toContain(
       'upload-v1'
     )
+    expect(window.api.managedFileVersions.diffText).not.toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 'upload-v1' })
+    )
+
+    await click('[aria-label="Next file version"]')
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      selectedVersionId: 'upload-v2',
+      versionNumber: 2
+    })
+    expect(window.api.managedFileVersions.diffText).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'upload-v2' })
+    )
+    expect(document.body.querySelector('[aria-label="Stop comparing README.md"]')).not.toBeNull()
   })
 })
