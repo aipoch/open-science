@@ -1375,20 +1375,72 @@ const InstalledSpecialistsPanel = ({
                                 {item.description}
                               </span>
                             ) : null}
-                            <span className="block text-[11px] text-muted-foreground">
-                              {item.setupPending
-                                ? t('Setup incomplete')
-                                : item.capabilityMode === 'full'
-                                  ? t('Full access')
-                                  : t('Selected capabilities')}
-                              {!item.setupPending && item.origin === 'imported'
-                                ? ` · ${t('Imported · Original version {{version}} · {{state}}', {
-                                    version: item.packageVersion ?? '0.1.0',
-                                    state: item.modifiedSinceImport
-                                      ? t('Modified after import')
-                                      : t('Unchanged since import')
-                                  })}`
-                                : ''}
+                            <span
+                              className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
+                              data-specialist-metadata-group={item.id}
+                            >
+                              <Badge
+                                variant="outline"
+                                className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground"
+                                data-specialist-metadata="capabilities"
+                              >
+                                {item.setupPending
+                                  ? t('Setup incomplete')
+                                  : item.capabilityMode === 'full'
+                                    ? t('Full access')
+                                    : t('Selected capabilities')}
+                              </Badge>
+                              {!item.setupPending && item.origin === 'imported' ? (
+                                <>
+                                  <Badge
+                                    variant="secondary"
+                                    className="h-5 px-1.5 text-[11px] font-normal"
+                                    data-specialist-metadata="source"
+                                  >
+                                    {item.marketplaceProvenance
+                                      ? t('Marketplace')
+                                      : t('Imported ZIP')}
+                                  </Badge>
+                                  {item.marketplaceProvenance?.publisher ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
+                                      data-specialist-metadata="publisher"
+                                      title={t('By {{publisher}}', {
+                                        publisher: item.marketplaceProvenance.publisher
+                                      })}
+                                    >
+                                      <span className="truncate">
+                                        {t('By {{publisher}}', {
+                                          publisher: item.marketplaceProvenance.publisher
+                                        })}
+                                      </span>
+                                    </Badge>
+                                  ) : null}
+                                  <Badge
+                                    variant="outline"
+                                    className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
+                                    data-specialist-metadata="version"
+                                  >
+                                    {t('Version {{version}}', {
+                                      version: item.packageVersion ?? '0.1.0'
+                                    })}
+                                  </Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      item.modifiedSinceImport
+                                        ? 'h-5 border-warning-100 bg-warning-100/60 px-1.5 text-[11px] font-normal text-warning-900'
+                                        : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
+                                    }
+                                    data-specialist-metadata="local-status"
+                                  >
+                                    {item.modifiedSinceImport
+                                      ? t('Modified locally')
+                                      : t('Unchanged locally')}
+                                  </Badge>
+                                </>
+                              ) : null}
                             </span>
                           </div>
                         </button>

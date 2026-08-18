@@ -892,7 +892,7 @@ describe('SpecialistsPanel', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
   })
 
-  it('shows imported version and derived modification provenance in list and detail', async () => {
+  it('shows manual import metadata as separate badges in list and detail', async () => {
     const imported: SpecialistListItem = {
       ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
       kind: 'custom',
@@ -914,9 +914,15 @@ describe('SpecialistsPanel', () => {
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
-    expect(document.body.textContent).toContain(
-      'Imported · Original version 1.2.0 · Modified after import'
+    const metadata = document.body.querySelector(
+      '[data-specialist-metadata-group="research-synth"]'
     )
+    expect(metadata?.querySelectorAll('[data-specialist-metadata]')).toHaveLength(4)
+    expect(metadata?.textContent).toContain('Full access')
+    expect(metadata?.textContent).toContain('Imported ZIP')
+    expect(metadata?.textContent).toContain('Version 1.2.0')
+    expect(metadata?.textContent).toContain('Modified locally')
+    expect(metadata?.textContent).not.toContain(' · ')
 
     await act(async () => {
       root.render(
@@ -926,6 +932,43 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain('Package provenance')
     expect(document.body.textContent).toContain('Original version')
     expect(document.body.textContent).toContain('Modified after import')
+  })
+
+  it('distinguishes a Marketplace install from a manually imported ZIP', async () => {
+    const installed: SpecialistListItem = {
+      ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
+      kind: 'custom',
+      id: 'marketplace-specialist',
+      origin: 'imported',
+      packageVersion: '1.0.1',
+      modifiedSinceImport: false,
+      marketplaceProvenance: { publisher: 'Open Science' },
+      importBaseline: {
+        importedAt: '2026-08-18T10:00:00.000Z',
+        archiveDigest: 'c'.repeat(64),
+        contentDigest: 'd'.repeat(64)
+      }
+    }
+    useSpecialistStore.setState({ items: [installed, { kind: 'reviewer', id: 'reviewer' }] })
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [installed, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const metadata = document.body.querySelector(
+      '[data-specialist-metadata-group="marketplace-specialist"]'
+    )
+    expect(metadata?.querySelectorAll('[data-specialist-metadata]')).toHaveLength(5)
+    expect(metadata?.textContent).toContain('Marketplace')
+    expect(metadata?.textContent).toContain('By Open Science')
+    expect(metadata?.textContent).toContain('Version 1.0.1')
+    expect(metadata?.textContent).toContain('Unchanged locally')
+    expect(metadata?.textContent).not.toContain('Imported ZIP')
+    expect(metadata?.textContent).not.toContain(' · ')
   })
 
   it('filters specialists by a user-entered search term', async () => {

@@ -7,7 +7,7 @@ import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 
 import { sha256 } from './protocol'
-import { MarketplaceRepository } from './repository'
+import { MarketplaceRepository, type MarketplaceInstallProvenance } from './repository'
 import { MarketplaceService } from './service'
 
 const encoder = new TextEncoder()
@@ -523,6 +523,89 @@ describe('MarketplaceService', () => {
       pendingInstallations: [],
       installations: [installed]
     })
+  })
+
+  it('returns the newest exact Marketplace provenance for installed Specialists', async () => {
+    const repository = new MarketplaceRepository(
+      await mkdtemp(join(tmpdir(), 'marketplace-installed-provenance-'))
+    )
+    const exactDigest = 'c'.repeat(64)
+    const provenance = (overrides: {
+      sourceId: string
+      publisher: string
+      installedAt: string
+      installedArchiveDigest?: string
+    }): MarketplaceInstallProvenance => ({
+      sourceId: overrides.sourceId,
+      specialistId: 'installed-specialist',
+      publisher: overrides.publisher,
+      version: '1.0.0',
+      releasePath: 'releases/installed-specialist/1.0.0.json',
+      releaseDigest: 'a'.repeat(64),
+      artifactDigest: 'b'.repeat(64),
+      ...(overrides.installedArchiveDigest
+        ? { installedArchiveDigest: overrides.installedArchiveDigest }
+        : {}),
+      upstreamCommit: 'd'.repeat(40),
+      selectedSkillIds: [],
+      selectedConnectorIds: [],
+      installedAt: overrides.installedAt
+    })
+    await repository.recordInstallation(
+      provenance({
+        sourceId: 'older-source',
+        publisher: 'Older Publisher',
+        installedAt: '2026-08-17T00:00:00.000Z',
+        installedArchiveDigest: exactDigest
+      })
+    )
+    await repository.recordInstallation(
+      provenance({
+        sourceId: 'newer-source',
+        publisher: 'Current Publisher',
+        installedAt: '2026-08-18T00:00:00.000Z',
+        installedArchiveDigest: exactDigest
+      })
+    )
+    await repository.recordInstallation(
+      provenance({
+        sourceId: 'stale-source',
+        publisher: 'Stale Publisher',
+        installedAt: '2026-08-19T00:00:00.000Z',
+        installedArchiveDigest: 'e'.repeat(64)
+      })
+    )
+    await repository.recordInstallation(
+      provenance({
+        sourceId: 'legacy-source',
+        publisher: 'Legacy Publisher',
+        installedAt: '2026-08-20T00:00:00.000Z'
+      })
+    )
+    const service = new MarketplaceService({
+      repository,
+      packages: {} as never,
+      fetch: vi.fn<typeof fetch>(),
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [
+        {
+          id: 'installed-specialist',
+          origin: 'imported',
+          archiveDigest: exactDigest
+        }
+      ],
+      setSkillsMainEnabled: vi.fn()
+    })
+
+    await expect(
+      service.installedSpecialistProvenance([
+        {
+          id: 'installed-specialist',
+          origin: 'imported',
+          archiveDigest: exactDigest
+        }
+      ])
+    ).resolves.toEqual(new Map([['installed-specialist', { publisher: 'Current Publisher' }]]))
   })
 
   it('serializes recovery behind an active Marketplace installation', async () => {

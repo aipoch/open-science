@@ -150,6 +150,10 @@ export type EffectiveSpecialistSkills =
       missingSkillIds: string[]
     }
 
+export type SpecialistMarketplaceProvenance = {
+  publisher: string
+}
+
 // Resolve against the live catalog; callers must not snapshot catalog contents into a profile or
 // session. Full access includes future entries by construction, while selected is an explicit list.
 export const resolveEffectiveSpecialistSkills = (
@@ -223,6 +227,10 @@ export type SpecialistProfileView = {
   origin?: 'local' | 'imported'
   // Derived from the current portable profile and importBaseline; never persisted.
   modifiedSinceImport?: boolean
+  // Derived from exact Marketplace provenance plus the current import archive digest; never
+  // persisted with the Specialist profile. Absent for manual imports and historical provenance
+  // that cannot prove it still describes the installed package.
+  marketplaceProvenance?: SpecialistMarketplaceProvenance
   ownedSkillIds?: string[]
   importBaseline?: {
     importedAt: string

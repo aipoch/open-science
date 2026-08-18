@@ -75,6 +75,7 @@ type PackageImportIpc = {
 type MarketplaceIpc = Pick<
   MarketplaceService,
   | 'list'
+  | 'installedSpecialistProvenance'
   | 'inspectGitHubSource'
   | 'addSource'
   | 'removeSource'
@@ -224,7 +225,39 @@ export const registerSpecialistIpcHandlers = (
 
   ipcMainHandle(SPECIALIST_IPC.LIST, async (): Promise<SpecialistCatalogSnapshot> => {
     try {
-      return await service.listForSettingsSnapshot()
+      const snapshot = await service.listForSettingsSnapshot()
+      if (!marketplace) return snapshot
+      try {
+        const installedSpecialists = snapshot.items.flatMap((item) =>
+          item.kind === 'custom'
+            ? [
+                {
+                  id: item.id,
+                  ...(item.origin ? { origin: item.origin } : {}),
+                  ...(item.importBaseline?.archiveDigest
+                    ? { archiveDigest: item.importBaseline.archiveDigest }
+                    : {})
+                }
+              ]
+            : []
+        )
+        const marketplaceProvenance =
+          await marketplace.installedSpecialistProvenance(installedSpecialists)
+        if (marketplaceProvenance.size === 0) return snapshot
+        return {
+          ...snapshot,
+          items: snapshot.items.map((item) => {
+            if (item.kind !== 'custom') return item
+            const provenance = marketplaceProvenance.get(item.id)
+            return provenance ? { ...item, marketplaceProvenance: provenance } : item
+          })
+        }
+      } catch (error) {
+        // Marketplace metadata is optional enrichment. A damaged or unavailable provenance file
+        // must not hide the otherwise healthy Specialist catalog.
+        log.error('specialist:list Marketplace provenance failed', { error })
+        return snapshot
+      }
     } catch (error) {
       log.error('specialist:list failed', { error })
       throw error

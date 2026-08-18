@@ -46,6 +46,106 @@ const createReconfigurationStub = (): Pick<SessionSpecialistReconfiguration, 're
 })
 
 describe('specialist session IPC', () => {
+  it('adds exact Marketplace provenance to the Settings catalog without persisting it', async () => {
+    handlers.clear()
+    const importedProfile: SpecialistProfileView = {
+      ...profile,
+      origin: 'imported',
+      importBaseline: {
+        importedAt: '2026-08-18T00:00:00.000Z',
+        archiveDigest: 'a'.repeat(64),
+        contentDigest: 'b'.repeat(64)
+      }
+    }
+    const service = {
+      ...createProfileService(),
+      listForSettingsSnapshot: vi.fn().mockResolvedValue({
+        items: [
+          { kind: 'custom' as const, ...importedProfile },
+          { kind: 'reviewer' as const, id: 'reviewer' }
+        ],
+        integrity: { status: 'ok' as const }
+      })
+    } as unknown as ProfileService
+    const marketplace = {
+      list: vi.fn(),
+      installedSpecialistProvenance: vi
+        .fn()
+        .mockResolvedValue(new Map([[profile.id, { publisher: 'Open Science' }]])),
+      inspectGitHubSource: vi.fn(),
+      addSource: vi.fn(),
+      removeSource: vi.fn(),
+      getRelease: vi.fn(),
+      prepareInstall: vi.fn(),
+      install: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn()
+    }
+    registerSpecialistIpcHandlers(
+      service,
+      new SessionBindingService(service),
+      createReconfigurationStub(),
+      undefined,
+      undefined,
+      undefined,
+      marketplace as never
+    )
+
+    await expect(handlers.get(SPECIALIST_IPC.LIST)?.({}, undefined)).resolves.toEqual({
+      items: [
+        {
+          kind: 'custom',
+          ...importedProfile,
+          marketplaceProvenance: { publisher: 'Open Science' }
+        },
+        { kind: 'reviewer', id: 'reviewer' }
+      ],
+      integrity: { status: 'ok' }
+    })
+    expect(marketplace.installedSpecialistProvenance).toHaveBeenCalledWith([
+      {
+        id: importedProfile.id,
+        origin: 'imported',
+        archiveDigest: importedProfile.importBaseline?.archiveDigest
+      }
+    ])
+  })
+
+  it('keeps the Settings catalog available when Marketplace provenance cannot be read', async () => {
+    handlers.clear()
+    const snapshot = {
+      items: [{ kind: 'custom' as const, ...profile }],
+      integrity: { status: 'ok' as const }
+    }
+    const service = {
+      ...createProfileService(),
+      listForSettingsSnapshot: vi.fn().mockResolvedValue(snapshot)
+    } as unknown as ProfileService
+    const marketplace = {
+      list: vi.fn(),
+      installedSpecialistProvenance: vi.fn().mockRejectedValue(new Error('invalid provenance')),
+      inspectGitHubSource: vi.fn(),
+      addSource: vi.fn(),
+      removeSource: vi.fn(),
+      getRelease: vi.fn(),
+      prepareInstall: vi.fn(),
+      install: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn()
+    }
+    registerSpecialistIpcHandlers(
+      service,
+      new SessionBindingService(service),
+      createReconfigurationStub(),
+      undefined,
+      undefined,
+      undefined,
+      marketplace as never
+    )
+
+    await expect(handlers.get(SPECIALIST_IPC.LIST)?.({}, undefined)).resolves.toEqual(snapshot)
+  })
+
   it('keeps Marketplace downloads in main and binds install candidates to the renderer owner', async () => {
     handlers.clear()
     const marketplace = {
