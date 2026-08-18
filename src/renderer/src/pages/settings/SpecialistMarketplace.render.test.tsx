@@ -261,6 +261,44 @@ describe('Specialist Marketplace settings', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'example-specialist' })
   })
 
+  it('allows reviewing a Specialist with every optional Skill deselected', async () => {
+    window.api.specialist.getMarketplaceRelease = vi.fn().mockResolvedValue({
+      ...release,
+      skills: [
+        {
+          id: 'example-skill',
+          name: 'example-skill',
+          displayName: 'Example Skill',
+          description: 'Optional workflow.',
+          fileCount: 1,
+          uncompressedBytes: 100
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace
+          view={{
+            kind: 'marketplace-release',
+            sourceId: 'github-example',
+            id: 'example-specialist',
+            version: '2.0.0'
+          }}
+          onNavigate={vi.fn()}
+        />
+      )
+    })
+
+    const review = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Review installation')
+    )
+    expect(review?.disabled).toBe(false)
+    fireEvent.click(review!)
+    expect(container.textContent).toContain('Review installation')
+    expect(container.textContent).toContain('Skills0')
+  })
+
   it('labels verified cached Marketplace data without hiding its listings', async () => {
     window.api.specialist.listMarketplace = vi.fn().mockResolvedValue({
       ...snapshot,

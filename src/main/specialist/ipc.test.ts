@@ -178,6 +178,65 @@ describe('specialist session IPC', () => {
     expect(marketplace.dispose).toHaveBeenCalledWith(41)
   })
 
+  it('binds one renderer lifetime listener across Marketplace candidate requests', async () => {
+    handlers.clear()
+    const marketplace = {
+      list: vi.fn(),
+      inspectGitHubSource: vi.fn().mockResolvedValue({ candidateToken: 'source-candidate' }),
+      addSource: vi.fn(),
+      removeSource: vi.fn(),
+      getRelease: vi.fn(),
+      prepareInstall: vi.fn().mockResolvedValue({
+        release: { specialistId: 'example' },
+        package: { candidateToken: 'install-candidate', diagnostics: [], installable: true }
+      }),
+      install: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn()
+    }
+    registerSpecialistIpcHandlers(
+      createProfileService(),
+      new SessionBindingService(createProfileService()),
+      createReconfigurationStub(),
+      undefined,
+      undefined,
+      undefined,
+      marketplace as never
+    )
+
+    let destroyed = false
+    const destroyedListeners: Array<() => void> = []
+    const once = vi.fn((_name: string, listener: () => void) => {
+      destroyedListeners.push(listener)
+    })
+    const event = {
+      sender: {
+        id: 41,
+        send: vi.fn(),
+        isDestroyed: () => destroyed,
+        once
+      }
+    }
+
+    await handlers.get(SPECIALIST_MARKETPLACE_IPC.INSPECT_GITHUB_SOURCE)?.(event, {
+      repositoryUrl: 'https://github.com/example/marketplace'
+    })
+    const listenerCount = once.mock.calls.length
+    await handlers.get(SPECIALIST_MARKETPLACE_IPC.PREPARE_INSTALL)?.(event, {
+      sourceId: 'source',
+      specialistId: 'example',
+      version: '1.0.0',
+      selectedSkillIds: [],
+      selectedConnectorIds: []
+    })
+
+    expect(once).toHaveBeenCalledTimes(listenerCount)
+    destroyed = true
+    destroyedListeners.forEach((listener) => listener())
+    expect(marketplace.dispose).toHaveBeenCalledOnce()
+    expect(marketplace.dispose).toHaveBeenCalledWith(41)
+  })
+
   it('broadcasts only an invalidation signal without profile prompts or resource paths', () => {
     let notify: (() => void) | undefined
     const service = {

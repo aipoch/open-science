@@ -170,7 +170,8 @@ const sendMarketplaceDownloadProgress = (
 
 const bindMarketplaceOwnerLifetime = (
   event: unknown,
-  marketplace: MarketplaceIpc
+  marketplace: MarketplaceIpc,
+  boundSenders: WeakSet<object>
 ): { ownerId: number | undefined; assertActive: () => void } => {
   const ownerId = rendererOwnerId(event)
   const sender = (
@@ -181,17 +182,16 @@ const bindMarketplaceOwnerLifetime = (
       }
     }
   )?.sender
-  let destroyed = sender?.isDestroyed?.() ?? false
-  const dispose = (): void => {
-    destroyed = true
-    marketplace.dispose(ownerId)
+  const dispose = (): void => marketplace.dispose(ownerId)
+  if (sender?.isDestroyed?.()) dispose()
+  else if (sender?.once && !boundSenders.has(sender)) {
+    boundSenders.add(sender)
+    sender.once('destroyed', dispose)
   }
-  if (destroyed) dispose()
-  else sender?.once?.('destroyed', dispose)
   return {
     ownerId,
     assertActive: () => {
-      if (!destroyed && !sender?.isDestroyed?.()) return
+      if (!sender?.isDestroyed?.()) return
       dispose()
       throw new Error('Marketplace candidate owner is no longer available.')
     }
@@ -311,6 +311,9 @@ export const registerSpecialistIpcHandlers = (
   }
 
   if (marketplace) {
+    // One renderer owns all of its Marketplace candidates, so one listener can release them all.
+    // Binding per request would retain every completed request until the renderer is destroyed.
+    const boundMarketplaceSenders = new WeakSet<object>()
     ipcMainHandle(SPECIALIST_MARKETPLACE_IPC.LIST, async (_event, request: unknown) => {
       if (request !== undefined) throw new Error('Marketplace list does not accept renderer data.')
       return marketplace.list()
@@ -318,7 +321,7 @@ export const registerSpecialistIpcHandlers = (
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.INSPECT_GITHUB_SOURCE,
       async (event, request: InspectGitHubMarketplaceSourceRequest) => {
-        const lifetime = bindMarketplaceOwnerLifetime(event, marketplace)
+        const lifetime = bindMarketplaceOwnerLifetime(event, marketplace, boundMarketplaceSenders)
         const candidate = await marketplace.inspectGitHubSource(request, lifetime.ownerId)
         lifetime.assertActive()
         return candidate
@@ -340,7 +343,7 @@ export const registerSpecialistIpcHandlers = (
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.PREPARE_INSTALL,
       async (event, request: PrepareMarketplaceInstallRequest) => {
-        const lifetime = bindMarketplaceOwnerLifetime(event, marketplace)
+        const lifetime = bindMarketplaceOwnerLifetime(event, marketplace, boundMarketplaceSenders)
         const preview = await marketplace.prepareInstall(
           request,
           lifetime.ownerId,

@@ -569,11 +569,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   </div>
                 ) : null}
                 <div className="mt-5 flex justify-end">
-                  <Button
-                    type="button"
-                    disabled={release.skills.length > 0 && selectedSkillIds.size === 0}
-                    onClick={() => setReviewing(true)}
-                  >
+                  <Button type="button" onClick={() => setReviewing(true)}>
                     {t('Review installation')}
                   </Button>
                 </div>
