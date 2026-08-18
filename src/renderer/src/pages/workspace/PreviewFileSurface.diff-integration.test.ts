@@ -3,20 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { ManagedTextDiffTaskRunner } from '../../../../main/managed-file-versions/diff-task'
 import { toDiffPresentationBlocks } from './managed-version-diff-presentation'
 
-const markdownContents = (
-  blocks: ReturnType<typeof toDiffPresentationBlocks>
-): Array<{ kind: 'added' | 'removed'; content: string }> =>
-  blocks.flatMap((block) =>
-    block.kind === 'markdown' && (block.changeKind === 'added' || block.changeKind === 'removed')
-      ? [
-          {
-            kind: block.changeKind,
-            content: block.content
-          }
-        ]
-      : []
-  )
-
 const markdownChange = (kind: 'added' | 'removed', content: string): string => {
   const tag = `managed-diff-${kind}`
   return `<${tag}>${content}</${tag}>`
@@ -81,6 +67,31 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     ])
   })
 
+  it('falls back a changed table delimiter row to exact source characters', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'table-delimiter-replacement',
+      before: '| Name | Value |\n| --- | --- |\n| A | stable |\n',
+      after: '| Name | Value |\n| :--- | ---: |\n| A | stable |\n'
+    })
+
+    expect(
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
+    ).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '| Name | Value |\n| ' },
+          { kind: 'added', text: ':' },
+          { kind: 'context', text: '--- | ---' },
+          { kind: 'added', text: ':' },
+          { kind: 'context', text: ' |\n| A | stable |' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
   it('keeps a complete Setext heading when its title changes', async () => {
     const lines = await new ManagedTextDiffTaskRunner().run({
       requestId: 'setext-heading-replacement',
@@ -100,7 +111,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     ])
   })
 
-  it('keeps both complete fenced blocks when only an inner line is replaced', async () => {
+  it('falls back one fenced block to exact source characters', async () => {
     const lines = await new ManagedTextDiffTaskRunner().run({
       requestId: 'fence-replacement',
       before: '```ts\nconst value = "old"\nconst stable = true\n```\n',
@@ -108,20 +119,18 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffPresentationBlocks(
-          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-          'markdown'
-        )
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
       {
-        kind: 'removed',
-        content: '```ts\nconst value = "old"\nconst stable = true\n```'
-      },
-      {
-        kind: 'added',
-        content: '```ts\nconst value = "new"\nconst stable = true\n```'
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '```ts\nconst value = "' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '"\nconst stable = true\n```' }
+        ],
+        startIndex: 0
       }
     ])
   })
@@ -166,7 +175,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     ])
   })
 
-  it('keeps a complete blockquote around a changed lazy continuation', async () => {
+  it('falls back one blockquote to exact source characters', async () => {
     const lines = await new ManagedTextDiffTaskRunner().run({
       requestId: 'blockquote-lazy-replacement',
       before: '> opening quote\nold lazy continuation\n> adjacent quote line\n\nAfter quote\n',
@@ -174,20 +183,24 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffPresentationBlocks(
-          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-          'markdown'
-        )
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
       {
-        kind: 'removed',
-        content: '> opening quote\nold lazy continuation\n> adjacent quote line'
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '> opening quote\n' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ' lazy continuation\n> adjacent quote line' }
+        ],
+        startIndex: 0
       },
       {
-        kind: 'added',
-        content: '> opening quote\nnew lazy continuation\n> adjacent quote line'
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '\nAfter quote',
+        startIndex: 4
       }
     ])
   })
@@ -200,15 +213,25 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffPresentationBlocks(
-          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-          'markdown'
-        )
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
-      { kind: 'removed', content: '> old quote' },
-      { kind: 'added', content: '> new quote' }
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '> ' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ' quote' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '# Stable heading\nStable paragraph',
+        startIndex: 2
+      }
     ])
   })
 
@@ -220,15 +243,25 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffPresentationBlocks(
-          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-          'markdown'
-        )
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
-      { kind: 'removed', content: '> old quote' },
-      { kind: 'added', content: '> new quote' }
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '> ' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ' quote' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '<div>stable</div>',
+        startIndex: 2
+      }
     ])
   })
 
@@ -240,15 +273,25 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffPresentationBlocks(
-          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-          'markdown'
-        )
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
-      { kind: 'removed', content: '> old quote\n2. stable lazy continuation' },
-      { kind: 'added', content: '> new quote\n2. stable lazy continuation' }
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '> ' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ' quote\n2. stable lazy continuation' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '1. Stable list item',
+        startIndex: 3
+      }
     ])
   })
 
@@ -280,15 +323,28 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
       })
 
       expect(
-        markdownContents(
-          toDiffPresentationBlocks(
-            { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-            'markdown'
-          )
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
         )
       ).toEqual([
-        { kind: 'removed', content: '> old quote' },
-        { kind: 'added', content: '> new quote' }
+        {
+          kind: 'text',
+          changeKind: 'mixed',
+          segments: [
+            { kind: 'context', text: '> ' },
+            { kind: 'removed', text: 'old' },
+            { kind: 'added', text: 'new' },
+            { kind: 'context', text: ' quote' }
+          ],
+          startIndex: 0
+        },
+        {
+          kind: 'markdown',
+          changeKind: 'context',
+          content: `${separator}${suffix.trimEnd()}`,
+          startIndex: 2
+        }
       ])
     }
   )
@@ -301,20 +357,24 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffPresentationBlocks(
-          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-          'markdown'
-        )
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
       {
-        kind: 'removed',
-        content: '> old opening\n> stable marked line\nstable lazy continuation'
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '> ' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ' opening\n> stable marked line\nstable lazy continuation' }
+        ],
+        startIndex: 0
       },
       {
-        kind: 'added',
-        content: '> new opening\n> stable marked line\nstable lazy continuation'
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '\nAfter quote',
+        startIndex: 4
       }
     ])
   })
@@ -329,20 +389,24 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffPresentationBlocks(
-          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-          'markdown'
-        )
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
       {
-        kind: 'removed',
-        content: '    const first = true\n\n    const value = "old"\n\n    const stable = true'
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '    const first = true\n\n    const value = "' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '"\n\n    const stable = true' }
+        ],
+        startIndex: 0
       },
       {
-        kind: 'added',
-        content: '    const first = true\n\n    const value = "new"\n\n    const stable = true'
+        kind: 'markdown',
+        changeKind: 'context',
+        content: 'After code',
+        startIndex: 6
       }
     ])
   })

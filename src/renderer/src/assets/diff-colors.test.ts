@@ -77,4 +77,13 @@ describe('diff color tokens', () => {
       expect(css).not.toContain(`:is(li, td, th):has(${marker})`)
     }
   })
+
+  it('marks semantic carrier text without painting the carrier rectangle', () => {
+    const semanticRules = css.match(/\.managed-version-diff-markdown[^{}]+\{[^{}]+\}/gu)?.join('\n')
+
+    expect(semanticRules).toBeDefined()
+    expect(semanticRules).not.toContain('background-color')
+    expect(semanticRules).toContain('color: var(--diff-added-foreground)')
+    expect(semanticRules).toContain('color: var(--diff-removed-foreground)')
+  })
 })

@@ -317,16 +317,14 @@
 @layer components {
   .managed-version-diff-markdown :is(li, td, th):has(> [data-managed-diff-marker='added']),
   .managed-version-diff-markdown :is(li, td, th):has(> p > [data-managed-diff-marker='added']) {
-    background-color: var(--diff-added-highlight);
-    color: var(--text-000);
+    color: var(--diff-added-foreground);
     font-weight: 500;
     text-decoration: none;
   }
 
   .managed-version-diff-markdown :is(li, td, th):has(> [data-managed-diff-marker='removed']),
   .managed-version-diff-markdown :is(li, td, th):has(> p > [data-managed-diff-marker='removed']) {
-    background-color: var(--diff-removed-highlight);
-    color: var(--text-000);
+    color: var(--diff-removed-foreground);
     text-decoration: line-through;
   }
 

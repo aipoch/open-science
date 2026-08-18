@@ -34,10 +34,26 @@ const WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require('node:worker_threads')
 const { diffChars, diffLines } = require('diff')
 const run = () => {
-const stripNewline = (value) => value.replace(/(?:\r\n|\n)$/u, '')
-const splitChangedLines = (value) => value.length === 0 ? [] : value.match(/.*?(?:\r\n|\n|$)/gu).filter(Boolean).map(stripNewline)
+const splitChangedLines = (value) => {
+  if (value.length === 0) return []
+  const lines = []
+  let start = 0
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== '\n') continue
+    const hasCarriageReturn = index > start && value[index - 1] === '\r'
+    lines.push({
+      text: value.slice(start, hasCarriageReturn ? index - 1 : index),
+      ending: hasCarriageReturn ? '\r\n' : '\n'
+    })
+    start = index + 1
+  }
+  if (start < value.length) lines.push({ text: value.slice(start), ending: '' })
+  return lines
+}
 const segmentsForPair = (before, after) => {
-  const changes = diffChars(before, after)
+  const beforeValue = before.text + before.ending
+  const afterValue = after.text + after.ending
+  const changes = diffChars(beforeValue, afterValue)
   const removed = []
   const added = []
   for (const change of changes) {
@@ -50,6 +66,7 @@ const segmentsForPair = (before, after) => {
   }
   return { removed, added }
 }
+const changedSegments = (line, kind) => [{ kind, text: line.text + line.ending }]
 let oldLine = 1
 let newLine = 1
 const lines = []
@@ -83,16 +100,16 @@ for (let index = 0; index < changes.length; index += 1) {
         const segments = segmentsForPair(before, after)
         if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: segments.removed })) return
         if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: segments.added })) return
-      } else if (before !== undefined) { if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: [{ kind: 'removed', text: before }] })) return }
-      else if (after !== undefined) { if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: [{ kind: 'added', text: after }] })) return }
+      } else if (before !== undefined) { if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: changedSegments(before, 'removed') })) return }
+      else if (after !== undefined) { if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: changedSegments(after, 'added') })) return }
     }
     index += 1
     continue
   }
-  for (const text of splitChangedLines(change.value)) {
-    if (change.removed) { if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: [{ kind: 'removed', text }] })) return }
-    else if (change.added) { if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: [{ kind: 'added', text }] })) return }
-    else if (!pushLine({ kind: 'context', oldLineNumber: oldLine++, newLineNumber: newLine++, segments: [{ kind: 'context', text }] })) return
+  for (const line of splitChangedLines(change.value)) {
+    if (change.removed) { if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: changedSegments(line, 'removed') })) return }
+    else if (change.added) { if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: changedSegments(line, 'added') })) return }
+    else if (!pushLine({ kind: 'context', oldLineNumber: oldLine++, newLineNumber: newLine++, segments: [{ kind: 'context', text: line.text + line.ending }] })) return
   }
 }
 parentPort.postMessage(lines)

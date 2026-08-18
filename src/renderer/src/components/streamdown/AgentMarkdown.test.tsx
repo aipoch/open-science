@@ -88,6 +88,23 @@ describe('AgentMarkdown renderer recovery', () => {
     )
   })
 
+  it('uses a caller-provided fallback when rich Markdown rendering fails', async () => {
+    await act(async () => {
+      root.render(
+        <AgentMarkdown
+          content="render-only-internal-content"
+          fallback={<pre data-testid="custom-markdown-fallback">Original source</pre>}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-agent-markdown-fallback]')).toBeNull()
+    expect(container.querySelector('[data-testid="custom-markdown-fallback"]')?.textContent).toBe(
+      'Original source'
+    )
+    expect(container.textContent).not.toContain('render-only-internal-content')
+  })
+
   it('retries rich rendering when the message content changes after a failure', async () => {
     await act(async () => {
       root.render(<AgentMarkdown content="Initial message" />)

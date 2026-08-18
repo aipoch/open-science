@@ -11,7 +11,7 @@ const IMAGE_CONTENT = Buffer.from(
   'base64'
 )
 const VERSION_TWO_CONTENT = '# Fixture findings\n\nFirst edited version.'
-const VERSION_THREE_CONTENT = '# Fixture findings\n\nSecond edited version.'
+const VERSION_THREE_CONTENT = '## Fixture findings\n\nSecond edited version.'
 const SCRIPT_NAME = 'analysis.sh'
 const SCRIPT_CONTENT = '#!/bin/bash\n# stable\necho "old"\n'
 const SCRIPT_VERSION_TWO_CONTENT = '#!/bin/bash\n# stable\necho "new"\n'
@@ -55,6 +55,22 @@ const visibleChangeTextContents = async (changes: Locator): Promise<string[]> =>
     })
   )
 
+const reconstructedDiffText = async (
+  container: Locator
+): Promise<{ before: string; after: string }> =>
+  container.evaluate((element) => {
+    const textWithout = (selector: string): string => {
+      const copy = element.cloneNode(true) as HTMLElement
+      copy.querySelectorAll('.sr-only').forEach((label) => label.remove())
+      copy.querySelectorAll(selector).forEach((change) => change.remove())
+      return copy.textContent ?? ''
+    }
+    return {
+      before: textWithout('ins[data-managed-diff="added"]'),
+      after: textWithout('del[data-managed-diff="removed"]')
+    }
+  })
+
 test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
@@ -94,15 +110,37 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
     .getByRole('button', { name: `Compare ${FILE_NAME} with its source version` })
     .click()
   const differences = preview.getByRole('region', { name: 'File version differences' })
-  await expect(differences.getByRole('heading', { name: 'Fixture findings' })).toBeVisible()
-  const removedChange = differences.locator('del[data-managed-diff="removed"]')
-  const addedChange = differences.locator('ins[data-managed-diff="added"]')
+  await expect(differences.getByRole('heading', { name: 'Fixture findings' })).toHaveCount(0)
+  const rawHeading = differences.locator('[data-diff-kind="mixed"] pre').filter({
+    hasText: 'Fixture findings'
+  })
+  const rawHeadingAdded = rawHeading.locator('ins[data-managed-diff="added"]')
+  await expect(rawHeading).toBeVisible()
+  expect(await visibleChangeTextContents(rawHeadingAdded)).toEqual(['#'])
+  expect(
+    await rawHeading.evaluate((element) => {
+      const copy = element.cloneNode(true) as HTMLElement
+      copy.querySelectorAll('.sr-only').forEach((label) => label.remove())
+      return copy.textContent
+    })
+  ).toBe('## Fixture findings')
+  expect(
+    await rawHeading.evaluate((element) => getComputedStyle(element.parentElement!).backgroundColor)
+  ).toBe('rgba(0, 0, 0, 0)')
+  const removedChange = differences.locator('p del[data-managed-diff="removed"]')
+  const addedChange = differences.locator('p ins[data-managed-diff="added"]')
   await expect(removedChange).toBeVisible()
   await expect(addedChange).toBeVisible()
   expect(await visibleChangeTextContents(removedChange)).toEqual(['First'])
   expect(await visibleChangeTextContents(addedChange)).toEqual(['Second'])
   await expect(removedChange.locator('.sr-only')).toHaveText('Removed:')
   await expect(addedChange.locator('.sr-only')).toHaveText('Added:')
+  expect(
+    await removedChange.evaluate(
+      (element) =>
+        getComputedStyle(element.closest<HTMLElement>('[data-diff-kind]')!).backgroundColor
+    )
+  ).toBe('rgba(0, 0, 0, 0)')
   const diffColors = await differences.evaluate((region) => {
     const added = getComputedStyle(region.querySelector<HTMLElement>('p ins')!)
     const removed = getComputedStyle(region.querySelector<HTMLElement>('p del')!)
@@ -121,28 +159,15 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
   await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
   await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
   await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toBeVisible()
-  const versionTwoRemovedChanges = differences.locator('del[data-managed-diff="removed"]')
-  const versionTwoAddedChanges = differences.locator('ins[data-managed-diff="added"]')
-  await expect(versionTwoRemovedChanges).toHaveCount(8)
-  await expect(versionTwoAddedChanges).toHaveCount(6)
-  expect(await visibleChangeTextContents(versionTwoRemovedChanges)).toEqual([
-    'Determ',
-    'ni',
-    'ic',
-    'pr',
-    'v',
-    'w',
-    'c',
-    'tent'
-  ])
-  expect(await visibleChangeTextContents(versionTwoAddedChanges)).toEqual([
-    'F',
-    'r',
-    'd',
-    't',
-    'd',
-    'versi'
-  ])
+  await expect(differences.getByRole('heading', { name: 'Fixture findings' })).toBeVisible()
+  const versionTwoParagraph = differences.locator(
+    'p:has(del[data-managed-diff="removed"]):has(ins[data-managed-diff="added"])'
+  )
+  await expect(versionTwoParagraph).toBeVisible()
+  expect(await reconstructedDiffText(versionTwoParagraph)).toEqual({
+    before: 'Deterministic preview content.',
+    after: 'First edited version.'
+  })
 
   await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
   await expect(versionNavigation.getByText('v1', { exact: true })).toBeVisible()
@@ -186,9 +211,13 @@ test('shows structured text replacements with character-level highlights', async
   await expect(removedText.locator('.sr-only')).toHaveText('Removed:')
   await expect(addedText.locator('.sr-only')).toHaveText('Added:')
   await expect(mixedLine.locator('pre > span')).toHaveText(['echo "', '"'])
+  await expect(mixedLine).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   await expect(differences.locator('[data-diff-kind="removed"]')).toHaveCount(0)
   await expect(differences.locator('[data-diff-kind="added"]')).toHaveCount(0)
-  await expect(differences).not.toContainText(/^\s*\d+\s+\d+/u)
+  await expect(differences.getByTestId('source-line-number')).toHaveCount(0)
+  await expect(
+    differences.locator('[aria-label="Added line"], [aria-label="Removed line"]')
+  ).toHaveCount(0)
 })
 
 test('loads managed image previews from Project files', async ({ app }) => {

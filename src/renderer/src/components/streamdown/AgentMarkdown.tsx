@@ -36,6 +36,7 @@ type AgentMarkdownProps = {
   allowMedia?: boolean
   sessionLinks?: boolean
   extension?: AgentMarkdownExtension
+  fallback?: ReactNode
 }
 
 type RichAgentMarkdownProps = AgentMarkdownProps & {
@@ -141,6 +142,7 @@ const NETWORK_FETCHING_MEDIA_ELEMENTS = [
 type AgentMarkdownErrorBoundaryProps = {
   content: string
   children: ReactNode
+  fallback?: ReactNode
 }
 
 type AgentMarkdownErrorBoundaryState = {
@@ -235,6 +237,7 @@ class AgentMarkdownErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError) {
+      if (this.props.fallback !== undefined) return this.props.fallback
       return (
         <pre
           data-agent-markdown-fallback=""
@@ -318,9 +321,10 @@ const PresentedAgentMarkdown = memo(
     allowMedia = true,
     sessionLinks = false,
     incrementalBlocks = true,
-    extension
+    extension,
+    fallback
   }: RichAgentMarkdownProps): React.JSX.Element => (
-    <AgentMarkdownErrorBoundary content={content}>
+    <AgentMarkdownErrorBoundary content={content} fallback={fallback}>
       <RichAgentMarkdown
         content={content}
         isAnimating={isAnimating}
@@ -342,7 +346,8 @@ const AgentMarkdown = memo(
     isAnimating = false,
     allowMedia = true,
     sessionLinks = false,
-    extension
+    extension,
+    fallback
   }: AgentMarkdownProps): React.JSX.Element => {
     const presentation = useSmoothStreamingContent(content, isAnimating)
 
@@ -354,6 +359,7 @@ const AgentMarkdown = memo(
         sessionLinks={sessionLinks}
         incrementalBlocks={false}
         extension={extension}
+        fallback={fallback}
       />
     )
   }

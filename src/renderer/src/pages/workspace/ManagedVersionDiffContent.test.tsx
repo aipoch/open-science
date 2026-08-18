@@ -85,6 +85,124 @@ describe('ManagedVersionDiffContent', () => {
     expect(container.querySelector('[aria-label="Removed line"]')).toBeNull()
   })
 
+  it('keeps a stable HTML wrapper rendered when only its text content changes', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'render-stable-html-wrapper-diff',
+      before: '<h1 align="center">Claude Local Session Sync</h1>\n',
+      after: '<h1 align="center">Claude Local Session Sync C</h1>\n'
+    })
+
+    await act(async () => {
+      root.render(
+        <ManagedVersionDiffContent
+          result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+          format="markdown"
+          name="README.md"
+        />
+      )
+    })
+
+    const heading = container.querySelector('h1')
+    expect(heading).not.toBeNull()
+    expect(heading?.getAttribute('align')).toBe('center')
+    expect(heading?.firstChild?.textContent).toBe('Claude Local Session Sync')
+    expect(heading?.querySelector('del[data-managed-diff="removed"]')).toBeNull()
+
+    const additions = heading?.querySelectorAll('ins[data-managed-diff="added"]')
+    expect(additions).toHaveLength(1)
+    expect(additions?.[0]?.querySelector('[data-managed-diff-content]')?.textContent).toBe(' C')
+    expect(container.textContent).not.toContain('<h1')
+    expect(container.textContent).not.toContain('</h1>')
+    expect(container.querySelector('pre')).toBeNull()
+  })
+
+  it('highlights a changed raw segment without coloring its entire row', async () => {
+    const result: ManagedFileVersionDiffResult = {
+      baseVersionId: 'v1',
+      selectedVersionId: 'v2',
+      lines: [
+        {
+          kind: 'added',
+          newLineNumber: 1,
+          segments: [{ kind: 'added', text: 'new text' }]
+        }
+      ]
+    }
+
+    await act(async () => {
+      root.render(<ManagedVersionDiffContent result={result} format="text" name="notes.txt" />)
+    })
+
+    const row = container.querySelector('[data-diff-kind="added"]')
+    const added = row?.querySelector('[data-diff-segment="added"]')
+    expect(row?.className).not.toContain('bg-diff-added-surface')
+    expect(added?.className.split(/\s+/u)).toEqual(
+      expect.arrayContaining(['bg-diff-added-highlight', 'no-underline'])
+    )
+    expect(added?.querySelector('[data-managed-diff-content]')?.textContent).toBe('new text')
+  })
+
+  it.each([
+    { kind: 'added' as const, before: '', after: '# Added heading\n' },
+    { kind: 'removed' as const, before: '# Removed heading\n', after: '' }
+  ])('renders a standalone Markdown $kind block without a full-width surface', async (fixture) => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: `standalone-markdown-${fixture.kind}`,
+      before: fixture.before,
+      after: fixture.after
+    })
+
+    await act(async () => {
+      root.render(
+        <ManagedVersionDiffContent
+          result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+          format="markdown"
+          name="README.md"
+        />
+      )
+    })
+
+    const block = container.querySelector(`[data-diff-kind="${fixture.kind}"]`)
+    expect(block?.querySelector('h1')).not.toBeNull()
+    expect(block?.className).not.toContain(`bg-diff-${fixture.kind}-surface`)
+    expect(block?.getAttribute('data-managed-diff')).toBe(fixture.kind)
+  })
+
+  it('shows exact source characters when a Markdown heading cannot stay rendered', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'raw-atx-heading-fallback',
+      before: '# Old heading\n',
+      after: '## New heading\n'
+    })
+
+    await act(async () => {
+      root.render(
+        <ManagedVersionDiffContent
+          result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+          format="markdown"
+          name="README.md"
+        />
+      )
+    })
+
+    const block = container.querySelector('[data-diff-kind="mixed"]')
+    expect(block?.querySelector('pre')).not.toBeNull()
+    expect(block?.querySelector('h1, h2')).toBeNull()
+    expect(
+      Array.from(
+        block?.querySelectorAll('del [data-managed-diff-content]') ?? [],
+        (element) => element.textContent
+      )
+    ).toEqual(['Old'])
+    expect(
+      Array.from(
+        block?.querySelectorAll('ins [data-managed-diff-content]') ?? [],
+        (element) => element.textContent
+      )
+    ).toEqual(['#', 'New'])
+    expect(block?.className).not.toMatch(/bg-diff-(?:added|removed)-surface/u)
+  })
+
   it('does not style unchanged Markdown semantics as version changes', async () => {
     const result: ManagedFileVersionDiffResult = {
       baseVersionId: 'v1',

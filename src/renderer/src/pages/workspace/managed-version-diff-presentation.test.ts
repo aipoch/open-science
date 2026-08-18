@@ -3,17 +3,23 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ManagedTextDiffTaskRunner } from '../../../../main/managed-file-versions/diff-task'
 import type { ManagedFileVersionDiffResult } from '../../../../shared/managed-file-versions'
-import { toDiffPresentationBlocks, type DiffRenderBlock } from './managed-version-diff-presentation'
+import {
+  toDiffPresentationBlocks,
+  type DiffRenderBlock,
+  type MarkdownChangeTags
+} from './managed-version-diff-presentation'
 
 const diffMarkdown = async (
   before: string,
   after: string,
-  requestId: string
+  requestId: string,
+  tags?: MarkdownChangeTags
 ): Promise<DiffRenderBlock[]> => {
   const lines = await new ManagedTextDiffTaskRunner().run({ requestId, before, after })
   return toDiffPresentationBlocks(
     { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
-    'markdown'
+    'markdown',
+    tags
   )
 }
 
@@ -61,6 +67,458 @@ describe('managed version diff presentation', () => {
     ])
   })
 
+  it('keeps a stable HTML heading wrapper rendered while marking only changed text', async () => {
+    const blocks = await diffMarkdown(
+      '<h1 align="center">Claude Local Session Sync</h1>\n',
+      '<h1 align="center">Claude Local Session Sync C</h1>\n',
+      'rendered-html-heading-text-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `<h1 align="center">Claude Local Session Sync${escapedMarkdownChange('added', ' C')}</h1>`,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps stable nested HTML rendered with the caller-provided change tags', async () => {
+    const tags = {
+      added: 'managed-diff-added-r4nd0m',
+      removed: 'managed-diff-removed-r4nd0m'
+    }
+    const blocks = await diffMarkdown(
+      '<div class="summary"><strong>Old value</strong></div>\n',
+      '<div class="summary"><strong>New value</strong></div>\n',
+      'rendered-nested-html-text-change',
+      tags
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `<div class="summary"><strong><${tags.removed}>Old</${tags.removed}><${tags.added}>New</${tags.added}> value</strong></div>`,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps a stable multiline HTML wrapper rendered while marking only changed text', async () => {
+    const blocks = await diffMarkdown(
+      '<h1 align="center">\nOld value\n</h1>\n',
+      '<h1 align="center">\nNew value\n</h1>\n',
+      'rendered-multiline-html-text-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `<h1 align="center">\n${escapedMarkdownChange('removed', 'Old')}${escapedMarkdownChange('added', 'New')} value\n</h1>`,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    { replacementCount: 128, expectedKind: 'markdown' as const },
+    { replacementCount: 129, expectedKind: 'text' as const }
+  ])(
+    'uses $expectedKind at the rendered marker budget boundary for $replacementCount replacements',
+    ({ replacementCount, expectedKind }) => {
+      const changedSegments = Array.from({ length: replacementCount }, (_, index) => [
+        { kind: 'removed' as const, text: 'a' },
+        { kind: 'added' as const, text: 'b' },
+        { kind: 'context' as const, text: index === replacementCount - 1 ? '</p>\n' : ' ' }
+      ]).flat()
+      const result: ManagedFileVersionDiffResult = {
+        baseVersionId: 'v1',
+        selectedVersionId: 'v2',
+        lines: [
+          {
+            kind: 'removed',
+            segments: [
+              { kind: 'context', text: '<p>' },
+              ...changedSegments.filter((segment) => segment.kind !== 'added')
+            ]
+          },
+          {
+            kind: 'added',
+            segments: [
+              { kind: 'context', text: '<p>' },
+              ...changedSegments.filter((segment) => segment.kind !== 'removed')
+            ]
+          }
+        ]
+      }
+
+      const blocks = toDiffPresentationBlocks(result, 'markdown')
+
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0]).toMatchObject({ kind: expectedKind, changeKind: 'mixed' })
+      if (expectedKind === 'text') expect(blocks[0]).not.toHaveProperty('content')
+    }
+  )
+
+  it.each([
+    {
+      label: 'removed',
+      before: '<h1>Old</h1>\n',
+      after: '<h1></h1>\n',
+      content: `<h1>${escapedMarkdownChange('removed', 'Old')}</h1>`
+    },
+    {
+      label: 'added',
+      before: '<h1></h1>\n',
+      after: '<h1>New</h1>\n',
+      content: `<h1>${escapedMarkdownChange('added', 'New')}</h1>`
+    }
+  ])('keeps a stable HTML wrapper rendered when its text is fully $label', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `rendered-empty-html-text-${fixture.label}`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: fixture.content,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps an HTML attribute change in a character-level raw block', async () => {
+    const blocks = await diffMarkdown(
+      '<h1 align="center">Claude Local Session Sync</h1>\n',
+      '<h1 align="left">Claude Local Session Sync</h1>\n',
+      'raw-html-attribute-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<h1 align="' },
+          { kind: 'removed', text: 'c' },
+          { kind: 'added', text: 'l' },
+          { kind: 'context', text: 'e' },
+          { kind: 'removed', text: 'n' },
+          { kind: 'added', text: 'f' },
+          { kind: 'context', text: 't' },
+          { kind: 'removed', text: 'er' },
+          { kind: 'context', text: '">Claude Local Session Sync</h1>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps an HTML tag change in a character-level raw block', async () => {
+    const blocks = await diffMarkdown(
+      '<h1 align="center">Claude Local Session Sync</h1>\n',
+      '<h2 align="center">Claude Local Session Sync</h2>\n',
+      'raw-html-tag-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<h' },
+          { kind: 'removed', text: '1' },
+          { kind: 'added', text: '2' },
+          { kind: 'context', text: ' align="center">Claude Local Session Sync</h' },
+          { kind: 'removed', text: '1' },
+          { kind: 'added', text: '2' },
+          { kind: 'context', text: '>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps an HTML structure change in a character-level raw block', async () => {
+    const blocks = await diffMarkdown(
+      '<h1 align="center">Claude Local Session Sync</h1>\n',
+      '<h1 align="center"><em>Claude Local Session Sync</em></h1>\n',
+      'raw-html-structure-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<h1 align="center">' },
+          { kind: 'added', text: '<em>' },
+          { kind: 'context', text: 'Claude Local Session Sync</' },
+          { kind: 'added', text: 'em></' },
+          { kind: 'context', text: 'h1>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps unchanged HTML entities rendered while marking nearby plain text', async () => {
+    const blocks = await diffMarkdown(
+      '<h1>A &amp; old</h1>\n',
+      '<h1>A &amp; new</h1>\n',
+      'rendered-html-near-entity-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `<h1>A &amp; ${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}</h1>`,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps a changed HTML entity in a character-level raw block', async () => {
+    const blocks = await diffMarkdown(
+      '<h1>A &amp; B</h1>\n',
+      '<h1>A &copy; B</h1>\n',
+      'raw-html-entity-source-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<h1>A &' },
+          { kind: 'removed', text: 'am' },
+          { kind: 'added', text: 'co' },
+          { kind: 'context', text: 'p' },
+          { kind: 'added', text: 'y' },
+          { kind: 'context', text: '; B</h1>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps raw-text HTML elements in a character-level raw block', async () => {
+    const blocks = await diffMarkdown(
+      '<script>const value = "old"</script>\n',
+      '<script>const value = "new"</script>\n',
+      'raw-html-raw-text-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<script>const value = "' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '"</script>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    'script',
+    'style',
+    'textarea',
+    'title',
+    'xmp',
+    'iframe',
+    'noembed',
+    'noframes',
+    'plaintext',
+    'template'
+  ])('never injects rendered diff markers into the <%s> raw-text family', async (tagName) => {
+    const blocks = await diffMarkdown(
+      `<${tagName}>old</${tagName}>\n`,
+      `<${tagName}>new</${tagName}>\n`,
+      `raw-html-${tagName}-change`
+    )
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ kind: 'text', changeKind: 'mixed' })
+  })
+
+  it('keeps multiline raw-text HTML in a character-level raw block', async () => {
+    const blocks = await diffMarkdown(
+      '<script>\nconst value = "old"\n</script>\n',
+      '<script>\nconst value = "new"\n</script>\n',
+      'raw-html-multiline-script-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<script>\nconst value = "' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '"\n</script>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps one changed segment spanning HTML text nodes in a character-level raw block', () => {
+    const result: ManagedFileVersionDiffResult = {
+      baseVersionId: 'v1',
+      selectedVersionId: 'v2',
+      lines: [
+        {
+          kind: 'removed',
+          oldLineNumber: 1,
+          segments: [
+            { kind: 'context', text: '<p>a' },
+            { kind: 'removed', text: 'b<em>c' },
+            { kind: 'context', text: 'd</em></p>' }
+          ]
+        },
+        {
+          kind: 'added',
+          newLineNumber: 1,
+          segments: [
+            { kind: 'context', text: '<p>a' },
+            { kind: 'added', text: 'X<em>Y' },
+            { kind: 'context', text: 'd</em></p>' }
+          ]
+        }
+      ]
+    }
+
+    const blocks = toDiffPresentationBlocks(result, 'markdown')
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<p>a' },
+          { kind: 'removed', text: 'b<em>c' },
+          { kind: 'added', text: 'X<em>Y' },
+          { kind: 'context', text: 'd</em></p>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps foreign-namespace HTML in a character-level raw block', async () => {
+    const blocks = await diffMarkdown(
+      '<svg><text>old</text></svg>\n',
+      '<svg><text>new</text></svg>\n',
+      'raw-html-foreign-namespace-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '<svg><text>' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '</text></svg>' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    {
+      label: 'strong emphasis',
+      before: 'This is **old**\n',
+      after: 'This is **new**\n',
+      content: `This is **${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}**`
+    },
+    {
+      label: 'strikethrough',
+      before: 'This is ~~old~~\n',
+      after: 'This is ~~new~~\n',
+      content: `This is ~~${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}~~`
+    },
+    {
+      label: 'link label',
+      before: 'See [old](https://same.example)\n',
+      after: 'See [new](https://same.example)\n',
+      content: `See [${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}](https://same.example)`
+    },
+    {
+      label: 'inline HTML in prose',
+      before: 'Before <span>old</span>\n',
+      after: 'Before <span>new</span>\n',
+      content: `Before <span>${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}</span>`
+    },
+    {
+      label: 'standalone inline HTML',
+      before: '<span>old</span>\n',
+      after: '<span>new</span>\n',
+      content: `<span>${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}</span>`
+    }
+  ])('keeps stable $label rendered while marking only changed text', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `rendered-stable-${fixture.label.replaceAll(' ', '-')}`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: fixture.content,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('falls back when the HTML parser would discard inline diff markers', async () => {
+    const blocks = await diffMarkdown(
+      'Before <select><option>old</option></select>\n',
+      'Before <select><option>new</option></select>\n',
+      'raw-inline-html-special-content-model'
+    )
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ kind: 'text', changeKind: 'mixed' })
+    expect(blocks[0]).not.toHaveProperty('content')
+  })
+
+  it.each([
+    {
+      label: 'link destination',
+      before: 'See [guide](https://old.example)\n',
+      after: 'See [guide](https://new.example)\n'
+    },
+    { label: 'inline code', before: 'Run `old` now\n', after: 'Run `new` now\n' },
+    { label: 'inline math', before: 'Value is $old$\n', after: 'Value is $new$\n' }
+  ])('keeps a changed $label in a character-level raw block', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `raw-stable-markdown-${fixture.label.replaceAll(' ', '-')}`
+    )
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ kind: 'text', changeKind: 'mixed' })
+  })
+
   it('keeps a Setext heading rendered while marking its changed text inline', async () => {
     const blocks = await diffMarkdown(
       'Old title\n===\nStable paragraph\n',
@@ -78,7 +536,7 @@ describe('managed version diff presentation', () => {
     ])
   })
 
-  it('renders both complete Setext headings when the marker changes', async () => {
+  it('falls back a changed Setext marker to one character-level raw block', async () => {
     const blocks = await diffMarkdown(
       'Stable title\n===\n',
       'Stable title\n---\n',
@@ -87,40 +545,37 @@ describe('managed version diff presentation', () => {
 
     expect(blocks).toEqual([
       {
-        kind: 'markdown',
-        changeKind: 'removed',
-        content: 'Stable title\n===',
-        startIndex: 0
-      },
-      {
-        kind: 'markdown',
-        changeKind: 'added',
-        content: 'Stable title\n---',
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: 'Stable title\n' },
+          { kind: 'removed', text: '===' },
+          { kind: 'added', text: '---' }
+        ],
         startIndex: 0
       }
     ])
   })
 
-  it('keeps entity replacements as complete rendered Markdown blocks', async () => {
+  it('falls back an entity replacement to its changed source characters', async () => {
     const blocks = await diffMarkdown('Copyright &copy;\n', 'Copyright &reg;\n', 'entity-change')
 
     expect(blocks).toEqual([
       {
-        kind: 'markdown',
-        changeKind: 'removed',
-        content: 'Copyright &copy;',
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: 'Copyright &' },
+          { kind: 'removed', text: 'copy' },
+          { kind: 'added', text: 'reg' },
+          { kind: 'context', text: ';' }
+        ],
         startIndex: 0
-      },
-      {
-        kind: 'markdown',
-        changeKind: 'added',
-        content: 'Copyright &reg;',
-        startIndex: 1
       }
     ])
   })
 
-  it('shows changed reference definitions as raw single-column rows', async () => {
+  it('shows a changed reference definition as one character-level raw block', async () => {
     const blocks = await diffMarkdown(
       '[guide]: https://old.example\n',
       '[guide]: https://new.example\n',
@@ -130,20 +585,19 @@ describe('managed version diff presentation', () => {
     expect(blocks).toEqual([
       {
         kind: 'text',
-        changeKind: 'removed',
-        segments: [{ kind: 'removed', text: '[guide]: https://old.example' }],
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '[guide]: https://' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '.example' }
+        ],
         startIndex: 0
-      },
-      {
-        kind: 'text',
-        changeKind: 'added',
-        segments: [{ kind: 'added', text: '[guide]: https://new.example' }],
-        startIndex: 1
       }
     ])
   })
 
-  it('keeps reference-style links intact by falling back to complete Markdown blocks', async () => {
+  it('falls back a reference-style link to its changed source characters', async () => {
     const blocks = await diffMarkdown(
       'See [guide][old]\n',
       'See [guide][new]\n',
@@ -152,16 +606,15 @@ describe('managed version diff presentation', () => {
 
     expect(blocks).toEqual([
       {
-        kind: 'markdown',
-        changeKind: 'removed',
-        content: 'See [guide][old]',
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: 'See [guide][' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ']' }
+        ],
         startIndex: 0
-      },
-      {
-        kind: 'markdown',
-        changeKind: 'added',
-        content: 'See [guide][new]',
-        startIndex: 1
       }
     ])
   })
@@ -304,25 +757,39 @@ describe('managed version diff presentation', () => {
   })
 
   it.each([
-    { label: 'emphasis', before: 'This is plain\n', after: 'This is *plain*\n' },
-    { label: 'math', before: 'Value is plain\n', after: 'Value is $plain$\n' }
+    {
+      label: 'emphasis',
+      before: 'This is plain\n',
+      after: 'This is *plain*\n',
+      segments: [
+        { kind: 'context' as const, text: 'This is ' },
+        { kind: 'added' as const, text: '*' },
+        { kind: 'context' as const, text: 'plain' },
+        { kind: 'added' as const, text: '*' }
+      ]
+    },
+    {
+      label: 'math',
+      before: 'Value is plain\n',
+      after: 'Value is $plain$\n',
+      segments: [
+        { kind: 'context' as const, text: 'Value is ' },
+        { kind: 'added' as const, text: '$' },
+        { kind: 'context' as const, text: 'plain' },
+        { kind: 'added' as const, text: '$' }
+      ]
+    }
   ])(
-    'falls back to complete Markdown blocks across $label boundaries',
-    async ({ before, after }) => {
+    'falls back to changed source characters across $label boundaries',
+    async ({ before, after, segments }) => {
       const blocks = await diffMarkdown(before, after, `markdown-${before.length}-${after.length}`)
 
       expect(blocks).toEqual([
         {
-          kind: 'markdown',
-          changeKind: 'removed',
-          content: before.trimEnd(),
+          kind: 'text',
+          changeKind: 'mixed',
+          segments,
           startIndex: 0
-        },
-        {
-          kind: 'markdown',
-          changeKind: 'added',
-          content: after.trimEnd(),
-          startIndex: 1
         }
       ])
     }
@@ -345,7 +812,7 @@ describe('managed version diff presentation', () => {
     ])
   })
 
-  it('renders complete paragraphs when a replacement crosses inline Markdown syntax', async () => {
+  it('falls back only the affected paragraph across inline Markdown syntax', async () => {
     const blocks = await diffMarkdown(
       'Opening line\nThis is plain\nclosing line\n',
       'Opening line\nThis is *plain*\nclosing line\n',
@@ -354,21 +821,21 @@ describe('managed version diff presentation', () => {
 
     expect(blocks).toEqual([
       {
-        kind: 'markdown',
-        changeKind: 'removed',
-        content: 'Opening line\nThis is plain\nclosing line',
-        startIndex: 0
-      },
-      {
-        kind: 'markdown',
-        changeKind: 'added',
-        content: 'Opening line\nThis is *plain*\nclosing line',
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: 'Opening line\nThis is ' },
+          { kind: 'added', text: '*' },
+          { kind: 'context', text: 'plain' },
+          { kind: 'added', text: '*' },
+          { kind: 'context', text: '\nclosing line' }
+        ],
         startIndex: 0
       }
     ])
   })
 
-  it('does not absorb adjacent paragraphs into a changed ATX heading', async () => {
+  it('falls back only the changed ATX heading to one character-level raw block', async () => {
     const blocks = await diffMarkdown(
       'Intro paragraph\n# Old heading\nOutro paragraph\n',
       'Intro paragraph\n## New heading\nOutro paragraph\n',
@@ -383,15 +850,16 @@ describe('managed version diff presentation', () => {
         startIndex: 0
       },
       {
-        kind: 'markdown',
-        changeKind: 'removed',
-        content: '# Old heading',
-        startIndex: 1
-      },
-      {
-        kind: 'markdown',
-        changeKind: 'added',
-        content: '## New heading',
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '#' },
+          { kind: 'added', text: '#' },
+          { kind: 'context', text: ' ' },
+          { kind: 'removed', text: 'Old' },
+          { kind: 'added', text: 'New' },
+          { kind: 'context', text: ' heading' }
+        ],
         startIndex: 1
       },
       {
@@ -403,7 +871,7 @@ describe('managed version diff presentation', () => {
     ])
   })
 
-  it('renders complete ATX headings when a closing marker changes', async () => {
+  it('falls back a changed ATX closing marker to its source characters', async () => {
     const blocks = await diffMarkdown(
       '# Stable heading #\n',
       '# Stable heading ##\n',
@@ -412,15 +880,12 @@ describe('managed version diff presentation', () => {
 
     expect(blocks).toEqual([
       {
-        kind: 'markdown',
-        changeKind: 'removed',
-        content: '# Stable heading #',
-        startIndex: 0
-      },
-      {
-        kind: 'markdown',
-        changeKind: 'added',
-        content: '# Stable heading ##',
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '# Stable heading #' },
+          { kind: 'added', text: '#' }
+        ],
         startIndex: 0
       }
     ])
@@ -453,26 +918,150 @@ describe('managed version diff presentation', () => {
     expect(blocks).toContainEqual({
       kind: 'text',
       changeKind: 'added',
-      segments: [{ kind: 'added', text: '' }],
+      segments: [{ kind: 'added', text: '\n' }],
       startIndex: 1
     })
   })
 
-  it('shows a trailing-newline-only change as complete old and new rows', async () => {
+  it.each([
+    { label: 'addition', before: '', after: '\n', kind: 'added' as const },
+    { label: 'removal', before: '\n', after: '', kind: 'removed' as const }
+  ])('preserves a pure blank-line $label as one exact newline', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `pure-blank-line-${fixture.label}`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: fixture.kind,
+        segments: [{ kind: fixture.kind, text: '\n' }],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('shows a trailing-newline-only change as one exact raw character change', async () => {
     const blocks = await diffMarkdown('line', 'line\n', 'trailing-newline-change')
 
     expect(blocks).toEqual([
       {
-        kind: 'markdown',
-        changeKind: 'removed',
-        content: 'line',
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: 'line' },
+          { kind: 'added', text: '\n' }
+        ],
         startIndex: 0
-      },
+      }
+    ])
+  })
+
+  it.each([
+    { label: 'LF to CRLF', before: 'line\n', after: 'line\r\n', kind: 'added' as const },
+    { label: 'CRLF to LF', before: 'line\r\n', after: 'line\n', kind: 'removed' as const }
+  ])('keeps the shared newline visible during a trailing $label conversion', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `render-trailing-ending-conversion-${fixture.label}`
+    )
+
+    expect(blocks).toEqual([
       {
-        kind: 'markdown',
-        changeKind: 'added',
-        content: 'line',
-        startIndex: 1
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: 'line' },
+          { kind: fixture.kind, text: '\r' },
+          { kind: 'context', text: '\n' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('does not duplicate a changed newline before an inserted continuation', async () => {
+    const blocks = await diffMarkdown(
+      '- a',
+      '- a\n  continuation\n',
+      'inserted-continuation-after-newline'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '- a' },
+          { kind: 'added', text: '\n  continuation\n' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('does not duplicate a changed CRLF before an inserted continuation', async () => {
+    const blocks = await diffMarkdown(
+      '- a',
+      '- a\r\n  continuation\r\n',
+      'inserted-continuation-after-crlf'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '- a' },
+          { kind: 'added', text: '\r\n  continuation\r\n' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('does not duplicate a removed newline before a removed continuation', async () => {
+    const blocks = await diffMarkdown(
+      '- a\n  continuation\n',
+      '- a',
+      'removed-continuation-after-newline'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '- a' },
+          { kind: 'removed', text: '\n  continuation\n' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    { label: 'paragraph', prefix: 'plain' },
+    { label: 'lazy blockquote', prefix: '> quote' }
+  ])('keeps an inserted $label continuation in one exact mixed block', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.prefix,
+      `${fixture.prefix}\ncontinuation\n`,
+      `inserted-${fixture.label}-continuation`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: fixture.prefix },
+          { kind: 'added', text: '\ncontinuation\n' }
+        ],
+        startIndex: 0
       }
     ])
   })
@@ -566,6 +1155,427 @@ describe('managed version diff presentation', () => {
     lexer.mockRestore()
   })
 
+  it('keeps an oversized fenced replacement together without absorbing a stable heading', async () => {
+    const stable = 'x'.repeat(2_100)
+    const blocks = await diffMarkdown(
+      `\`\`\`txt\n${stable}old\n\`\`\`\n# Stable heading\n`,
+      `\`\`\`txt\n${stable}new\n\`\`\`\n# Stable heading\n`,
+      'oversized-fenced-replacement'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: `\`\`\`txt\n${stable}` },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '\n```' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '# Stable heading',
+        startIndex: 4
+      }
+    ])
+  })
+
+  it.each([
+    { label: 'marker type', beforeMarker: '```', afterMarker: '~~~' },
+    { label: 'long info string', beforeMarker: '```', afterMarker: '```' }
+  ])(
+    'keeps a single-line oversized unclosed fence $label change character-precise',
+    async (fixture) => {
+      const stable = 'x'.repeat(2_100)
+      const blocks = await diffMarkdown(
+        `${fixture.beforeMarker}${stable}old`,
+        `${fixture.afterMarker}${stable}new`,
+        `single-line-oversized-fence-${fixture.label}`
+      )
+      const markerSegments =
+        fixture.beforeMarker === fixture.afterMarker
+          ? [{ kind: 'context' as const, text: `${fixture.beforeMarker}${stable}` }]
+          : [
+              { kind: 'removed' as const, text: fixture.beforeMarker },
+              { kind: 'added' as const, text: fixture.afterMarker },
+              { kind: 'context' as const, text: stable }
+            ]
+
+      expect(blocks).toEqual([
+        {
+          kind: 'text',
+          changeKind: 'mixed',
+          segments: [
+            ...markerSegments,
+            { kind: 'removed', text: 'old' },
+            { kind: 'added', text: 'new' }
+          ],
+          startIndex: 0
+        }
+      ])
+    }
+  )
+
+  it.each([
+    {
+      label: 'blockquote',
+      opening: '> ```txt',
+      contentPrefix: '> ',
+      closing: '> ```'
+    },
+    {
+      label: 'list item',
+      opening: '- ```txt',
+      contentPrefix: '  ',
+      closing: '  ```'
+    },
+    {
+      label: 'ordered list item',
+      opening: '10. ```txt',
+      contentPrefix: '    ',
+      closing: '    ```'
+    },
+    {
+      label: 'nested list item',
+      opening: '- - ```txt',
+      contentPrefix: '    ',
+      closing: '    ```'
+    },
+    {
+      label: 'list blockquote',
+      opening: '- > ```txt',
+      contentPrefix: '  > ',
+      closing: '  > ```'
+    }
+  ])('keeps an oversized fence inside a $label container intact', async (fixture) => {
+    const stable = 'x'.repeat(2_100)
+    const blocks = await diffMarkdown(
+      `${fixture.opening}\n${fixture.contentPrefix}${stable}old\n${fixture.closing}\n# Stable heading\n`,
+      `${fixture.opening}\n${fixture.contentPrefix}${stable}new\n${fixture.closing}\n# Stable heading\n`,
+      `oversized-${fixture.label}-fence`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          {
+            kind: 'context',
+            text: `${fixture.opening}\n${fixture.contentPrefix}${stable}`
+          },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: `\n${fixture.closing}` }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '# Stable heading',
+        startIndex: 4
+      }
+    ])
+  })
+
+  it.each([
+    { label: 'blockquote', opening: '> ```txt', contentPrefix: '> ' },
+    { label: 'list item', opening: '- ```txt', contentPrefix: '  ' }
+  ])('ends an unclosed oversized $label fence when its container ends', async (fixture) => {
+    const stable = 'x'.repeat(2_100)
+    const blocks = await diffMarkdown(
+      `${fixture.opening}\n${fixture.contentPrefix}${stable}old\n# Stable heading\n`,
+      `${fixture.opening}\n${fixture.contentPrefix}${stable}new\n# Stable heading\n`,
+      `unclosed-oversized-${fixture.label}-fence`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          {
+            kind: 'context',
+            text: `${fixture.opening}\n${fixture.contentPrefix}${stable}`
+          },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '# Stable heading',
+        startIndex: 3
+      }
+    ])
+  })
+
+  it('does not close a top-level oversized fence with a blockquote fence marker', async () => {
+    const stable = 'x'.repeat(2_100)
+    const blocks = await diffMarkdown(
+      `\`\`\`txt\n${stable}old\n> \`\`\`\n# Stable heading\n`,
+      `\`\`\`txt\n${stable}new\n> \`\`\`\n# Stable heading\n`,
+      'mismatched-blockquote-fence-closer'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: `\`\`\`txt\n${stable}` },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '\n> ```\n# Stable heading' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    { label: 'backtick', marker: '```' },
+    { label: 'tilde', marker: '~~~' }
+  ])('does not truncate a non-empty $label fence tail into a valid closer', async (fixture) => {
+    const stable = 'x'.repeat(2_100)
+    const invalidCloser = `${fixture.marker}${' '.repeat(2_100)}x`
+    const blocks = await diffMarkdown(
+      `${fixture.marker}txt\n${stable}old\n${invalidCloser}\n# Stable heading\n`,
+      `${fixture.marker}txt\n${stable}new\n${invalidCloser}\n# Stable heading\n`,
+      `oversized-${fixture.label}-invalid-closer-tail`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: `${fixture.marker}txt\n${stable}` },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: `\n${invalidCloser}\n# Stable heading` }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('does not treat a ten-digit ordered marker as a list fence container', async () => {
+    const stable = 'x'.repeat(2_100)
+    const blocks = await diffMarkdown(
+      `1234567890. \`\`\`txt\n${stable}old\n# Stable heading\n`,
+      `1234567890. \`\`\`txt\n${stable}new\n# Stable heading\n`,
+      'invalid-ten-digit-list-fence'
+    )
+
+    expect(blocks.at(-1)).toEqual({
+      kind: 'markdown',
+      changeKind: 'context',
+      content: '# Stable heading',
+      startIndex: 3
+    })
+  })
+
+  it('does not treat an oversized invalid backtick opener as a fenced block', async () => {
+    const stable = 'x'.repeat(2_100)
+    const blocks = await diffMarkdown(
+      `\`\`\` foo\`bar\n${stable}old\n# Stable heading\n`,
+      `\`\`\` foo\`bar\n${stable}new\n# Stable heading\n`,
+      'invalid-oversized-backtick-opener'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: `\`\`\` foo\`bar\n${stable}` },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '# Stable heading',
+        startIndex: 3
+      }
+    ])
+  })
+
+  it('preserves an inserted trailing blank line in an oversized unclosed tilde fence', async () => {
+    const stable = 'x'.repeat(2_100)
+    const blocks = await diffMarkdown(
+      `~~~\n${stable}old`,
+      `~~~\n${stable}new\n\n`,
+      'oversized-unclosed-tilde-blank-line'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: `~~~\n${stable}` },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new\n\n' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    {
+      label: 'deleted',
+      before: '~~~\nstable\n~~~\n# Heading\n',
+      after: '~~~\nstable\n# Heading\n',
+      changedKind: 'removed' as const
+    },
+    {
+      label: 'inserted',
+      before: '~~~\nstable\n# Heading\n',
+      after: '~~~\nstable\n~~~\n# Heading\n',
+      changedKind: 'added' as const
+    }
+  ])('keeps following content in the raw range when a tilde closer is $label', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `${fixture.label}-tilde-closer`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '~~~\nstable\n' },
+          { kind: fixture.changedKind, text: '~~~\n' },
+          { kind: 'context', text: '# Heading' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('keeps adjacent changed fenced and heading blocks as separate raw ranges', async () => {
+    const blocks = await diffMarkdown(
+      '```txt\nold\n```\n# Heading\n',
+      '```txt\nnew\n```\n## Heading\n',
+      'adjacent-fence-and-heading-changes'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '```txt\n' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '\n```' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '#' },
+          { kind: 'added', text: '#' },
+          { kind: 'context', text: ' Heading' }
+        ],
+        startIndex: 4
+      }
+    ])
+  })
+
+  it('marks only a line inserted inside a fenced block', async () => {
+    const blocks = await diffMarkdown(
+      '```ts\nconst stable = true\n```\n',
+      '```ts\nconst stable = true\nconst added = 1\n```\n',
+      'fenced-line-insertion'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '```ts\nconst stable = true\n' },
+          { kind: 'added', text: 'const added = 1\n' },
+          { kind: 'context', text: '```' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('marks an inserted blank line inside a changed fenced block as a newline', async () => {
+    const blocks = await diffMarkdown(
+      '```txt\nold\n```\n',
+      '```txt\nnew\n\n```\n',
+      'fenced-replacement-with-blank-line'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '```txt\n' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '\n' },
+          { kind: 'added', text: '\n' },
+          { kind: 'context', text: '```' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('collapses an oversized pair with no changed segments to one context block', () => {
+    const content = `**${'x'.repeat(2_100)}**`
+    const lexer = vi.spyOn(marked, 'lexer')
+    const result: ManagedFileVersionDiffResult = {
+      baseVersionId: 'v1',
+      selectedVersionId: 'v2',
+      lines: [
+        {
+          kind: 'removed',
+          oldLineNumber: 1,
+          segments: [{ kind: 'context', text: content }]
+        },
+        {
+          kind: 'added',
+          newLineNumber: 1,
+          segments: [{ kind: 'context', text: content }]
+        }
+      ]
+    }
+
+    expect(toDiffPresentationBlocks(result, 'markdown')).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'context',
+        segments: [{ kind: 'context', text: content }],
+        startIndex: 0
+      }
+    ])
+    expect(lexer).not.toHaveBeenCalled()
+    lexer.mockRestore()
+  })
+
   it('keeps a long valid list rendered when its individual lines stay within budget', async () => {
     const content = Array.from({ length: 500 }, (_, index) => `- valid list item ${index}`).join(
       '\n'
@@ -592,14 +1602,34 @@ describe('managed version diff presentation', () => {
       selectedVersionId: 'v2',
       lines: [
         {
-          kind: 'removed',
+          kind: 'context',
           oldLineNumber: 1,
-          segments: [{ kind: 'removed', text: '- old item' }]
+          newLineNumber: 1,
+          segments: [{ kind: 'context', text: 'Opening line' }]
+        },
+        {
+          kind: 'removed',
+          oldLineNumber: 2,
+          segments: [
+            { kind: 'context', text: '- ' },
+            { kind: 'removed', text: 'old' },
+            { kind: 'context', text: ' item' }
+          ]
         },
         {
           kind: 'added',
-          newLineNumber: 1,
-          segments: [{ kind: 'added', text: '- new item' }]
+          newLineNumber: 2,
+          segments: [
+            { kind: 'context', text: '- ' },
+            { kind: 'added', text: 'new' },
+            { kind: 'context', text: ' item' }
+          ]
+        },
+        {
+          kind: 'context',
+          oldLineNumber: 3,
+          newLineNumber: 3,
+          segments: [{ kind: 'context', text: 'Closing line' }]
         }
       ]
     }
@@ -608,16 +1638,279 @@ describe('managed version diff presentation', () => {
 
     expect(blocks).toEqual([
       {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: 'Opening line',
+        startIndex: 0
+      },
+      {
         kind: 'text',
-        changeKind: 'removed',
-        segments: [{ kind: 'removed', text: '- old item' }],
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '- ' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ' item' }
+        ],
+        startIndex: 1
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: 'Closing line',
+        startIndex: 3
+      }
+    ])
+    lexer.mockRestore()
+  })
+
+  it('keeps a fenced block intact when the Markdown lexer throws', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'fenced-lexer-failure',
+      before: '```txt\nold\n```\n# Stable heading\n',
+      after: '```txt\nnew\n```\n# Stable heading\n'
+    })
+    const lexer = vi.spyOn(marked, 'lexer').mockImplementation(() => {
+      throw new Error('synthetic lexer failure')
+    })
+
+    expect(
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
+    ).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '```txt\n' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '\n```' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '# Stable heading',
+        startIndex: 4
+      }
+    ])
+    lexer.mockRestore()
+  })
+
+  it('keeps both sides of a changed fence intact when the Markdown lexer throws', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'changed-fence-lexer-failure',
+      before: '```txt\nold\n```\n# Stable heading\n',
+      after: '~~~txt\nnew\n~~~\n# Stable heading\n'
+    })
+    const lexer = vi.spyOn(marked, 'lexer').mockImplementation(() => {
+      throw new Error('synthetic lexer failure')
+    })
+
+    expect(
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
+    ).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'removed', text: '```' },
+          { kind: 'added', text: '~~~' },
+          { kind: 'context', text: 'txt\n' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '\n' },
+          { kind: 'removed', text: '```' },
+          { kind: 'added', text: '~~~' }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: '# Stable heading',
+        startIndex: 6
+      }
+    ])
+    lexer.mockRestore()
+  })
+
+  it.each([
+    {
+      label: 'deleted',
+      before: '~~~\nstable\n~~~\n# Heading\n',
+      after: '~~~\nstable\n# Heading\n',
+      changedKind: 'removed' as const
+    },
+    {
+      label: 'inserted',
+      before: '~~~\nstable\n# Heading\n',
+      after: '~~~\nstable\n~~~\n# Heading\n',
+      changedKind: 'added' as const
+    }
+  ])(
+    'keeps following content raw when a fence closer is $label and lexing fails',
+    async (fixture) => {
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `${fixture.label}-closer-lexer-failure`,
+        before: fixture.before,
+        after: fixture.after
+      })
+      const lexer = vi.spyOn(marked, 'lexer').mockImplementation(() => {
+        throw new Error('synthetic lexer failure')
+      })
+
+      expect(
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
+      ).toEqual([
+        {
+          kind: 'text',
+          changeKind: 'mixed',
+          segments: [
+            { kind: 'context', text: '~~~\nstable\n' },
+            { kind: fixture.changedKind, text: '~~~\n' },
+            { kind: 'context', text: '# Heading' }
+          ],
+          startIndex: 0
+        }
+      ])
+      lexer.mockRestore()
+    }
+  )
+
+  it.each([
+    {
+      label: 'ends an unclosed blockquote fence at the container boundary',
+      before: '> ```txt\n> old\n# Stable heading\n',
+      after: '> ```txt\n> new\n# Stable heading\n',
+      expected: [
+        {
+          kind: 'text' as const,
+          changeKind: 'mixed' as const,
+          segments: [
+            { kind: 'context' as const, text: '> ```txt\n> ' },
+            { kind: 'removed' as const, text: 'old' },
+            { kind: 'added' as const, text: 'new' }
+          ],
+          startIndex: 0
+        },
+        {
+          kind: 'markdown' as const,
+          changeKind: 'context' as const,
+          content: '# Stable heading',
+          startIndex: 3
+        }
+      ]
+    },
+    {
+      label: 'does not close a top-level fence with a blockquote marker',
+      before: '```txt\nold\n> ```\n# Stable heading\n',
+      after: '```txt\nnew\n> ```\n# Stable heading\n',
+      expected: [
+        {
+          kind: 'text' as const,
+          changeKind: 'mixed' as const,
+          segments: [
+            { kind: 'context' as const, text: '```txt\n' },
+            { kind: 'removed' as const, text: 'old' },
+            { kind: 'added' as const, text: 'new' },
+            { kind: 'context' as const, text: '\n> ```\n# Stable heading' }
+          ],
+          startIndex: 0
+        }
+      ]
+    },
+    {
+      label: 'keeps a nested list fence intact',
+      before: '- - ```txt\n    old\n# Stable heading\n',
+      after: '- - ```txt\n    new\n# Stable heading\n',
+      expected: [
+        {
+          kind: 'text' as const,
+          changeKind: 'mixed' as const,
+          segments: [
+            { kind: 'context' as const, text: '- - ```txt\n    ' },
+            { kind: 'removed' as const, text: 'old' },
+            { kind: 'added' as const, text: 'new' }
+          ],
+          startIndex: 0
+        },
+        {
+          kind: 'markdown' as const,
+          changeKind: 'context' as const,
+          content: '# Stable heading',
+          startIndex: 3
+        }
+      ]
+    }
+  ])('$label when the Markdown lexer throws', async (fixture) => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: `container-lexer-failure-${fixture.label}`,
+      before: fixture.before,
+      after: fixture.after
+    })
+    const lexer = vi.spyOn(marked, 'lexer').mockImplementation(() => {
+      throw new Error('synthetic lexer failure')
+    })
+
+    expect(
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
+    ).toEqual(fixture.expected)
+    lexer.mockRestore()
+  })
+
+  it('keeps an empty changed line visible when a raw fallback also contains a replacement', () => {
+    const lexer = vi.spyOn(marked, 'lexer').mockImplementation(() => {
+      throw new Error('synthetic lexer failure')
+    })
+    const result: ManagedFileVersionDiffResult = {
+      baseVersionId: 'v1',
+      selectedVersionId: 'v2',
+      lines: [
+        {
+          kind: 'removed',
+          oldLineNumber: 1,
+          segments: [
+            { kind: 'context', text: '- ' },
+            { kind: 'removed', text: 'old' }
+          ]
+        },
+        {
+          kind: 'added',
+          newLineNumber: 1,
+          segments: [
+            { kind: 'context', text: '- ' },
+            { kind: 'added', text: 'new' }
+          ]
+        },
+        {
+          kind: 'added',
+          newLineNumber: 2,
+          segments: [{ kind: 'added', text: '' }]
+        }
+      ]
+    }
+
+    expect(toDiffPresentationBlocks(result, 'markdown')).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '- ' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' }
+        ],
         startIndex: 0
       },
       {
         kind: 'text',
         changeKind: 'added',
-        segments: [{ kind: 'added', text: '- new item' }],
-        startIndex: 1
+        segments: [{ kind: 'added', text: '' }],
+        startIndex: 2
       }
     ])
     lexer.mockRestore()
