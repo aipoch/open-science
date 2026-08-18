@@ -3,6 +3,7 @@ import type {
   SessionDelegatedWorkRuntimeContext,
   SessionRuntimeContext
 } from '../../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 
 const collectDirectDelegateFrameIds = (
   graph: NonNullable<PersistedChatSession['conversationGraph']>
@@ -285,6 +286,38 @@ export const mergeRuntimeConversationAuthority = (
       ? { conversationGraph: structuredClone(current.conversationGraph) }
       : {})
 })
+
+const planProjectionMatchesRuntimePlan = (
+  projection: ActivePlanProjection | undefined,
+  plan: NonNullable<SessionRuntimeContext['plan']> | undefined
+): projection is ActivePlanProjection =>
+  Boolean(
+    projection &&
+    plan &&
+    projection.artifactId === plan.artifactId &&
+    projection.artifactVersionId === plan.artifactVersionId &&
+    projection.artifactChecksum === plan.artifactChecksum &&
+    projection.originatingPromptMessageId === plan.originatingPromptMessageId &&
+    projection.materializedAt === plan.materializedAt &&
+    projection.approval === plan.approval &&
+    projection.continuationState === plan.continuation?.state &&
+    JSON.stringify(projection.stepStatuses) === JSON.stringify(plan.stepStatuses)
+  )
+
+export const retainRuntimePlanProjection = (
+  current: Pick<PersistedChatSession, 'runtimeContext'> & {
+    activePlanProjection?: ActivePlanProjection
+  },
+  incoming: Pick<PersistedChatSession, 'runtimeContext'>
+): ActivePlanProjection | undefined => {
+  const projection = current.activePlanProjection
+  const currentPlan = current.runtimeContext?.plan
+  const incomingPlan = incoming.runtimeContext?.plan
+  return planProjectionMatchesRuntimePlan(projection, currentPlan) &&
+    JSON.stringify(currentPlan) === JSON.stringify(incomingPlan)
+    ? projection
+    : undefined
+}
 
 export const mergePersistedRuntimeIdentityProjection = (
   current: Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'>,

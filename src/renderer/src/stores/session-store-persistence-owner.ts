@@ -39,15 +39,14 @@ import {
   mergeDelegatedWorkAuthorityProjection,
   mergeNewerPersistedSessionByIdentity,
   mergePersistedRuntimeIdentityProjection,
-  mergeRuntimeConversationAuthority
+  mergeRuntimeConversationAuthority,
+  retainRuntimePlanProjection
 } from './session-store-persistence-merge'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
 export type ChatMessageStatus = PersistedMessageStatus
-export type ChatMessage = PersistedChatMessage & {
-  sortIndex?: number
-}
+export type ChatMessage = PersistedChatMessage & { sortIndex?: number }
 export type ActiveRun = PersistedActiveRun
 export type ToolActivityStatus = ToolCallStatus
 export type ToolActivity = {
@@ -587,6 +586,12 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               { ...current, runtimeContext: session.runtimeContext },
               interactionState
             )
+        const activePlanProjection = matchesPersistedPlanProjection(
+          current.activePlanProjection,
+          session
+        )
+          ? current.activePlanProjection
+          : retainRuntimePlanProjection(current, session)
         const projected: ChatSession = {
           ...current,
           ...mergeRuntimeConversationAuthority(current, session),
@@ -594,12 +599,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
-          activePlanProjection: matchesPersistedPlanProjection(
-            current.activePlanProjection,
-            session
-          )
-            ? current.activePlanProjection
-            : undefined,
+          activePlanProjection,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)

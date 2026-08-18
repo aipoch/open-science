@@ -831,6 +831,66 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
+  it('keeps the active Plan projection when Permission advances the runtime revision', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-permission',
+        runtimeContext: {
+          ...source.runtimeContext!,
+          revision: 2,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run tests',
+              options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'b'.repeat(64),
+            createdAt: 3
+          }
+        },
+        updatedAt: 3
+      },
+      mode: 'runtime-context-authority'
+    })
+
+    const updated = useSessionStore.getState().sessions[0]
+    expect(updated.activePlanProjection).toBe(projection)
+    expect(updated.runtimeContext).toMatchObject({ revision: 2, permission: { state: 'pending' } })
+  })
+
   it('does not replace newer local conversation state when a durable Plan authority arrives', () => {
     const prompt = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
