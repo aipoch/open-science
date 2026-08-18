@@ -1,5 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { request as httpRequest } from 'node:http'
+import { request as httpRequest, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -1387,6 +1387,61 @@ describe('startWebHttpServer', () => {
     expect(response.status).toBe(202)
     expect(await response.json()).toEqual({ ok: true })
     await vi.waitFor(() => expect(onShutdownRequest).toHaveBeenCalledOnce())
+  })
+
+  it('delivers the shutdown acknowledgement before closing an attached server', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    let shutdownClose: Promise<void> | undefined
+    const onShutdownRequest = (): void => {
+      shutdownClose = server.close()
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      onShutdownRequest,
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const originalEnd = ServerResponse.prototype.end
+    ServerResponse.prototype.end = function (
+      this: ServerResponse,
+      ...args: unknown[]
+    ): ServerResponse {
+      setTimeout(() => Reflect.apply(originalEnd, this, args), 25)
+      return this
+    } as typeof ServerResponse.prototype.end
+    let response: Response
+    try {
+      response = await fetch(`http://127.0.0.1:${server.port}/api/shutdown`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer test-token' }
+      })
+    } finally {
+      ServerResponse.prototype.end = originalEnd
+    }
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(shutdownClose).toBeDefined())
+    await shutdownClose
+    servers.splice(servers.indexOf(server), 1)
   })
 
   it('keeps shutdown local even when remote Browser access is authorized', async () => {

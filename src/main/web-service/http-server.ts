@@ -571,8 +571,16 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           json(response, 404, { ok: false, error: 'Shutdown is not available.' })
           return
         }
+        const onShutdownRequest = options.onShutdownRequest
+        let shutdownScheduled = false
+        const scheduleShutdown = (): void => {
+          if (shutdownScheduled) return
+          shutdownScheduled = true
+          setImmediate(onShutdownRequest)
+        }
+        response.once('finish', scheduleShutdown)
+        response.once('close', scheduleShutdown)
         json(response, 202, { ok: true })
-        setImmediate(options.onShutdownRequest)
         return
       }
 
