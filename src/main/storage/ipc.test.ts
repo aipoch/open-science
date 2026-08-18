@@ -216,6 +216,23 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
   })
 
+  it('does not lock staged-copy resolution after a malformed recovered commit request', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:commit-and-relaunch', { parent: null })).resolves.toMatchObject({
+      ok: false
+    })
+    await expect(invoke('storage:discard-migrated-copy', { parent: null })).resolves.toMatchObject({
+      ok: false
+    })
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(existsSync(target)).toBe(false)
+  })
+
   it('keeps a recovered marker and clears the write gate when writers cannot be paused', async () => {
     initDataRoot(dataRoot)
     await seedVerifiedMarker(target, dataRoot)

@@ -315,10 +315,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // boundary before commit/discard receives it. A fresh correlation id starts the recovery attempt's
   // diagnostics because the original process-local operation is gone.
   const recoverStagedFromMarker = async (
-    request: StorageParentRequest,
+    target: string,
     allowedStatuses: ReadonlySet<'copying' | 'verified'>
   ): Promise<NonNullable<typeof activeStaged> | undefined> => {
-    const target = dataRootForPicked(request.parent)
     const marker = await readMigrationMarker(target)
     if (
       !marker ||
@@ -350,14 +349,23 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       logger.warn('staged data root discard ignored', { reason: 'resolution-in-progress' })
       return { ok: false, error: 'A migration is already being resolved.' }
     }
+    let target: string
+    try {
+      target = dataRootForPicked(request.parent)
+    } catch (err) {
+      logger.warn('staged data root discard ignored', {
+        reason: 'invalid-request',
+        ...diagnosticErrorFields(err)
+      })
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
     resolutionInProgress = true
     try {
-      const target = dataRootForPicked(request.parent)
       const staged = activeStaged
         ? samePath(activeStaged.target, target)
           ? activeStaged
           : undefined
-        : await recoverStagedFromMarker(request, new Set(['copying', 'verified']))
+        : await recoverStagedFromMarker(target, new Set(['copying', 'verified']))
       if (!staged) {
         logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
         return { ok: false, error: 'No matching staged data copy was found.' }
@@ -423,13 +431,22 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     if (resolutionInProgress) {
       return { ok: false, error: 'A migration is already being resolved.' }
     }
+    let target: string
+    try {
+      target = dataRootForPicked(request.parent)
+    } catch (err) {
+      logger.warn('staged data root commit refused', {
+        reason: 'invalid-request',
+        ...diagnosticErrorFields(err)
+      })
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
     resolutionInProgress = true
-    const target = dataRootForPicked(request.parent)
     const staged = activeStaged
       ? samePath(activeStaged.target, target)
         ? activeStaged
         : undefined
-      : await recoverStagedFromMarker(request, new Set(['verified']))
+      : await recoverStagedFromMarker(target, new Set(['verified']))
     if (!staged) {
       resolutionInProgress = false
       return { ok: false, error: 'No completed migration copy was found.' }
