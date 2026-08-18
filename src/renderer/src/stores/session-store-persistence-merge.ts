@@ -265,6 +265,27 @@ type PersistedIdentityState = Pick<
   'artifacts' | 'conversationGraph' | 'filesRevision' | 'messages' | 'runtimeContext'
 >
 
+export const mergeRuntimeConversationAuthority = (
+  current: Pick<PersistedChatSession, 'conversationGraph' | 'messages'>,
+  incoming: Pick<PersistedChatSession, 'conversationGraph' | 'messages'>
+): Pick<PersistedChatSession, 'conversationGraph' | 'messages'> => ({
+  messages: mergeCollectionByIdentity(
+    current.messages,
+    incoming.messages,
+    ({ id }) => id,
+    (currentMessage) => currentMessage
+  ),
+  ...(incoming.conversationGraph
+    ? {
+        conversationGraph: current.conversationGraph
+          ? mergeConversationGraphByIdentity(current.conversationGraph, incoming.conversationGraph)
+          : structuredClone(incoming.conversationGraph)
+      }
+    : current.conversationGraph
+      ? { conversationGraph: structuredClone(current.conversationGraph) }
+      : {})
+})
+
 export const mergePersistedRuntimeIdentityProjection = (
   current: Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'>,
   incoming: Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'>,

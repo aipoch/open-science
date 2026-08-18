@@ -8,6 +8,7 @@ import {
   type LoadAllSessionsResult,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
+import { i18next } from '@/i18n'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { useSessionPersistence, type SessionPersistenceState } from './session-persistence'
 
@@ -44,7 +45,8 @@ describe('session persistence startup', () => {
   let reconcilePendingArtifactsApi: ReturnType<typeof vi.fn>
   let reportRendererFailure: ReturnType<typeof vi.fn>
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18next.changeLanguage('en')
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -75,7 +77,10 @@ describe('session persistence startup', () => {
   })
 
   afterEach(async () => {
-    await act(async () => root.unmount())
+    await act(async () => {
+      root.unmount()
+      await i18next.changeLanguage('en')
+    })
     container.remove()
   })
 
@@ -115,6 +120,17 @@ describe('session persistence startup', () => {
       </div>
     )
   }
+
+  it('does not reload persisted sessions when the locale changes', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    await act(async () => root.render(<Probe />))
+
+    expect(loadAll).toHaveBeenCalledOnce()
+
+    await act(async () => i18next.changeLanguage('ja'))
+
+    expect(loadAll).toHaveBeenCalledOnce()
+  })
 
   it('keeps session actions blocked after a load failure and recovers on retry', async () => {
     await act(async () => root.render(<Probe />))

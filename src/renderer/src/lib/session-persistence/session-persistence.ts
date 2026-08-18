@@ -808,6 +808,10 @@ const createStoreSaver = (
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
 const useSessionPersistence = (): SessionPersistenceState => {
   const { t } = useTranslation()
+  const translateRef = useRef(t)
+  useEffect(() => {
+    translateRef.current = t
+  }, [t])
   const [isHydrated, setIsHydrated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isReady, setIsReady] = useState(false)
@@ -972,7 +976,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
             if (isSessionRevisionConflictError(_error)) {
               revisionConflictTargets.current.add(target)
               unresolvedSessionRevisionConflictTargets.add(target)
-              setWriteError(t(SESSION_REVISION_CONFLICT_WRITE_ERROR))
+              setWriteError(translateRef.current(SESSION_REVISION_CONFLICT_WRITE_ERROR))
               return
             }
             const conflictRebaseFields = context.conflictRebaseFields
@@ -1055,7 +1059,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       if (saverRef.current === activeSaver) saverRef.current = undefined
       unsubscribe?.()
     }
-  }, [loadAttempt, t])
+  }, [loadAttempt])
 
   return {
     isHydrated,

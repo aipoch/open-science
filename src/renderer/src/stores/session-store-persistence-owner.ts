@@ -38,7 +38,8 @@ import {
 import {
   mergeDelegatedWorkAuthorityProjection,
   mergeNewerPersistedSessionByIdentity,
-  mergePersistedRuntimeIdentityProjection
+  mergePersistedRuntimeIdentityProjection,
+  mergeRuntimeConversationAuthority
 } from './session-store-persistence-merge'
 
 export type SessionStatus = PersistedSessionStatus
@@ -536,9 +537,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           currentRevision !== undefined &&
           incomingRevision !== undefined &&
           incomingRevision < currentRevision
-        ) {
+        )
           return state
-        }
 
         const permissionPending = session.runtimeContext?.permission?.state === 'pending'
         const interactionState = {
@@ -589,6 +589,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
             )
         const projected: ChatSession = {
           ...current,
+          ...mergeRuntimeConversationAuthority(current, session),
           revision: Math.max(sessionRevision(current), sessionRevision(session)),
           status,
           interactionState,

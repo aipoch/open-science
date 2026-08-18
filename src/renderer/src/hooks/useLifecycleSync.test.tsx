@@ -756,15 +756,36 @@ describe('useLifecycleSync', () => {
       promptMessageId: prompt?.messageId,
       content: 'Keep this live output.'
     })
+    const replyTimestamp = durableBeforeOutput.updatedAt + 1
+    const mainAppendedReply = {
+      id: 'main-appended-reply',
+      role: 'user' as const,
+      content: 'Keep this Main-owned reply',
+      status: 'complete' as const,
+      eventIds: [],
+      responseToMessageId: prompt?.messageId,
+      createdAt: replyTimestamp,
+      updatedAt: replyTimestamp
+    }
+    if (!durableBeforeOutput.conversationGraph) throw new Error('Expected a durable graph.')
+    const durableWithReply = {
+      ...durableBeforeOutput,
+      messages: [...durableBeforeOutput.messages, mainAppendedReply],
+      conversationGraph: synchronizeActiveConversationMessages(
+        durableBeforeOutput.conversationGraph,
+        [...durableBeforeOutput.messages, mainAppendedReply],
+        replyTimestamp
+      )
+    }
 
     await act(async () => {
       listeners.sessionUpdated?.({
         originClientId: MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
         session: {
-          ...durableBeforeOutput,
+          ...durableWithReply,
           revision: 3,
           status: 'waiting-plan-approval',
-          updatedAt: durableBeforeOutput.updatedAt + 1,
+          updatedAt: replyTimestamp,
           runtimeContext: {
             version: 1,
             revision: 1,
@@ -788,7 +809,12 @@ describe('useLifecycleSync', () => {
     })
     expect(projected.messages.map((message) => message.content)).toEqual([
       'Keep this live prompt',
-      'Keep this live output.'
+      'Keep this live output.',
+      'Keep this Main-owned reply'
+    ])
+    expect(projected.conversationGraph?.messages.map((message) => message.content)).toEqual([
+      'Keep this live prompt',
+      'Keep this Main-owned reply'
     ])
     expect(projected.activeRun?.promptMessageId).toBe(prompt?.messageId)
   })
