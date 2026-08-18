@@ -57,7 +57,7 @@ describe('MarketplaceService', () => {
           uncompressed_bytes: 1,
           file_count: 3
         },
-        defaults: { skill_ids: ['example-skill'], connector_ids: [] },
+        defaults: { skill_ids: ['example-skill'], connector_ids: ['example-connector'] },
         skills: [
           {
             id: 'example-skill',
@@ -70,7 +70,7 @@ describe('MarketplaceService', () => {
             uncompressed_bytes: 1
           }
         ],
-        connectors: []
+        connectors: [{ id: 'example-connector', required: true, default_selected: true }]
       })
     )
     const root = encoder.encode(
@@ -137,7 +137,12 @@ describe('MarketplaceService', () => {
         installedArchiveDigest = sha256(bytes)
         return {
           candidateToken: 'package-candidate',
-          summary: { id: 'example-specialist', version: '1.0.0' },
+          summary: {
+            id: 'example-specialist',
+            version: '1.0.0',
+            skills: [{ id: 'example-skill' }],
+            connectorIds: ['example-connector']
+          },
           diagnostics: [],
           installable: true
         }
@@ -214,11 +219,75 @@ describe('MarketplaceService', () => {
           specialistId: 'example-specialist',
           version: '1.0.0',
           selectedSkillIds: ['example-skill'],
-          selectedConnectorIds: []
+          selectedConnectorIds: ['example-connector']
         },
         17
       )
     ).rejects.toThrow('Downloaded package identity does not match')
+    expect(packages.candidateNewSkillIds).not.toHaveBeenCalled()
+
+    packages.preview.mockResolvedValueOnce({
+      candidateToken: 'dropped-skill-package-candidate',
+      summary: { id: 'example-specialist', version: '1.0.0', skills: [], connectorIds: [] },
+      diagnostics: [
+        {
+          severity: 'warning',
+          code: 'skill.name-mismatch',
+          message: 'Skill name mismatch.',
+          relatedId: 'example-skill'
+        }
+      ],
+      installable: true
+    })
+    await expect(
+      service.prepareInstall(
+        {
+          sourceId: listed.sources[0].id,
+          specialistId: 'example-specialist',
+          version: '1.0.0',
+          selectedSkillIds: ['example-skill'],
+          selectedConnectorIds: ['example-connector']
+        },
+        17
+      )
+    ).rejects.toThrow('did not retain every selected Marketplace capability')
+
+    packages.preview.mockResolvedValueOnce({
+      candidateToken: 'dropped-connector-package-candidate',
+      summary: {
+        id: 'example-specialist',
+        version: '1.0.0',
+        skills: [{ id: 'example-skill' }],
+        connectorIds: []
+      },
+      diagnostics: [
+        {
+          severity: 'warning',
+          code: 'skill.existing-conflict',
+          message: 'Installed Skill content differs.',
+          relatedId: 'example-skill'
+        },
+        {
+          severity: 'warning',
+          code: 'specialist.connector-unavailable',
+          message: 'Connector unavailable.',
+          relatedId: 'example-connector'
+        }
+      ],
+      installable: false
+    })
+    await expect(
+      service.prepareInstall(
+        {
+          sourceId: listed.sources[0].id,
+          specialistId: 'example-specialist',
+          version: '1.0.0',
+          selectedSkillIds: ['example-skill'],
+          selectedConnectorIds: ['example-connector']
+        },
+        17
+      )
+    ).rejects.toThrow('did not retain every selected Marketplace capability')
     expect(packages.candidateNewSkillIds).not.toHaveBeenCalled()
 
     const downloadProgress: Array<{ transferred: number; total: number; percent: number }> = []
@@ -228,7 +297,7 @@ describe('MarketplaceService', () => {
         specialistId: 'example-specialist',
         version: '1.0.0',
         selectedSkillIds: ['example-skill'],
-        selectedConnectorIds: []
+        selectedConnectorIds: ['example-connector']
       },
       17,
       (progress) => downloadProgress.push(progress)
@@ -279,7 +348,7 @@ describe('MarketplaceService', () => {
           specialistId: 'example-specialist',
           version: '1.0.0',
           selectedSkillIds: ['example-skill'],
-          selectedConnectorIds: []
+          selectedConnectorIds: ['example-connector']
         },
         17
       )

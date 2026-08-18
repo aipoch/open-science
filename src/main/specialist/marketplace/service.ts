@@ -41,6 +41,14 @@ const RELEASE_MAX_BYTES = 8 * 1024 * 1024
 const ARTIFACT_MAX_BYTES = 50 * 1024 * 1024
 const METADATA_REQUEST_TIMEOUT_MS = 15_000
 const ARTIFACT_REQUEST_TIMEOUT_MS = 120_000
+const DROPPED_SELECTED_SKILL_DIAGNOSTICS = new Set([
+  'skill.id-invalid',
+  'skill.document-missing',
+  'skill.document-invalid',
+  'skill.name-mismatch',
+  'skill.version-invalid',
+  'specialist.skill-unavailable'
+])
 
 export type OfficialMarketplaceSourceConfig = {
   id: string
@@ -422,9 +430,10 @@ export class MarketplaceService {
         percent: Math.min(100, Math.round((transferred / total) * 100))
       })
     )
+    const requestedSkillNames = requestedSkills.map((id) => skillById.get(id)!.name)
     const filteredArchive = filterMarketplaceSpecialistZip(
       archiveBytes,
-      requestedSkills.map((id) => skillById.get(id)!.name),
+      requestedSkillNames,
       requestedConnectors
     )
     const preview = await this.options.packages.preview(filteredArchive, ownerId)
@@ -438,6 +447,28 @@ export class MarketplaceService {
         'verification',
         'Downloaded package identity does not match the reviewed Marketplace release.'
       )
+    }
+    if (preview.summary) {
+      const retainedSkillNames = new Set(preview.summary?.skills.map((skill) => skill.id) ?? [])
+      const selectedSkillNames = new Set(requestedSkillNames)
+      const selectedConnectorIds = new Set(requestedConnectors)
+      const capabilityDropped =
+        requestedSkillNames.some((name) => !retainedSkillNames.has(name)) ||
+        preview.diagnostics.some(
+          (diagnostic) =>
+            (diagnostic.relatedId !== undefined &&
+              selectedSkillNames.has(diagnostic.relatedId) &&
+              DROPPED_SELECTED_SKILL_DIAGNOSTICS.has(diagnostic.code)) ||
+            (diagnostic.code === 'specialist.connector-unavailable' &&
+              diagnostic.relatedId !== undefined &&
+              selectedConnectorIds.has(diagnostic.relatedId))
+        )
+      if (capabilityDropped) {
+        throw new MarketplaceError(
+          'verification',
+          'Downloaded package did not retain every selected Marketplace capability.'
+        )
+      }
     }
     const newSkillIds = this.options.packages.candidateNewSkillIds(preview.candidateToken, ownerId)
     if (!newSkillIds) {
