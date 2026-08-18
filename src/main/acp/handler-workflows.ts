@@ -120,10 +120,11 @@ const prepareSaveAsSkillContinuation = (
   }
   const preparedControlRun =
     session.status === 'running' && session.activeRun?.promptMessageId === request.promptMessageId
+  // Repository reads normalize a persisted prepared control into recovery before runtime admission.
+  // A simultaneous replay is accepted only when it passes the verified context-reset checks below.
   const recoveredPreparedControlRun =
     session.resumeRecovery?.kind === 'resume-required' &&
     session.resumeRecovery.promptMessageId === request.promptMessageId &&
-    !session.pendingHistoryReplay &&
     runtime.hasLiveSession(session.projectId, session.id)
   const graph = session.conversationGraph
   const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
@@ -155,7 +156,7 @@ const prepareSaveAsSkillContinuation = (
     (!session.agentFrameworkId || session.agentFrameworkId === sessionBackend.framework.id)
   )
   const preparedContextResetReplay = Boolean(
-    preparedControlRun &&
+    (preparedControlRun || recoveredPreparedControlRun) &&
     preparedControlTurn &&
     session.pendingHistoryReplay?.kind === 'all' &&
     verifiedContextReset
