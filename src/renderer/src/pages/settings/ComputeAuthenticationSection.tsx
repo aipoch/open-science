@@ -168,27 +168,33 @@ const ComputeAuthenticationSection = (
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="text-sm font-medium text-foreground">{t('Authentication')}</legend>
-      {COMPUTE_AUTHENTICATION_MODES.map((strategy) => (
-        <Label
-          key={strategy.mode}
-          className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3"
-        >
-          <input
-            type="radio"
-            name="compute-authentication"
-            value={strategy.mode}
-            checked={props.mode === strategy.mode}
-            disabled={!strategy.isAvailable(props.passwordCapability)}
-            onChange={() => props.onModeChange(strategy.mode)}
-          />
-          <span>
-            <span className="block text-sm font-medium">{strategy.choiceLabel(t)}</span>
-            <span className="block text-xs font-normal text-muted-foreground">
-              {strategy.choiceDescription(t, props.passwordCapability)}
+      {COMPUTE_AUTHENTICATION_MODES.map((strategy) => {
+        const available = strategy.isAvailable(props.passwordCapability)
+        return (
+          <Label
+            key={strategy.mode}
+            className={`flex items-start gap-2 rounded-lg border border-border p-3 ${
+              available ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+            }`}
+          >
+            <input
+              type="radio"
+              name="compute-authentication"
+              value={strategy.mode}
+              checked={props.mode === strategy.mode}
+              disabled={!available}
+              className="mt-0.5 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+              onChange={() => props.onModeChange(strategy.mode)}
+            />
+            <span>
+              <span className="block text-sm font-medium">{strategy.choiceLabel(t)}</span>
+              <span className="block text-xs font-normal text-muted-foreground">
+                {strategy.choiceDescription(t, props.passwordCapability)}
+              </span>
             </span>
-          </span>
-        </Label>
-      ))}
+          </Label>
+        )
+      })}
     </fieldset>
   )
 }
@@ -219,7 +225,7 @@ const ComputeAdvancedSettings = (props: ComputeAdvancedSettingsProps): React.JSX
         aria-expanded={props.open}
         aria-controls="compute-advanced-settings"
         onClick={() => props.onOpenChange(!props.open)}
-        className="flex w-full items-center gap-2 py-2.5 text-left text-sm font-medium text-foreground"
+        className="flex w-full touch-manipulation items-center gap-2 py-2.5 text-left text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
       >
         <ChevronDown
           className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${

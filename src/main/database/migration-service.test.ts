@@ -277,6 +277,83 @@ describe('application database migrations', () => {
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
 
+  it('upgrades a pre-ledger ComputeJob table while preserving historical rows', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-3a-to-current-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ComputeJob" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "providerId" TEXT NOT NULL,
+      "shape" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "projectId" TEXT NOT NULL,
+      "status" TEXT NOT NULL DEFAULT 'submitted',
+      "intent" TEXT NOT NULL,
+      "command" TEXT NOT NULL,
+      "commandHash" TEXT NOT NULL,
+      "environment" TEXT,
+      "resourceRequest" TEXT,
+      "inputManifest" TEXT,
+      "outputManifest" TEXT,
+      "harvestConfig" TEXT,
+      "timeoutSeconds" INTEGER,
+      "remoteWorkdir" TEXT,
+      "remoteHandle" TEXT,
+      "exitCode" INTEGER,
+      "stdoutTail" TEXT,
+      "stderrTail" TEXT,
+      "errorCode" TEXT,
+      "lastPollError" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "submittedAt" DATETIME,
+      "startedAt" DATETIME,
+      "finishedAt" DATETIME,
+      "harvestedAt" DATETIME
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ComputeJob" ("id","providerId","shape","sessionId","projectId","intent","command","commandHash","status","createdAt")
+       VALUES ('old-job-1','ssh:test','direct_ssh','s1','p1','legacy intent','echo ok','hash123','submitted',CURRENT_TIMESTAMP)`
+    )
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: [
+        '0001_runtime_schema_baseline',
+        '0002_project_agent_context',
+        '0003_granted_local_roots',
+        '0004_review_assessment_snapshots',
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints',
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
+      ]
+    })
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+    await expect(
+      client.$queryRaw<
+        Array<{
+          id: string
+          intent: string
+          harvestError: string | null
+          leftOnRemote: boolean | null
+          notifiedAt: Date | null
+          notificationConsumedAt: Date | null
+        }>
+      >`SELECT "id", "intent", "harvestError", "leftOnRemote", "notifiedAt", "notificationConsumedAt"
+        FROM "ComputeJob" WHERE "id" = 'old-job-1'`
+    ).resolves.toEqual([
+      {
+        id: 'old-job-1',
+        intent: 'legacy intent',
+        harvestError: null,
+        leftOnRemote: null,
+        notifiedAt: null,
+        notificationConsumedAt: null
+      }
+    ])
+  })
+
   it('preserves existing jobs while adding authentication failures idempotently', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-compute-auth-job-errors-'))
     client = createProjectDbClient(storageRoot)

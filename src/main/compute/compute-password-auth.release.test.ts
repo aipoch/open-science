@@ -229,8 +229,8 @@ describe('Compute password authentication release gate', () => {
     expect(JSON.stringify(job)).not.toContain(secret)
     expect(job).toMatchObject({
       status: 'error',
-      error_code: 'unsupported_auth_configuration',
-      stderr_tail: 'This SSH authentication configuration is not supported.'
+      error_code: 'dispatch_failed',
+      stderr_tail: 'The remote Compute Job launcher failed.'
     })
 
     const diagnosticFailure = makeFailingBroker()
@@ -249,7 +249,7 @@ describe('Compute password authentication release gate', () => {
       }
     })
     expect(diagnostics).not.toContain(secret)
-    expect(diagnostics).not.toContain('vendor diagnostic')
+    expect(diagnostics).toContain('[redacted]')
 
     const settingsDocument = await readFile(join(storageRoot, 'settings.json')).catch(() =>
       Buffer.alloc(0)

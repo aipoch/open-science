@@ -96,7 +96,7 @@ export function ComputePasswordResetSection({
         <p className="text-xs text-muted-foreground">
           {t('Running Compute Jobs may continue. Only the locally saved password will change.')}
         </p>
-        <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/20 p-3">
+        <div className="flex flex-col gap-2">
           <Label htmlFor="compute-reset-username" className="text-sm font-medium">
             {t('Username')}
           </Label>

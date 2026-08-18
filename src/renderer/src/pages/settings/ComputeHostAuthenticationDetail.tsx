@@ -286,7 +286,7 @@ export function ComputeHostAuthenticationDetail({
               'The candidate authentication configuration is verified before commit. Session enablement and Permission Grants will be cleared.'
             )}
           </p>
-          <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+          <div className="flex flex-col gap-3">
             <fieldset className="grid gap-2 sm:grid-cols-2">
               <legend className="mb-2 text-sm font-medium">{t('Authentication method')}</legend>
               {(['password', 'ssh_config'] as const).map((choice) => (

@@ -810,6 +810,100 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     expect(options).not.toContain('ControlPersist=60')
   })
 
+  it('does not reread executable SSH configuration after attaching the askpass capability', async () => {
+    const runner: SshRunner = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 255,
+          stdout: '',
+          stderr: 'Permission denied',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'connected',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+    }
+    const adapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operation: (password: string) => Promise<unknown>) => operation('secret')
+        }))
+      } as unknown as CredentialVault,
+      runner,
+      vi.fn(async () => ({
+        ...target,
+        host: 'cluster-alias',
+        extraArgs: ['-o', 'User=researcher', '-p', '2222', '-o', 'ConnectTimeout=10']
+      })),
+      vi.fn(async () => ({
+        hostname: 'login.cluster.example',
+        hostkeyalias: 'cluster-host-key',
+        userknownhostsfile: '/custom/known_hosts',
+        knownhostscommand: '/tmp/credential-consuming-helper'
+      })),
+      vi.fn(async () => ({
+        env: {
+          SSH_ASKPASS: '/constrained/helper',
+          OPEN_SCIENCE_ASKPASS_CAPABILITY: 'opaque'
+        },
+        wasAnswered: () => true,
+        dispose: async () => undefined
+      }))
+    )
+
+    const lease = await adapter.acquire(host, { intent: 'direct_command' })
+    await lease.run('true', { timeoutMs: 1000 })
+
+    const passwordTarget = vi.mocked(runner.run).mock.calls[1]![0]
+    expect(passwordTarget.host).toBe('login.cluster.example')
+    expect(passwordTarget.extraArgs).toEqual(
+      expect.arrayContaining([
+        '-F',
+        'none',
+        '-o',
+        'HostKeyAlias=cluster-host-key',
+        '-o',
+        'UserKnownHostsFile=/custom/known_hosts'
+      ])
+    )
+    expect(passwordTarget.extraArgs.join(' ')).not.toContain('credential-consuming-helper')
+  })
+
+  it('rejects a resolved hostname that SSH could parse as an option before attaching askpass', async () => {
+    const runner: SshRunner = {
+      run: vi.fn()
+    }
+    const createAskpass = vi.fn()
+    const adapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operation: (password: string) => Promise<unknown>) => operation('secret')
+        }))
+      } as unknown as CredentialVault,
+      runner,
+      vi.fn(async () => ({
+        ...target,
+        host: 'cluster-alias',
+        extraArgs: ['-o', 'User=researcher', '-p', '2222']
+      })),
+      vi.fn(async () => ({
+        hostname: '-oKnownHostsCommand=/tmp/credential-consuming-helper'
+      })),
+      createAskpass
+    )
+
+    await expect(adapter.acquire(host, { intent: 'direct_command' })).rejects.toMatchObject({
+      code: 'unsupported_auth_configuration'
+    })
+    expect(createAskpass).not.toHaveBeenCalled()
+  })
+
   it('decrypts the persisted credential for the first password Probe after restart', async () => {
     const passwordHost = {
       ...host,
@@ -1216,6 +1310,51 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     }
   )
 
+  it.each(['direct_command', 'direct_download'] as const)(
+    'returns an ordinary password-mode %s remote command failure after authentication succeeds',
+    async (intent) => {
+      const remoteFailure = {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'remote command failed',
+        truncated: false,
+        timedOut: false
+      }
+      const runner: SshRunner = {
+        run: vi
+          .fn()
+          .mockResolvedValueOnce({
+            exitCode: 255,
+            stdout: '',
+            stderr: 'Permission denied',
+            truncated: false,
+            timedOut: false
+          })
+          .mockResolvedValueOnce(remoteFailure)
+      }
+      const adapter = new PasswordSshAdapter(
+        {
+          acquirePasswordLease: vi.fn(async () => ({
+            withPassword: (operation: (password: string) => Promise<unknown>) =>
+              operation('ordinary-command-failure-secret')
+          }))
+        } as unknown as CredentialVault,
+        runner,
+        vi.fn(async () => target),
+        vi.fn(async () => ({})),
+        vi.fn(async () => ({
+          env: { SSH_ASKPASS: '/constrained/helper' },
+          wasAnswered: () => true,
+          dispose: async () => undefined
+        }))
+      )
+
+      const lease = await adapter.acquire(host, { intent })
+
+      await expect(lease.run('false', { timeoutMs: 1000 })).resolves.toEqual(remoteFailure)
+    }
+  )
+
   it('keeps an answered target-password failure classified and persisted as authentication_failed', async () => {
     const passwordHost = {
       ...host,
@@ -1371,7 +1510,54 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     expect(failure.message).not.toContain('/private/path')
   })
 
-  it.each(['run', 'upload', 'download'] as const)(
+  it('returns an ordinary remote status while redacting the saved password from its output', async () => {
+    const rawDiagnostic = 'remote command failed: release-gate-secret at /private/helper'
+    const runner: SshRunner = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 255,
+          stdout: '',
+          stderr: 'Permission denied',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 42,
+          stdout: '',
+          stderr: rawDiagnostic,
+          truncated: false,
+          timedOut: false
+        })
+    }
+    const adapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operationWithPassword: (password: string) => Promise<unknown>) =>
+            operationWithPassword('release-gate-secret')
+        }))
+      } as unknown as CredentialVault,
+      runner,
+      vi.fn(async () => target),
+      vi.fn(async () => ({})),
+      vi.fn(async () => ({
+        env: { SSH_ASKPASS: '/constrained/helper' },
+        wasAnswered: () => true,
+        dispose: async () => undefined
+      }))
+    )
+    const lease = await adapter.acquire(host, { intent: 'direct_command' })
+
+    const result = await lease.run('true', { timeoutMs: 1000 })
+
+    expect(result).toMatchObject({
+      exitCode: 42,
+      stderr: 'remote command failed: [redacted] at /private/helper'
+    })
+    expect(result.stderr).not.toContain('release-gate-secret')
+  })
+
+  it.each(['upload', 'download'] as const)(
     'fails closed with a safe code when password %s returns unclassified diagnostics',
     async (operation) => {
       const rawDiagnostic = 'vendor helper crashed: release-gate-secret at /private/helper'
@@ -1421,15 +1607,13 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
         scpRunner
       )
       const lease = await adapter.acquire(host, {
-        intent: operation === 'run' ? 'direct_command' : `direct_${operation}`
+        intent: `direct_${operation}`
       })
 
       const failure = await (
-        operation === 'run'
-          ? lease.run('true', { timeoutMs: 1000 })
-          : operation === 'upload'
-            ? lease.upload('/local/input', '/remote/input')
-            : lease.download('/remote/output', '/local/output', 1024)
+        operation === 'upload'
+          ? lease.upload('/local/input', '/remote/input')
+          : lease.download('/remote/output', '/local/output', 1024)
       ).catch((error) => error)
 
       expect(failure).toMatchObject({ code: 'unsupported_auth_configuration' })

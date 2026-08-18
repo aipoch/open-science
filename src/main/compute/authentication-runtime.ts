@@ -1,4 +1,5 @@
 import type { ComputeHost } from '../../shared/compute'
+import { createLogger, errorLogFields } from '../logger'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { ComputeAuthOwner } from './compute-auth-owner'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
@@ -13,6 +14,8 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { SystemScpRunner, type ScpRunner } from './scp-runner'
 import { SystemSshRunner, type SshRunner } from './ssh-runner'
+
+const log = createLogger('compute')
 
 type ComputeHostLifecycle = Readonly<{
   pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
@@ -96,10 +99,18 @@ const createComputeAuthenticationOwner = (
         options.connectionBroker.invalidateAuthenticationIdentity?.(change.providerId)
         await options.approvalBroker.invalidateProvider(change.providerId)
       }
-      if (options.hostLifecycle) {
-        await options.hostLifecycle.pruneSessionEnabledHosts(change.providerId, commit)
-      } else {
-        await commit()
+      try {
+        if (options.hostLifecycle) {
+          await options.hostLifecycle.pruneSessionEnabledHosts(change.providerId, commit)
+        } else {
+          await commit()
+        }
+      } catch (error) {
+        if (!committed) throw error
+        log.warn(
+          'compute Session cleanup after authentication change failed',
+          errorLogFields(error)
+        )
       }
       if (!committed) throw new Error('The Compute Host authentication change did not commit.')
 
@@ -108,6 +119,11 @@ const createComputeAuthenticationOwner = (
           kind: 'compute_provider',
           providerId: change.providerId
         })
+      } catch (error) {
+        log.warn(
+          'compute permission grant projection finalization after authentication change failed',
+          errorLogFields(error)
+        )
       } finally {
         options.approvalBroker.completeProviderInvalidation(change.providerId)
       }
