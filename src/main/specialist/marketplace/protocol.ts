@@ -2,9 +2,13 @@ import { createHash, createPublicKey, verify } from 'node:crypto'
 
 import { z } from 'zod'
 
+import { validateSpecialistPackageVersion } from '../../../shared/specialist'
+
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/)
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
-const semver = z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/)
+const semver = z
+  .string()
+  .refine((value) => validateSpecialistPackageVersion(value) === undefined, 'Expected SemVer.')
 const relativePath = z
   .string()
   .min(1)

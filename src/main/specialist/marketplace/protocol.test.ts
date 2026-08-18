@@ -65,4 +65,13 @@ describe('Specialist Marketplace protocol', () => {
     parsed.specialists[0].latest.release.path = '../outside.json'
     expect(() => parseMarketplaceRoot(encoder.encode(JSON.stringify(parsed)))).toThrow()
   })
+
+  it('accepts the full Specialist package SemVer grammar', () => {
+    const parsed = JSON.parse(new TextDecoder().decode(rootBytes))
+    parsed.specialists[0].latest.version = '1.2.3-rc.1+build.7'
+
+    expect(
+      parseMarketplaceRoot(encoder.encode(JSON.stringify(parsed))).specialists[0]?.latest.version
+    ).toBe('1.2.3-rc.1+build.7')
+  })
 })

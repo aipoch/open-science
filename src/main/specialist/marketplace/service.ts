@@ -428,6 +428,17 @@ export class MarketplaceService {
       requestedConnectors
     )
     const preview = await this.options.packages.preview(filteredArchive, ownerId)
+    if (
+      (preview.summary &&
+        (preview.summary.id !== loaded.release.specialist_id ||
+          preview.summary.version !== loaded.release.version)) ||
+      (preview.installable && !preview.summary)
+    ) {
+      throw new MarketplaceError(
+        'verification',
+        'Downloaded package identity does not match the reviewed Marketplace release.'
+      )
+    }
     const newSkillIds = this.options.packages.candidateNewSkillIds(preview.candidateToken, ownerId)
     if (!newSkillIds) {
       if (!preview.installable) return { release: loaded.view, package: preview }

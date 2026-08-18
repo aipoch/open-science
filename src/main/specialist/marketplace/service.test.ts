@@ -137,6 +137,7 @@ describe('MarketplaceService', () => {
         installedArchiveDigest = sha256(bytes)
         return {
           candidateToken: 'package-candidate',
+          summary: { id: 'example-specialist', version: '1.0.0' },
           diagnostics: [],
           installable: true
         }
@@ -199,6 +200,26 @@ describe('MarketplaceService', () => {
     await service.addSource({ candidateToken: inspected.candidateToken })
     const listed = await service.list()
     expect(listed.specialists.map((item) => item.id)).toEqual(['example-specialist'])
+
+    packages.preview.mockResolvedValueOnce({
+      candidateToken: 'mismatched-package-candidate',
+      summary: { id: 'different-specialist', version: '9.9.9' },
+      diagnostics: [],
+      installable: true
+    })
+    await expect(
+      service.prepareInstall(
+        {
+          sourceId: listed.sources[0].id,
+          specialistId: 'example-specialist',
+          version: '1.0.0',
+          selectedSkillIds: ['example-skill'],
+          selectedConnectorIds: []
+        },
+        17
+      )
+    ).rejects.toThrow('Downloaded package identity does not match')
+    expect(packages.candidateNewSkillIds).not.toHaveBeenCalled()
 
     const downloadProgress: Array<{ transferred: number; total: number; percent: number }> = []
     const preview = await service.prepareInstall(
