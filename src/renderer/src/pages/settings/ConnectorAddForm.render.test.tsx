@@ -88,6 +88,39 @@ const selectOption = (label: string, option: string): void => {
 }
 
 describe('ConnectorAddForm (local command)', () => {
+  it('uses one Connector type Tab stop and switches mode with ArrowRight', async () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    const radios = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        '[role="radiogroup"][aria-label="Connector type"] [role="radio"]'
+      )
+    )
+    const group = document.body.querySelector<HTMLElement>(
+      '[role="radiogroup"][aria-label="Connector type"]'
+    )
+    expect(group?.tabIndex).toBe(0)
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([-1, -1])
+
+    act(() => {
+      group?.focus()
+    })
+    expect(document.activeElement).toBe(radios[0])
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([0, -1])
+
+    await act(async () => {
+      radios[0].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(document.body.querySelector('[aria-label="Server URL"]')).not.toBeNull()
+    expect(document.activeElement).toBe(radios[1])
+  })
+
   it('adds a stdio server with the default npx command, then calls onDone', async () => {
     const onDone = vi.fn()
     act(() => {

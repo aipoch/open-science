@@ -308,4 +308,38 @@ describe('GeneralPanel app icon', () => {
     expect(settingsApi.setAppIconVariant).toHaveBeenCalledWith({ variant: 'dark' })
     expect(useSettingsStore.getState().appIconVariant).toBe('dark')
   })
+
+  it('uses one App icon Tab stop and selects with ArrowRight', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const tiles = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        '[role="radiogroup"][aria-label="App icon"] [role="radio"]'
+      )
+    )
+    const group = document.body.querySelector<HTMLElement>(
+      '[role="radiogroup"][aria-label="App icon"]'
+    )
+    expect(group?.tabIndex).toBe(0)
+    expect(tiles.map((tile) => tile.tabIndex)).toEqual([-1, -1])
+
+    await act(async () => {
+      group?.focus()
+    })
+    expect(document.activeElement).toBe(tiles[0])
+    expect(tiles.map((tile) => tile.tabIndex)).toEqual([0, -1])
+
+    await act(async () => {
+      tiles[0].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+    })
+    await flush()
+
+    expect(settingsApi.setAppIconVariant).toHaveBeenCalledWith({ variant: 'dark' })
+    expect(document.activeElement).toBe(tiles[1])
+  })
 })

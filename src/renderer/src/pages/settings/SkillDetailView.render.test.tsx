@@ -192,4 +192,48 @@ describe('SkillDetailView', () => {
 
     expect(useSettingsStore.getState().setSkillEnabled).toHaveBeenCalledWith('a', false)
   })
+
+  it('shows a retryable error when Skill detail loading fails', async () => {
+    const getSkillDetail = window.api.settings.getSkillDetail as ReturnType<typeof vi.fn>
+    getSkillDetail
+      .mockRejectedValueOnce(new Error('detail unavailable'))
+      .mockResolvedValueOnce(detail)
+
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Open Science could not load this Skill.'
+    )
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => {
+      retry?.click()
+      await Promise.resolve()
+    })
+    expect(getSkillDetail).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('Alpha body')
+  })
+
+  it('reports a rejected Skill access change after rollback', async () => {
+    useSettingsStore.setState({
+      setSkillEnabled: vi.fn().mockRejectedValue(new Error('write failed'))
+    })
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save this setting. The previous value was restored.'
+    )
+  })
 })

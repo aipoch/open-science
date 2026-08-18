@@ -21,6 +21,7 @@ import {
   Zap
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -300,6 +301,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [isExpanded, setIsExpanded] = useState(false)
   const isMobile = useMediaQuery('(max-width: 767px)')
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
+  const mobileNavRef = useRef<HTMLElement | null>(null)
+  const mobileNavTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const mobileNavWasOpenRef = useRef(false)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -320,6 +324,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useEffect(() => {
     if (open) void load()
   }, [open, load])
+
+  useEffect(() => {
+    if (isMobile && isMobileNavOpen) {
+      mobileNavWasOpenRef.current = true
+      const activeItem = mobileNavRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+      const firstItem = mobileNavRef.current?.querySelector<HTMLElement>('button')
+      ;(activeItem ?? firstItem)?.focus()
+      return
+    }
+    if (!mobileNavWasOpenRef.current) return
+    mobileNavWasOpenRef.current = false
+    mobileNavTriggerRef.current?.focus()
+  }, [isMobile, isMobileNavOpen])
 
   // When opened from a skill mention, seed the history straight to that skill's detail page. This is
   // the derive-state-during-render pattern (guarded so it runs once per request); the guard resets on
@@ -868,6 +885,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           // the whole panel. The dropdown's own dismiss still closes just the dropdown; the panel is
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => {
+            if (!isMobileNavOpen) return
+            event.preventDefault()
+            setIsMobileNavOpen(false)
+          }}
           className={cn(
             'fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
             isExpanded
@@ -886,70 +908,98 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               type="button"
               className="fixed inset-0 z-[65] bg-black/45 md:hidden"
               aria-label={t('Close settings navigation')}
+              tabIndex={-1}
               onClick={() => setIsMobileNavOpen(false)}
             />
           ) : null}
 
           {/* Left navigation becomes an off-canvas drawer on narrow browser screens. */}
-          <nav
-            aria-label={t('Settings')}
-            aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
-            inert={isMobile && !isMobileNavOpen ? true : undefined}
-            className={cn(
-              'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
-              isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
-            )}
+          <FocusScope
+            asChild
+            loop={isMobile && isMobileNavOpen}
+            trapped={isMobile && isMobileNavOpen}
           >
-            {SETTINGS_GROUPS.map((group) => (
-              <div
-                key={group.labelKey ?? group.panels[0]?.id}
-                className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
+            <div
+              data-slot="mobile-settings-navigation"
+              role={isMobile && isMobileNavOpen ? 'dialog' : undefined}
+              aria-modal={isMobile && isMobileNavOpen ? true : undefined}
+              aria-label={isMobile && isMobileNavOpen ? t('Settings navigation') : undefined}
+              className="contents"
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape' || !isMobileNavOpen) return
+                event.preventDefault()
+                event.stopPropagation()
+                setIsMobileNavOpen(false)
+              }}
+            >
+              <nav
+                ref={mobileNavRef}
+                aria-label={t('Settings')}
+                aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
+                inert={isMobile && !isMobileNavOpen ? true : undefined}
+                className={cn(
+                  'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
+                  isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+                )}
               >
-                {group.labelKey ? (
-                  <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
-                    {t(group.labelKey)}
+                {SETTINGS_GROUPS.map((group) => (
+                  <div
+                    key={group.labelKey ?? group.panels[0]?.id}
+                    className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
+                  >
+                    {group.labelKey ? (
+                      <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                        {t(group.labelKey)}
+                      </div>
+                    ) : null}
+                    <ul className="flex flex-col gap-0.5">
+                      {group.panels.map(({ id, labelKey, Icon }) => {
+                        const isActive = activePanel === id
+                        return (
+                          <li key={id}>
+                            <button
+                              type="button"
+                              aria-current={isActive ? 'page' : undefined}
+                              onClick={() => {
+                                setIsMobileNavOpen(false)
+                                navigatePanel(id)
+                              }}
+                              className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                                isActive
+                                  ? 'bg-muted font-medium text-foreground'
+                                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                              }`}
+                            >
+                              <Icon
+                                className="size-4 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                              <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
                   </div>
-                ) : null}
-                <ul className="flex flex-col gap-0.5">
-                  {group.panels.map(({ id, labelKey, Icon }) => {
-                    const isActive = activePanel === id
-                    return (
-                      <li key={id}>
-                        <button
-                          type="button"
-                          aria-current={isActive ? 'page' : undefined}
-                          onClick={() => {
-                            setIsMobileNavOpen(false)
-                            navigatePanel(id)
-                          }}
-                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
-                            isActive
-                              ? 'bg-muted font-medium text-foreground'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                          }`}
-                        >
-                          <Icon
-                            className="size-4 shrink-0 text-muted-foreground"
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            ))}
-          </nav>
+                ))}
+              </nav>
+            </div>
+          </FocusScope>
 
           {/* Right column: header bar + scrollable panel content. */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card">
+          <div
+            data-slot="settings-main"
+            aria-hidden={isMobile && isMobileNavOpen ? true : undefined}
+            inert={isMobile && isMobileNavOpen ? true : undefined}
+            className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
+          >
             <TooltipProvider delayDuration={300}>
               <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
                 <div className="flex min-w-0 items-center gap-1">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
+                        ref={mobileNavTriggerRef}
                         type="button"
                         variant="ghost"
                         size="icon-sm"
@@ -1121,6 +1171,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 ) : activePanel === 'connectors' ? (
                   connectorsView.kind === 'detail' ? (
                     <ConnectorDetailView
+                      key={connectorsView.id}
                       id={connectorsView.id}
                       onManagePermissions={() => navigatePanel('permissions')}
                     />

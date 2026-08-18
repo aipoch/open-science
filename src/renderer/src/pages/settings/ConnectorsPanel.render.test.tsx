@@ -323,6 +323,59 @@ describe('ConnectorsPanel (groups)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'pubmed' })
   })
 
+  it('distinguishes loading and a retryable Connector catalog failure from empty results', async () => {
+    let rejectLoad: ((reason?: unknown) => void) | undefined
+    const loadConnectors = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectLoad = reject
+          })
+      )
+      .mockResolvedValueOnce(undefined)
+    useSettingsStore.setState({ connectors: [], customServers: [], loadConnectors })
+
+    await act(async () => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
+      'Loading Connectors…'
+    )
+
+    await act(async () => rejectLoad?.(new Error('catalog unavailable')))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Open Science could not load Connectors.'
+    )
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => retry?.click())
+    expect(loadConnectors).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a rejected Connector access change after rollback', async () => {
+    useSettingsStore.setState({
+      setConnectorEnabled: vi.fn().mockRejectedValue(new Error('write failed'))
+    })
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    const pubmedRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('PubMed'))
+    await act(async () => {
+      pubmedRow?.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save this setting. The previous value was restored.'
+    )
+  })
+
   it('warns about affected Specialists before removing a custom server', async () => {
     const onNavigate = vi.fn()
     act(() => {

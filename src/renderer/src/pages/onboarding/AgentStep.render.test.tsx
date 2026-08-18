@@ -520,6 +520,43 @@ describe('AgentStep', () => {
     expect(container.querySelector('[aria-label="Use OpenCode"]')).not.toBeNull()
   })
 
+  it('uses one installed-framework Tab stop and selects with ArrowRight', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
+      setAgentFramework,
+      preflight: {
+        claudeReady: true,
+        opencodeReady: true,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await renderStep()
+
+    const radios = Array.from(container.querySelectorAll<HTMLElement>('[role="radio"]'))
+    expect(container.querySelector('[role="radiogroup"]')).not.toBeNull()
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([0, -1])
+
+    radios[0].focus()
+    await act(async () => {
+      radios[0].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      await Promise.resolve()
+    })
+
+    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
+    expect(document.activeElement).toBe(radios[1])
+  })
+
   it('locks installed framework cards while detection is in flight', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',

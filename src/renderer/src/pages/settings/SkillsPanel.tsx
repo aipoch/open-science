@@ -9,7 +9,7 @@ import {
   Plus,
   Trash2
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { SkillSource } from '../../../../shared/settings'
@@ -32,7 +32,13 @@ import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
 import { SkillBulkManageView } from './SkillBulkManageView'
-import { SettingsIconAction, SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import {
+  SettingsIconAction,
+  SettingsLoadNotice,
+  SettingsRow,
+  SettingsSection,
+  SettingsToggle
+} from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import {
   resourceScope,
@@ -138,6 +144,9 @@ const SkillsPanel = ({
   const [exportError, setExportError] = useState<string | undefined>()
   const [exportStatus, setExportStatus] = useState<{ id: string; message: string } | undefined>()
   const [exportingId, setExportingId] = useState<string | undefined>()
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [toggleError, setToggleError] = useState<string | undefined>()
+  const loadRequestRef = useRef(0)
   const canExportSkills = typeof window.api?.settings?.exportSkill === 'function'
   const chatProjectId = useMemo(
     () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
@@ -166,8 +175,34 @@ const SkillsPanel = ({
     }
   }
 
+  const loadCatalog = async (): Promise<void> => {
+    const requestId = ++loadRequestRef.current
+    setCatalogState('loading')
+    try {
+      await loadSkills()
+      if (loadRequestRef.current === requestId) setCatalogState('ready')
+    } catch {
+      if (loadRequestRef.current === requestId) setCatalogState('error')
+    }
+  }
+
+  const retryCatalog = (): void => {
+    void loadCatalog()
+  }
+
   useEffect(() => {
-    void loadSkills()
+    const requestId = ++loadRequestRef.current
+    void loadSkills().then(
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('ready')
+      },
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('error')
+      }
+    )
+    return () => {
+      loadRequestRef.current += 1
+    }
   }, [loadSkills])
 
   useEffect(() => {
@@ -212,7 +247,7 @@ const SkillsPanel = ({
     })
   }, [filter, query, scopeFilter, skills, specialistFilter, specialistItems])
   if (view.kind === 'detail') {
-    return <SkillDetailView skillId={view.id} />
+    return <SkillDetailView key={view.id} skillId={view.id} />
   }
   if (view.kind === 'create') {
     return (
@@ -260,6 +295,28 @@ const SkillsPanel = ({
   }
 
   const groups = SOURCE_GROUPS.filter((group) => filter === 'all' || filter === group.source)
+
+  const toggleSkill = async (id: string, enabled: boolean): Promise<void> => {
+    setToggleError(undefined)
+    try {
+      await setSkillEnabled(id, enabled)
+    } catch {
+      setToggleError(t('Could not save this setting. The previous value was restored.'))
+    }
+  }
+
+  if (skills.length === 0 && catalogState !== 'ready') {
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={catalogState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Skills…')}
+          errorMessage={t('Open Science could not load Skills.')}
+          onRetry={retryCatalog}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="p-5">
@@ -418,6 +475,25 @@ const SkillsPanel = ({
         </p>
       ) : null}
 
+      {toggleError ? (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+        >
+          {toggleError}
+        </p>
+      ) : null}
+
+      {catalogState === 'error' && skills.length > 0 ? (
+        <SettingsLoadNotice
+          state="error"
+          loadingLabel={t('Loading Skills…')}
+          errorMessage={t('Open Science could not load Skills.')}
+          onRetry={retryCatalog}
+          className="mb-3"
+        />
+      ) : null}
+
       <div className="flex flex-col gap-4">
         {groups.map((group) => {
           const rows = visible.filter(({ skill }) => skill.source === group.source)
@@ -555,11 +631,7 @@ const SkillsPanel = ({
                             <SettingsToggle
                               enabled={skill.enabled}
                               aria-label={t('Toggle {{name}}', { name: skill.displayName })}
-                              onToggle={() =>
-                                void setSkillEnabled(skill.id, !skill.enabled).catch(
-                                  () => undefined
-                                )
-                              }
+                              onToggle={() => void toggleSkill(skill.id, !skill.enabled)}
                             />
                           </div>
                           {deleteError?.id === skill.id ? (

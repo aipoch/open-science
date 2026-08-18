@@ -53,6 +53,37 @@ describe('ReasoningEffortSelect', () => {
     expect(setReasoningEffort).toHaveBeenCalledWith('max')
   })
 
+  it('uses roving focus and selects the next effort with ArrowRight', async () => {
+    const setReasoningEffort = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ reasoningEffort: 'high', setReasoningEffort })
+
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+
+    const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    const selectedIndex = radios.findIndex((radio) => radio.getAttribute('aria-checked') === 'true')
+    const group = container.querySelector<HTMLElement>('[role="radiogroup"]')
+    expect(group?.tabIndex).toBe(0)
+    expect(radios.every((radio) => radio.tabIndex === -1)).toBe(true)
+
+    act(() => {
+      group?.focus()
+    })
+    expect(document.activeElement).toBe(radios[selectedIndex])
+    expect(radios.filter((radio) => radio.tabIndex === 0)).toHaveLength(1)
+
+    await act(async () => {
+      radios[selectedIndex].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(setReasoningEffort).toHaveBeenCalledWith('xhigh')
+    expect(document.activeElement).toBe(radios[selectedIndex + 1])
+  })
+
   it('shows only the active model three effort levels plus the separate default choice', async () => {
     useSettingsStore.setState({
       activeProviderId: 'stepfun',

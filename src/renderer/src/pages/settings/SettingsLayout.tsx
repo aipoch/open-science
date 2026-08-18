@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react'
-import type { LucideIcon } from 'lucide-react'
+import { AlertTriangle, LoaderCircle, type LucideIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -150,6 +151,59 @@ const SettingsToggle = ({
   />
 )
 
+type SettingsLoadNoticeProps = {
+  state: 'loading' | 'error'
+  loadingLabel: string
+  errorMessage: string
+  onRetry: () => void
+  className?: string
+}
+
+// Keeps request loading and failure visually distinct from a successful empty Settings surface.
+const SettingsLoadNotice = ({
+  state,
+  loadingLabel,
+  errorMessage,
+  onRetry,
+  className
+}: SettingsLoadNoticeProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  if (state === 'loading') {
+    return (
+      <div
+        role="status"
+        className={cn(
+          'flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground',
+          className
+        )}
+      >
+        <LoaderCircle
+          className="size-4 animate-spin motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+        <span>{loadingLabel}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'flex items-center gap-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-sm text-danger-000',
+        className
+      )}
+    >
+      <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+      <p className="min-w-0 flex-1">{errorMessage}</p>
+      <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+        {t('Retry')}
+      </Button>
+    </div>
+  )
+}
+
 type SettingsIconActionProps = Omit<
   ComponentProps<typeof Button>,
   'aria-label' | 'children' | 'size' | 'variant'
@@ -192,4 +246,11 @@ const SettingsIconAction = ({
   </TooltipProvider>
 )
 
-export { SettingsField, SettingsIconAction, SettingsRow, SettingsSection, SettingsToggle }
+export {
+  SettingsField,
+  SettingsIconAction,
+  SettingsLoadNotice,
+  SettingsRow,
+  SettingsSection,
+  SettingsToggle
+}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { RadioGroup } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -44,9 +45,14 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
   )
 
   return (
-    <div
-      role="radiogroup"
+    <RadioGroup.Root
       aria-label={t('Reasoning effort')}
+      value={options[selectedIndex]?.intent}
+      onValueChange={(value) => {
+        setInteractive(true)
+        void setReasoningEffort(value as Parameters<typeof setReasoningEffort>[0])
+      }}
+      orientation="horizontal"
       className="relative grid w-fit rounded-lg bg-muted p-0.5"
       style={{ gridTemplateColumns: `repeat(${options.length}, 4rem)` }}
     >
@@ -59,15 +65,9 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
         style={{ transform: `translateX(${selectedIndex * 100}%)` }}
       />
       {options.map((option) => (
-        <button
+        <RadioGroup.Item
           key={option.intent}
-          type="button"
-          role="radio"
-          aria-checked={options[selectedIndex] === option}
-          onClick={() => {
-            setInteractive(true)
-            void setReasoningEffort(option.intent)
-          }}
+          value={option.intent}
           className={cn(
             'relative z-10 flex h-7 w-16 items-center justify-center rounded-md text-xs font-medium transition-colors motion-reduce:transition-none',
             options[selectedIndex] === option
@@ -76,9 +76,9 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
           )}
         >
           {option.label}
-        </button>
+        </RadioGroup.Item>
       ))}
-    </div>
+    </RadioGroup.Root>
   )
 }
 
