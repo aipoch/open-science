@@ -453,19 +453,30 @@ export const createSessionMessageGraphOwner = <
     )
     if (!pendingSession) return undefined
 
-    // Keep the transcript's presentation identity continuous across the id swap: remember the
-    // pending-side identities the UI was keyed on, and rebase the conversation graph's
-    // session-derived root ids off the dead pending id.
-    const previousActiveBranchId = pendingSession.conversationGraph?.frames.find(
-      (frame) => frame.id === pendingSession.conversationGraph?.activeFrameId
-    )?.activeBranchId
-    const boundFromPendingMessageBranchId = previousActiveBranchId?.endsWith(`-${pendingSessionId}`)
-      ? previousActiveBranchId
+    // Keep the transcript's presentation identity continuous across the id swap: rebase the
+    // conversation graph's session-derived root ids off the dead pending id, and remember the
+    // active branch id before/after the rebase so the UI can translate its scope keys. Reading
+    // the pair off the rebased graph keeps it consistent with the rebase by construction —
+    // if the rebase declines a rename, no pair is recorded and the scope stays as-is.
+    const graphBeforeBind = pendingSession.conversationGraph
+    const graphAfterBind = graphBeforeBind
+      ? rebaseConversationGraphSessionId(graphBeforeBind, pendingSessionId, sessionId)
       : undefined
-    const boundToMessageBranchId = boundFromPendingMessageBranchId?.replace(
-      `-${pendingSessionId}`,
-      `-${sessionId}`
-    )
+    const activeBranchIdOf = (graph: typeof graphBeforeBind): string | undefined =>
+      graph?.frames.find((frame) => frame.id === graph.activeFrameId)?.activeBranchId
+    const branchIdBeforeBind = activeBranchIdOf(graphBeforeBind)
+    const branchIdAfterBind = activeBranchIdOf(graphAfterBind)
+    // Only a branch id the rebase actually remapped is bind-derived; legacy or fork-derived ids
+    // must keep driving the presentation scope untouched.
+    const bindRemappedBranchIdentity =
+      branchIdBeforeBind !== undefined &&
+      branchIdAfterBind !== undefined &&
+      branchIdBeforeBind !== branchIdAfterBind
+        ? {
+            boundFromPendingMessageBranchId: branchIdBeforeBind,
+            boundToMessageBranchId: branchIdAfterBind
+          }
+        : {}
 
     const now = Date.now()
     set({
@@ -478,16 +489,8 @@ export const createSessionMessageGraphOwner = <
               id: sessionId,
               isPending: false,
               boundFromPendingSessionId: pendingSessionId,
-              ...(boundFromPendingMessageBranchId && boundToMessageBranchId
-                ? { boundFromPendingMessageBranchId, boundToMessageBranchId }
-                : {}),
-              conversationGraph: session.conversationGraph
-                ? rebaseConversationGraphSessionId(
-                    session.conversationGraph,
-                    pendingSessionId,
-                    sessionId
-                  )
-                : session.conversationGraph,
+              ...bindRemappedBranchIdentity,
+              conversationGraph: graphAfterBind ?? session.conversationGraph,
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               agentBackendId: agentBackendId ?? session.agentBackendId,

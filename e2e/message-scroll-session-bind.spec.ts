@@ -10,6 +10,16 @@ const MESSAGE_COUNT = 500
 const JUMP_BACK_THRESHOLD_PX = 400
 const LIVE_EDGE_THRESHOLD_PX = 50
 
+// The bind scroll reset only becomes observable when session creation is slow like a real agent
+// spawn; the fake agent honors this delay (see e2e/fixtures/fake-opencode.mjs). Save/restore so
+// other spec files in the same Playwright worker never inherit the delay.
+const savedSessionDelayEnv = process.env.FAKE_OPENCODE_NEW_SESSION_DELAY_MS
+process.env.FAKE_OPENCODE_NEW_SESSION_DELAY_MS = '4000'
+test.afterEach(() => {
+  if (savedSessionDelayEnv === undefined) delete process.env.FAKE_OPENCODE_NEW_SESSION_DELAY_MS
+  else process.env.FAKE_OPENCODE_NEW_SESSION_DELAY_MS = savedSessionDelayEnv
+})
+
 type SeedMessage = {
   id: string
   role: 'user' | 'agent'
@@ -196,9 +206,6 @@ const expectLiveEdge = async (page: Page): Promise<void> => {
 
 test('keeps the transcript pinned when a branched session binds mid-run', async ({ app }) => {
   test.setTimeout(300_000)
-  // The bind scroll reset only becomes observable when session creation is slow like a real
-  // agent spawn; the fake agent honors this delay (see e2e/fixtures/fake-opencode.mjs).
-  process.env.FAKE_OPENCODE_NEW_SESSION_DELAY_MS ??= '4000'
 
   let page = await app.completeOnboarding()
   page = await forceEnglishLocale(page)
