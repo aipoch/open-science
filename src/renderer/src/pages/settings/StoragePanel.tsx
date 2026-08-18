@@ -203,6 +203,16 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setIsEditing(false)
   }
 
+  const handleMigrationClose = (): void => {
+    const resolvedTarget = migrationTarget
+    setMigrationTarget(null)
+    // Discarding a recovered copy changes its on-disk classification. Refresh the editor instead of
+    // leaving a stale `recover` action that would reopen a modal for a marker that no longer exists.
+    if (resolvedTarget && inspection?.path === resolvedTarget.path) {
+      void inspectPath(resolvedTarget.path)
+    }
+  }
+
   const handleAdopt = async (): Promise<void> => {
     setAdoptConfirmOpen(false)
     setIsAdopting(true)
@@ -432,7 +442,17 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       components={{ em: <strong className="font-semibold text-foreground" /> }}
                     />
                   </p>
-                ) : kind === 'move' ? (
+                ) : kind === 'recover' ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {inspection?.recoveryStatus === 'verified'
+                      ? t(
+                          'A verified copy from an interrupted move was found here. You can finish the move without copying everything again, or discard it.'
+                        )
+                      : t(
+                          'An incomplete copy from an interrupted move was found here. Discard it before using this location again.'
+                        )}
+                  </p>
+                ) : (
                   <>
                     <p className="mt-2 text-xs text-muted-foreground">
                       <Trans
@@ -447,17 +467,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       )}
                     </p>
                   </>
-                ) : kind === 'recover' ? (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {inspection?.recoveryStatus === 'verified'
-                      ? t(
-                          'A verified copy from an interrupted move was found here. You can finish the move without copying everything again, or discard it.'
-                        )
-                      : t(
-                          'An incomplete copy from an interrupted move was found here. Discard it before using this location again.'
-                        )}
-                  </p>
-                ) : null}
+                )}
 
                 {kind === 'invalid' && inspection?.error ? (
                   <p className="mt-2 text-xs text-destructive" role="alert">
@@ -719,7 +729,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
         <StorageMigrationModal
           targetPath={migrationTarget.path}
           recoveryStatus={migrationTarget.recoveryStatus}
-          onClose={() => setMigrationTarget(null)}
+          onClose={handleMigrationClose}
         />
       ) : null}
     </div>
