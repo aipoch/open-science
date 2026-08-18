@@ -514,11 +514,8 @@ const HomePage = ({
       .catch((error: unknown) => {
         // Durable deletion failed; keep the target and in-memory sessions visible so the user can
         // inspect the failure and retry or cancel explicitly.
-        setDeleteProjectError(
-          error instanceof Error
-            ? error.message
-            : t('Could not delete the project. Please try again.')
-        )
+        console.warn('Project deletion failed', error)
+        setDeleteProjectError(t('Could not delete the project. Please try again.'))
       })
       .finally(() => {
         setIsDeletingProject(false)
@@ -784,7 +781,7 @@ const HomePage = ({
                 className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
                 role="alert"
               >
-                <p>{t('Could not load projects: {{error}}', { error: loadError })}</p>
+                <p>{t('Open Science could not load projects. Retry to continue.')}</p>
                 <Button
                   type="button"
                   variant="outline"

@@ -23,9 +23,12 @@ type ProjectStore = ProjectStoreData & {
   removeProject: (id: string) => void
 }
 
-// Surfaces DB/IPC failures as a short message instead of a silent empty list.
-const describeError = (error: unknown): string =>
-  error instanceof Error ? error.message : 'Unknown error'
+// Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
+const SAFE_PROJECT_LOAD_ERROR = 'Open Science could not load projects. Retry to continue.'
+
+const reportProjectLoadError = (error: unknown): void => {
+  console.warn('Project list loading failed', error)
+}
 
 // Keeps projects sorted most-recently-updated first, matching the repository's list ordering.
 const sortByUpdatedDesc = (projects: Project[]): Project[] =>
@@ -72,7 +75,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return
       }
 
-      set({ isLoaded: true, loadError: describeError(error) })
+      reportProjectLoadError(error)
+      set({ isLoaded: true, loadError: SAFE_PROJECT_LOAD_ERROR })
     }
   },
 
