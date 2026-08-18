@@ -65,9 +65,14 @@ describe('LocalFsService.listDir', () => {
   it('sorts the complete readdir result before applying the entry cap', async () => {
     const fileDirents = Array.from({ length: LOCAL_DIR_ENTRY_CAP }, (_, index) => ({
       name: `file-${String(index).padStart(4, '0')}`,
-      isDirectory: () => false
+      isDirectory: () => false,
+      isSymbolicLink: () => false
     }))
-    const directoryDirent = { name: 'zzz-directory', isDirectory: () => true }
+    const directoryDirent = {
+      name: 'zzz-directory',
+      isDirectory: () => true,
+      isSymbolicLink: () => false
+    }
     vi.mocked(readdir).mockResolvedValueOnce([...fileDirents, directoryDirent] as never)
     vi.mocked(stat).mockResolvedValue({
       isDirectory: () => false,
@@ -80,6 +85,36 @@ describe('LocalFsService.listDir', () => {
     expect(listing.truncated).toBe(true)
     expect(listing.entries).toHaveLength(LOCAL_DIR_ENTRY_CAP)
     expect(listing.entries[0]).toMatchObject({ name: 'zzz-directory', isDirectory: true })
+    expect(listing.entries.at(-1)?.name).toBe('file-4998')
+    expect(listing.entries.some((entry) => entry.name === 'file-4999')).toBe(false)
+  })
+
+  it('classifies directory symlinks before applying the entry cap', async () => {
+    const fileDirents = Array.from({ length: LOCAL_DIR_ENTRY_CAP }, (_, index) => ({
+      name: `file-${String(index).padStart(4, '0')}`,
+      isDirectory: () => false,
+      isSymbolicLink: () => false
+    }))
+    const directoryLinkDirent = {
+      name: 'zzz-directory-link',
+      isDirectory: () => false,
+      isSymbolicLink: () => true
+    }
+    vi.mocked(readdir).mockResolvedValueOnce([...fileDirents, directoryLinkDirent] as never)
+    vi.mocked(stat).mockImplementation(
+      async (path) =>
+        ({
+          isDirectory: () => String(path).endsWith(directoryLinkDirent.name),
+          size: 1,
+          mtimeMs: 1
+        }) as never
+    )
+
+    const listing = await service.listDir(root)
+
+    expect(listing.truncated).toBe(true)
+    expect(listing.entries).toHaveLength(LOCAL_DIR_ENTRY_CAP)
+    expect(listing.entries[0]).toMatchObject({ name: 'zzz-directory-link', isDirectory: true })
     expect(listing.entries.at(-1)?.name).toBe('file-4998')
     expect(listing.entries.some((entry) => entry.name === 'file-4999')).toBe(false)
   })

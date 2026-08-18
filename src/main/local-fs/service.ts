@@ -1,5 +1,6 @@
 import { hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
+import type { Stats } from 'node:fs'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
 
@@ -191,21 +192,39 @@ export class LocalFsService {
     const dirents = await readdir(resolvedPath, { withFileTypes: true })
     const truncated = dirents.length > LOCAL_DIR_ENTRY_CAP
     // readdir order is filesystem-dependent. Sort the inexpensive Dirent metadata before applying
-    // the cap so repeated listings select the same visible subset without stat'ing every entry in
-    // an arbitrarily large directory.
+    // the cap so repeated listings select the same visible subset. Resolve only symlinks up front so
+    // directory targets participate in the directory-first selection without stat'ing every entry.
+    const isDirectoryByName = new Map<string, boolean>()
+    const symlinkStatsByName = new Map<string, Stats>()
+    for (const dirent of dirents) {
+      let isDirectory = dirent.isDirectory()
+      if (!isDirectory && dirent.isSymbolicLink()) {
+        try {
+          const entryStat = await stat(join(resolvedPath, dirent.name))
+          symlinkStatsByName.set(dirent.name, entryStat)
+          isDirectory = entryStat.isDirectory()
+        } catch {
+          // Broken or unreadable symlinks remain file-like and use the existing fallback metadata.
+        }
+      }
+      isDirectoryByName.set(dirent.name, isDirectory)
+    }
     dirents.sort((a, b) => {
-      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
+      const aIsDirectory = isDirectoryByName.get(a.name) ?? false
+      const bIsDirectory = isDirectoryByName.get(b.name) ?? false
+      if (aIsDirectory !== bIsDirectory) return aIsDirectory ? -1 : 1
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
     })
     const capped = truncated ? dirents.slice(0, LOCAL_DIR_ENTRY_CAP) : dirents
 
     const entries: LocalDirEntry[] = []
     for (const dirent of capped) {
-      const isDirectory = dirent.isDirectory()
+      const isDirectory = isDirectoryByName.get(dirent.name) ?? dirent.isDirectory()
       // Stat each entry for size/mtime; skip entries that vanish or deny access mid-listing so one
       // unreadable file never fails the whole directory.
       try {
-        const entryStat = await stat(join(resolvedPath, dirent.name))
+        const entryStat =
+          symlinkStatsByName.get(dirent.name) ?? (await stat(join(resolvedPath, dirent.name)))
         entries.push({
           name: dirent.name,
           isDirectory: isDirectory || entryStat.isDirectory(),
