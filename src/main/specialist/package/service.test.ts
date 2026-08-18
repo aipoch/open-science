@@ -383,6 +383,46 @@ describe('SpecialistPackageService', () => {
     })
   })
 
+  it('blocks package export with actionable diagnostics when the profile is incomplete', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'draft-specialist',
+      name: 'DRAFT_SPECIALIST',
+      displayName: 'Draft Specialist',
+      description: '',
+      systemPrompt: '',
+      enabled: false,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+
+    await expect(service.previewExport('draft-specialist')).resolves.toMatchObject({
+      canExport: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'specialist.description-invalid',
+          message: expect.stringContaining('description')
+        },
+        {
+          severity: 'error',
+          code: 'specialist.system-prompt-invalid',
+          message: expect.stringContaining('system prompt')
+        }
+      ]
+    })
+  })
+
   it('exports builtin and owned Skills with exact IDs and editable capability references only', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({

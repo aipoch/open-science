@@ -17,6 +17,10 @@ import {
   SPECIALIST_PACKAGE_SCHEMA_VERSION,
   type SpecialistPackageValidationPlan
 } from '../../../shared/specialist-package'
+import {
+  validateSpecialistDescription,
+  validateSpecialistSystemPrompt
+} from '../../../shared/specialist'
 import { parseSkillDocument } from '../../../shared/skill-frontmatter'
 import { createLogger } from '../../logger'
 import type { StoredSpecialist } from '../types'
@@ -489,21 +493,43 @@ export class SpecialistPackageService {
         message: `Content changed but the package version remains ${specialist.packageVersion}.`
       })
     }
+    const descriptionError = !specialist.description.trim()
+      ? 'Complete the Specialist description before exporting a package.'
+      : validateSpecialistDescription(specialist.description)
+    if (descriptionError) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'specialist.description-invalid',
+        message: descriptionError
+      })
+    }
+    const systemPromptError = !specialist.systemPrompt.trim()
+      ? 'Complete the Specialist system prompt before exporting a package.'
+      : validateSpecialistSystemPrompt(specialist.systemPrompt)
+    if (systemPromptError) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'specialist.system-prompt-invalid',
+        message: systemPromptError
+      })
+    }
     const includedSkillIds = selectedSkills
       .filter((skill) => skill.selected)
       .map((skill) => skill.id)
-    try {
-      await this.export({
-        specialistId: specialist.id,
-        expectedRevision: specialist.revision,
-        includedSkillIds
-      })
-    } catch {
-      diagnostics.push({
-        severity: 'error',
-        code: 'specialist.export-validation-failed',
-        message: 'The current Specialist or selected Skills contain blocking validation errors.'
-      })
+    if (!diagnostics.some((item) => item.severity === 'error')) {
+      try {
+        await this.export({
+          specialistId: specialist.id,
+          expectedRevision: specialist.revision,
+          includedSkillIds
+        })
+      } catch {
+        diagnostics.push({
+          severity: 'error',
+          code: 'specialist.export-validation-failed',
+          message: 'The current Specialist or selected Skills contain blocking validation errors.'
+        })
+      }
     }
 
     return {
