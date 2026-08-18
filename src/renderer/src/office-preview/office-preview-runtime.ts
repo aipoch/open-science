@@ -71,13 +71,6 @@ const asRuntimeError = (
   )
 }
 
-const PARSING_TITLES = {
-  docx: 'Parsing the Word document',
-  xls: 'Parsing the Excel workbook',
-  xlsx: 'Parsing the Excel workbook',
-  pptx: 'Parsing the PowerPoint presentation'
-} as const
-
 const runOfficePreview = async (
   options: RunOfficePreviewOptions
 ): Promise<OfficePreviewRuntimeCleanup> => {
@@ -86,7 +79,7 @@ const runOfficePreview = async (
   let disposeRender: OfficePreviewRuntimeCleanup | undefined
 
   try {
-    reportState({ sessionId: start.sessionId, phase: 'reading', title: 'Reading the Office file' })
+    reportState({ sessionId: start.sessionId, phase: 'reading' })
     let bytes: Uint8Array
     try {
       const response = await fetchFile(start.resource.url, {
@@ -120,8 +113,7 @@ const runOfficePreview = async (
 
     reportState({
       sessionId: start.sessionId,
-      phase: 'validating',
-      title: 'Validating the Office package'
+      phase: 'validating'
     })
     try {
       await validateOfficePackage(bytes, extension, controller.signal)
@@ -131,8 +123,7 @@ const runOfficePreview = async (
 
     reportState({
       sessionId: start.sessionId,
-      phase: 'parsing',
-      title: PARSING_TITLES[extension]
+      phase: 'parsing'
     })
     try {
       disposeRender = await renderOfficeFile({
@@ -144,9 +135,7 @@ const runOfficePreview = async (
         onStatus: (status) =>
           reportState({
             sessionId: start.sessionId,
-            phase: status.phase,
-            title: status.title,
-            description: status.description
+            phase: status.phase
           })
       })
     } catch (error) {

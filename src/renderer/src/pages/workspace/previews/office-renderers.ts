@@ -3,8 +3,6 @@ import type { OfficeFileExtension } from './office-package'
 export type OfficeRenderCleanup = () => void | Promise<void>
 export type OfficeRenderStatus = {
   phase: 'parsing' | 'rendering'
-  title: string
-  description: string
 }
 
 type RenderOfficeFileOptions = {
@@ -331,14 +329,10 @@ const SPREADSHEET_WORKER_STARTUP_TIMEOUT_MS = 5_000
 const SPREADSHEET_STATUS_SCOPE_ATTRIBUTE = 'data-open-science-spreadsheet-preview'
 const SPREADSHEET_STATUS_SCOPE = `[${SPREADSHEET_STATUS_SCOPE_ATTRIBUTE}]`
 const SPREADSHEET_PARSING_STATUS: OfficeRenderStatus = {
-  phase: 'parsing',
-  title: 'Parsing the Excel workbook',
-  description: 'Preparing worksheets, styles, and virtualized viewport data.'
+  phase: 'parsing'
 }
 const RENDERING_STATUS: OfficeRenderStatus = {
-  phase: 'rendering',
-  title: 'Rendering the preview',
-  description: 'Building the document view.'
+  phase: 'rendering'
 }
 const SPREADSHEET_STATUS_STYLE = `
 ${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .loading {

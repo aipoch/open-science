@@ -20,6 +20,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { formatDisplayNumber } from '@/lib/locale-format'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ComputePasswordResetSection } from './ComputePasswordResetSection'
@@ -275,7 +276,7 @@ export function ComputeHostDetail({
       setDetailsError({
         kind: 'key',
         key: 'Details must be {{limit}} characters or fewer.',
-        params: { limit: DETAILS_DOC_MAX_LENGTH.toLocaleString() }
+        params: { limit: formatDisplayNumber(DETAILS_DOC_MAX_LENGTH) }
       })
       return
     }
@@ -687,8 +688,8 @@ export function ComputeHostDetail({
                 )}
               >
                 {t('{{used}} / {{limit}} chars', {
-                  used: detailsDoc.length.toLocaleString(),
-                  limit: DETAILS_DOC_MAX_LENGTH.toLocaleString()
+                  used: formatDisplayNumber(detailsDoc.length),
+                  limit: formatDisplayNumber(DETAILS_DOC_MAX_LENGTH)
                 })}
               </span>
               <div className="flex gap-2">

@@ -7,7 +7,7 @@ import {
   resolveLocalePreference,
   resolvePreference
 } from '@/lib/locale-preference'
-import type { LanguagePreference, Locale } from '../../../shared/locale'
+import type { LanguagePreference, Locale, LocalePreferenceSnapshot } from '../../../shared/locale'
 
 type LocaleStore = {
   // The user's choice: 'system' (detect from the device) or an explicit locale.
@@ -32,5 +32,45 @@ export const useLocaleStore = create<LocaleStore>((set) => ({
     applyHtmlLang(locale)
     persistPreference(preference)
     set({ preference, locale })
+    void window.api.locale
+      ?.setPreference({ preference })
+      .then((snapshot) => {
+        if (useLocaleStore.getState().preference === preference) applyLocaleSnapshot(snapshot)
+      })
+      .catch(() => undefined)
   }
 }))
+
+const applyLocaleSnapshot = (snapshot: LocalePreferenceSnapshot): void => {
+  setI18nLocale(snapshot.locale)
+  applyHtmlLang(snapshot.locale)
+  persistPreference(snapshot.preference)
+  useLocaleStore.setState(snapshot)
+}
+
+let stopLocalePreferenceSync: (() => void) | undefined
+
+// Electron's main process owns native-surface locale resolution for the current process. The
+// renderer remains the persistence source and projects its stored choice into that owner on startup.
+// Web builds expose no locale bridge, so they keep using navigator.languages unchanged.
+export const startLocalePreferenceSync = (): (() => void) => {
+  stopLocalePreferenceSync?.()
+  const localeApi = window.api.locale
+  if (!localeApi) return () => undefined
+
+  const unsubscribe = localeApi.onChanged(applyLocaleSnapshot)
+  void localeApi
+    .setPreference({ preference: useLocaleStore.getState().preference })
+    .then((snapshot) => {
+      if (useLocaleStore.getState().preference === snapshot.preference) {
+        applyLocaleSnapshot(snapshot)
+      }
+    })
+    .catch(() => undefined)
+
+  stopLocalePreferenceSync = () => {
+    unsubscribe()
+    stopLocalePreferenceSync = undefined
+  }
+  return stopLocalePreferenceSync
+}

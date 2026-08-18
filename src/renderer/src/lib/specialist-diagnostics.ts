@@ -1,4 +1,5 @@
 import type { PackageDiagnostic } from '../../../shared/specialist-package'
+import { formatDisplayNumber } from './locale-format'
 
 // Maps raw validation codes (zip-adapter.ts, package/validator.ts) to user-facing
 // copy: a human title plus a body that explains the finding and what to do.
@@ -12,7 +13,7 @@ const formatBytes = (value: number): string =>
     ? `${Number((value / (1024 * 1024)).toFixed(1))} MB`
     : `${Number((value / 1024).toFixed(1))} KB`
 
-const formatCount = (value: number): string => value.toLocaleString('en-US')
+const formatCount = (value: number): string => formatDisplayNumber(value)
 
 const copy = (title: string, body: string): SpecialistDiagnosticCopy => ({ title, body })
 

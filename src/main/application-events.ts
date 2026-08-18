@@ -32,6 +32,7 @@ import type { CompletionHandoffLifecycleEvent, PendingSwitchBroadcast } from '..
 import type { MigrationProgress } from '../shared/storage'
 import type { SideChatRelayDeliveredEvent, SideChatRuntimeEvent } from '../shared/side-chat'
 import type { UpdateStatus } from '../shared/update'
+import type { LocalePreferenceSnapshot } from '../shared/locale'
 
 // This catalog describes only events that already flow through renderer-broadcast. Window-only
 // signals and generated Web-only channels stay on their existing transports until their owner moves
@@ -75,6 +76,7 @@ export type ApplicationEventMap = {
   'reviewer:fix-loop-start': ReviewSessionRequest
   'reviewer:fix-loop-end': ReviewSessionRequest
   'remote-access:changed': Record<string, never>
+  'locale:changed': LocalePreferenceSnapshot
   'update:status': UpdateStatus
   'update:progress': DownloadProgress
 }

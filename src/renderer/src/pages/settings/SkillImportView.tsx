@@ -20,6 +20,7 @@ import type {
 import { GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { formatDisplayNumber } from '@/lib/locale-format'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
 import { GitHubTokenControl } from './GitHubTokenControl'
@@ -306,7 +307,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                         <div className="flex shrink-0 items-center justify-between gap-3 px-1 sm:justify-end">
                           <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
                             <Star className="size-3.5" aria-hidden="true" />
-                            {repository.stars.toLocaleString()}
+                            {formatDisplayNumber(repository.stars)}
                           </span>
                           <Button
                             type="button"

@@ -5,8 +5,9 @@
 //
 // Detection reads navigator.languages rather than the host OS locale on purpose. In the web build the
 // backend may run on a machine whose OS language differs from the person using the browser; the
-// browser's list is the one that describes the reader. The main process has its own detection (via
-// app.getLocale()) for surfaces that paint before the renderer exists.
+// browser's list is the one that describes the reader. In Electron, the renderer synchronizes this
+// persisted choice to the main process, whose in-memory owner resolves `system` from Electron's
+// preferred language list for native surfaces.
 
 import {
   DEFAULT_LANGUAGE_PREFERENCE,

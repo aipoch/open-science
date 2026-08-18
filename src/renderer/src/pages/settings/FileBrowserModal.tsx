@@ -29,6 +29,7 @@ import { Dialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
+import { formatDisplayDateTime } from '@/lib/locale-format'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
 import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
@@ -253,7 +254,7 @@ function DetailPanel({
 
         <div className="space-y-1.5">
           <MetaRow label={t('SIZE')} value={formatSize(entry.size)} />
-          <MetaRow label={t('MODIFIED')} value={new Date(entry.mtimeMs).toLocaleString()} />
+          <MetaRow label={t('MODIFIED')} value={formatDisplayDateTime(entry.mtimeMs)} />
           <MetaRow label={t('TYPE')} value={t(inferType(entry.name))} />
         </div>
 

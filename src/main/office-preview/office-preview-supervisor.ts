@@ -131,8 +131,7 @@ class OfficePreviewSupervisor {
       this.activeSessionByParent.set(parentOwnerId, sessionId)
       this.publishState(parentOwnerId, request.requestId, {
         sessionId,
-        phase: 'starting',
-        title: 'Starting Office preview'
+        phase: 'starting'
       })
       this.armReadinessTimeout(sessionId, session)
 
