@@ -2459,7 +2459,7 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
-  it('keeps startup cleanup closed after quarantining corrupt Session authority', async () => {
+  it('keeps cleanup closed across scans after quarantining corrupt Session authority', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-corrupt-session-reconciliation-'))
     const projectDir = join(root, 'sessions', 'project-1')
     await mkdir(projectDir, { recursive: true })
@@ -2482,6 +2482,7 @@ describe('SessionPersistenceCoordinator', () => {
 
     try {
       const loaded = await coordinator.loadAll()
+      const replayed = await coordinator.loadAll()
 
       expect(loaded.sessions).toEqual([])
       expect(loaded.diagnostics).toMatchObject({
@@ -2495,7 +2496,8 @@ describe('SessionPersistenceCoordinator', () => {
           }
         ]
       })
-      expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
+      expect(replayed.diagnostics).toEqual(loaded.diagnostics)
+      expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledTimes(2)
       await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
         sessions: [],
         isComplete: false
