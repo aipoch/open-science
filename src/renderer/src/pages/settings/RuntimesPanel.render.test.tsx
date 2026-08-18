@@ -175,6 +175,30 @@ describe('RuntimesPanel', () => {
     expect(recheck?.parentElement?.className).toContain('ml-auto')
   })
 
+  it('disables Recheck until the initial registry load settles', async () => {
+    let resolveInitial:
+      ((value: { python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }) => void) | undefined
+    listEnvironments.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveInitial = resolve
+        })
+    )
+    await render()
+
+    const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => /recheck/i.test(button.textContent ?? '')
+    )
+    expect(recheck?.disabled).toBe(true)
+    await click(recheck ?? null)
+    expect(listEnvironments).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveInitial?.({ python: pythonEnvs, r: rEnvs })
+    })
+    expect(recheck?.disabled).toBe(false)
+  })
+
   it('shows discovery failures instead of rendering an empty registry and recovers on Recheck', async () => {
     listEnvironments.mockRejectedValueOnce(new Error('runtime discovery unavailable'))
     await render()
@@ -207,6 +231,7 @@ describe('RuntimesPanel', () => {
 
   it('keeps the last complete registry snapshot when Recheck fails', async () => {
     await render()
+    expect(container.querySelector('[data-testid="runtime-packages-count"]')?.textContent).toBe('2')
     listEnvironments.mockRejectedValueOnce(new Error('runtime recheck unavailable'))
 
     const recheck = Array.from(container.querySelectorAll('button')).find((button) =>
@@ -219,6 +244,7 @@ describe('RuntimesPanel', () => {
     )
     expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(4)
     expect(container.textContent).toContain('System Python')
+    expect(container.querySelector('[data-testid="runtime-packages-count"]')?.textContent).toBe('2')
   })
 
   it('renders a card per detected env with version and interpreter path', async () => {

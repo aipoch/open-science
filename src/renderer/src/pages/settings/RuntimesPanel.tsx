@@ -58,7 +58,7 @@ type RuntimesPanelProps = {
 }
 
 const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [envs, setEnvs] = useState<EnvLists | null>(null)
   const [enablement, setEnablement] = useState<Enablements>({})
   const [loaded, setLoaded] = useState(false)
@@ -119,6 +119,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const applyAll = ([nextEnvs, nextEnablement]: [EnvLists, Enablements]): void => {
     setEnvs(nextEnvs)
     setEnablement(nextEnablement)
+    setError(null)
     setLoaded(true)
   }
 
@@ -126,10 +127,10 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     void fetchAll()
       .then(applyAll)
       .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : t('Could not load runtimes.'))
+        setError(e instanceof Error ? e.message : i18n.t('Could not load runtimes.'))
         setLoaded(true)
       })
-  }, [t])
+  }, [i18n])
 
   // Lazy package-count fetch: runs AFTER the env list lands (never blocks fetchAll). One bulk
   // listPackageCounts call per language (the main process does ONE discovery sweep per call and
@@ -184,14 +185,16 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
 
   // Recheck refreshes both halves of the runtime registry together for the same reason as initial
   // loading: cards and their permissions must describe one coherent backend snapshot. Counts are
-  // cleared too so every badge refetches against the new env list.
+  // cleared after a successful refresh so every badge refetches against the new env list; a failed
+  // refresh retains both the last complete registry snapshot and its matching counts.
   const recheck = async (): Promise<void> => {
     setBusy(true)
     setError(null)
-    countsRef.current = {}
-    setPackageCounts({})
     try {
-      applyAll(await fetchAll())
+      const next = await fetchAll()
+      countsRef.current = {}
+      setPackageCounts({})
+      applyAll(next)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not re-check runtimes.'))
     } finally {
@@ -487,7 +490,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             variant="outline"
             size="sm"
             onClick={() => void recheck()}
-            disabled={busy}
+            disabled={busy || loading}
           >
             <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
             {t('Recheck')}
