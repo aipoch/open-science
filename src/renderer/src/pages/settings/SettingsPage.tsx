@@ -1168,7 +1168,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       providerId={computeView.providerId}
                       authenticationFocus={computeView.authenticationFocus}
                       authenticationRequestId={computeView.authenticationRequestId}
-                      onRemoved={() => navigateCompute({ kind: 'list' })}
                     />
                   ) : (
                     <ComputePanel onNavigate={navigateCompute} />

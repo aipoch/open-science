@@ -110,7 +110,7 @@ describe('ComputeHostDetail', () => {
       isLoaded: true
     })
 
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const sections = Array.from(
       container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
@@ -131,7 +131,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true })
 
     await act(async () => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
       await Promise.resolve()
     })
 
@@ -178,7 +178,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [passwordHost], isLoaded: true, resetPassword })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
     const open = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Update'
@@ -223,7 +223,7 @@ describe('ComputeHostDetail', () => {
       isLoaded: true
     })
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
     const click = (label: string): void => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -255,7 +255,7 @@ describe('ComputeHostDetail', () => {
         authentication: { ...configuredHost.authentication!, revision: 4 }
       })
     useComputeStore.setState({ hosts: [configuredHost], isLoaded: true, resetPassword })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
     const click = async (label: string): Promise<void> => {
       const button = Array.from(container.querySelectorAll('button')).find(
         (candidate) => candidate.textContent?.trim() === label
@@ -283,7 +283,7 @@ describe('ComputeHostDetail', () => {
 
   it('keeps authentication configuration and saved-password editors mutually exclusive', () => {
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const click = (label: string): void => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -317,7 +317,7 @@ describe('ComputeHostDetail', () => {
     })
     useComputeStore.setState({ hosts: [passwordHost], isLoaded: true })
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
     const reset = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Update'
@@ -358,7 +358,7 @@ describe('ComputeHostDetail', () => {
     )
     useComputeStore.setState({ hosts: [passwordHost], isLoaded: true, resetPassword })
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
     const click = (label: string): void => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -394,7 +394,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ isLoaded: false })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     expect(container.textContent).toContain('Loading host')
@@ -404,7 +404,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [], isLoaded: true })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     expect(container.textContent).toContain('no longer exists')
@@ -414,7 +414,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [host()], isLoaded: true })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     expect(container.textContent).toContain('biowulf')
@@ -436,7 +436,7 @@ describe('ComputeHostDetail', () => {
       ]
     })
 
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
     await act(async () => Promise.resolve())
 
     expect(container.textContent).toContain('Credential unavailable')
@@ -480,7 +480,7 @@ describe('ComputeHostDetail', () => {
         ]
       })
 
-      act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+      act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
       await act(async () => Promise.resolve())
 
       expect(container.textContent).toContain(expected)
@@ -488,112 +488,23 @@ describe('ComputeHostDetail', () => {
     }
   )
 
-  it('shows only the bottom-right Remove Host action without Danger zone copy', () => {
+  it('does not duplicate the list-level Remove Host action', () => {
     useComputeStore.setState({ hosts: [host()], isLoaded: true })
 
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const removeActions = Array.from(container.querySelectorAll('button')).filter(
       (button) => button.textContent?.trim() === 'Remove Host'
     )
 
-    expect(container.textContent).not.toContain('Danger zone')
-    expect(container.textContent).not.toContain(
-      'Removing this Compute Host deletes its local configuration and cannot be undone.'
-    )
-    expect(removeActions).toHaveLength(1)
-    expect(removeActions[0]?.parentElement?.classList.contains('justify-end')).toBe(true)
-  })
-
-  it('checks eligibility and requires explicit confirmation before deleting a password Host', async () => {
-    const deleteHost = vi.fn(async () => undefined)
-    const onRemoved = vi.fn()
-    useComputeStore.setState({
-      hosts: [
-        host({
-          authentication: {
-            mode: 'password',
-            credentialStatus: 'configured',
-            revision: 1,
-            lastVerifiedAt: undefined
-          }
-        })
-      ],
-      deleteHost
-    })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={onRemoved} />))
-
-    const remove = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Remove Host'
-    )
-    await act(async () => remove?.click())
-
-    expect(deleteHost).not.toHaveBeenCalled()
-    expect(window.api.compute.deletionStatus).toHaveBeenCalledWith({ providerId: 'ssh:biowulf' })
-    expect(document.body.textContent).toContain(
-      'The local Compute Host and encrypted password will be deleted.'
-    )
-    expect(document.body.textContent).toContain('The remote SSH account is unchanged')
-    expect(document.body.textContent).toContain('password cannot be recovered')
-
-    const confirm = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')
-    ).find((button) => button.textContent?.trim() === 'Remove Host')
-    await act(async () => confirm?.click())
-    expect(deleteHost).toHaveBeenCalledWith('ssh:biowulf')
-    expect(onRemoved).toHaveBeenCalledOnce()
-  })
-
-  it('keeps removal blocked while Compute Jobs still need attention', async () => {
-    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({ blockedByJobs: true })
-    const deleteHost = vi.fn(async () => undefined)
-    useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
-
-    const remove = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Remove Host'
-    )
-    await act(async () => remove?.click())
-
-    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
-    const confirm = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Remove Host'
-    )
-    expect(dialog?.textContent).toContain(
-      'This Host cannot be removed while Compute Jobs are active or still need harvesting or remote cleanup.'
-    )
-    expect(confirm?.disabled).toBe(true)
-    expect(deleteHost).not.toHaveBeenCalled()
-  })
-
-  it('keeps the dialog open and reports a deletion failure without claiming success', async () => {
-    const deleteHost = vi.fn(async () => {
-      throw new Error('delete failed')
-    })
-    const onRemoved = vi.fn()
-    useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={onRemoved} />))
-
-    const remove = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Remove Host'
-    )
-    await act(async () => remove?.click())
-    const confirm = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')
-    ).find((button) => button.textContent?.trim() === 'Remove Host')
-    await act(async () => confirm?.click())
-
-    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
-      'Could not remove this Compute Host.'
-    )
-    expect(onRemoved).not.toHaveBeenCalled()
+    expect(removeActions).toHaveLength(0)
   })
 
   it('shows Details, Scratch root, and Concurrent job limit sections', () => {
     useComputeStore.setState({ hosts: [host()], isLoaded: true })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     expect(container.textContent).toContain('Details')
@@ -612,7 +523,7 @@ describe('ComputeHostDetail', () => {
     })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     expect(container.textContent).toContain('PINNED')
@@ -622,7 +533,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [host()], isLoaded: true })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     expect(container.textContent).toContain('10 (default)')
@@ -633,7 +544,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [host({ concurrencyLimit: 10 })], isLoaded: true })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     expect(container.textContent).toContain('10')
@@ -647,7 +558,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true, changeAuthentication })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     const authSection = Array.from(
@@ -700,7 +611,7 @@ describe('ComputeHostDetail', () => {
       .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
       .mockResolvedValue(changed)
     useComputeStore.setState({ hosts: [sshHost], isLoaded: true, changeAuthentication })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const click = async (label: string): Promise<void> => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -727,7 +638,7 @@ describe('ComputeHostDetail', () => {
       .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
       .mockResolvedValue(passwordHost())
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true, changeAuthentication })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const enter = (id: string, value: string): void => {
       const input = container.querySelector<HTMLInputElement>(`#${id}`)!
@@ -762,7 +673,7 @@ describe('ComputeHostDetail', () => {
       .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
       .mockResolvedValue(current)
     useComputeStore.setState({ hosts: [current], isLoaded: true, changeAuthentication })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const click = async (label: string): Promise<void> => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -790,7 +701,7 @@ describe('ComputeHostDetail', () => {
       .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
       .mockResolvedValue(current)
     useComputeStore.setState({ hosts: [current], isLoaded: true, changeAuthentication })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const click = async (label: string): Promise<void> => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -821,7 +732,7 @@ describe('ComputeHostDetail', () => {
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true, changeAuthentication })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
     const authSection = Array.from(
       container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
@@ -861,7 +772,7 @@ describe('ComputeHostDetail', () => {
       throw Object.assign(new Error('host_unreachable'), { code: 'host_unreachable' })
     })
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true, changeAuthentication })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const click = async (label: string): Promise<void> => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -895,7 +806,7 @@ describe('ComputeHostDetail', () => {
         throw Object.assign(new Error('host_unreachable'), { code: 'host_unreachable' })
       })
       useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true, changeAuthentication })
-      act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+      act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
       const click = async (label: string): Promise<void> => {
         const button = Array.from(container.querySelectorAll('button')).find(
@@ -957,7 +868,7 @@ describe('ComputeHostDetail', () => {
       throw Object.assign(new Error('host_unreachable'), { code: 'host_unreachable' })
     })
     useComputeStore.setState({ hosts: [sshHost], isLoaded: true, changeAuthentication })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const click = async (label: string): Promise<void> => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -990,7 +901,7 @@ describe('ComputeHostDetail', () => {
 
   it('associates username, port, and password validation errors with their fields', async () => {
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const click = (label: string): void => {
       const button = Array.from(container.querySelectorAll('button')).find(
@@ -1037,7 +948,7 @@ describe('ComputeHostDetail', () => {
   it('masks but preserves the exact multiline password candidate when changing identity', async () => {
     const changeAuthentication = vi.fn(async () => passwordHost())
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true, changeAuthentication })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
 
     const changeUsername = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Edit'
@@ -1077,7 +988,7 @@ describe('ComputeHostDetail', () => {
     })
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     const failure = container.querySelector<HTMLElement>('[role="alert"]')
@@ -1091,7 +1002,7 @@ describe('ComputeHostDetail', () => {
     stubDetailsGet('original notes')
 
     act(() => {
-      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" />)
     })
 
     // Wait for the detailsGet effect to resolve.
@@ -1153,7 +1064,7 @@ describe('ComputeHostDetail', () => {
       root.render(
         <ComputeHostDetail
           providerId="ssh:biowulf"
-          onRemoved={vi.fn()}
+
           authenticationFocus="authentication_failed"
         />
       )
@@ -1184,7 +1095,7 @@ describe('ComputeHostDetail', () => {
       root.render(
         <ComputeHostDetail
           providerId="ssh:biowulf"
-          onRemoved={vi.fn()}
+
           authenticationFocus="secure_storage_unavailable"
         />
       )
@@ -1215,7 +1126,7 @@ describe('ComputeHostDetail', () => {
       root.render(
         <ComputeHostDetail
           providerId="ssh:biowulf"
-          onRemoved={vi.fn()}
+
           authenticationFocus="authentication_failed"
           authenticationRequestId={7}
         />

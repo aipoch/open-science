@@ -30,12 +30,9 @@ import {
 } from './compute-runtime-recovery'
 import { SettingsSection } from './SettingsLayout'
 import { ComputeHostAuthenticationDetail } from './ComputeHostAuthenticationDetail'
-import { ComputeHostRemovalDialog } from './ComputeHostRemovalDialog'
 
 type ComputeHostDetailProps = {
   providerId: string
-  // Called after the host is removed (SettingsPage returns to the list).
-  onRemoved: () => void
   authenticationFocus?: ComputeAuthenticationErrorCode
   authenticationRequestId?: number
 }
@@ -64,7 +61,6 @@ const failure = (err: unknown, key: DetailErrorKey): DetailError =>
 // details editor, scratch root editor, and concurrent job limit editor.
 export function ComputeHostDetail({
   providerId,
-  onRemoved,
   authenticationFocus,
   authenticationRequestId
 }: ComputeHostDetailProps): React.JSX.Element {
@@ -936,8 +932,6 @@ export function ComputeHostDetail({
           </div>
         )}
       </div>
-
-      <ComputeHostRemovalDialog host={host} onRemoved={onRemoved} />
     </div>
   )
 }
