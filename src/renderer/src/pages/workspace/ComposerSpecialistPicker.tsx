@@ -65,7 +65,7 @@ const ComposerSpecialistPicker = ({
   )
   const options: PickerOption[] = [
     {
-      key: 'main-agent',
+      key: '__main-agent-option',
       id: undefined,
       name: t('Main Agent'),
       searchText: t('Main Agent')

@@ -147,4 +147,23 @@ describe('ComposerSpecialistPicker', () => {
       )?.disabled
     ).toBe(true)
   })
+
+  it('namespaces the synthetic Main Agent option away from valid Specialist ids', () => {
+    useSpecialistStore.setState((state) => ({
+      items: [...state.items, specialist('main-agent', 'MAIN_AGENT_SPECIALIST')]
+    }))
+    const onChange = vi.fn()
+    renderPicker({ onChange })
+
+    const mainOption = container.querySelector<HTMLButtonElement>(
+      '[data-testid="composer-specialist-option-__main-agent-option"]'
+    )!
+    const specialistOption = container.querySelector<HTMLButtonElement>(
+      '[data-testid="composer-specialist-option-main-agent"]'
+    )!
+    expect(mainOption.id).not.toBe(specialistOption.id)
+
+    act(() => mainOption.click())
+    expect(onChange).toHaveBeenCalledWith(undefined)
+  })
 })
