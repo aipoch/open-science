@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { basename } from 'node:path'
 
 import type {
@@ -70,6 +70,8 @@ const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\
 const SECRET_FLAG = /^--?(?:api[-_]?key|token|secret|password|credential|authorization)(?:=|$)/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
+// Keeps preview digests opaque to the renderer; restarting the app invalidates an open preview.
+const CONNECTOR_TEMPLATE_DIGEST_KEY = randomBytes(32)
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -599,9 +601,9 @@ export const buildConnectorTemplateExport = (
   }
   const contents = templateJson(definition)
   const parsed = parseConnectorTemplate(contents)
-  // This digest detects a stale export preview; it never protects or stores credentials.
-  // codeql[js/insufficient-password-hash]
-  const digest = parsed.ready ? createHash('sha256').update(contents).digest('hex') : undefined
+  const digest = parsed.ready
+    ? createHmac('sha256', CONNECTOR_TEMPLATE_DIGEST_KEY).update(contents).digest('hex')
+    : undefined
   return {
     preview: {
       ...parsed,

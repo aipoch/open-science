@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
+import {
+  buildConnectorTemplateExport,
+  parseConnectorTemplate,
+  type ConnectorTemplateSource
+} from './connector-template'
 
 describe('Connector configuration templates', () => {
   it('parses a credential-free stdio template', () => {
@@ -260,7 +264,7 @@ describe('Connector configuration templates', () => {
   })
 
   it('exports only secret names and produces a stable digest', () => {
-    const result = buildConnectorTemplateExport({
+    const source: ConnectorTemplateSource = {
       id: 'local-id',
       name: 'example-server',
       displayName: 'Example Server',
@@ -268,7 +272,8 @@ describe('Connector configuration templates', () => {
       command: 'npx',
       args: ['-y', '@example/mcp'],
       environmentNames: ['API_TOKEN']
-    })
+    }
+    const result = buildConnectorTemplateExport(source)
 
     expect(result.preview).toMatchObject({
       ready: true,
@@ -276,6 +281,10 @@ describe('Connector configuration templates', () => {
       suggestedFileName: 'open-science-connector-example-server.json'
     })
     expect(result.preview.digest).toMatch(/^[a-f0-9]{64}$/)
+    expect(buildConnectorTemplateExport(source).preview.digest).toBe(result.preview.digest)
+    expect(
+      buildConnectorTemplateExport({ ...source, description: 'Changed' }).preview.digest
+    ).not.toBe(result.preview.digest)
     expect(JSON.parse(result.contents!)).toEqual({
       schema_version: 1,
       kind: 'open-science.connector',
@@ -287,6 +296,22 @@ describe('Connector configuration templates', () => {
       required_secrets: { environment: ['API_TOKEN'] }
     })
     expect(result.contents).not.toContain('local-id')
+  })
+
+  it('invalidates an export preview when the process key rotates', async () => {
+    const source: ConnectorTemplateSource = {
+      id: 'local-id',
+      name: 'example-server',
+      displayName: 'Example Server',
+      transport: 'stdio',
+      command: 'npx'
+    }
+    const digest = buildConnectorTemplateExport(source).preview.digest
+
+    vi.resetModules()
+    const freshModule = await import('./connector-template')
+
+    expect(freshModule.buildConnectorTemplateExport(source).preview.digest).not.toBe(digest)
   })
 
   it('exports OAuth field names in snake_case', () => {
