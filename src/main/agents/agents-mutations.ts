@@ -27,12 +27,13 @@
 import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
 import { applyNameOrIdFilter } from './agents-service'
 import type { ProfileService } from '../specialist/service'
-import type { SpecialistProfileView } from '../../shared/specialist'
 import type {
   CreateSpecialistInput,
   SpecialistCapabilityMode,
   SpecialistFullAccessConfig,
-  SpecialistSelectedConfig
+  SpecialistProfileView,
+  SpecialistSelectedConfig,
+  UpdateSpecialistInput
 } from '../../shared/specialist'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 import type { ApprovalGateway } from '../../shared/agents-contract'
@@ -350,18 +351,7 @@ const handleUpdate = async (
     throw agentsPublicError('revision does not match the current specialist revision.')
   }
 
-  const input: {
-    id: string
-    revision: number
-    displayName?: string
-    description?: string
-    systemPrompt?: string
-    iconKey?: string
-    colorKey?: string
-    capabilityMode?: SpecialistCapabilityMode
-    fullAccess?: SpecialistFullAccessConfig
-    selectedCapabilities?: SpecialistSelectedConfig
-  } = { id: current.id, revision }
+  const input: UpdateSpecialistInput = { id: current.id, revision }
 
   const displayName = optionalStringOrThrow(patch.display_name, 'display name')
   if (displayName !== undefined) input.displayName = displayName
@@ -377,6 +367,7 @@ const handleUpdate = async (
   if (patch.enabled !== undefined && !isBoolean(patch.enabled)) {
     throw agentsPublicError('enabled must be a boolean.')
   }
+  if (patch.enabled !== undefined) input.enabled = patch.enabled
 
   // Capability projection centralizes the Selected/Full + collection-replacement semantics.
   const capability = await projectCapabilityFields(patch, current, deps.catalog, 'update')
@@ -390,15 +381,7 @@ const handleUpdate = async (
     input.fullAccess = capability.fullAccess
   }
 
-  // enabled lives on a separate ProfileService method (update() does not carry it). When the
-  // requested state differs from the current, we toggle AFTER the identity/capability update so the
-  // optimistic-concurrency check (revision) gates the whole mutation first, then setEnabled flips the
-  // enabled flag. setEnabled is not revision-guarded, so ordering update-first is safe.
-  let readBack = await deps.profileService.update(input)
-  if (patch.enabled !== undefined && patch.enabled !== readBack.enabled) {
-    readBack = await deps.profileService.setEnabled(current.id, patch.enabled)
-  }
-  return readBack
+  return deps.profileService.update(input)
 }
 
 // ---------------------------------------------------------------------------
