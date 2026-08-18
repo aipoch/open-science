@@ -531,6 +531,7 @@ describe('preload bridge — public surface inventory', () => {
       'sideChat.start',
       'specialist.addMarketplaceSource',
       'specialist.cancelHandoff',
+      'specialist.cancelMarketplaceCandidate',
       'specialist.cancelPackage',
       'specialist.create',
       'specialist.delete',

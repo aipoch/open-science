@@ -350,6 +350,7 @@ import type {
 } from '../shared/specialist-package'
 import type {
   AddMarketplaceSourceRequest,
+  CancelMarketplaceCandidateRequest,
   GetMarketplaceReleaseRequest,
   InspectGitHubMarketplaceSourceRequest,
   MarketplaceDownloadProgress,
@@ -593,6 +594,7 @@ export interface OpenScienceAPI {
     prepareMarketplaceInstall(
       request: PrepareMarketplaceInstallRequest
     ): Promise<MarketplaceInstallPreview>
+    cancelMarketplaceCandidate(request: CancelMarketplaceCandidateRequest): Promise<void>
     onMarketplaceDownloadProgress(
       listener: (progress: MarketplaceDownloadProgress) => void
     ): RemoveListener

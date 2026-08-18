@@ -35,7 +35,7 @@ import {
   type StoredMarketplaceSource
 } from './repository'
 
-const SOURCE_CANDIDATE_TTL_MS = 10 * 60 * 1_000
+const CANDIDATE_TTL_MS = 10 * 60 * 1_000
 const ROOT_MAX_BYTES = 2 * 1024 * 1024
 const RELEASE_MAX_BYTES = 8 * 1024 * 1024
 const ARTIFACT_MAX_BYTES = 50 * 1024 * 1024
@@ -62,7 +62,10 @@ export type OfficialMarketplaceSourceConfig = {
 
 type MarketplaceServiceOptions = {
   repository: MarketplaceRepository
-  packages: Pick<SpecialistPackageService, 'preview' | 'install' | 'candidateNewSkillIds'>
+  packages: Pick<
+    SpecialistPackageService,
+    'preview' | 'install' | 'candidateNewSkillIds' | 'cancel' | 'dispose'
+  >
   fetch: typeof fetch
   officialSource?: OfficialMarketplaceSourceConfig
   now?: () => Date
@@ -112,11 +115,14 @@ type LoadedRoot = {
 
 type SourceCandidateState = {
   expiresAt: number
+  ownerId?: number
   source: StoredMarketplaceSource
   view: MarketplaceSourceCandidate
 }
 
 type InstallCandidateState = {
+  expiresAt: number
+  ownerId?: number
   sourceId: string
   packageCandidateToken: string
   newSkillIds: readonly string[]
@@ -314,7 +320,8 @@ export class MarketplaceService {
   }
 
   async inspectGitHubSource(
-    request: InspectGitHubMarketplaceSourceRequest
+    request: InspectGitHubMarketplaceSourceRequest,
+    ownerId?: number
   ): Promise<MarketplaceSourceCandidate> {
     if (!request || typeof request.repositoryUrl !== 'string') {
       throw new Error('GitHub repository URL is required.')
@@ -363,16 +370,27 @@ export class MarketplaceService {
       specialistCount: root.specialists.length
     }
     this.sourceCandidates.set(token, {
-      expiresAt: this.now().getTime() + SOURCE_CANDIDATE_TTL_MS,
+      expiresAt: this.now().getTime() + CANDIDATE_TTL_MS,
+      ...(ownerId === undefined ? {} : { ownerId }),
       source,
       view
     })
     return view
   }
 
-  async addSource(request: AddMarketplaceSourceRequest): Promise<MarketplaceSourceView> {
+  async addSource(
+    request: AddMarketplaceSourceRequest,
+    ownerId?: number
+  ): Promise<MarketplaceSourceView> {
     const candidate = this.sourceCandidates.get(request?.candidateToken)
-    if (!candidate || candidate.expiresAt <= this.now().getTime()) {
+    if (
+      !candidate ||
+      candidate.ownerId !== ownerId ||
+      candidate.expiresAt <= this.now().getTime()
+    ) {
+      if (candidate?.expiresAt && candidate.expiresAt <= this.now().getTime()) {
+        this.sourceCandidates.delete(request?.candidateToken)
+      }
       throw new Error('Marketplace source review expired. Inspect the repository again.')
     }
     this.sourceCandidates.delete(request.candidateToken)
@@ -437,64 +455,74 @@ export class MarketplaceService {
       requestedConnectors
     )
     const preview = await this.options.packages.preview(filteredArchive, ownerId)
-    if (
-      (preview.summary &&
-        (preview.summary.id !== loaded.release.specialist_id ||
-          preview.summary.version !== loaded.release.version)) ||
-      (preview.installable && !preview.summary)
-    ) {
-      throw new MarketplaceError(
-        'verification',
-        'Downloaded package identity does not match the reviewed Marketplace release.'
-      )
-    }
-    if (preview.summary) {
-      const retainedSkillNames = new Set(preview.summary?.skills.map((skill) => skill.id) ?? [])
-      const selectedSkillNames = new Set(requestedSkillNames)
-      const selectedConnectorIds = new Set(requestedConnectors)
-      const capabilityDropped =
-        requestedSkillNames.some((name) => !retainedSkillNames.has(name)) ||
-        preview.diagnostics.some(
-          (diagnostic) =>
-            (diagnostic.relatedId !== undefined &&
-              selectedSkillNames.has(diagnostic.relatedId) &&
-              DROPPED_SELECTED_SKILL_DIAGNOSTICS.has(diagnostic.code)) ||
-            (diagnostic.code === 'specialist.connector-unavailable' &&
-              diagnostic.relatedId !== undefined &&
-              selectedConnectorIds.has(diagnostic.relatedId))
-        )
-      if (capabilityDropped) {
+    try {
+      if (
+        (preview.summary &&
+          (preview.summary.id !== loaded.release.specialist_id ||
+            preview.summary.version !== loaded.release.version)) ||
+        (preview.installable && !preview.summary)
+      ) {
         throw new MarketplaceError(
           'verification',
-          'Downloaded package did not retain every selected Marketplace capability.'
+          'Downloaded package identity does not match the reviewed Marketplace release.'
         )
       }
-    }
-    const newSkillIds = this.options.packages.candidateNewSkillIds(preview.candidateToken, ownerId)
-    if (!newSkillIds) {
-      if (!preview.installable) return { release: loaded.view, package: preview }
-      throw new Error('Marketplace package candidate is unavailable.')
-    }
-    this.installCandidates.set(preview.candidateToken, {
-      sourceId: loaded.source.id,
-      packageCandidateToken: preview.candidateToken,
-      newSkillIds,
-      provenance: {
-        sourceId: loaded.source.id,
-        specialistId: loaded.release.specialist_id,
-        publisher: loaded.listing.publisher.name,
-        version: loaded.release.version,
-        releasePath: loaded.releasePath,
-        releaseDigest: loaded.releaseDigest,
-        artifactDigest: loaded.release.artifact.sha256,
-        installedArchiveDigest: sha256(filteredArchive),
-        upstreamCommit: loaded.release.source.commit,
-        selectedSkillIds: requestedSkills,
-        selectedConnectorIds: requestedConnectors,
-        installedAt: this.now().toISOString()
+      if (preview.summary) {
+        const retainedSkillNames = new Set(preview.summary?.skills.map((skill) => skill.id) ?? [])
+        const selectedSkillNames = new Set(requestedSkillNames)
+        const selectedConnectorIds = new Set(requestedConnectors)
+        const capabilityDropped =
+          requestedSkillNames.some((name) => !retainedSkillNames.has(name)) ||
+          preview.diagnostics.some(
+            (diagnostic) =>
+              (diagnostic.relatedId !== undefined &&
+                selectedSkillNames.has(diagnostic.relatedId) &&
+                DROPPED_SELECTED_SKILL_DIAGNOSTICS.has(diagnostic.code)) ||
+              (diagnostic.code === 'specialist.connector-unavailable' &&
+                diagnostic.relatedId !== undefined &&
+                selectedConnectorIds.has(diagnostic.relatedId))
+          )
+        if (capabilityDropped) {
+          throw new MarketplaceError(
+            'verification',
+            'Downloaded package did not retain every selected Marketplace capability.'
+          )
+        }
       }
-    })
-    return { release: loaded.view, package: preview }
+      const newSkillIds = this.options.packages.candidateNewSkillIds(
+        preview.candidateToken,
+        ownerId
+      )
+      if (!newSkillIds) {
+        if (!preview.installable) return { release: loaded.view, package: preview }
+        throw new Error('Marketplace package candidate is unavailable.')
+      }
+      this.installCandidates.set(preview.candidateToken, {
+        expiresAt: this.now().getTime() + CANDIDATE_TTL_MS,
+        ...(ownerId === undefined ? {} : { ownerId }),
+        sourceId: loaded.source.id,
+        packageCandidateToken: preview.candidateToken,
+        newSkillIds,
+        provenance: {
+          sourceId: loaded.source.id,
+          specialistId: loaded.release.specialist_id,
+          publisher: loaded.listing.publisher.name,
+          version: loaded.release.version,
+          releasePath: loaded.releasePath,
+          releaseDigest: loaded.releaseDigest,
+          artifactDigest: loaded.release.artifact.sha256,
+          installedArchiveDigest: sha256(filteredArchive),
+          upstreamCommit: loaded.release.source.commit,
+          selectedSkillIds: requestedSkills,
+          selectedConnectorIds: requestedConnectors,
+          installedAt: this.now().toISOString()
+        }
+      })
+      return { release: loaded.view, package: preview }
+    } catch (error) {
+      this.options.packages.cancel(preview.candidateToken, ownerId)
+      throw error
+    }
   }
 
   async install(
@@ -502,7 +530,13 @@ export class MarketplaceService {
     ownerId?: number
   ): Promise<MarketplaceInstallResult> {
     const candidate = this.installCandidates.get(request?.candidateToken)
-    if (!candidate) return { status: 'failed', code: 'candidate-invalid' }
+    if (!candidate || candidate.ownerId !== ownerId) {
+      return { status: 'failed', code: 'candidate-invalid' }
+    }
+    if (candidate.expiresAt <= this.now().getTime()) {
+      this.cancel(request.candidateToken, ownerId)
+      return { status: 'failed', code: 'candidate-expired' }
+    }
     const disabledBefore = new Set(await this.options.getDisabledSkillIds())
     const newlyDisabled = candidate.newSkillIds.filter((id) => !disabledBefore.has(id))
     if (candidate.newSkillIds.length > 0) {
@@ -530,6 +564,27 @@ export class MarketplaceService {
     } catch {
       return { ...result, provenanceLinked: false }
     }
+  }
+
+  cancel(candidateToken: unknown, ownerId?: number): void {
+    if (typeof candidateToken !== 'string') return
+    if (this.sourceCandidates.get(candidateToken)?.ownerId === ownerId) {
+      this.sourceCandidates.delete(candidateToken)
+    }
+    if (this.installCandidates.get(candidateToken)?.ownerId === ownerId) {
+      this.installCandidates.delete(candidateToken)
+    }
+    this.options.packages.cancel(candidateToken, ownerId)
+  }
+
+  dispose(ownerId?: number): void {
+    for (const [token, candidate] of this.sourceCandidates) {
+      if (candidate.ownerId === ownerId) this.sourceCandidates.delete(token)
+    }
+    for (const [token, candidate] of this.installCandidates) {
+      if (candidate.ownerId === ownerId) this.installCandidates.delete(token)
+    }
+    this.options.packages.dispose(ownerId)
   }
 
   private async sources(): Promise<ResolvedSource[]> {

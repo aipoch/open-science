@@ -11,6 +11,7 @@ export const SPECIALIST_MARKETPLACE_IPC = {
   REMOVE_SOURCE: 'specialist:marketplace-source-remove',
   GET_RELEASE: 'specialist:marketplace-release-get',
   PREPARE_INSTALL: 'specialist:marketplace-install-prepare',
+  CANCEL_CANDIDATE: 'specialist:marketplace-candidate-cancel',
   DOWNLOAD_PROGRESS: 'specialist:marketplace-download-progress',
   INSTALL: 'specialist:marketplace-install'
 } as const
@@ -133,6 +134,7 @@ export type MarketplaceInstallPreview = {
 }
 
 export type MarketplaceInstallRequest = SpecialistPackageInstallRequest
+export type CancelMarketplaceCandidateRequest = { candidateToken: string }
 
 export type MarketplaceInstallResult = SpecialistPackageInstallResult & {
   provenanceLinked?: boolean

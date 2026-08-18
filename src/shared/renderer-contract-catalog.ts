@@ -354,7 +354,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['cancel', 'side-chat:cancel', ELECTRON], ['close', 'side-chat:close', ELECTRON], ['list', 'side-chat:list', ELECTRON], ['send', 'side-chat:send', ELECTRON], ['start', 'side-chat:start', ELECTRON],
   ]),
   group('specialist', 'specialist', [
-    ['addMarketplaceSource', 'specialist:marketplace-source-add', ELECTRON], ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['cancelPackage', 'specialist:package-cancel', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],
+    ['addMarketplaceSource', 'specialist:marketplace-source-add', ELECTRON], ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['cancelMarketplaceCandidate', 'specialist:marketplace-candidate-cancel', ELECTRON], ['cancelPackage', 'specialist:package-cancel', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],
     ['duplicate', 'specialist:duplicate', ELECTRON], ['exportContributionTemplate', 'specialist:export-contribution-template', ELECTRON], ['exportSpecialist', 'specialist:export-save', ELECTRON],
     ['getHandoffEvents', 'specialist:get-handoff-events', ELECTRON], ['getMarketplaceRelease', 'specialist:marketplace-release-get', ELECTRON], ['inspectGitHubMarketplaceSource', 'specialist:marketplace-source-inspect-github', ELECTRON],
     ['installMarketplace', 'specialist:marketplace-install', ELECTRON], ['installPackage', 'specialist:package-install', ELECTRON], ['list', 'specialist:list', ELECTRON], ['listMarketplace', 'specialist:marketplace-list', ELECTRON],

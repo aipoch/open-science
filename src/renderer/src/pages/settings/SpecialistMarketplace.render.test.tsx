@@ -91,6 +91,7 @@ beforeEach(() => {
         specialistCount: 1
       }),
       addMarketplaceSource: vi.fn().mockResolvedValue(snapshot.sources[0]),
+      cancelMarketplaceCandidate: vi.fn().mockResolvedValue(undefined),
       removeMarketplaceSource: vi.fn()
     }
   } as never
@@ -355,6 +356,58 @@ describe('Specialist Marketplace settings', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'example-specialist' })
   })
 
+  it('requires a fresh download after an installation attempt consumes its candidate', async () => {
+    window.api.specialist.getMarketplaceRelease = vi.fn().mockResolvedValue(release)
+    window.api.specialist.prepareMarketplaceInstall = vi.fn().mockResolvedValue({
+      release,
+      package: { candidateToken: 'consumed-candidate', diagnostics: [], installable: true }
+    })
+    window.api.specialist.installMarketplace = vi.fn().mockResolvedValue({
+      status: 'failed',
+      code: 'commit-failed'
+    })
+
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace
+          view={{
+            kind: 'marketplace-release',
+            sourceId: 'github-example',
+            id: 'example-specialist',
+            version: '2.0.0'
+          }}
+          onNavigate={vi.fn()}
+        />
+      )
+    })
+    fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes('Review installation')
+      )!
+    )
+    await act(async () => {
+      fireEvent.click(
+        Array.from(container.querySelectorAll('button')).find((button) =>
+          button.textContent?.includes('Download and review')
+        )!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        Array.from(container.querySelectorAll('button')).find((button) =>
+          button.textContent?.includes('Install Specialist')
+        )!
+      )
+    })
+
+    expect(container.textContent).toContain('Installation failed. Try again.')
+    expect(container.textContent).not.toContain('Package verified')
+    expect(container.textContent).toContain('Download and review')
+    expect(window.api.specialist.cancelMarketplaceCandidate).toHaveBeenCalledWith({
+      candidateToken: 'consumed-candidate'
+    })
+  })
+
   it('shows streamed package download progress while preparing an install', async () => {
     const prepared =
       deferred<Awaited<ReturnType<typeof window.api.specialist.prepareMarketplaceInstall>>>()
@@ -418,6 +471,15 @@ describe('Specialist Marketplace settings', () => {
       await prepared.promise
     })
     expect(container.querySelector('[role="progressbar"]')).toBeNull()
+
+    fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Back'
+      )!
+    )
+    expect(window.api.specialist.cancelMarketplaceCandidate).toHaveBeenCalledWith({
+      candidateToken: 'candidate'
+    })
   })
 
   it('shows the specific package validation reason and blocks installation', async () => {

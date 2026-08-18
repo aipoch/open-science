@@ -85,6 +85,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'sideChat.start',
   'specialist.addMarketplaceSource',
   'specialist.cancelHandoff',
+  'specialist.cancelMarketplaceCandidate',
   'specialist.cancelPackage',
   'specialist.create',
   'specialist.delete',

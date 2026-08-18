@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
@@ -111,6 +111,35 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const [downloadProgress, setDownloadProgress] = useState<MarketplaceDownloadProgress>()
   const [skillConflictResolutions, setSkillConflictResolutions] =
     useState<SkillConflictResolutionMap>({})
+  const sourceCandidateTokenRef = useRef<string | undefined>(undefined)
+  const installCandidateTokenRef = useRef<string | undefined>(undefined)
+  const viewKey =
+    view.kind === 'marketplace-release'
+      ? `${view.kind}:${view.sourceId}:${view.id}:${view.version}`
+      : view.kind
+  const viewKeyRef = useRef<string | undefined>(viewKey)
+
+  useEffect(() => {
+    viewKeyRef.current = viewKey
+    return () => {
+      viewKeyRef.current = undefined
+    }
+  }, [viewKey])
+
+  const cancelCandidate = useCallback((candidateToken: string | undefined): void => {
+    if (!candidateToken) return
+    void window.api.specialist.cancelMarketplaceCandidate({ candidateToken }).catch(() => undefined)
+  }, [])
+
+  useEffect(
+    () => () => {
+      cancelCandidate(sourceCandidateTokenRef.current)
+      cancelCandidate(installCandidateTokenRef.current)
+      sourceCandidateTokenRef.current = undefined
+      installCandidateTokenRef.current = undefined
+    },
+    [cancelCandidate, viewKey]
+  )
 
   const loadMarketplace = useCallback(async (): Promise<void> => {
     if (typeof window.api?.specialist?.listMarketplace !== 'function') {
@@ -200,13 +229,23 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   }, [query, snapshot])
 
   const inspectSource = async (): Promise<void> => {
+    const startedViewKey = viewKey
+    cancelCandidate(sourceCandidateTokenRef.current)
+    sourceCandidateTokenRef.current = undefined
     setSourceBusy(true)
     setSourceError(undefined)
     setSourceCandidate(undefined)
     try {
-      setSourceCandidate(
-        await window.api.specialist.inspectGitHubMarketplaceSource({ repositoryUrl })
-      )
+      const candidate = await window.api.specialist.inspectGitHubMarketplaceSource({
+        repositoryUrl
+      })
+      sourceCandidateTokenRef.current = candidate.candidateToken
+      if (viewKeyRef.current !== startedViewKey) {
+        cancelCandidate(candidate.candidateToken)
+        sourceCandidateTokenRef.current = undefined
+        return
+      }
+      setSourceCandidate(candidate)
     } catch {
       setSourceError(t('Could not inspect this GitHub source.'))
     } finally {
@@ -222,6 +261,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       await window.api.specialist.addMarketplaceSource({
         candidateToken: sourceCandidate.candidateToken
       })
+      sourceCandidateTokenRef.current = undefined
       setRepositoryUrl('')
       setSourceCandidate(undefined)
       await loadMarketplace()
@@ -244,6 +284,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
   const install = async (): Promise<void> => {
     if (!release || view.kind !== 'marketplace-release') return
+    const startedViewKey = viewKey
     setInstallBusy(true)
     setInstallError(undefined)
     if (!installPreview) setDownloadProgress(undefined)
@@ -259,6 +300,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         }))
       const preparedNow = !installPreview
       if (preparedNow) {
+        installCandidateTokenRef.current = preview.package.candidateToken
+        if (viewKeyRef.current !== startedViewKey) {
+          cancelCandidate(preview.package.candidateToken)
+          installCandidateTokenRef.current = undefined
+          return
+        }
         setInstallPreview(preview)
         setDownloadProgress(undefined)
         setSkillConflictResolutions({})
@@ -276,9 +323,15 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         skillConflictResolutions: skillConflictResolutionList(conflicts, skillConflictResolutions)
       })
       if (result.status !== 'installed') {
+        cancelCandidate(preview.package.candidateToken)
+        installCandidateTokenRef.current = undefined
+        setInstallPreview(undefined)
+        setDownloadProgress(undefined)
+        setSkillConflictResolutions({})
         setInstallError(t('Installation failed. Try again.'))
         return
       }
+      installCandidateTokenRef.current = undefined
       await Promise.allSettled([
         useSpecialistStore.getState().load(),
         useSettingsStore.getState().loadSkills()
@@ -651,6 +704,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     variant="outline"
                     disabled={installBusy}
                     onClick={() => {
+                      cancelCandidate(installCandidateTokenRef.current)
+                      installCandidateTokenRef.current = undefined
                       setReviewing(false)
                       setInstallPreview(undefined)
                       setDownloadProgress(undefined)

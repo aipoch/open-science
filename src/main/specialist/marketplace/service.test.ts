@@ -148,6 +148,8 @@ describe('MarketplaceService', () => {
         }
       }),
       candidateNewSkillIds: vi.fn().mockReturnValue(['personal-example-skill']),
+      cancel: vi.fn(),
+      dispose: vi.fn(),
       install: vi.fn().mockImplementation(async () => {
         order.push('install')
         installed = true
@@ -389,6 +391,8 @@ describe('MarketplaceService', () => {
         [
           'candidate',
           {
+            expiresAt: Date.now() + 60_000,
+            ownerId: 17,
             sourceId: 'source',
             packageCandidateToken: 'candidate',
             newSkillIds: ['personal-example-skill'],
@@ -429,6 +433,8 @@ describe('MarketplaceService', () => {
         [
           'candidate',
           {
+            expiresAt: Date.now() + 60_000,
+            ownerId: 17,
             sourceId: 'source',
             packageCandidateToken: 'candidate',
             newSkillIds: [],
@@ -442,6 +448,66 @@ describe('MarketplaceService', () => {
       status: 'installed'
     })
     expect(setSkillsMainEnabled).not.toHaveBeenCalled()
+  })
+
+  it('binds install candidates to their renderer owner and releases expired candidates', async () => {
+    let now = 1_000
+    const packages = {
+      preview: vi.fn(),
+      candidateNewSkillIds: vi.fn(),
+      install: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn()
+    }
+    const service = new MarketplaceService({
+      repository: new MarketplaceRepository(await mkdtemp(join(tmpdir(), 'marketplace-owner-'))),
+      packages: packages as never,
+      fetch: vi.fn<typeof fetch>(),
+      now: () => new Date(now),
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [],
+      setSkillsMainEnabled: async () => undefined
+    })
+    const installCandidates = new Map([
+      [
+        'candidate',
+        {
+          expiresAt: 2_000,
+          ownerId: 17,
+          sourceId: 'source',
+          packageCandidateToken: 'candidate',
+          newSkillIds: [],
+          provenance: {}
+        }
+      ]
+    ])
+    Reflect.set(service, 'installCandidates', installCandidates)
+
+    await expect(service.install({ candidateToken: 'candidate' }, 18)).resolves.toEqual({
+      status: 'failed',
+      code: 'candidate-invalid'
+    })
+    expect(installCandidates.has('candidate')).toBe(true)
+
+    now = 2_001
+    await expect(service.install({ candidateToken: 'candidate' }, 17)).resolves.toEqual({
+      status: 'failed',
+      code: 'candidate-expired'
+    })
+    expect(installCandidates.has('candidate')).toBe(false)
+    expect(packages.cancel).toHaveBeenCalledWith('candidate', 17)
+
+    Reflect.set(
+      service,
+      'sourceCandidates',
+      new Map([
+        ['source-owner-17', { ownerId: 17 }],
+        ['source-owner-18', { ownerId: 18 }]
+      ])
+    )
+    service.dispose(17)
+    expect([...Reflect.get(service, 'sourceCandidates').keys()]).toEqual(['source-owner-18'])
+    expect(packages.dispose).toHaveBeenCalledWith(17)
   })
 
   it('does not follow Marketplace metadata redirects into another GitHub repository', async () => {

@@ -81,6 +81,8 @@ type MarketplaceIpc = Pick<
   | 'getRelease'
   | 'prepareInstall'
   | 'install'
+  | 'cancel'
+  | 'dispose'
 >
 
 const isCandidateRequest = (request: unknown): request is SpecialistPackageInstallRequest =>
@@ -164,6 +166,36 @@ const sendMarketplaceDownloadProgress = (
   ).sender
   if (!sender || sender.isDestroyed?.()) return
   sender.send(SPECIALIST_MARKETPLACE_IPC.DOWNLOAD_PROGRESS, progress)
+}
+
+const bindMarketplaceOwnerLifetime = (
+  event: unknown,
+  marketplace: MarketplaceIpc
+): { ownerId: number | undefined; assertActive: () => void } => {
+  const ownerId = rendererOwnerId(event)
+  const sender = (
+    event as {
+      sender?: {
+        isDestroyed?: () => boolean
+        once?: (name: string, listener: () => void) => void
+      }
+    }
+  )?.sender
+  let destroyed = sender?.isDestroyed?.() ?? false
+  const dispose = (): void => {
+    destroyed = true
+    marketplace.dispose(ownerId)
+  }
+  if (destroyed) dispose()
+  else sender?.once?.('destroyed', dispose)
+  return {
+    ownerId,
+    assertActive: () => {
+      if (!destroyed && !sender?.isDestroyed?.()) return
+      dispose()
+      throw new Error('Marketplace candidate owner is no longer available.')
+    }
+  }
 }
 
 // Broadcasts a catalog-changed event to all renderer windows.
@@ -285,12 +317,17 @@ export const registerSpecialistIpcHandlers = (
     })
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.INSPECT_GITHUB_SOURCE,
-      async (_event, request: InspectGitHubMarketplaceSourceRequest) =>
-        marketplace.inspectGitHubSource(request)
+      async (event, request: InspectGitHubMarketplaceSourceRequest) => {
+        const lifetime = bindMarketplaceOwnerLifetime(event, marketplace)
+        const candidate = await marketplace.inspectGitHubSource(request, lifetime.ownerId)
+        lifetime.assertActive()
+        return candidate
+      }
     )
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.ADD_SOURCE,
-      async (_event, request: AddMarketplaceSourceRequest) => marketplace.addSource(request)
+      async (event, request: AddMarketplaceSourceRequest) =>
+        marketplace.addSource(request, rendererOwnerId(event))
     )
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.REMOVE_SOURCE,
@@ -302,13 +339,24 @@ export const registerSpecialistIpcHandlers = (
     )
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.PREPARE_INSTALL,
-      async (event, request: PrepareMarketplaceInstallRequest) =>
-        marketplace.prepareInstall(
+      async (event, request: PrepareMarketplaceInstallRequest) => {
+        const lifetime = bindMarketplaceOwnerLifetime(event, marketplace)
+        const preview = await marketplace.prepareInstall(
           request,
-          rendererOwnerId(event),
+          lifetime.ownerId,
           (progress: MarketplaceDownloadProgress) =>
             sendMarketplaceDownloadProgress(event, progress)
         )
+        lifetime.assertActive()
+        return preview
+      }
+    )
+    ipcMainHandle(
+      SPECIALIST_MARKETPLACE_IPC.CANCEL_CANDIDATE,
+      async (event, request: unknown): Promise<void> => {
+        if (!isCandidateRequest(request)) throw new Error('Invalid Marketplace candidate.')
+        marketplace.cancel(request.candidateToken, rendererOwnerId(event))
+      }
     )
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.INSTALL,

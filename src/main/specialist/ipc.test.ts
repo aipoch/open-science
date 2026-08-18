@@ -54,6 +54,8 @@ describe('specialist session IPC', () => {
       addSource: vi.fn(),
       removeSource: vi.fn(),
       getRelease: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn(),
       prepareInstall: vi.fn().mockImplementation(async (_request, _ownerId, onProgress) => {
         onProgress({
           sourceId: 'source',
@@ -92,6 +94,9 @@ describe('specialist session IPC', () => {
     await handlers.get(SPECIALIST_MARKETPLACE_IPC.INSTALL)?.(event, {
       candidateToken: 'candidate'
     })
+    await handlers.get(SPECIALIST_MARKETPLACE_IPC.CANCEL_CANDIDATE)?.(event, {
+      candidateToken: 'candidate'
+    })
 
     expect(marketplace.prepareInstall).toHaveBeenCalledWith(
       expect.any(Object),
@@ -107,7 +112,70 @@ describe('specialist session IPC', () => {
       percent: 50
     })
     expect(marketplace.install).toHaveBeenCalledWith({ candidateToken: 'candidate' }, 41)
+    expect(marketplace.cancel).toHaveBeenCalledWith('candidate', 41)
     expect(JSON.stringify(marketplace.prepareInstall.mock.calls)).not.toContain('archiveBytes')
+  })
+
+  it('disposes an in-flight Marketplace candidate when its renderer is destroyed', async () => {
+    handlers.clear()
+    let resolvePrepare!: (value: unknown) => void
+    const marketplace = {
+      list: vi.fn(),
+      inspectGitHubSource: vi.fn(),
+      addSource: vi.fn(),
+      removeSource: vi.fn(),
+      getRelease: vi.fn(),
+      prepareInstall: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolvePrepare = resolve
+          })
+      ),
+      install: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn()
+    }
+    registerSpecialistIpcHandlers(
+      createProfileService(),
+      new SessionBindingService(createProfileService()),
+      createReconfigurationStub(),
+      undefined,
+      undefined,
+      undefined,
+      marketplace as never
+    )
+
+    let destroyed = false
+    let onDestroyed: (() => void) | undefined
+    const event = {
+      sender: {
+        id: 41,
+        send: vi.fn(),
+        isDestroyed: () => destroyed,
+        once: (_name: string, listener: () => void) => {
+          onDestroyed = listener
+        }
+      }
+    }
+    const pending = Promise.resolve(
+      handlers.get(SPECIALIST_MARKETPLACE_IPC.PREPARE_INSTALL)?.(event, {
+        sourceId: 'source',
+        specialistId: 'example',
+        version: '1.0.0',
+        selectedSkillIds: [],
+        selectedConnectorIds: []
+      })
+    )
+
+    destroyed = true
+    onDestroyed?.()
+    resolvePrepare({
+      release: { specialistId: 'example' },
+      package: { candidateToken: 'candidate', diagnostics: [], installable: true }
+    })
+
+    await expect(pending).rejects.toThrow('owner is no longer available')
+    expect(marketplace.dispose).toHaveBeenCalledWith(41)
   })
 
   it('broadcasts only an invalidation signal without profile prompts or resource paths', () => {
