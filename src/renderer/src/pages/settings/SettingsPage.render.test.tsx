@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, createRef, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -2258,9 +2259,10 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
     await act(async () => {
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Marketplace')
-        ?.click()
+      const marketplaceTab = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      ).find((button) => button.textContent?.trim() === 'Marketplace')
+      if (marketplaceTab) fireEvent.mouseDown(marketplaceTab, { button: 0 })
       await Promise.resolve()
     })
     await act(async () => {
