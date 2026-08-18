@@ -40,6 +40,7 @@ import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { ProjectSessionDeletionState } from './repository'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
+import { saveSessionWithRevision } from './save-session'
 import {
   SessionPersistenceStateOwner,
   SessionRuntimeContextRevisionConflictError,
@@ -102,7 +103,10 @@ type SessionMutationRepository = {
     | { status: 'unreadable' }
   >
   assertSessionIdentityOwnership(sessionId: string, expectedProjectId: string): Promise<void>
-  saveSession(session: PersistedChatSession): Promise<void>
+  saveSession(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession | void>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -411,9 +415,12 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           try {
             const recovery = recoverInterruptedDelegatedWorkSession(sessions[index])
             if (recovery.interrupted.length === 0) continue
-            await this.repository.saveSession(recovery.session)
+            const persistedRecovery = await saveSessionWithRevision(
+              this.repository,
+              recovery.session
+            )
             sessions = sessions.map((candidate, candidateIndex) =>
-              candidateIndex === index ? recovery.session : candidate
+              candidateIndex === index ? persistedRecovery : candidate
             )
             result = { ...result, sessions }
           } catch (error) {

@@ -2,7 +2,8 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'invalid-command-arguments',
   'invalid-command-result',
   'command-unavailable',
-  'command-failed'
+  'command-failed',
+  'session-revision-conflict'
 ] as const
 
 export type ApplicationCommandErrorCode = (typeof APPLICATION_COMMAND_ERROR_CODES)[number]

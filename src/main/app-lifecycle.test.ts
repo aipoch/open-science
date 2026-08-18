@@ -529,6 +529,24 @@ describe('installAppLifecycle', () => {
     )
   })
 
+  it('keeps the app open when the renderer reports an unresolved Session revision conflict', async () => {
+    const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
+    const { app, closeOpts, shutdownBackends, tray, windows } = setup({
+      flushSessionPersistence
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalledOnce()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(tray?.destroy).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+    expect(windows[0].visible).toBe(true)
+    expect(windows[0].focused).toBe(true)
+  })
+
   it('quits on window-all-closed only when non-darwin and no tray host', () => {
     const noTray = setup({ trayHost: false, platform: 'linux' })
     noTray.app.emit('window-all-closed')

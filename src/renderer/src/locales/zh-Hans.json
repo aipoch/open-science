@@ -458,6 +458,7 @@
   "Conversation": "对话",
   "Conversation imports": "对话导入",
   "Conversation storage needs attention": "对话存储需要处理",
+  "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "此对话已在另一个窗口中更改。你的本地更改尚未保存。请在关闭应用前重试，以重新加载最新版本。",
   "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "仍绑定到 <name>{{name}}</name> 的对话将变为<em>不可用</em>，并且<em>不会</em>自动切换到主 Agent。对每个受影响的对话，你需要先明确选择一个新专家或主 Agent，之后它才能继续发送消息。",
   "Copied": "已复制",
   "Copied!": "已复制！",

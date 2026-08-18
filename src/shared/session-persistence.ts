@@ -480,6 +480,9 @@ export type PersistedChatSession = {
   id: string
   // Owning project. On load this is authoritative from the file's directory (sessions/<projectId>/).
   projectId: string
+  // Whole-Session durable revision used for optimistic concurrency. Historical files omit it and
+  // restore as revision 0; Main stamps revision 1 on their next successful state transition.
+  revision?: number
   // Immutable snapshot of the direct Session and active conversation path copied by
   // Branch in new session. Historical Sessions omit it and remain unrelated.
   branchSource?: PersistedSessionBranchSource
@@ -578,6 +581,35 @@ export type SessionConflictRebaseField =
 export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]
 }
+
+export const SESSION_REVISION_CONFLICT_ERROR_CODE = 'session-revision-conflict' as const
+
+export class SessionRevisionConflictError extends Error {
+  readonly code = SESSION_REVISION_CONFLICT_ERROR_CODE
+
+  constructor(
+    readonly expectedRevision: number,
+    readonly actualRevision: number
+  ) {
+    super(
+      `Session revision conflict: expected ${expectedRevision}, actual ${actualRevision}. Reload the latest conversation before retrying.`
+    )
+    this.name = 'SessionRevisionConflictError'
+  }
+}
+
+export const sessionRevision = (session: Pick<PersistedChatSession, 'revision'>): number =>
+  Number.isSafeInteger(session.revision) && (session.revision ?? -1) >= 0 ? session.revision! : 0
+
+export const isSessionRevisionConflictError = (
+  error: unknown
+): error is Readonly<{ code: typeof SESSION_REVISION_CONFLICT_ERROR_CODE }> =>
+  error instanceof SessionRevisionConflictError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === SESSION_REVISION_CONFLICT_ERROR_CODE) ||
+  (error instanceof Error && error.message.includes('Session revision conflict:'))
 
 // Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
@@ -3278,10 +3310,12 @@ const sanitizeSession = (
           options.preserveRuntimeState ? group : normalizeActivityGroupAfterRestore(group)
         )
     : []
+  const revision = asNumber(session.revision)
   let sanitized: PersistedChatSession = {
     id,
     // Content value is a hint; the repository overrides it with the session file's directory on load.
     projectId: asString(session.projectId) ?? '',
+    revision: Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? revision : 0,
     title: asString(session.title) ?? id,
     cwd: asString(session.cwd) ?? '',
     status: asSessionStatus(session.status),

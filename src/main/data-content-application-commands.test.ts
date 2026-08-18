@@ -13,7 +13,10 @@ import {
   registerDataContentApplicationCommands,
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
-import type { SessionDeletionResult } from '../shared/session-persistence'
+import {
+  SessionRevisionConflictError,
+  type SessionDeletionResult
+} from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 
 const callerContext = createCallerContext({
@@ -647,6 +650,24 @@ describe('Data and content application commands', () => {
       session: deps.session,
       originClientId: 'web:renderer-1'
     })
+  })
+
+  it('preserves the Session revision conflict code across the application command boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.saveSession.mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSave,
+        invocation([deps.session] as const)
+      )
+    ).rejects.toMatchObject({
+      code: 'session-revision-conflict',
+      message: expect.stringContaining('expected 1, actual 2')
+    })
+    expect(deps.events.publish).not.toHaveBeenCalled()
   })
 
   it('allows only current Task automation to update main-owned delegation policy', async () => {

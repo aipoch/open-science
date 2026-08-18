@@ -17,6 +17,7 @@ import {
   materializeSessionConversationGraph,
   sanitizeActivityGroup,
   sanitizePlanHistoryProjections,
+  sessionRevision,
   sanitizeToolActivity,
   type PersistedActiveRun,
   type PersistedActivityGroup,
@@ -398,7 +399,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
-      if (existing && existing.updatedAt >= session.updatedAt) {
+      const incomingSessionRevision = sessionRevision(session)
+      const existingSessionRevision = existing ? sessionRevision(existing) : -1
+      if (
+        existing &&
+        (existingSessionRevision > incomingSessionRevision ||
+          (existingSessionRevision === incomingSessionRevision &&
+            existing.updatedAt >= session.updatedAt))
+      ) {
         const incomingRuntimeRevision = session.runtimeContext?.revision ?? -1
         const existingRuntimeRevision = existing.runtimeContext?.revision ?? -1
         const runtimeAdvanced = incomingRuntimeRevision > existingRuntimeRevision
@@ -457,7 +465,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       const incomingProjection =
-        existing && session.updatedAt > existing.updatedAt
+        existing &&
+        (incomingSessionRevision > existingSessionRevision ||
+          (incomingSessionRevision === existingSessionRevision &&
+            session.updatedAt > existing.updatedAt))
           ? mergeNewerPersistedSessionByIdentity(existing, session)
           : session
       const hydratedSession = existing
@@ -496,6 +507,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (mode === 'enabled-compute-hosts-authority') {
         const projected: ChatSession = {
           ...current,
+          revision: Math.max(sessionRevision(current), sessionRevision(session)),
           enabledComputeHosts: session.enabledComputeHosts
             ? [...session.enabledComputeHosts]
             : undefined,
@@ -531,6 +543,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         )
         const projected: ChatSession = {
           ...current,
+          revision: Math.max(sessionRevision(current), sessionRevision(session)),
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
@@ -546,7 +559,11 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
 
       if (mode === 'delegated-authority') {
         const authority = mergeDelegatedWorkAuthorityProjection(current, session)
-        const projected: ChatSession = { ...current, ...authority }
+        const projected: ChatSession = {
+          ...current,
+          ...authority,
+          revision: Math.max(sessionRevision(current), sessionRevision(session))
+        }
         externallyHydratedSessions.add(projected)
         return {
           sessions: state.sessions.map((candidate) =>
@@ -572,7 +589,13 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
             )
           : undefined
         const authorityProjected = projectDurablePlanAuthority(current, session)
-        if (!flat.changed && !graph?.changed && authorityProjected === current) return state
+        if (
+          !flat.changed &&
+          !graph?.changed &&
+          authorityProjected === current &&
+          sessionRevision(session) <= sessionRevision(current)
+        )
+          return state
         projected =
           flat.changed || graph?.changed
             ? projectDurablePlanAuthority(withTransientSessionState(session, current), session)
@@ -603,9 +626,19 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
             : {})
         }
         projected = projectDurablePlanAuthority(merged, session)
-        if (!flat.changed && !graph?.changed && projected === merged) return state
+        if (
+          !flat.changed &&
+          !graph?.changed &&
+          projected === merged &&
+          sessionRevision(session) <= sessionRevision(current)
+        )
+          return state
       }
 
+      projected = {
+        ...projected,
+        revision: Math.max(sessionRevision(projected), sessionRevision(session))
+      }
       externallyHydratedSessions.add(projected)
       return {
         sessions: state.sessions.map((candidate) =>

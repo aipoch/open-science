@@ -72,6 +72,13 @@ describe('Session file envelope versions', () => {
     expect(decodeSessionFile(value)).toEqual({ status: 'invalid' })
     expect(normalizeSessionFile(value)).toBeUndefined()
   })
+
+  it('restores historical and malformed whole-Session revisions as zero', () => {
+    expect(normalizeSessionFile(legacySession())?.revision).toBe(0)
+    expect(normalizeSessionFile({ ...legacySession(), revision: 7 })?.revision).toBe(7)
+    expect(normalizeSessionFile({ ...legacySession(), revision: -1 })?.revision).toBe(0)
+    expect(normalizeSessionFile({ ...legacySession(), revision: '7' })?.revision).toBe(0)
+  })
 })
 
 describe('Session Specialist binding persistence', () => {

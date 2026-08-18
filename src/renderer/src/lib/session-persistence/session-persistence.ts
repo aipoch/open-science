@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
+  isSessionRevisionConflictError,
+  sessionRevision,
   type DeleteSessionRequest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
@@ -149,7 +152,23 @@ const liveSessionPersistence = createOrderedSessionPersistence({
 const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
   liveSessionPersistence.saveSession(session)
 
-const flushSessionPersistence = (): Promise<void> => liveSessionPersistence.flush()
+const unresolvedSessionRevisionConflictTargets = new Set<string>()
+
+class SessionPersistenceFlushConflictError extends Error {
+  readonly code = 'session-revision-conflict' as const
+
+  constructor() {
+    super('Session persistence has an unresolved revision conflict.')
+    this.name = 'SessionPersistenceFlushConflictError'
+  }
+}
+
+const flushSessionPersistence = async (): Promise<void> => {
+  await liveSessionPersistence.flush()
+  if (unresolvedSessionRevisionConflictTargets.size > 0) {
+    throw new SessionPersistenceFlushConflictError()
+  }
+}
 
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
@@ -378,6 +397,8 @@ const SAFE_SESSION_LOAD_ERROR =
   'Open Science could not read saved conversation data. Retry to continue.'
 const SAFE_SESSION_WRITE_ERROR =
   'Open Science could not save the latest conversation changes. Retry before closing the app.'
+const SESSION_REVISION_CONFLICT_WRITE_ERROR =
+  'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
 
 // Hydrates the in-memory session store from the per-session files loaded by the main process.
 const loadPersistedSessions = async (
@@ -420,6 +441,9 @@ const createStoreSaver = (
 ): StoreSaver => {
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
+  const acknowledgedRevisions = new Map(
+    initial.sessions.map((session) => [session.id, sessionRevision(session)])
+  )
 
   return (state, options) => {
     const nextSessions = state.sessions
@@ -439,6 +463,12 @@ const createStoreSaver = (
 
       const target = `session:${session.id}`
       const isForced = options?.forceTargets?.has(target) === true
+      if (isExternallyHydratedSession(session)) {
+        acknowledgedRevisions.set(
+          session.id,
+          Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(session))
+        )
+      }
 
       if (
         (previousById.get(session.id) !== session || isForced) &&
@@ -484,6 +514,8 @@ const createStoreSaver = (
                 const persisted = observePersistencePhase('session-serialize', () =>
                   toPersistedSession(session)
                 )
+                persisted.revision =
+                  acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                 let durableSession: PersistedChatSession
                 try {
                   durableSession = await persistence.saveSession(persisted, saveOptions)
@@ -491,6 +523,7 @@ const createStoreSaver = (
                   reportPersistenceError(error, 'session-save')
                   throw error
                 }
+                acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 observePersistencePhase('session-apply-durable', () =>
                   applyDurableSession(durableSession, saveOptions)
                 )
@@ -502,6 +535,8 @@ const createStoreSaver = (
                     const persisted = observePersistencePhase('session-serialize', () =>
                       toPersistedSession(session)
                     )
+                    persisted.revision =
+                      acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                     let durableSession: PersistedChatSession
                     try {
                       durableSession = await (coalescedOptions
@@ -511,6 +546,7 @@ const createStoreSaver = (
                       reportPersistenceError(error, 'session-save')
                       throw error
                     }
+                    acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                     observePersistencePhase('session-apply-durable', () =>
                       applyDurableSession(durableSession, coalescedOptions)
                     )
@@ -573,6 +609,7 @@ const createStoreSaver = (
 
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
 const useSessionPersistence = (): SessionPersistenceState => {
+  const { t } = useTranslation()
   const [isHydrated, setIsHydrated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isReady, setIsReady] = useState(false)
@@ -588,6 +625,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
   const failedConflictRebaseFields = useRef(new Map<string, SessionConflictRebaseField[]>())
+  const revisionConflictTargets = useRef(new Set<string>())
   const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
@@ -610,6 +648,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {
+    if (revisionConflictTargets.current.size > 0) {
+      retryLoad()
+      return
+    }
     const saver = saverRef.current
     if (!saver || failedWriteTargets.current.size === 0) return
 
@@ -628,7 +670,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       forceTargets: new Set(failedWriteTargets.current),
       conflictRebaseFieldsByTarget: new Map(failedConflictRebaseFields.current)
     }).catch(reportPersistenceError)
-  }, [])
+  }, [retryLoad])
 
   useEffect(() => {
     let isMounted = true
@@ -648,6 +690,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
           preferredSelection
         )
         if (!result || !isMounted) return
+        unresolvedSessionRevisionConflictTargets.clear()
+        revisionConflictTargets.current.clear()
         setIsHydrated(true)
         const loadWarnings = result.diagnostics?.warnings ?? []
         const sessionWarningCount = loadWarnings.filter(
@@ -727,6 +771,12 @@ const useSessionPersistence = (): SessionPersistenceState => {
           onFailure: (target, _error, context) => {
             if (!isMounted) return
             failedWriteTargets.current.add(target)
+            if (isSessionRevisionConflictError(_error)) {
+              revisionConflictTargets.current.add(target)
+              unresolvedSessionRevisionConflictTargets.add(target)
+              setWriteError(t(SESSION_REVISION_CONFLICT_WRITE_ERROR))
+              return
+            }
             const conflictRebaseFields = context.conflictRebaseFields
             if (conflictRebaseFields && conflictRebaseFields.length > 0) {
               failedConflictRebaseFields.current.set(target, [
@@ -753,6 +803,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
             if (!isMounted) return
             failedWriteTargets.current.delete(target)
             failedConflictRebaseFields.current.delete(target)
+            revisionConflictTargets.current.delete(target)
+            unresolvedSessionRevisionConflictTargets.delete(target)
             if (target === 'manifest' && retryManifestWritePending.current) {
               retryManifestWritePending.current = false
               setIsReady(true)
@@ -805,7 +857,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       if (saverRef.current === activeSaver) saverRef.current = undefined
       unsubscribe?.()
     }
-  }, [loadAttempt])
+  }, [loadAttempt, t])
 
   return {
     isHydrated,

@@ -6,6 +6,7 @@ import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/p
 import {
   materializeSessionConversationGraph,
   sanitizeSessionRuntimeContext,
+  sessionRevision,
   type DelegationPolicy,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -16,6 +17,8 @@ import {
 } from '../../shared/session-persistence'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { diagnosticErrorFields, type Logger } from '../logger'
+import { rebaseSafeSessionFields, resolveRevisionedSessionSave } from './revision-conflict'
+import { saveSessionWithRevision } from './save-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
 
@@ -56,7 +59,10 @@ type SessionStateRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<void>
+  saveSession(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession | void>
 }
 
 type SessionStateFileIndex = {
@@ -103,41 +109,6 @@ const emptySessionRuntimeContext = (): SessionRuntimeContext => ({ version: 1, r
 
 const cloneRuntimeContext = (context: SessionRuntimeContext): SessionRuntimeContext =>
   structuredClone(context)
-
-const rebaseSafeSessionFields = (
-  authoritative: PersistedChatSession,
-  submitted: PersistedChatSession,
-  fields: NonNullable<SaveSessionOptions['conflictRebaseFields']>
-): PersistedChatSession => {
-  const rebased = { ...authoritative }
-  for (const field of fields) {
-    switch (field) {
-      case 'title':
-        rebased.title = submitted.title
-        break
-      case 'permissionProfile':
-        rebased.permissionProfile = submitted.permissionProfile
-        break
-      case 'autoReviewEnabled':
-        rebased.autoReviewEnabled = submitted.autoReviewEnabled
-        break
-      case 'enabledComputeHosts':
-        // Retained in the wire-compatible enum, but this field is now changed only by its command.
-        break
-      case 'pinned':
-        rebased.pinned = submitted.pinned
-        break
-      case 'specialistId':
-        rebased.specialistId = submitted.specialistId
-        break
-      case 'specialistBindingPending':
-        rebased.specialistBindingPending = submitted.specialistBindingPending
-        break
-    }
-  }
-  rebased.updatedAt = Math.max(authoritative.updatedAt, submitted.updatedAt) + 1
-  return rebased
-}
 
 const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
   const graph = session.conversationGraph
@@ -375,7 +346,7 @@ class SessionPersistenceStateOwner {
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
 
-    await this.options.repository.saveSession({
+    await saveSessionWithRevision(this.options.repository, {
       ...session,
       ...(sessionStatus ? { status: sessionStatus } : {}),
       runtimeContext,
@@ -445,8 +416,8 @@ class SessionPersistenceStateOwner {
       ...(runtimeContext ? { runtimeContext } : {}),
       updatedAt: timestamp
     })
-    await this.options.repository.saveSession(durable)
-    this.recordSession(durable)
+    const persisted = await saveSessionWithRevision(this.options.repository, durable)
+    this.recordSession(persisted)
     return message
   }
 
@@ -468,9 +439,9 @@ class SessionPersistenceStateOwner {
       delegationPolicy: policy,
       updatedAt: Math.max(loaded.session.updatedAt + 1, Date.now())
     }
-    await this.options.repository.saveSession(durableSession)
-    this.recordSession(durableSession)
-    return durableSession
+    const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
+    this.recordSession(persisted)
+    return persisted
   }
 
   async setEnabledComputeHosts(
@@ -488,9 +459,9 @@ class SessionPersistenceStateOwner {
       enabledComputeHosts: [...providerIds],
       updatedAt: Math.max(loaded.session.updatedAt + 1, Date.now())
     }
-    await this.options.repository.saveSession(durableSession)
-    this.recordSession(durableSession)
-    return durableSession
+    const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
+    this.recordSession(persisted)
+    return persisted
   }
 
   async pruneEnabledComputeHosts(
@@ -498,7 +469,10 @@ class SessionPersistenceStateOwner {
     validProviderIds: ReadonlySet<string>
   ): Promise<PersistedChatSession[]> {
     const durableSessions: PersistedChatSession[] = []
-    const attemptedSessions: PersistedChatSession[] = []
+    const attemptedSessions: Array<{
+      session: PersistedChatSession
+      rollbackRevision: number
+    }> = []
     try {
       for (const session of sessions) {
         const current = session.enabledComputeHosts ?? []
@@ -513,18 +487,24 @@ class SessionPersistenceStateOwner {
           enabledComputeHosts,
           updatedAt: Math.max(session.updatedAt + 1, Date.now())
         }
-        attemptedSessions.push(session)
-        await this.options.repository.saveSession(durableSession)
-        this.recordSession(durableSession)
-        durableSessions.push(durableSession)
+        const rollback = { session, rollbackRevision: sessionRevision(session) }
+        attemptedSessions.push(rollback)
+        const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
+        rollback.rollbackRevision = sessionRevision(persisted)
+        this.recordSession(persisted)
+        durableSessions.push(persisted)
       }
       return durableSessions
     } catch (error) {
       const rollbackErrors: unknown[] = []
-      for (const session of attemptedSessions) {
+      for (const { session, rollbackRevision } of attemptedSessions) {
         try {
-          await this.options.repository.saveSession(session)
-          this.recordSession(session)
+          const persisted = await saveSessionWithRevision(
+            this.options.repository,
+            session,
+            rollbackRevision
+          )
+          this.recordSession(persisted)
         } catch (rollbackError) {
           rollbackErrors.push(rollbackError)
         }
@@ -553,10 +533,16 @@ class SessionPersistenceStateOwner {
         'Cannot save Session projection because main-owned runtime context is unreadable.'
       )
     }
-    const rendererOwnedSession: PersistedChatSession = { ...session }
+    const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    const { session: submittedSession, expectedRevision } = resolveRevisionedSessionSave(
+      authority,
+      session,
+      options.conflictRebaseFields
+    )
+
+    const rendererOwnedSession: PersistedChatSession = { ...submittedSession }
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
-    const authority = authoritative.status === 'found' ? authoritative.session : undefined
     const specialistBindingOwnedByCaller =
       options.conflictRebaseFields?.includes('specialistId') === true &&
       options.conflictRebaseFields.includes('specialistBindingPending')
@@ -641,7 +627,7 @@ class SessionPersistenceStateOwner {
           mode: 'live-save'
         })
       : materializedSession
-    const key = `${session.projectId}:${session.id}`
+    const key = `${submittedSession.projectId}:${submittedSession.id}`
     let bindingTopology = sessionBindingTopologyHash(durableSession)
     let bindingValidation: FinalizedArtifactBindingValidation =
       this.validatedBindingTopologies.get(key) === bindingTopology
@@ -656,8 +642,8 @@ class SessionPersistenceStateOwner {
       if (conflictRebaseFields.length === 0) throw bindingValidation.error
 
       const latest = await this.options.repository.loadSessionWithDiagnostics(
-        session.projectId,
-        session.id
+        submittedSession.projectId,
+        submittedSession.id
       )
       if (latest.status !== 'found') throw bindingValidation.error
       const rebasedSession = rebaseSafeSessionFields(
@@ -682,19 +668,23 @@ class SessionPersistenceStateOwner {
       if (bindingValidation.status === 'conflict') throw bindingValidation.error
     }
 
-    await this.options.repository.saveSession(durableSession)
-    this.recordSession(durableSession)
+    const persistedSession = await saveSessionWithRevision(
+      this.options.repository,
+      durableSession,
+      expectedRevision
+    )
+    this.recordSession(persistedSession)
     if (bindingValidation.status === 'valid') {
       this.validatedBindingTopologies.set(key, bindingTopology)
     }
-    await this.options.provenance?.captureFinalizedMessages(durableSession)
+    await this.options.provenance?.captureFinalizedMessages(persistedSession)
     let changedSources: ProjectFileSource[]
     try {
-      changedSources = await this.options.fileIndex.syncSession(durableSession)
+      changedSources = await this.options.fileIndex.syncSession(persistedSession)
     } catch (error) {
       this.markMetadataIncomplete()
       this.options.notifyFilesChanged({
-        projectId: session.projectId,
+        projectId: submittedSession.projectId,
         sources: ['artifact', 'upload'],
         kind: 'reset'
       })
@@ -702,13 +692,13 @@ class SessionPersistenceStateOwner {
     }
     if (changedSources.length > 0) {
       this.options.notifyFilesChanged({
-        projectId: session.projectId,
-        sessionId: session.id,
+        projectId: submittedSession.projectId,
+        sessionId: submittedSession.id,
         sources: changedSources,
         kind: 'upsert'
       })
     }
-    return durableSession
+    return persistedSession
   }
 }
 

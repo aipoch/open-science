@@ -747,6 +747,43 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][1]).toEqual({ conflictRebaseFields: ['title'] })
   })
 
+  it('chains queued local saves from the last acknowledged durable revision', async () => {
+    const firstSave = createDeferred<PersistedChatSession>()
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 6 }))
+    const api = createApi({ saveSession })
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First',
+      cwd: '/workspace/project',
+      projectId: 'project-a'
+    })
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...toPersistedSession(source), revision: 4 }
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'First queued')
+    const first = save(useSessionStore.getState())
+    await flushMicrotasks()
+    expect(saveSession.mock.calls[0][0].revision).toBe(4)
+
+    useSessionStore.getState().renameSession('session-1', 'Second queued')
+    const second = save(useSessionStore.getState())
+    firstSave.resolve({ ...saveSession.mock.calls[0][0], revision: 5 })
+    await Promise.all([first, second])
+
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 5,
+      title: 'Second queued'
+    })
+  })
+
   it('reports an earlier failed write even when a later queued write succeeds', async () => {
     const api = createApi({
       saveSession: vi.fn().mockRejectedValue(new Error('disk full')),

@@ -230,6 +230,39 @@ describe('session persistence startup', () => {
     )
   })
 
+  it('reloads after a Session revision conflict instead of resending stale JSON', async () => {
+    const restored = createPersistedSession({ revision: 1 })
+    loadAll.mockReset().mockResolvedValue({
+      ...emptyLoadResult(),
+      sessions: [restored]
+    })
+    saveSession.mockRejectedValue(
+      Object.assign(new Error('Session revision conflict: expected 1, actual 2.'), {
+        code: 'session-revision-conflict'
+      })
+    )
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().renameSession('session-1', 'Local title')
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
+    )
+    expect(saveSession).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(loadAll).toHaveBeenCalledTimes(2)
+    expect(saveSession).toHaveBeenCalledOnce()
+  })
+
   it('automatically clears a failed write target after its session is durably deleted', async () => {
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
     saveSession.mockRejectedValue(new Error('disk full'))

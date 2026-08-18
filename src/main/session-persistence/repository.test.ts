@@ -369,7 +369,7 @@ describe('session persistence repository (per-session files)', () => {
     const wait = vi.fn(async () => undefined)
     const repository = new SessionRepository(await createStorageRoot(), { renameFile, wait })
 
-    await expect(repository.saveSession(createSession())).resolves.toBeUndefined()
+    await expect(repository.saveSession(createSession())).resolves.toMatchObject({ revision: 1 })
 
     expect(renameFile).toHaveBeenCalledTimes(2)
     expect(wait).toHaveBeenCalledTimes(1)
@@ -427,6 +427,34 @@ describe('session persistence repository (per-session files)', () => {
     await expect(repository.loadSessionWithDiagnostics('project-a', 'missing')).resolves.toEqual({
       status: 'missing'
     })
+  })
+
+  it('compares and advances Session revisions inside the atomic write lane', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const first = await repository.saveSession(createSession(), 0)
+    expect(first.revision).toBe(1)
+
+    await expect(
+      repository.saveSession(
+        createSession({ revision: 0, title: 'Stale replacement', updatedAt: 1710000000200 }),
+        0
+      )
+    ).rejects.toMatchObject({
+      code: 'session-revision-conflict',
+      expectedRevision: 0,
+      actualRevision: 1
+    })
+    await expect(repository.loadSession('project-a', 'session-1')).resolves.toMatchObject({
+      revision: 1,
+      title: 'Saved conversation'
+    })
+
+    await expect(
+      repository.saveSession(
+        { ...first, title: 'Accepted replacement', updatedAt: 1710000000300 },
+        1
+      )
+    ).resolves.toMatchObject({ revision: 2, title: 'Accepted replacement' })
   })
 
   it('never writes finalized upload absolute paths into Session JSON', async () => {

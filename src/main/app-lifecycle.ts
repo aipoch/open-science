@@ -120,7 +120,8 @@ export const installAppLifecycle = (
     outcome: RendererSessionPersistenceFlushOutcome
   ): ShutdownStepOutcome => {
     if (outcome === 'timeout') return 'timeout'
-    if (outcome === 'send-failed') return 'failed'
+    if (outcome === 'send-failed' || outcome === 'renderer-failed' || outcome === 'conflict')
+      return 'failed'
     if (outcome === 'renderer-gone') return 'degraded'
     return 'completed'
   }
@@ -305,6 +306,7 @@ export const installAppLifecycle = (
       let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
       let rendererFlushResult: ShutdownStepOutcome
       let backendTeardownResult: ShutdownStepOutcome
+      let shutdownAbortedForSessionConflict = false
       try {
         diagnostics?.phase('usage-drain')
         try {
@@ -330,6 +332,21 @@ export const installAppLifecycle = (
             result: rendererFlushResult,
             ...diagnosticErrorFields(error)
           })
+        }
+
+        if (rendererFlushOutcome === 'conflict') {
+          shutdownAbortedForSessionConflict = true
+          diagnostics?.complete({
+            degraded: true,
+            usageDrainResult,
+            rendererFlushResult,
+            rendererFlushOutcome,
+            backendTeardownResult: 'degraded'
+          })
+          if (deps.flushLogs) {
+            await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
+          }
+          return
         }
 
         diagnostics?.phase('backend-teardown')
@@ -360,9 +377,16 @@ export const installAppLifecycle = (
           if (result === 'timeout') console.warn('[shutdown] final log flush timed out')
         }
       } finally {
-        trayBox.current?.destroy()
-        shutdownFinished = true
-        deps.app.exit(0)
+        if (shutdownAbortedForSessionConflict) {
+          shutdownStarted = false
+          quitConfirmed = false
+          clearApplicationShutdownTrigger()
+          showMainWindow()
+        } else {
+          trayBox.current?.destroy()
+          shutdownFinished = true
+          deps.app.exit(0)
+        }
       }
     })()
   })

@@ -21,6 +21,7 @@ import type {
   ChildRecord,
   SessionKey
 } from '../delegation/session-records'
+import { saveSessionWithRevision } from './save-session'
 import { SessionRuntimeContextRevisionConflictError } from './state-owner'
 
 type DelegatedWorkSessionRepository = {
@@ -38,7 +39,7 @@ type DelegatedWorkSessionRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
 }
 
 type SessionDelegatedWorkStoreOptions = {
@@ -231,8 +232,8 @@ class SessionDelegatedWorkStore {
         runtimeContext,
         updatedAt
       }
-      await this.options.repository.saveSession(updated)
-      this.options.notifySessionUpdated(updated)
+      const persisted = await saveSessionWithRevision(this.options.repository, updated)
+      this.options.notifySessionUpdated(persisted)
       return result
     })
   }
@@ -313,8 +314,8 @@ class SessionDelegatedWorkStore {
         filesRevision: (materialized.filesRevision ?? 0) + 1,
         updatedAt: Math.max(materialized.updatedAt + 1, Date.now())
       }
-      await this.options.repository.saveSession(updated)
-      this.options.notifySessionUpdated(updated)
+      const persisted = await saveSessionWithRevision(this.options.repository, updated)
+      this.options.notifySessionUpdated(persisted)
     })
   }
 
@@ -355,8 +356,8 @@ class SessionDelegatedWorkStore {
       for (const session of scan.result.sessions) {
         const recovery = recoverInterruptedDelegatedWorkSession(session)
         if (recovery.interrupted.length === 0) continue
-        await this.options.repository.saveSession(recovery.session)
-        this.options.notifySessionUpdated(recovery.session)
+        const persisted = await saveSessionWithRevision(this.options.repository, recovery.session)
+        this.options.notifySessionUpdated(persisted)
         interrupted.push(...recovery.interrupted)
       }
       this.options.markStartupRecoveryComplete()

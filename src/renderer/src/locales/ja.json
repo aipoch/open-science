@@ -397,6 +397,7 @@
   "Conversation": "会話",
   "Conversation imports": "会話のインポート",
   "Conversation storage needs attention": "会話のストレージには注意が必要です",
+  "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "この会話は別のウィンドウで変更されました。ローカルの変更は保存されていません。アプリを閉じる前に再試行して、最新バージョンを再読み込みしてください。",
   "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "<name>{{name}}</name> に紐づいている会話は<em>利用できなくなり</em>、メイン Agent へ<em>自動的には切り替わりません</em>。影響を受ける各会話は、再送信する前に新しいスペシャリストまたはメイン Agent を明示的に選択してください。",
   "Copied": "コピー済み",
   "Copied!": "コピーしました。",
