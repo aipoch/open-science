@@ -6,6 +6,7 @@ import type { ComputeHostRepository } from './repository'
 import {
   classifyConnectionFailure,
   ComputeConnectionError,
+  redactConnectionOutputs,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from './connection-broker'
@@ -445,6 +446,14 @@ export class JobPoller {
     // Split output into per-job sections by the nonce-prefixed JOB_START marker.
     const escapedNonce = nonce.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const sections = output.split(new RegExp(`^${escapedNonce}JOB_START:`, 'm'))
+    const parsedResults: Array<{
+      job: ComputeJob
+      alive: boolean
+      exitCode: number | null
+      hasExitCode: boolean
+      stdoutTail: string
+      stderrTail: string
+    }> = []
 
     for (const section of sections) {
       if (!section.trim()) continue
@@ -486,9 +495,23 @@ export class JobPoller {
       const stderrTail =
         stderrEnd > stderrStart ? body.slice(stderrStart, stderrEnd).replace(/\n$/, '') : ''
 
+      parsedResults.push({ job, alive, exitCode, hasExitCode, stdoutTail, stderrTail })
+    }
+
+    const safeTails = await redactConnectionOutputs(
+      connection,
+      parsedResults.flatMap(({ stdoutTail, stderrTail }) => [stdoutTail, stderrTail])
+    )
+    for (const [index, result] of parsedResults.entries()) {
       await this._applyPollResult(
-        job,
-        { alive, exitCode, hasExitCode, stdoutTail, stderrTail },
+        result.job,
+        {
+          alive: result.alive,
+          exitCode: result.exitCode,
+          hasExitCode: result.hasExitCode,
+          stdoutTail: safeTails[index * 2] ?? '',
+          stderrTail: safeTails[index * 2 + 1] ?? ''
+        },
         connection
       )
     }

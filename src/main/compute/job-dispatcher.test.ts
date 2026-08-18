@@ -397,6 +397,40 @@ describe('dispatchJob', () => {
     }
   )
 
+  it('redacts invalid dispatch protocol output only after PID parsing fails', async () => {
+    const job = makeJob()
+    const secret = 'dispatch-secret'
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: `not-a-pid ${secret}`,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const lease = leaseFromRunners(runner)
+    lease.redactSensitiveOutputs = vi.fn(async (values) =>
+      values.map((value) => value.replaceAll(secret, '[redacted]'))
+    )
+    const { repo, transition } = makeJobRepo(job)
+
+    await dispatchJob(job.job_id, {
+      connectionBroker: { acquire: vi.fn(async () => lease) },
+      hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+      jobRepository: repo as unknown as ComputeJobRepository
+    })
+
+    expect(transition).toHaveBeenCalledWith(
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({
+        status: 'error',
+        errorCode: 'dispatch_failed',
+        stderrTail: 'Could not read pid from dispatch output: "not-a-pid [redacted]"'
+      })
+    )
+    expect(JSON.stringify(transition.mock.calls)).not.toContain(secret)
+  })
+
   it('marks the job in-flight in the tracker during dispatch and clears it afterward', async () => {
     const job = makeJob()
     const tracker = new DispatchTracker()

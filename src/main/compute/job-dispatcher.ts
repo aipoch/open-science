@@ -4,6 +4,7 @@ import type { ComputeJob } from '../../shared/compute'
 import {
   classifyConnectionFailure,
   ComputeConnectionError,
+  redactConnectionOutputs,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from './connection-broker'
@@ -258,9 +259,10 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   // Parse pid from stdout (last non-empty line).
   const pid = Number.parseInt(runResult.stdout.trim().split('\n').pop() ?? '', 10)
   if (!Number.isFinite(pid) || pid <= 0) {
+    const [safeStdout = ''] = await redactConnectionOutputs(connection, [runResult.stdout])
     await lifecycle.dispatchError(jobId, {
       errorCode: 'dispatch_failed',
-      stderrTail: `Could not read pid from dispatch output: ${JSON.stringify(runResult.stdout)}`
+      stderrTail: `Could not read pid from dispatch output: ${JSON.stringify(safeStdout)}`
     })
     return
   }

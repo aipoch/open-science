@@ -102,6 +102,13 @@ const REMOTE_COMMAND_STATUS_INTENTS = new Set<AcquireComputeConnectionRequest['i
   'job_cleanup'
 ])
 
+const JOB_PROTOCOL_INTENTS = new Set<AcquireComputeConnectionRequest['intent']>([
+  'job_dispatch',
+  'job_poll',
+  'job_harvest',
+  'job_cleanup'
+])
+
 const passwordSafeConfigArgs = (config: Readonly<Record<string, string>>): string[] => {
   const result = ['-F', 'none']
   for (const [key, option] of PASSWORD_SAFE_CONFIG_OPTIONS) {
@@ -301,7 +308,11 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
       run: (command, options) => withLease((lease) => lease.run(command, options)),
       upload: (localPath, remotePath) => withLease((lease) => lease.upload(localPath, remotePath)),
       download: (remotePath, localPath, maxBytes) =>
-        withLease((lease) => lease.download(remotePath, localPath, maxBytes))
+        withLease((lease) => lease.download(remotePath, localPath, maxBytes)),
+      redactSensitiveOutputs: (values) =>
+        credentialLease.withPassword(async (password) =>
+          values.map((value) => redactPassword(value, password))
+        )
     }
   }
 
@@ -371,7 +382,9 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
           if (failure) throw failure
           return {
             ...result,
-            stdout: redactPassword(result.stdout, password),
+            stdout: JOB_PROTOCOL_INTENTS.has(request.intent)
+              ? result.stdout
+              : redactPassword(result.stdout, password),
             stderr: redactPassword(result.stderr, password)
           }
         }),
@@ -405,7 +418,9 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
           const failure = classifyPasswordConnectionFailure(result, askpass)
           if (failure) throw failure
           return result
-        })
+        }),
+      redactSensitiveOutputs: async (values) =>
+        values.map((value) => redactPassword(value, password))
     }
   }
 

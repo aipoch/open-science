@@ -599,7 +599,8 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     const passwordLease = {
       run: vi.fn(),
       upload: vi.fn(),
-      download: vi.fn()
+      download: vi.fn(),
+      redactSensitiveOutputs: vi.fn(async (values: readonly string[]) => [...values])
     } as unknown as ComputeConnectionLease
     const passwordAdapter = { acquire: vi.fn(async () => passwordLease) }
     const resolveTarget = vi.fn(async () => target)
@@ -614,8 +615,10 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     expect(observedLease).toMatchObject({
       run: expect.any(Function),
       upload: expect.any(Function),
-      download: expect.any(Function)
+      download: expect.any(Function),
+      redactSensitiveOutputs: expect.any(Function)
     })
+    await expect(observedLease.redactSensitiveOutputs?.(['tail'])).resolves.toEqual(['tail'])
     expect(passwordAdapter.acquire).toHaveBeenCalledWith(passwordHost, { intent: 'probe' })
     expect(resolveTarget).not.toHaveBeenCalled()
   })
@@ -1446,6 +1449,49 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
       await expect(lease.run('false', { timeoutMs: 1000 })).resolves.toEqual(remoteFailure)
     }
   )
+
+  it('preserves password-mode job protocol stdout and redacts parsed payloads on demand', async () => {
+    const runner: SshRunner = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 255,
+          stdout: '',
+          stderr: 'Permission denied',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: '1\n',
+          stderr: 'diagnostic 1',
+          truncated: false,
+          timedOut: false
+        })
+    }
+    const adapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operation: (password: string) => Promise<unknown>) => operation('1')
+        }))
+      } as unknown as CredentialVault,
+      runner,
+      vi.fn(async () => target),
+      vi.fn(async () => ({})),
+      vi.fn(async () => ({
+        env: { SSH_ASKPASS: '/constrained/helper' },
+        wasAnswered: () => true,
+        dispose: async () => undefined
+      }))
+    )
+
+    const lease = await adapter.acquire(host, { intent: 'job_dispatch' })
+    const result = await lease.run('launch', { timeoutMs: 1000 })
+
+    expect(result.stdout).toBe('1\n')
+    expect(result.stderr).toBe('diagnostic [redacted]')
+    await expect(lease.redactSensitiveOutputs?.(['tail 1'])).resolves.toEqual(['tail [redacted]'])
+  })
 
   it('keeps an answered target-password failure classified and persisted as authentication_failed', async () => {
     const passwordHost = {

@@ -221,6 +221,69 @@ describe('JobPoller', () => {
     expect(onJobUpdated).toHaveBeenCalled()
   })
 
+  it('parses protocol markers before redacting persisted job tails', async () => {
+    const job = makeJob()
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      get: vi.fn(() => Promise.resolve(job)),
+      update,
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const pollOutput = withNonce([
+      'JOB_START:job-1',
+      'alive:1',
+      '0',
+      'existing first-line fixture\nstdout contains 1\n',
+      'STDOUT_END:job-1',
+      'stderr contains 1',
+      'STDERR_END:job-1'
+    ])
+    const redactSensitiveOutputs = vi.fn(async (values: readonly string[]) =>
+      values.map((value) => value.replaceAll('1', '[redacted]'))
+    )
+    const connectionBroker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => ({
+        run: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: pollOutput,
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })),
+        upload: vi.fn(async () => undefined),
+        download: vi.fn(),
+        redactSensitiveOutputs
+      }))
+    }
+    const poller = new JobPoller({
+      connectionBroker,
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
+
+    await poller.tick()
+
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'success',
+        exitCode: 0,
+        stdoutTail: 'stdout contains [redacted]\n',
+        stderrTail: 'stderr contains [redacted]'
+      })
+    )
+    expect(redactSensitiveOutputs).toHaveBeenCalledWith([
+      'stdout contains 1\n',
+      'stderr contains 1'
+    ])
+  })
+
   it('does not publish or harvest a terminal observation that loses the lifecycle race', async () => {
     const job = makeJob()
     const updateIfStatus = vi.fn(() => Promise.resolve(null))

@@ -30,7 +30,16 @@ interface ComputeConnectionLease {
   run(remoteCommand: string, options: ConnectionRunOptions): Promise<ConnectionRunResult>
   upload(localPath: string, remotePath: string): Promise<void>
   download(remotePath: string, localPath: string, maxBytes: number): Promise<BoundedScpResult>
+  // Password leases expose post-parse redaction so structured protocol fields remain intact while
+  // user-visible or persisted payloads can still be scrubbed before crossing their boundary.
+  redactSensitiveOutputs?(values: readonly string[]): Promise<string[]>
 }
+
+const redactConnectionOutputs = async (
+  lease: ComputeConnectionLease,
+  values: readonly string[]
+): Promise<string[]> =>
+  lease.redactSensitiveOutputs ? lease.redactSensitiveOutputs(values) : [...values]
 
 interface ComputeConnectionBroker {
   acquire(
@@ -230,7 +239,13 @@ class SshConfigComputeConnectionBroker implements ComputeConnectionBroker {
       download: (remotePath, localPath, maxBytes) =>
         this.withActiveOperation(providerId, generation, () =>
           lease.download(remotePath, localPath, maxBytes)
-        )
+        ),
+      ...(lease.redactSensitiveOutputs
+        ? {
+            redactSensitiveOutputs: (values: readonly string[]) =>
+              lease.redactSensitiveOutputs!(values)
+          }
+        : {})
     }
   }
 
@@ -398,7 +413,13 @@ class SshConfigComputeConnectionBroker implements ComputeConnectionBroker {
       run: (command, options) => observe(() => lease.run(command, options)),
       upload: (localPath, remotePath) => observe(() => lease.upload(localPath, remotePath)),
       download: (remotePath, localPath, maxBytes) =>
-        observe(() => lease.download(remotePath, localPath, maxBytes))
+        observe(() => lease.download(remotePath, localPath, maxBytes)),
+      ...(lease.redactSensitiveOutputs
+        ? {
+            redactSensitiveOutputs: (values: readonly string[]) =>
+              lease.redactSensitiveOutputs!(values)
+          }
+        : {})
     }
   }
 
@@ -460,6 +481,7 @@ export {
   ComputeConnectionError,
   SshConfigComputeConnectionBroker,
   classifyConnectionFailure,
+  redactConnectionOutputs,
   safeConnectionErrorMessage
 }
 export type {
