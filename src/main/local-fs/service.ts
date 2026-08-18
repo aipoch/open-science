@@ -190,6 +190,13 @@ export class LocalFsService {
     const resolvedPath = await realpath(path)
     const dirents = await readdir(resolvedPath, { withFileTypes: true })
     const truncated = dirents.length > LOCAL_DIR_ENTRY_CAP
+    // readdir order is filesystem-dependent. Sort the inexpensive Dirent metadata before applying
+    // the cap so repeated listings select the same visible subset without stat'ing every entry in
+    // an arbitrarily large directory.
+    dirents.sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
     const capped = truncated ? dirents.slice(0, LOCAL_DIR_ENTRY_CAP) : dirents
 
     const entries: LocalDirEntry[] = []
