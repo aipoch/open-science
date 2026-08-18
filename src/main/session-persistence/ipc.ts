@@ -20,6 +20,7 @@ import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { SessionMetadataSnapshot } from './coordinator'
 import { MainMessageAttributionAuthority } from './message-attribution-authority'
+import { isSessionCatalogAuthoritative } from './catalog-authority'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -80,6 +81,10 @@ const withProjectDeletionRecoveryStatus = (
     isProjectDeletionRecoveryComplete
   }
 })
+
+const canReconcileSessionAbsences = (result: LoadAllSessionsResult): boolean =>
+  result.diagnostics?.isProjectDeletionRecoveryComplete === true &&
+  isSessionCatalogAuthoritative(result.diagnostics)
 
 // Cached metadata must not overtake queued Project deletion work. Let recovery failures reject so
 // Permissions reports the Session store as incomplete instead of publishing stale navigation labels.
@@ -225,6 +230,7 @@ const registerSessionPersistenceIpcHandlers = (
 }
 
 export {
+  canReconcileSessionAbsences,
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlers,

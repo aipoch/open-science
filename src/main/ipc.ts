@@ -163,6 +163,7 @@ import {
 import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
 import {
+  canReconcileSessionAbsences,
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlersWithAttributionAuthority,
@@ -862,7 +863,7 @@ const createApplicationModules = async (
         ...result,
         sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
           result.sessions,
-          result.diagnostics?.isComplete === true
+          canReconcileSessionAbsences(result)
         )
       }
     },

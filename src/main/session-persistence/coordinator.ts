@@ -71,6 +71,7 @@ import {
   SessionDelegatedWorkPersistenceOwner
 } from './delegated-work-owner'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
+import { isSessionCatalogAuthoritative } from './catalog-authority'
 
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -375,8 +376,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         operation.fail(error, { status: 'failed', hydrationAvailable: false })
         throw error
       }
-      const hasAuthoritativeSessionCatalog =
-        scan.isComplete && !scan.warnings?.some((warning) => warning.kind === 'corrupt')
+      const hasAuthoritativeSessionCatalog = isSessionCatalogAuthoritative(scan)
       this.stateOwner.replaceMetadata(scan.result.sessions, hasAuthoritativeSessionCatalog)
       operation.phase('authority-loaded', {
         sessionCount: scan.result.sessions.length,
