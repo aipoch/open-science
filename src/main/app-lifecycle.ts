@@ -358,9 +358,18 @@ export const installAppLifecycle = (
           })
         }
 
-        const finalFlush = await flushRendererSessionPersistence('renderer-session-flush')
-        rendererFlushOutcome = finalFlush.outcome
-        rendererFlushResult = finalFlush.result
+        if (rendererPreflightOutcome === 'timeout') {
+          rendererFlushOutcome = 'timeout'
+          rendererFlushResult = 'timeout'
+          diagnostics?.phase('renderer-session-flush', {
+            result: rendererFlushResult,
+            skippedAfterPreflightTimeout: true
+          })
+        } else {
+          const finalFlush = await flushRendererSessionPersistence('renderer-session-flush')
+          rendererFlushOutcome = finalFlush.outcome
+          rendererFlushResult = finalFlush.result
+        }
 
         diagnostics?.phase('backend-teardown')
         try {

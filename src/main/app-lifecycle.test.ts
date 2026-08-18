@@ -440,10 +440,11 @@ describe('installAppLifecycle', () => {
   it('records a degraded renderer persistence flush and drains terminal logs before exit', async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     const flushLogs = vi.fn(async () => undefined)
+    const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
     const { app, closeOpts } = setup({
       log,
       flushLogs,
-      flushSessionPersistence: vi.fn(async () => 'timeout' as const)
+      flushSessionPersistence
     })
     closeOpts[0].requestQuit()
 
@@ -462,6 +463,7 @@ describe('installAppLifecycle', () => {
       })
     )
     expect(flushLogs).toHaveBeenCalledOnce()
+    expect(flushSessionPersistence).toHaveBeenCalledOnce()
     expect(flushLogs.mock.invocationCallOrder[0]).toBeLessThan(app.exit.mock.invocationCallOrder[0])
   })
 
