@@ -1,6 +1,9 @@
 // Dev-only streaming pipeline counters for before/after perf comparisons. Counting is a few
 // integer increments per call, so it runs everywhere; only the `window.__streamingMetrics`
-// handle is DEV-gated (tree-shaken out of production renderer builds).
+// handle is gated to dev and e2e builds (tree-shaken out of production renderer builds). The e2e
+// build (`npm run build:e2e`, vite mode "e2e") exposes it so the performance benchmark
+// (e2e/message-scroller-performance.spec.ts) can cross-check its frame sampling against these
+// pipeline counters.
 const streamingMetrics = {
   // Assistant chunk events applied to the session store (workspace-events.ts).
   acpChunkEventsReceived: 0,
@@ -60,7 +63,7 @@ export const recordAgentMessageChunkCommit = (chunkCount: number): void => {
   streamingMetrics.agentMessageChunksCommitted += chunkCount
 }
 
-if (import.meta.env.DEV && typeof window !== 'undefined') {
+if ((import.meta.env.DEV || import.meta.env.MODE === 'e2e') && typeof window !== 'undefined') {
   // Live reference: reading window.__streamingMetrics in the console always shows current values.
   ;(window as unknown as { __streamingMetrics: typeof streamingMetrics }).__streamingMetrics =
     streamingMetrics

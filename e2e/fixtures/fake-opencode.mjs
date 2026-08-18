@@ -425,6 +425,10 @@ if (process.argv.includes('--version')) {
     }))
     .onRequest(acp.methods.agent.authenticate, () => ({}))
     .onRequest(acp.methods.agent.session.new, async (context) => {
+      // Some lifecycle races (e.g. pending-session binding) only surface when session creation is
+      // slow like a real agent spawn; opt in via FAKE_OPENCODE_NEW_SESSION_DELAY_MS.
+      const newSessionDelayMs = Number(process.env.FAKE_OPENCODE_NEW_SESSION_DELAY_MS ?? 0)
+      if (newSessionDelayMs > 0) await delay(newSessionDelayMs)
       const sessionId = `e2e-session-${nextSessionId++}`
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {

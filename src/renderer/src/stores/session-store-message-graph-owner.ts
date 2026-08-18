@@ -3,6 +3,7 @@ import {
   activateConversationBranch,
   forkEditedConversationMessage,
   projectConversationMessage,
+  rebaseConversationGraphSessionId,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
@@ -452,6 +453,31 @@ export const createSessionMessageGraphOwner = <
     )
     if (!pendingSession) return undefined
 
+    // Keep the transcript's presentation identity continuous across the id swap: rebase the
+    // conversation graph's session-derived root ids off the dead pending id, and remember the
+    // active branch id before/after the rebase so the UI can translate its scope keys. Reading
+    // the pair off the rebased graph keeps it consistent with the rebase by construction —
+    // if the rebase declines a rename, no pair is recorded and the scope stays as-is.
+    const graphBeforeBind = pendingSession.conversationGraph
+    const graphAfterBind = graphBeforeBind
+      ? rebaseConversationGraphSessionId(graphBeforeBind, pendingSessionId, sessionId)
+      : undefined
+    const activeBranchIdOf = (graph: typeof graphBeforeBind): string | undefined =>
+      graph?.frames.find((frame) => frame.id === graph.activeFrameId)?.activeBranchId
+    const branchIdBeforeBind = activeBranchIdOf(graphBeforeBind)
+    const branchIdAfterBind = activeBranchIdOf(graphAfterBind)
+    // Only a branch id the rebase actually remapped is bind-derived; legacy or fork-derived ids
+    // must keep driving the presentation scope untouched.
+    const bindRemappedBranchIdentity =
+      branchIdBeforeBind !== undefined &&
+      branchIdAfterBind !== undefined &&
+      branchIdBeforeBind !== branchIdAfterBind
+        ? {
+            boundFromPendingMessageBranchId: branchIdBeforeBind,
+            boundToMessageBranchId: branchIdAfterBind
+          }
+        : {}
+
     const now = Date.now()
     set({
       selectedSessionId:
@@ -462,6 +488,9 @@ export const createSessionMessageGraphOwner = <
               ...session,
               id: sessionId,
               isPending: false,
+              boundFromPendingSessionId: pendingSessionId,
+              ...bindRemappedBranchIdentity,
+              conversationGraph: graphAfterBind ?? session.conversationGraph,
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               agentBackendId: agentBackendId ?? session.agentBackendId,

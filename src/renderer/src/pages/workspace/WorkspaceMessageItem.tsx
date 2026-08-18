@@ -461,6 +461,11 @@ const editSendButtonClassName =
 const ignoreEditPaste = (): void => {}
 // A branch-changing resend with several downstream turns asks for confirmation first.
 const EDIT_TRUNCATION_WARNING_TURNS = 2
+// Offscreen height guesses for contain-intrinsic-size, from row heights measured by
+// e2e/message-scroller-performance.spec.ts: user rows ≈46px, agent rows ≈336px. Better guesses
+// mean less scrollHeight drift while content-visibility rows resolve their real heights.
+const USER_ROW_CONTAINMENT_ESTIMATE = '[contain-intrinsic-size:auto_3rem]'
+const AGENT_ROW_CONTAINMENT_ESTIMATE = '[contain-intrinsic-size:auto_21rem]'
 // Staged uploads render as gray file pills inside the sent bubble.
 const uploadedAttachmentButtonClassName =
   'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-left text-[13px] leading-5 text-text-000 transition-colors hover:bg-bg-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
@@ -937,6 +942,9 @@ const WorkspaceMessageItemImpl = ({
       key={message.id}
       messageId={message.id}
       disableContainment={message.status === 'streaming' || isAssistantPresenting}
+      containmentEstimate={
+        isUserMessage ? USER_ROW_CONTAINMENT_ESTIMATE : AGENT_ROW_CONTAINMENT_ESTIMATE
+      }
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >

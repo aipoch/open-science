@@ -65,10 +65,14 @@ function MessageScrollerContent({
 function MessageScrollerItem({
   className,
   disableContainment = false,
+  containmentEstimate = '[contain-intrinsic-size:auto_10rem]',
   scrollAnchor = false,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Item> & {
   disableContainment?: boolean
+  // Offscreen-size estimate for content-visibility rows; closer per-row-type estimates keep the
+  // scrollbar stable while rows resolve their real height.
+  containmentEstimate?: string
 }) {
   return (
     <MessageScrollerPrimitive.Item
@@ -76,7 +80,7 @@ function MessageScrollerItem({
       scrollAnchor={scrollAnchor}
       className={cn(
         'min-w-0 shrink-0',
-        !disableContainment && '[contain-intrinsic-size:auto_10rem] [content-visibility:auto]',
+        !disableContainment && `${containmentEstimate} [content-visibility:auto]`,
         className
       )}
       {...props}

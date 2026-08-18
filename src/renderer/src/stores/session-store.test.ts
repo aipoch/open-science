@@ -2108,6 +2108,43 @@ describe('session store', () => {
     ])
   })
 
+  it('keeps presentation identity continuous and rebases the graph when binding', () => {
+    const pending = useSessionStore.getState().appendPendingUserMessage({
+      content: 'Continue the analysis',
+      cwd: '/workspace/project'
+    })
+    const pendingSessionId = pending?.sessionId ?? ''
+
+    useSessionStore.getState().bindPendingSession({
+      pendingSessionId,
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project'
+    })
+
+    const bound = useSessionStore.getState().sessions[0]
+    expect(bound).toMatchObject({
+      id: 'transport-session-1',
+      isPending: false,
+      boundFromPendingSessionId: pendingSessionId,
+      boundFromPendingMessageBranchId: `message-branch-${pendingSessionId}`,
+      boundToMessageBranchId: 'message-branch-transport-session-1'
+    })
+    // No graph id keeps embedding the dead pending id after the bind.
+    expect(JSON.stringify(bound.conversationGraph)).not.toContain(pendingSessionId)
+    expect(bound.conversationGraph?.rootFrameId).toBe('root-frame-transport-session-1')
+    expect(bound.conversationGraph?.frames[0]?.activeBranchId).toBe(
+      'message-branch-transport-session-1'
+    )
+    expect(bound.conversationGraph?.runtimeSegments[0]?.id).toBe(
+      'runtime-segment-transport-session-1'
+    )
+    // The presentation identities stay in memory only, never on disk.
+    const persisted = toPersistedSession(bound)
+    expect(persisted).not.toHaveProperty('boundFromPendingSessionId')
+    expect(persisted).not.toHaveProperty('boundFromPendingMessageBranchId')
+    expect(persisted).not.toHaveProperty('boundToMessageBranchId')
+  })
+
   it('appends follow-up user messages to the same session and restarts the run', () => {
     const first = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

@@ -97,6 +97,11 @@ export type ChatSession = Omit<
   branchSwitchBlocked?: boolean
   conversationGraphSyncBlocked?: boolean
   pendingContextReplayMessageId?: string
+  // Transient presentation identities from before a pending Session bound to its backend id. The
+  // transcript keys its scroller and row remount scope on these so the bind never remounts it.
+  boundFromPendingSessionId?: string
+  boundFromPendingMessageBranchId?: string
+  boundToMessageBranchId?: string
   // Transient independent facts for the blocking lane. Plan remains owned by its durable
   // projection, while Side chat remains an overlay that never settles these facts.
   interactionState?: SessionInteractionState
@@ -173,6 +178,9 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     branchSwitchBlocked,
     conversationGraphSyncBlocked,
     pendingContextReplayMessageId,
+    boundFromPendingSessionId,
+    boundFromPendingMessageBranchId,
+    boundToMessageBranchId,
     interactionState,
     activePlanProjection,
     planHistoryProjections,
@@ -195,6 +203,9 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   void branchSwitchBlocked
   void conversationGraphSyncBlocked
   void pendingContextReplayMessageId
+  void boundFromPendingSessionId
+  void boundFromPendingMessageBranchId
+  void boundToMessageBranchId
   void interactionState
   void activePlanProjection
   void runtimeContext
