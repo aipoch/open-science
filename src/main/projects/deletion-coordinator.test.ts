@@ -680,8 +680,14 @@ describe('ProjectDeletionCoordinator', () => {
 
     await expect(coordinator.deleteProject('project-2')).resolves.toBeUndefined()
 
+    await expect(coordinator.waitForProjectOperations(['project-1'])).rejects.toThrow(
+      'tail cleanup unavailable'
+    )
+
     expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-2')
     expect(projects.delete).toHaveBeenCalledWith('project-2')
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(3)
   })
 
   it('keeps a committed recovery intent when the Project row still exists and replay fails', async () => {

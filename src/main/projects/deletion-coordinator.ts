@@ -157,14 +157,10 @@ class ProjectDeletionCoordinator {
     const deletion = this.operationQueue.then(() =>
       withDataRootWrite(async () => {
         await this.waitForProjectOperationsNow([projectId])
+        // A scoped wait may have suppressed failures owned by other Projects. Keep recovery
+        // incomplete after this deletion so those durable intents remain eligible for retry.
         this.isRecoveryComplete = false
-        try {
-          await this.runDeletion(projectId)
-          this.isRecoveryComplete = true
-        } catch (error) {
-          this.isRecoveryComplete = false
-          throw error
-        }
+        await this.runDeletion(projectId)
       })
     )
     this.operationQueue = deletion.catch(() => undefined)
