@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SpecialistsPanel } from './SpecialistsPanel'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import { i18next } from '@/i18n'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -371,6 +372,58 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain('Choose Skills to include')
     expect(document.body.textContent).toContain('Single file too large')
     expect(document.body.textContent).not.toContain('package.archive-file-size-exceeded')
+  })
+
+  it('localizes capability and export diagnostics without exposing raw codes or messages', async () => {
+    const preview = exportPreviewFixture({
+      canExport: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'specialist.skillIds-duplicate',
+          message: 'Raw duplicate Skill message.'
+        },
+        {
+          severity: 'error',
+          code: 'specialist.description-invalid',
+          message: 'Raw description message.'
+        }
+      ]
+    })
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      previewExport: makePreviewExportMock(preview)
+    })
+    const onNavigate = vi.fn()
+
+    try {
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hans')
+        root.render(
+          <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={onNavigate} />
+        )
+      })
+      expect(document.body.textContent).toContain('Skill 名称重复')
+      expect(document.body.textContent).toContain('Skill 列表不得包含重复名称')
+      expect(document.body.textContent).toContain('无效的描述')
+      expect(document.body.textContent).toContain('描述必须是长度限制内的非空字符串')
+
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hant')
+      })
+      expect(document.body.textContent).toContain('Skill 名稱重複')
+      expect(document.body.textContent).toContain('Skill 清單不得包含重複名稱')
+      expect(document.body.textContent).toContain('無效的描述')
+      expect(document.body.textContent).toContain('描述必須是長度限制內的非空字串')
+      expect(document.body.textContent).not.toContain('specialist.skillIds-duplicate')
+      expect(document.body.textContent).not.toContain('specialist.description-invalid')
+      expect(document.body.textContent).not.toContain('Raw duplicate Skill message.')
+      expect(document.body.textContent).not.toContain('Raw description message.')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
   })
 
   it('falls back to the skill chooser with an error when the direct export save fails', async () => {
