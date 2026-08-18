@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import { computeHostSummary, computeProbeSnapshot, type ComputeHost } from '../../shared/compute'
 import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
 import type { NotebookRpcConnection } from './mcp-server'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
@@ -109,8 +110,12 @@ type NotebookLocalRpcServerOptions = {
       timeoutSeconds?: number,
       context?: { sessionId: string; projectId: string }
     ): Promise<unknown>
-    list(): Promise<unknown>
-    getDetails(providerId: string): Promise<unknown>
+    list(): Promise<ComputeHost[]>
+    getDetails(providerId: string): Promise<{
+      doc: string
+      isSkeleton: boolean
+      probeResult?: ComputeHost['probeResult']
+    }>
     appendDetails(providerId: string, args: { text: string; author: string }): Promise<void>
     replaceDetails(
       providerId: string,
@@ -2049,9 +2054,12 @@ class NotebookLocalRpcServer {
         }
       }
 
-      // op='list' — returns all registered compute hosts for agent discovery (design.md §5).
+      // op='list' — all registered compute hosts as agent-facing summaries for discovery
+      // (design.md §5). Projected, never full ComputeHost objects: detailsDoc/probe internals
+      // belong to the details op and would overflow the agent-visible tool-result cap.
       if (op === 'list') {
-        return this.computeService.list()
+        const hosts = await this.computeService.list()
+        return hosts.map(computeHostSummary)
       }
 
       // op='details' — agent-facing read/append/replace for host knowledge docs (design.md §5).
@@ -2060,7 +2068,8 @@ class NotebookLocalRpcServer {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const mode = typeof params.mode === 'string' ? params.mode : 'read'
         if (mode === 'read') {
-          return this.computeService.getDetails(providerId)
+          const { probeResult, ...details } = await this.computeService.getDetails(providerId)
+          return { ...details, probe: computeProbeSnapshot(probeResult) }
         }
         if (mode === 'append') {
           const text = typeof params.text === 'string' ? params.text : ''
@@ -2139,12 +2148,21 @@ class NotebookLocalRpcServer {
         return this.computeService.getJobResult(jobId)
       }
 
-      // op='list_compute' — returns session-enabled hosts (design.md §15.1, issue 06).
-      // Differs from op='list' (all registered hosts): this returns only hosts the user enabled for
-      // this conversation via the ComputeHostSelector. Session id comes from COMPUTE_SESSION_ID in
-      // the repl spawn env (same passthrough used by submit_job / call_command).
+      // op='list_compute' — returns session-enabled hosts as agent-facing summaries (design.md
+      // §15.1, issue 06). Differs from op='list' (all registered hosts): this returns only hosts the
+      // user enabled for this conversation via the ComputeHostSelector, in registry order. Session id
+      // comes from COMPUTE_SESSION_ID in the repl spawn env (same passthrough used by submit_job /
+      // call_command). Enabled ids without a registered host row (deleted mid-session) are skipped.
       if (op === 'list_compute') {
-        return this.computeService.getEnabledComputeHosts(sessionId)
+        const enabledIds = this.computeService.getEnabledComputeHosts(sessionId)
+        if (enabledIds.length === 0) return []
+        const byProviderId = new Map(
+          (await this.computeService.list()).map((host) => [host.providerId, host])
+        )
+        return enabledIds.flatMap((providerId) => {
+          const host = byProviderId.get(providerId)
+          return host ? [computeHostSummary(host)] : []
+        })
       }
 
       // op='set_concurrency_limit' — set session-level concurrency limit (Phase 3c, issue 05).

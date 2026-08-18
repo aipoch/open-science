@@ -107,7 +107,11 @@ export class ComputeService {
     return Promise.all(hosts.map((host) => projectComputeCredentialStatus(host, credentialVault)))
   }
 
-  async getDetails(providerId: string): Promise<{ doc: string; isSkeleton: boolean }> {
+  async getDetails(providerId: string): Promise<{
+    doc: string
+    isSkeleton: boolean
+    probeResult: ProbeResult | undefined
+  }> {
     return this.hostProfiles.getDetails(providerId)
   }
 

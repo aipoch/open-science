@@ -92,6 +92,62 @@ export type ComputeHost = {
   updatedAt: number
 }
 
+// Agent-facing enumeration summary (computeCall op='list' / op='list_compute'). Intentionally
+// excludes detailsDoc (up to 32 KiB) and the probe snapshot — the dedicated details op serves those
+// on demand, and full objects at enumeration time overflow the agent-visible tool-result cap.
+export type ComputeHostSummary = {
+  provider_id: string
+  display_name: string
+  shape: ComputeHostShape
+  status: 'connected' | 'probe_failed' | 'not_probed'
+}
+
+// Agent-facing probe snapshot returned on demand by host.compute.details(). Keep the wire projection
+// here with the enumeration summary so the control REPL never has to understand renderer models.
+export type ComputeProbeSnapshot = {
+  ok: boolean
+  probed_at: string
+  exit_code: number | null
+  error_tail: string | null
+  os?: string
+  cpus?: number
+  mem_mib?: number
+  gpus?: ProbeGpu[]
+  detected_scheduler?: ProbeResult['detectedScheduler']
+}
+
+// Projects a full host to the agent enumeration summary. Pure and preload-safe.
+export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
+  provider_id: host.providerId,
+  display_name: host.displayName,
+  shape: host.shape,
+  status:
+    host.probeResult === undefined
+      ? 'not_probed'
+      : host.probeResult.ok
+        ? 'connected'
+        : 'probe_failed'
+})
+
+export const computeProbeSnapshot = (
+  probeResult: ProbeResult | undefined
+): ComputeProbeSnapshot | null =>
+  probeResult
+    ? {
+        ok: probeResult.ok,
+        probed_at: probeResult.probedAt,
+        exit_code: probeResult.exitCode,
+        error_tail: probeResult.errorTail,
+        ...(probeResult.os !== undefined ? { os: probeResult.os } : {}),
+        ...(probeResult.cpus !== undefined ? { cpus: probeResult.cpus } : {}),
+        ...(probeResult.memMib !== undefined ? { mem_mib: probeResult.memMib } : {}),
+        ...(probeResult.gpus !== undefined ? { gpus: probeResult.gpus } : {}),
+        ...(probeResult.detectedScheduler !== undefined
+          ? { detected_scheduler: probeResult.detectedScheduler }
+          : {})
+      }
+    : null
+
 // Add-form payload. displayName defaults to the alias; detailsDoc seeds the notes (author = user).
 export type CreateComputeHostRequest = {
   sshAlias: string

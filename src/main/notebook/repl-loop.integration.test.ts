@@ -76,7 +76,8 @@ describe('repl_loop local RPC transport', () => {
           "messageReceipt: 'messageReceipt' in host, message_receipt: 'message_receipt' in host, " +
           "resolveMessage: 'resolveMessage' in host, resolve_message: 'resolve_message' in host, " +
           "submitOutput: 'submitOutput' in host, submit_output: 'submit_output' in host, " +
-          "listCompute: 'listCompute' in host.compute, list_compute: 'list_compute' in host.compute, " +
+          "listRegistered: 'listRegistered' in host.compute, list: 'list' in host.compute, " +
+          "listEnabled: 'listEnabled' in host.compute, listCompute: 'listCompute' in host.compute, " +
           "callCommand: 'callCommand' in c, call_command: 'call_command' in c, " +
           "submitJob: 'submitJob' in c, submit_job: 'submit_job' in c, " +
           "attachJob: 'attachJob' in c, attach_job: 'attach_job' in c, " +
@@ -111,8 +112,10 @@ describe('repl_loop local RPC transport', () => {
         resolve_message: false,
         submitOutput: true,
         submit_output: false,
-        listCompute: true,
-        list_compute: false,
+        listRegistered: true,
+        list: false,
+        listEnabled: true,
+        listCompute: false,
         callCommand: true,
         call_command: false,
         submitJob: true,
@@ -2857,7 +2860,7 @@ gate('repl_loop.js host.compute', () => {
     server.close()
   })
 
-  it('host.compute.list() posts op=list and returns the parsed result', async () => {
+  it('host.compute.listRegistered() posts op=list and returns the parsed result', async () => {
     next = {
       status: 200,
       body: { result: [{ provider_id: 'ssh:biowulf', display_name: 'biowulf' }] }
@@ -2867,11 +2870,41 @@ gate('repl_loop.js host.compute', () => {
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'
     })
     try {
-      const r = await send('return (await host.compute.list())[0].provider_id')
+      const r = await send('return (await host.compute.listRegistered())[0].provider_id')
       expect(r.error).toBeNull()
       expect(r.result).toContain('ssh:biowulf')
       expect(received.method).toBe('computeCall')
       expect(received.params?.op).toBe('list')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('host.compute.listEnabled() posts op=list_compute with the spawn-env session id', async () => {
+    next = {
+      status: 200,
+      body: {
+        result: [
+          {
+            provider_id: 'ssh:biowulf',
+            display_name: 'biowulf',
+            shape: 'direct_ssh',
+            status: 'connected'
+          }
+        ]
+      }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-7'
+    })
+    try {
+      const r = await send('return (await host.compute.listEnabled())[0].status')
+      expect(r.error).toBeNull()
+      expect(r.result).toContain('connected')
+      expect(received.method).toBe('computeCall')
+      expect(received.params).toEqual({ op: 'list_compute', session_id: 'session-7' })
     } finally {
       child.kill()
     }
