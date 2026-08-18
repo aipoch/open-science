@@ -1420,6 +1420,7 @@
   "Resize left panel": "左パネルのサイズを変更する",
   "Resize notebook and terminal": "Notebook と端末のサイズを変更する",
   "Resize right panel": "右パネルのサイズを変更する",
+  "Resolve the current Session operation first.": "先に現在のセッション操作を完了してください。",
   "Resolve the items marked Action needed, then choose Check again.": "「アクションが必要」とマークされた項目を解決し、[もう一度確認] を選択します。",
   "Resolved": "解決済み",
   "Resolving…": "解決中…",

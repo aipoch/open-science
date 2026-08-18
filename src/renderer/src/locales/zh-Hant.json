@@ -1478,6 +1478,7 @@
   "Resize left panel": "調整左側面板大小",
   "Resize notebook and terminal": "調整 Notebook 與終端大小",
   "Resize right panel": "調整右側面板大小",
+  "Resolve the current Session operation first.": "請先完成目前會話操作。",
   "Resolve the items marked Action needed, then choose Check again.": "請先處理標記為「需要處理」的項目，然後點擊「重新檢查」。",
   "Resolved": "已解決",
   "Resolving…": "解析中…",

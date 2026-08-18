@@ -376,7 +376,7 @@ const WorkspacePage = ({
   )
   const awaitsHistoryReplay = sessionAwaitsHistoryReplay(activeSession)
   const sideChatDisabledReason = awaitsHistoryReplay
-    ? 'Resolve the current Session operation first.'
+    ? t('Resolve the current Session operation first.')
     : (sideChat.unavailableReason ??
       (activeProviderType !== undefined && isCodexSubscriptionProvider(activeProviderType)
         ? 'Side chat is unavailable for Codex subscription because strict tool isolation cannot be enforced.'

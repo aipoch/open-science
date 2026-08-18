@@ -1481,6 +1481,7 @@
   "Resize left panel": "调整左侧面板大小",
   "Resize notebook and terminal": "调整 Notebook 与终端大小",
   "Resize right panel": "调整右侧面板大小",
+  "Resolve the current Session operation first.": "请先完成当前会话操作。",
   "Resolve the items marked Action needed, then choose Check again.": "请先处理标记为「需要处理」的项目，然后点击「重新检查」。",
   "Resolved": "已解决",
   "Resolving…": "解析中…",
