@@ -707,6 +707,80 @@ describe('startWebHttpServer', () => {
     expect(directSignals[0]?.aborted).toBe(true)
   })
 
+  it('bounds close when an active HTTP request does not finish', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    let markInvocationStarted: (() => void) | undefined
+    const invocationStarted = new Promise<void>((resolve) => {
+      markInvocationStarted = resolve
+    })
+    let releaseInvocation: (() => void) | undefined
+    const invocationGate = new Promise<void>((resolve) => {
+      releaseInvocation = resolve
+    })
+    let callerSignal: AbortSignal | undefined
+    const directInvoke = vi.fn(async (_channel, invocation) => {
+      callerSignal = invocation.callerLease.signal
+      markInvocationStarted?.()
+      await invocationGate
+      return []
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => ['projects:list'],
+        invoke: vi.fn(),
+        dispose: vi.fn()
+      },
+      applicationCommands: {
+        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const request = httpRequest({
+      host: '127.0.0.1',
+      port: server.port,
+      path: '/rpc/projects%3Alist',
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        connection: 'close',
+        'content-type': 'application/json',
+        'x-open-science-client': 'test-client'
+      }
+    })
+    request.on('error', () => undefined)
+    request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
+    await invocationStarted
+
+    const closePromise = server.close()
+    const closeOutcome = await Promise.race([
+      closePromise.then(() => 'closed' as const),
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 250))
+    ])
+
+    releaseInvocation?.()
+    await closePromise
+    request.destroy()
+    servers.splice(servers.indexOf(server), 1)
+
+    expect(closeOutcome).toBe('closed')
+    expect(callerSignal?.aborted).toBe(true)
+  })
+
   it('passes pairing authority only for trusted-browser Web RPC calls', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)

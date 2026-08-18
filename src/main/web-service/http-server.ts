@@ -845,12 +845,25 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       removeTaskProgressSink?.()
       for (const socket of sockets) socket.close()
       wsServer.close()
-      await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+      // Stop accepting connections before force-closing handlers that ignore caller cancellation.
+      const closePromise = new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+      let cleanupError: unknown
       try {
         clientLeases.dispose()
+      } catch (error) {
+        cleanupError = error
       } finally {
-        commandClient.dispose()
+        try {
+          commandClient.dispose()
+        } catch (error) {
+          cleanupError = cleanupError
+            ? new AggregateError([cleanupError, error], 'Web command client cleanup failed.')
+            : error
+        }
       }
+      server.closeAllConnections()
+      await closePromise
+      if (cleanupError) throw cleanupError
     }
   }
 }
