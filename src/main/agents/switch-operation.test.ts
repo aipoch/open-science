@@ -465,7 +465,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
       persistBinding: persist
     })
     await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
-      /host\.agents\.switch:/
+      'host.agents.switch: Specialist "BIO_EXPERT" was disabled before the switch committed'
     )
     expect(persist).not.toHaveBeenCalled()
   })
@@ -709,7 +709,7 @@ describe('SwitchOperation — sanitization and no-sensitive-data', () => {
       })
     })
     await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
-      /host\.agents\.switch:/
+      'host.agents.switch: Internal operation failed.'
     )
   })
 

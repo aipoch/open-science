@@ -161,7 +161,7 @@ describe('applyDelete — approved delete', () => {
         currentName: 'DATA_ANALYST',
         reviewedRevision: 3
       })
-    ).rejects.toThrow(/host\.agents\.delete:.*I\/O error/)
+    ).rejects.toThrow('host.agents.delete: Internal operation failed.')
   })
 
   it('fails closed with a sanitized error when revision drifted before approval', async () => {

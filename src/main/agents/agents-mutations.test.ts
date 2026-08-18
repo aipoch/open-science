@@ -853,7 +853,7 @@ describe('executeAgentsMutation — errors are sanitized', () => {
         { op: 'create', params: { name: 'Bio' } },
         { profileService: svc, catalog }
       )
-    ).rejects.toThrow(/host\.agents\.create:/)
+    ).rejects.toThrow('host.agents.create: Internal operation failed.')
   })
 
   it('a repo revision-conflict surfaces as a sanitized host.agents.update: error', async () => {
