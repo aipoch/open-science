@@ -11,6 +11,7 @@ import {
   type ComputeConnectionLease
 } from './connection-broker'
 import { quoteRemotePath, type RemoteHandle } from './job-dispatcher'
+import { parsePollOutput } from './job-poll-output'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { emitJobNotification } from './job-notifier'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
@@ -443,60 +444,7 @@ export class JobPoller {
     nonce: string,
     connection: ComputeConnectionLease
   ): Promise<void> {
-    // Split output into per-job sections by the nonce-prefixed JOB_START marker.
-    const escapedNonce = nonce.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const sections = output.split(new RegExp(`^${escapedNonce}JOB_START:`, 'm'))
-    const parsedResults: Array<{
-      job: ComputeJob
-      alive: boolean
-      exitCode: number | null
-      hasExitCode: boolean
-      stdoutTail: string
-      stderrTail: string
-    }> = []
-
-    for (const section of sections) {
-      if (!section.trim()) continue
-      const firstNewline = section.indexOf('\n')
-      if (firstNewline === -1) continue
-      const jobId = section.slice(0, firstNewline).trim()
-      const body = section.slice(firstNewline + 1)
-
-      const job = jobs.find((j) => j.job_id === jobId)
-      if (!job) continue
-
-      // Extract alive line (nonce-prefixed).
-      const aliveMatch = body.match(new RegExp(`^${escapedNonce}alive:([01])`, 'm'))
-      const alive = aliveMatch?.[1] === '1'
-
-      // Extract exit code (line after the nonce-prefixed alive line).
-      const alivePrefix = `${nonce}alive:`
-      const lines = body.split('\n')
-      let exitCodeRaw = ''
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i]?.startsWith(alivePrefix)) {
-          exitCodeRaw = lines[i + 1]?.trim() ?? ''
-          break
-        }
-      }
-      const exitCode = exitCodeRaw.trim() === '' ? null : Number.parseInt(exitCodeRaw.trim(), 10)
-      const hasExitCode = exitCode !== null && Number.isFinite(exitCode)
-
-      // Extract stdout tail (between the third line after JOB_START and STDOUT_END marker).
-      const stdoutEndMarker = `${nonce}STDOUT_END:${jobId}`
-      const stderrEndMarker = `${nonce}STDERR_END:${jobId}`
-      const stdoutStart = body.indexOf('\n', body.indexOf('\n', body.indexOf('\n') + 1) + 1) + 1
-      const stdoutEnd = body.indexOf(stdoutEndMarker)
-      const stdoutTail =
-        stdoutEnd > stdoutStart ? body.slice(stdoutStart, stdoutEnd).replace(/\n$/, '') : ''
-
-      const stderrStart = body.indexOf('\n', stdoutEnd + stdoutEndMarker.length) + 1
-      const stderrEnd = body.indexOf(stderrEndMarker)
-      const stderrTail =
-        stderrEnd > stderrStart ? body.slice(stderrStart, stderrEnd).replace(/\n$/, '') : ''
-
-      parsedResults.push({ job, alive, exitCode, hasExitCode, stdoutTail, stderrTail })
-    }
+    const parsedResults = parsePollOutput(output, jobs, nonce)
 
     const safeTails = await redactConnectionOutputs(
       connection,

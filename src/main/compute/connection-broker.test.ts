@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createConnection } from 'node:net'
+import { platform } from 'node:os'
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => process.cwd() }
@@ -30,6 +31,20 @@ const target: ResolvedSshTarget = {
   extraArgs: ['-o', 'BatchMode=yes']
 }
 
+const unixSocketAskpass = it.skipIf(platform() === 'win32')
+
+const answeredAskpass = (): {
+  env: NodeJS.ProcessEnv
+  wasAnswered: () => boolean
+  wasUnsupportedPromptRejected: () => boolean
+  dispose: () => Promise<void>
+} => ({
+  env: { SSH_ASKPASS: '/constrained/helper' },
+  wasAnswered: () => true,
+  wasUnsupportedPromptRejected: () => false,
+  dispose: async () => undefined
+})
+
 const askAskpass = (env: NodeJS.ProcessEnv, prompt: string): Promise<Record<string, string>> =>
   new Promise((resolve, reject) => {
     const socket = createConnection(env['OPEN_SCIENCE_ASKPASS_SOCKET'] as string)
@@ -51,18 +66,32 @@ const askAskpass = (env: NodeJS.ProcessEnv, prompt: string): Promise<Record<stri
   })
 
 describe('ComputeConnectionBroker SSH configuration compatibility', () => {
-  it('does not inherit unrelated process environment values into the askpass child', async () => {
-    const distinctiveSecret = 'release gate secret "quoted"\nUnicode 密码'
-    vi.stubEnv('OPEN_SCIENCE_RELEASE_GATE_SECRET', distinctiveSecret)
-
-    const askpass = await createAskpassEnvironment(distinctiveSecret, ['researcher@cluster'])
-    try {
-      expect(askpass.env['OPEN_SCIENCE_RELEASE_GATE_SECRET']).toBeUndefined()
-      expect(JSON.stringify(askpass.env)).not.toContain(distinctiveSecret)
-    } finally {
-      await askpass.dispose()
+  it.runIf(platform() === 'win32')(
+    'rejects Unix-socket askpass construction on Windows',
+    async () => {
+      await expect(
+        createAskpassEnvironment('must-not-open-a-socket', ['researcher@cluster'])
+      ).rejects.toMatchObject({
+        code: 'unsupported_auth_configuration'
+      })
     }
-  })
+  )
+
+  unixSocketAskpass(
+    'does not inherit unrelated process environment values into the askpass child',
+    async () => {
+      const distinctiveSecret = 'release gate secret "quoted"\nUnicode 密码'
+      vi.stubEnv('OPEN_SCIENCE_RELEASE_GATE_SECRET', distinctiveSecret)
+
+      const askpass = await createAskpassEnvironment(distinctiveSecret, ['researcher@cluster'])
+      try {
+        expect(askpass.env['OPEN_SCIENCE_RELEASE_GATE_SECRET']).toBeUndefined()
+        expect(JSON.stringify(askpass.env)).not.toContain(distinctiveSecret)
+      } finally {
+        await askpass.dispose()
+      }
+    }
+  )
 
   it('suppresses background authentication retries per Host after a confirmed failure', async () => {
     const otherHost = { ...host, id: 'host-2', providerId: 'ssh:other', sshAlias: 'other' }
@@ -1239,63 +1268,66 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     )
   })
 
-  it('fails closed after rejecting any interactive variant or repeated target prompt', async () => {
-    const secret = 'distinctive target-only secret'
-    const responses: Array<Record<string, string>> = []
-    const runner: SshRunner = {
-      run: vi
-        .fn()
-        .mockResolvedValueOnce({
-          exitCode: 255,
-          stdout: '',
-          stderr: 'Permission denied',
-          truncated: false,
-          timedOut: false
-        })
-        .mockImplementationOnce(async (_target, _command, options) => {
-          for (const prompt of [
-            "Enter passphrase for key '/tmp/id_ed25519':",
-            "intruder@other-host's password:",
-            "proxy@bastion's password:",
-            'Keyboard-interactive authentication:',
-            'One-time password (OTP):',
-            'MFA verification code:'
-          ]) {
-            responses.push(await askAskpass(options.env ?? {}, prompt))
-          }
-          responses.push(await askAskpass(options.env ?? {}, "researcher@cluster's password:"))
-          responses.push(await askAskpass(options.env ?? {}, "researcher@cluster's password:"))
-          return {
-            exitCode: 0,
-            stdout: 'ok',
-            stderr: '',
+  unixSocketAskpass(
+    'fails closed after rejecting any interactive variant or repeated target prompt',
+    async () => {
+      const secret = 'distinctive target-only secret'
+      const responses: Array<Record<string, string>> = []
+      const runner: SshRunner = {
+        run: vi
+          .fn()
+          .mockResolvedValueOnce({
+            exitCode: 255,
+            stdout: '',
+            stderr: 'Permission denied',
             truncated: false,
             timedOut: false
-          }
-        })
+          })
+          .mockImplementationOnce(async (_target, _command, options) => {
+            for (const prompt of [
+              "Enter passphrase for key '/tmp/id_ed25519':",
+              "intruder@other-host's password:",
+              "proxy@bastion's password:",
+              'Keyboard-interactive authentication:',
+              'One-time password (OTP):',
+              'MFA verification code:'
+            ]) {
+              responses.push(await askAskpass(options.env ?? {}, prompt))
+            }
+            responses.push(await askAskpass(options.env ?? {}, "researcher@cluster's password:"))
+            responses.push(await askAskpass(options.env ?? {}, "researcher@cluster's password:"))
+            return {
+              exitCode: 0,
+              stdout: 'ok',
+              stderr: '',
+              truncated: false,
+              timedOut: false
+            }
+          })
+      }
+      const adapter = new PasswordSshAdapter(
+        {
+          acquirePasswordLease: vi.fn(async () => ({
+            withPassword: (operation: (password: string) => Promise<unknown>) => operation(secret)
+          }))
+        } as unknown as CredentialVault,
+        runner,
+        vi.fn(async () => target),
+        vi.fn(async () => ({}))
+      )
+
+      const lease = await adapter.acquire(host, { intent: 'direct_command' })
+      await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
+        code: 'unsupported_auth_configuration'
+      })
+
+      expect(responses.slice(0, 6)).toEqual([{}, {}, {}, {}, {}, {}])
+      expect(responses[6]).toEqual({ password: secret })
+      expect(responses[7]).toEqual({})
     }
-    const adapter = new PasswordSshAdapter(
-      {
-        acquirePasswordLease: vi.fn(async () => ({
-          withPassword: (operation: (password: string) => Promise<unknown>) => operation(secret)
-        }))
-      } as unknown as CredentialVault,
-      runner,
-      vi.fn(async () => target),
-      vi.fn(async () => ({}))
-    )
+  )
 
-    const lease = await adapter.acquire(host, { intent: 'direct_command' })
-    await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
-      code: 'unsupported_auth_configuration'
-    })
-
-    expect(responses.slice(0, 6)).toEqual([{}, {}, {}, {}, {}, {}])
-    expect(responses[6]).toEqual({ password: secret })
-    expect(responses[7]).toEqual({})
-  })
-
-  it.each([
+  unixSocketAskpass.each([
     ['passphrase', ["Enter passphrase for key '/tmp/id_ed25519':"]],
     ['other-account password', ["proxy@bastion's password:"]],
     ['keyboard-interactive', ['Keyboard-interactive authentication:']],
@@ -1396,7 +1428,8 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
         } as unknown as CredentialVault,
         runner,
         vi.fn(async () => target),
-        vi.fn(async () => ({}))
+        vi.fn(async () => ({})),
+        vi.fn(async () => answeredAskpass())
       )
 
       const lease = await adapter.acquire(host, { intent: 'direct_command' })
@@ -1493,121 +1526,127 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     await expect(lease.redactSensitiveOutputs?.(['tail 1'])).resolves.toEqual(['tail [redacted]'])
   })
 
-  it('keeps an answered target-password failure classified and persisted as authentication_failed', async () => {
-    const passwordHost = {
-      ...host,
-      authentication: {
-        mode: 'password' as const,
-        credentialStatus: 'configured' as const,
-        revision: 1,
-        lastVerifiedAt: undefined
+  unixSocketAskpass(
+    'keeps an answered target-password failure classified and persisted as authentication_failed',
+    async () => {
+      const passwordHost = {
+        ...host,
+        authentication: {
+          mode: 'password' as const,
+          credentialStatus: 'configured' as const,
+          revision: 1,
+          lastVerifiedAt: undefined
+        }
       }
-    }
-    const runner: SshRunner = {
-      run: vi
-        .fn()
-        .mockResolvedValueOnce({
-          exitCode: 255,
-          stdout: '',
-          stderr: 'Permission denied',
-          truncated: false,
-          timedOut: false
-        })
-        .mockImplementationOnce(async (_target, _command, options) => {
-          await askAskpass(options.env ?? {}, "researcher@cluster's password:")
-          return {
+      const runner: SshRunner = {
+        run: vi
+          .fn()
+          .mockResolvedValueOnce({
             exitCode: 255,
             stdout: '',
-            stderr: 'Permission denied (password).',
+            stderr: 'Permission denied',
             truncated: false,
             timedOut: false
-          }
-        })
-    }
-    const passwordAdapter = new PasswordSshAdapter(
-      {
-        acquirePasswordLease: vi.fn(async () => ({
-          withPassword: (operation: (password: string) => Promise<unknown>) =>
-            operation('incorrect-target-password')
-        }))
-      } as unknown as CredentialVault,
-      runner,
-      vi.fn(async () => target),
-      vi.fn(async () => ({}))
-    )
-    const persistAuthenticationFailure = vi.fn(async () => undefined)
-    const broker = new SshConfigComputeConnectionBroker({
-      getHost: vi.fn(async () => passwordHost),
-      runner,
-      passwordAdapter,
-      persistAuthenticationFailure
-    })
-
-    const lease = await broker.acquire(host.providerId, { intent: 'direct_command' })
-
-    await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
-      code: 'authentication_failed'
-    })
-    expect(persistAuthenticationFailure).toHaveBeenCalledWith(passwordHost)
-  })
-
-  it('does not persist a rejected proxy prompt as an authentication failure', async () => {
-    const passwordHost = {
-      ...host,
-      authentication: {
-        mode: 'password' as const,
-        credentialStatus: 'configured' as const,
-        revision: 1,
-        lastVerifiedAt: undefined
+          })
+          .mockImplementationOnce(async (_target, _command, options) => {
+            await askAskpass(options.env ?? {}, "researcher@cluster's password:")
+            return {
+              exitCode: 255,
+              stdout: '',
+              stderr: 'Permission denied (password).',
+              truncated: false,
+              timedOut: false
+            }
+          })
       }
+      const passwordAdapter = new PasswordSshAdapter(
+        {
+          acquirePasswordLease: vi.fn(async () => ({
+            withPassword: (operation: (password: string) => Promise<unknown>) =>
+              operation('incorrect-target-password')
+          }))
+        } as unknown as CredentialVault,
+        runner,
+        vi.fn(async () => target),
+        vi.fn(async () => ({}))
+      )
+      const persistAuthenticationFailure = vi.fn(async () => undefined)
+      const broker = new SshConfigComputeConnectionBroker({
+        getHost: vi.fn(async () => passwordHost),
+        runner,
+        passwordAdapter,
+        persistAuthenticationFailure
+      })
+
+      const lease = await broker.acquire(host.providerId, { intent: 'direct_command' })
+
+      await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
+        code: 'authentication_failed'
+      })
+      expect(persistAuthenticationFailure).toHaveBeenCalledWith(passwordHost)
     }
-    const runner: SshRunner = {
-      run: vi
-        .fn()
-        .mockResolvedValueOnce({
-          exitCode: 255,
-          stdout: '',
-          stderr: 'Permission denied',
-          truncated: false,
-          timedOut: false
-        })
-        .mockImplementationOnce(async (_target, _command, options) => {
-          await askAskpass(options.env ?? {}, "proxy@bastion's password:")
-          return {
+  )
+
+  unixSocketAskpass(
+    'does not persist a rejected proxy prompt as an authentication failure',
+    async () => {
+      const passwordHost = {
+        ...host,
+        authentication: {
+          mode: 'password' as const,
+          credentialStatus: 'configured' as const,
+          revision: 1,
+          lastVerifiedAt: undefined
+        }
+      }
+      const runner: SshRunner = {
+        run: vi
+          .fn()
+          .mockResolvedValueOnce({
             exitCode: 255,
             stdout: '',
-            stderr: 'Permission denied (password).',
+            stderr: 'Permission denied',
             truncated: false,
             timedOut: false
-          }
-        })
+          })
+          .mockImplementationOnce(async (_target, _command, options) => {
+            await askAskpass(options.env ?? {}, "proxy@bastion's password:")
+            return {
+              exitCode: 255,
+              stdout: '',
+              stderr: 'Permission denied (password).',
+              truncated: false,
+              timedOut: false
+            }
+          })
+      }
+      const passwordAdapter = new PasswordSshAdapter(
+        {
+          acquirePasswordLease: vi.fn(async () => ({
+            withPassword: (operation: (password: string) => Promise<unknown>) =>
+              operation('must-not-be-released')
+          }))
+        } as unknown as CredentialVault,
+        runner,
+        vi.fn(async () => target),
+        vi.fn(async () => ({}))
+      )
+      const persistAuthenticationFailure = vi.fn(async () => undefined)
+      const broker = new SshConfigComputeConnectionBroker({
+        getHost: vi.fn(async () => passwordHost),
+        runner,
+        passwordAdapter,
+        persistAuthenticationFailure
+      })
+
+      const lease = await broker.acquire(host.providerId, { intent: 'direct_command' })
+
+      await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
+        code: 'unsupported_auth_configuration'
+      })
+      expect(persistAuthenticationFailure).not.toHaveBeenCalled()
     }
-    const passwordAdapter = new PasswordSshAdapter(
-      {
-        acquirePasswordLease: vi.fn(async () => ({
-          withPassword: (operation: (password: string) => Promise<unknown>) =>
-            operation('must-not-be-released')
-        }))
-      } as unknown as CredentialVault,
-      runner,
-      vi.fn(async () => target),
-      vi.fn(async () => ({}))
-    )
-    const persistAuthenticationFailure = vi.fn(async () => undefined)
-    const broker = new SshConfigComputeConnectionBroker({
-      getHost: vi.fn(async () => passwordHost),
-      runner,
-      passwordAdapter,
-      persistAuthenticationFailure
-    })
-
-    const lease = await broker.acquire(host.providerId, { intent: 'direct_command' })
-
-    await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
-      code: 'unsupported_auth_configuration'
-    })
-    expect(persistAuthenticationFailure).not.toHaveBeenCalled()
-  })
+  )
 
   it('returns a stable authentication error without raw transfer diagnostics', async () => {
     const rawDiagnostic = 'Permission denied (password). helper=/private/path secret=do-not-leak'

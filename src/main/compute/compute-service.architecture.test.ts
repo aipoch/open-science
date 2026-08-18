@@ -520,6 +520,7 @@ describe('Compute service architecture', () => {
       'src/main/compute/concurrency-manager.ts',
       'src/main/compute/job-dispatcher.ts',
       'src/main/compute/job-poller.ts',
+      'src/main/compute/job-poll-output.ts',
       'src/main/compute/job-repository.ts',
       'src/main/compute/enabled-hosts-registry.ts',
       'src/main/compute/session-enabled-hosts-owner.ts',
