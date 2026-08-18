@@ -185,6 +185,28 @@ describe('startWebHttpServer', () => {
       error: { code: 'invalid-command-arguments', message: 'Invalid project request.' }
     })
 
+    directInvoke.mockRejectedValueOnce(
+      new Error('SQLITE_CANTOPEN: /Users/private/.open-science/open-science.db')
+    )
+    const internalErrorResponse = await fetch(
+      `http://127.0.0.1:${server.port}/rpc/projects%3Alist`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'x-open-science-client': 'direct-client'
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      }
+    )
+    expect(internalErrorResponse.status).toBe(500)
+    expect(await internalErrorResponse.json()).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      ok: false,
+      error: { code: 'command-failed', message: 'Internal server error' }
+    })
+
     const directSignal = directInvoke.mock.calls[0]?.[1].callerLease.signal
     firstSocket.close()
     await new Promise<void>((resolve) => firstSocket.once('close', () => resolve()))
@@ -931,6 +953,7 @@ describe('startWebHttpServer', () => {
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
+    const authorizeHttp = vi.fn().mockResolvedValue(authorizedExternalAccess())
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
@@ -946,7 +969,7 @@ describe('startWebHttpServer', () => {
         }
       },
       externalAccess: {
-        authorizeHttp: vi.fn().mockResolvedValue(authorizedExternalAccess()),
+        authorizeHttp,
         authorizeWebSocket: vi.fn().mockResolvedValue({})
       },
       bootstrap: {
@@ -984,16 +1007,29 @@ describe('startWebHttpServer', () => {
     }
     const remoteBootstrap = await fetch(bootstrapUrl)
     expect(remoteBootstrap.status).toBe(200)
-    expect(await remoteBootstrap.json()).toMatchObject({
+    const remoteBootstrapBody = await remoteBootstrap.json()
+    expect(remoteBootstrapBody).toMatchObject({
       rpcChannels: [remotelyAvailableChannel],
       restrictedRpcChannels: localOnlyChannels
     })
+    expect(remoteBootstrapBody).not.toHaveProperty('configRoot')
 
     const localBootstrap = await fetch(bootstrapUrl, {
       headers: { authorization: 'Bearer local-token' }
     })
     expect(localBootstrap.status).toBe(200)
-    expect(await localBootstrap.json()).toMatchObject({ rpcChannels, restrictedRpcChannels: [] })
+    expect(await localBootstrap.json()).toMatchObject({
+      configRoot: '/fake/root',
+      rpcChannels,
+      restrictedRpcChannels: []
+    })
+
+    authorizeHttp.mockRejectedValueOnce(
+      new Error('EACCES: /Users/private/.open-science/remote-access.json')
+    )
+    const failedBootstrap = await fetch(bootstrapUrl)
+    expect(failedBootstrap.status).toBe(500)
+    expect(await failedBootstrap.json()).toEqual({ error: 'Internal server error' })
 
     for (const channel of localOnlyChannels) {
       const remoteResponse = await fetch(rpcUrl(channel), {
@@ -1643,6 +1679,19 @@ describe('startWebHttpServer', () => {
     expect(missingProject.status).toBe(404)
     expect(await missingProject.json()).toEqual({
       error: { code: 'project_not_found', message: 'Project not found: missing' }
+    })
+
+    tasks.startRun.mockRejectedValueOnce(
+      new Error('SQLITE_CANTOPEN: /Users/private/.open-science/open-science.db')
+    )
+    const internalError = await fetch(`${base}/api/v1/runs`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ project: 'project-1', prompt: 'Research this.' })
+    })
+    expect(internalError.status).toBe(500)
+    expect(await internalError.json()).toEqual({
+      error: { code: 'internal_error', message: 'Internal server error' }
     })
 
     const malformed = await fetch(`${base}/api/v1/runs`, {
