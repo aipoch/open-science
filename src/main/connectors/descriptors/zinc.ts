@@ -176,18 +176,38 @@ function bodyExcerpt(text: string, n = 200): string {
   return excerpt || '<empty body>'
 }
 
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted()
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve, reject) => {
+    const finish = (): void => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }
+    const abort = (): void => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(finish, ms)
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<Response> {
+  signal?.throwIfAborted()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
+  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
   try {
     return await netFetchStandard(url, {
       ...init,
       headers: { 'user-agent': USER_AGENT, ...init.headers },
-      signal: controller.signal
+      signal: requestSignal
     })
   } finally {
     clearTimeout(timer)
@@ -198,7 +218,8 @@ async function fetchWithTimeout(
 async function submit(
   endpoint: string,
   data: Record<string, string>,
-  deadline: number
+  deadline: number,
+  signal?: AbortSignal
 ): Promise<string> {
   const url = `${BASE_URL}/${endpoint}`
   const budgetMs = Math.min(HTTP_TIMEOUT_MS, Math.max(1000, deadline - Date.now()))
@@ -209,7 +230,8 @@ async function submit(
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams(data).toString()
     },
-    budgetMs
+    budgetMs,
+    signal
   )
   const text = await res.text()
   if (res.status === 400) {
@@ -246,11 +268,16 @@ const PENDING_STATUSES = new Set(['PENDING', 'STARTED', 'PROGRESS', 'RETRY'])
 // Poll /search/result/<task> until completion (SUCCESS, or a status-less body whose `result` key
 // is present); throws a ZINC-task-timeout error naming the task uuid for manual re-poll once the
 // deadline passes, mirroring upstream ZincTaskTimeout.
-async function poll(task: string, deadline: number): Promise<PollResponse> {
+async function poll(task: string, deadline: number, signal?: AbortSignal): Promise<PollResponse> {
   const url = `${BASE_URL}/search/result/${encodeURIComponent(task)}`
   for (;;) {
     const budgetMs = Math.min(HTTP_TIMEOUT_MS, Math.max(1000, deadline - Date.now()))
-    const res = await fetchWithTimeout(url, { headers: { accept: 'application/json' } }, budgetMs)
+    const res = await fetchWithTimeout(
+      url,
+      { headers: { accept: 'application/json' } },
+      budgetMs,
+      signal
+    )
     const text = await res.text()
     if (!res.ok) {
       throw new Error(`polling ZINC task ${task} returned HTTP ${res.status}: ${bodyExcerpt(text)}`)
@@ -285,7 +312,7 @@ async function poll(task: string, deadline: number): Promise<PollResponse> {
       )
     }
     const wait = Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()))
-    await new Promise((resolve) => setTimeout(resolve, wait))
+    await sleep(wait, signal)
   }
 }
 
@@ -325,11 +352,12 @@ function flattenResult(result: unknown): FlatResult {
 async function runSearch(
   endpoint: string,
   data: Record<string, string>,
-  timeoutS: number
+  timeoutS: number,
+  signal?: AbortSignal
 ): Promise<FlatResult> {
   const deadline = Date.now() + timeoutS * 1000
-  const task = await submit(endpoint, data, deadline)
-  const payload = await poll(task, deadline)
+  const task = await submit(endpoint, data, deadline, signal)
+  const payload = await poll(task, deadline, signal)
   return flattenResult(payload.result)
 }
 
@@ -395,13 +423,14 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       '`{ "query", "total_available", "returned_count", "truncated", "source_counts": { "zinc22": int, ... }, "records": [ { "zinc_id", "smiles", "tranche_name", "catalogs", "source", "tranche_properties": { "heavy_atoms", "logp" } } ] }` — records capped at `max_results` (default 50, cap 500); `truncated` true when more were available. `source` is "zinc22"/"zinc20"; ids with no match simply have no record.',
     example:
       'const result = await host.mcp("zinc", "zinc_search_by_id", {"zinc_ids": ["ZINC000000000012"]})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const ids = requireIds(a.zinc_ids, MAX_IDS_PER_CALL, 'ZINC id', ZINC_ID_RE)
       const cap = clampMaxResults(a.max_results)
       const { records, counts } = await runSearch(
         'substances.txt',
         { zinc_ids: ids.join(','), output_fields: OUTPUT_FIELDS },
-        clampTimeoutS(a.timeout_s)
+        clampTimeoutS(a.timeout_s),
+        ctx.signal
       )
       return pageResult(records, counts, cap, { zinc_ids: ids })
     }
@@ -447,7 +476,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       'The standard bounded shape (`query`, `total_available`, `returned_count`, `truncated`, `source_counts`, `records`) with records as in `zinc_search_by_id`. `query` echoes the resolved `{ smiles, dist, adist }`.',
     example:
       'const result = await host.mcp("zinc", "zinc_search_by_smiles", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "dist": 2})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const smiles = typeof a.smiles === 'string' ? a.smiles.trim() : ''
       if (!smiles) throw new Error('smiles must be a non-empty SMILES string')
       const dist = requireDistance(a.dist, 0, 'dist must be 0-10 (Tanimoto distance; 0 = exact)')
@@ -459,7 +488,8 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       const { records, counts } = await runSearch(
         'smiles.txt',
         { smiles, dist: String(dist), adist: String(adist), output_fields: OUTPUT_FIELDS },
-        clampTimeoutS(a.timeout_s)
+        clampTimeoutS(a.timeout_s),
+        ctx.signal
       )
       return pageResult(records, counts, cap, { smiles, dist, adist })
     }
@@ -495,7 +525,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       'The standard bounded shape; records additionally carry `supplier_code` alongside `zinc_id`/`smiles`/`catalogs`/`tranche_name`/`tranche_properties`.',
     example:
       'const result = await host.mcp("zinc", "zinc_search_by_supplier", {"supplier_codes": ["MCULE-2311834287"]})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const codes = requireIds(a.supplier_codes, MAX_IDS_PER_CALL, 'supplier code')
       const cap = clampMaxResults(a.max_results)
       const { records, counts } = await runSearch(
@@ -504,7 +534,8 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
           supplier_codes: codes.join(','),
           output_fields: 'zinc_id,smiles,supplier_code,catalogs,tranche_name'
         },
-        clampTimeoutS(a.timeout_s)
+        clampTimeoutS(a.timeout_s),
+        ctx.signal
       )
       return pageResult(records, counts, cap, { supplier_codes: codes })
     }
@@ -539,7 +570,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       'The standard bounded shape with records as in `zinc_search_by_id` (random order). `query` echoes `{ count, subset, known_subsets }`.',
     example:
       'const result = await host.mcp("zinc", "zinc_random_sample", {"count": 25, "subset": "lead-like"})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const cap = clampMaxResults(a.count)
       const subset = typeof a.subset === 'string' && a.subset.trim() ? a.subset.trim() : undefined
       const data: Record<string, string> = { count: String(cap), output_fields: OUTPUT_FIELDS }
@@ -547,7 +578,8 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       const { records, counts } = await runSearch(
         'substance/random.txt',
         data,
-        clampTimeoutS(a.timeout_s)
+        clampTimeoutS(a.timeout_s),
+        ctx.signal
       )
       return pageResult(records, counts, cap, {
         count: cap,
@@ -582,13 +614,14 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       '`{ "query", "returned_count", "structures", "repository_note" }`; each structure carries `zinc_id`, `found`, `smiles`, `source`, `tranche_name` + `tranche_properties`, and (when the tranche decodes) `download`: `{ repository, tranche_path_pattern: "zinc-22*/H##/<tranche>/", formats }`. Sub-release directories (zinc-22a, zinc-22b, …) must be browsed for exact file names — the repository has no per-compound fetch URL.',
     example:
       'const result = await host.mcp("zinc", "zinc_get_3d", {"zinc_ids": ["ZINC000000000012"]})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const ids = requireIds(a.zinc_ids, MAX_IDS_3D, 'ZINC id', ZINC_ID_RE)
       const canonical = ids.map(normalizeZincId)
       const { records } = await runSearch(
         'substances.txt',
         { zinc_ids: canonical.join(','), output_fields: OUTPUT_FIELDS },
-        clampTimeoutS(a.timeout_s)
+        clampTimeoutS(a.timeout_s),
+        ctx.signal
       )
       // Key the result map by NORMALIZED id: upstream returns zero-padded ids, so a short-form
       // input would otherwise miss its own result and report an authoritative-looking found:false.

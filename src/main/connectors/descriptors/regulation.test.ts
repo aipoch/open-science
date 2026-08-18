@@ -72,6 +72,50 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('regulation / ENCODE cancellation', () => {
+  it('aborts an active direct ENCODE request', async () => {
+    let observedSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(
+      async (_url: string, init?: RequestInit): Promise<Response> =>
+        new Promise((_, reject) => {
+          observedSignal = init?.signal ?? undefined
+          observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), {
+            once: true
+          })
+        })
+    )
+    vi.stubGlobal('fetch', fetchImpl)
+    const cancellation = new AbortController()
+
+    const pending = tool('encode_get_experiment').run!(
+      { ...ENCODE_CTX, signal: cancellation.signal },
+      { accession: 'ENCSR000AKP' }
+    )
+    await vi.waitFor(() => expect(observedSignal).toBeInstanceOf(AbortSignal))
+    cancellation.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('aborts ENCODE retry backoff before another request starts', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('ECONNRESET'))
+    vi.stubGlobal('fetch', fetchImpl)
+    const cancellation = new AbortController()
+
+    const pending = tool('encode_get_experiment').run!(
+      { ...ENCODE_CTX, signal: cancellation.signal },
+      { accession: 'ENCSR000AKP' }
+    )
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    cancellation.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+})
+
 describe('regulation / all 16 tools are registered', () => {
   it('exposes the exact ENCODE + JASPAR + UniBind tool ids', () => {
     expect(REGULATION_TOOLS.map((t) => t.id).sort()).toEqual(

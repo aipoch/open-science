@@ -142,6 +142,7 @@ export class ParserEngine {
       }
     }
     return {
+      ...(signal ? { signal } : {}),
       credentials,
       fetchJson: async (url) => (await doFetch(url, 'application/json')).json(),
       fetchJsonWithHeaders: async (url) => {

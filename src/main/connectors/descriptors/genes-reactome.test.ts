@@ -108,6 +108,34 @@ afterEach(() => {
 })
 
 describe('genes / map_reactome_pathways', () => {
+  it('aborts its direct Reactome request when the tool context is cancelled', async () => {
+    let observedSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(
+      async (_url: string, init?: RequestInit): Promise<Response> =>
+        new Promise((_, reject) => {
+          observedSignal = init?.signal ?? undefined
+          observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), {
+            once: true
+          })
+        })
+    )
+    vi.stubGlobal('fetch', fetchImpl)
+    const cancellation = new AbortController()
+
+    const pending = tool.run!(
+      { ...ctx, signal: cancellation.signal },
+      {
+        identifiers: ['TP53'],
+        id_type: 'symbol'
+      }
+    )
+    await vi.waitFor(() => expect(observedSignal).toBeInstanceOf(AbortSignal))
+    cancellation.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
   it('POSTs a newline-joined text/plain body with species/resource/includeDisease params', async () => {
     const fetchImpl = makeFetch()
     vi.stubGlobal('fetch', fetchImpl)

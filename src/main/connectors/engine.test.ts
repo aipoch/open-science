@@ -144,6 +144,20 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
+  it('exposes the caller signal to run-style descriptors', async () => {
+    const engine = new ParserEngine({ fetchImpl: vi.fn() })
+    const cancellation = new AbortController()
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      run: async (ctx) => ctx.signal
+    }
+
+    await expect(engine.call(desc, {}, {}, cancellation.signal)).resolves.toBe(cancellation.signal)
+  })
+
   it('does not retry a client error (4xx other than 429)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 400 } as Response)
     const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })
