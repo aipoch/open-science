@@ -375,9 +375,12 @@ const SensitiveLocalPathDialog = ({
       }}
     >
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className={dialogOverlayClassName} />
+        <AlertDialog.Overlay
+          className={`${dialogOverlayClassName} z-[60]`}
+          data-testid="sensitive-local-path-overlay"
+        />
         <AlertDialog.Content
-          className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}
+          className={dialogPanelClassName('z-[60] w-[min(420px,calc(100vw-2rem))] p-0')}
           data-testid="sensitive-local-path-dialog"
         >
           <div className={dialogHeaderClassName}>

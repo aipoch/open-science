@@ -83,6 +83,11 @@ afterEach(() => {
 const addressInput = (): HTMLInputElement | null =>
   document.body.querySelector<HTMLInputElement>('[aria-label="Directory path"]')
 
+const zIndexFromClassName = (element: Element): number => {
+  const match = element.className.match(/(?:^|\s)z-\[(\d+)\](?:\s|$)/)
+  return match ? Number(match[1]) : 0
+}
+
 describe('LocalFileBrowser requestedPath', () => {
   it('lands in Home without a requested path', async () => {
     await act(async () => {
@@ -218,6 +223,33 @@ describe('LocalFileBrowser sensitive paths', () => {
         source: 'local'
       })
     ])
+  })
+
+  it('stacks sensitive-path consent above an expanded Files preview', async () => {
+    listDir.mockImplementation(async (path: string): Promise<LocalDirListing> => ({
+      entries: path === HOME ? [{ name: '.ssh', isDirectory: true, size: 0, mtimeMs: 0 }] : [],
+      truncated: false,
+      resolvedPath: path
+    }))
+    await act(async () => {
+      root.render(
+        <section role="dialog" data-testid="expanded-files-preview" className="z-[56]">
+          <LocalFileBrowser />
+        </section>
+      )
+    })
+    await flush()
+
+    await clickEntry('.ssh')
+
+    const expandedPreview = container.querySelector('[data-testid="expanded-files-preview"]')
+    const overlay = document.body.querySelector('[data-testid="sensitive-local-path-overlay"]')
+    const dialog = document.body.querySelector('[data-testid="sensitive-local-path-dialog"]')
+    expect(expandedPreview).not.toBeNull()
+    expect(overlay).not.toBeNull()
+    expect(dialog).not.toBeNull()
+    expect(zIndexFromClassName(overlay!)).toBeGreaterThan(zIndexFromClassName(expandedPreview!))
+    expect(zIndexFromClassName(dialog!)).toBeGreaterThan(zIndexFromClassName(expandedPreview!))
   })
 })
 
