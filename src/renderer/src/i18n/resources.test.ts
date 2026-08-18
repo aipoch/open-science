@@ -311,6 +311,121 @@ describe('mandatory product glossary', () => {
 
     expect(offenders).toEqual([])
   })
+
+  const chosenGenericTerms = {
+    'zh-Hans': {
+      Specialist: '专家',
+      Specialists: '专家',
+      Marketplace: '市场',
+      Connector: '连接器',
+      Main: '主 Agent',
+      Shell: 'Shell',
+      'Token usage': 'token 用量',
+      'Token: {{masked}}': '令牌：{{masked}}'
+    },
+    'zh-Hant': {
+      Specialist: '專家',
+      Specialists: '專家',
+      Marketplace: '市集',
+      Connector: '連接器',
+      Main: '主 Agent',
+      Shell: 'Shell',
+      'Token usage': 'token 用量',
+      'Token: {{masked}}': '權杖：{{masked}}'
+    },
+    ja: {
+      Specialist: 'スペシャリスト',
+      Specialists: 'スペシャリスト',
+      Marketplace: 'マーケットプレイス',
+      Connector: 'コネクタ',
+      Main: 'メイン Agent',
+      Shell: 'シェル',
+      'Token usage': 'token 使用量',
+      'Token: {{masked}}': 'token：{{masked}}'
+    }
+  } satisfies Record<TranslatedLocale, Record<string, string>>
+
+  it.each(TRANSLATED)('%s uses the chosen generic terminology', (locale) => {
+    const expected = chosenGenericTerms[locale]
+    const actual = Object.fromEntries(
+      Object.keys(expected).map((key) => [key, catalog(locale)[key]])
+    )
+
+    expect(actual).toEqual(expected)
+  })
+
+  it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
+    const expected = locale === 'ja' ? 'シェル' : 'Shell'
+    const offenders = Object.entries(catalog(locale))
+      .filter(([key]) => /\bshell\b/i.test(englishOf(key)))
+      .filter(([, value]) => !value.includes(expected))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each(TRANSLATED)(
+    '%s uses the chosen Main Agent spelling in every Main role label',
+    (locale) => {
+      const expected = locale === 'ja' ? 'メイン Agent' : '主 Agent'
+      const offenders = Object.entries(catalog(locale))
+        .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
+        .filter(([, value]) => !value.includes(expected))
+        .map(([key]) => key)
+
+      expect(offenders).toEqual([])
+    }
+  )
+
+  it.each(['zh-Hans', 'zh-Hant'] as const)(
+    '%s translates credential tokens independently from model-usage token',
+    (locale) => {
+      const credentialTokenSource = [
+        /\b(?:Claude|GitHub|OAuth|setup|saved|replacement|access)\s+tokens?\b/i,
+        /\b(?:paste|save|remove|use|manage|prefer|exclude|read)\b[^.]*\btokens?\b/i,
+        /\btokens?\s+(?:verified|verification|excluded)\b/i,
+        /^Token:/
+      ]
+      const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+        const source = englishOf(key)
+        if (!credentialTokenSource.some((pattern) => pattern.test(source))) return []
+
+        const prose = value.replace(/\bsetup-token\b/gi, '')
+        return /\btokens?\b/i.test(prose) ? [key] : []
+      })
+
+      expect(offenders).toEqual([])
+    }
+  )
+
+  it.each(TRANSLATED)('%s localizes generic product nouns', (locale) => {
+    const localizedGlossary = [
+      { source: /\bSpecialists?\b/i, untranslated: /\bSpecialists?\b/i },
+      { source: /\bMarketplace\b/, untranslated: /\bMarketplace\b/ },
+      { source: /\bConnectors?\b/i, untranslated: /\bConnectors?\b/i },
+      { source: /\bMain\b/, untranslated: /\bMain\b/ }
+    ]
+    const retainedIdentifiersAndNames = [
+      /\b(?:specialist\.json|openscience-specialist-template\.zip)\b/gi,
+      /Claude Connectors Directory/g,
+      /Specialist Marketplace protocol/g,
+      /(?:GitHub|Azure|Microsoft|Visual Studio) Marketplace/g
+    ]
+    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+      const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
+      const prose = retainedIdentifiersAndNames.reduce(
+        (text, retained) => text.replace(retained, ''),
+        value
+      )
+      return localizedGlossary
+        .filter(
+          ({ source: pattern, untranslated }) => pattern.test(source) && untranslated.test(prose)
+        )
+        .map(() => key)
+    })
+
+    expect(offenders).toEqual([])
+  })
 })
 
 describe('Japanese safety copy', () => {

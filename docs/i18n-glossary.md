@@ -39,13 +39,15 @@ context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the suff
 Never translated, in any catalog:
 
 `Open Science` (product name), `Claude`, `Codex`, `opencode`, `Agent`, `Notebook`, `MCP`, `ACP`,
-`API`, `CLI`, `SSH`, `GitHub`, `Star`, `Discord`, `Python`, `Jupyter`, `token`, and all model names.
+`API`, `CLI`, `SSH`, `GitHub`, `Star`, `Discord`, `Python`, `Jupyter`, model-usage `token`, and all
+model names.
 
 - `Agent` and `Notebook` are first-class feature names that appear in dense UI; the English terms
   are shorter and less ambiguous than 智能体 / 笔记本. Explanatory prose may describe them in
   Chinese, but the labels stay English.
-- `token` stays English because `12k tokens` reads more clearly than 词元 or 令牌 in the context
-  indicator, and matches how the surrounding community writes it.
+- Model-usage `token` stays English because `12k tokens` reads more clearly than 词元 or 詞元 in
+  the context indicator, and matches how the surrounding community writes it. Authentication
+  tokens use the established credential terms 令牌 / 權杖 in Chinese; Japanese retains `token`.
 - The `Open Science` name is fixed by `docs/design.md`, but the home tagline beneath it **is**
   translated.
 
@@ -66,7 +68,11 @@ Never translated, in any catalog:
 | provider           | プロバイダー           | 模型服务商 | 模型服務商 |
 | subscription       | サブスクリプション     | 订阅       | 訂閱       |
 | skill              | Skill                  | Skill      | Skill      |
+| specialist         | スペシャリスト         | 专家       | 專家       |
+| marketplace        | マーケットプレイス     | 市场       | 市集       |
 | connector          | コネクタ               | 连接器     | 連接器     |
+| shell              | シェル                 | Shell      | Shell      |
+| main agent         | メイン Agent           | 主 Agent   | 主 Agent   |
 | kernel             | カーネル               | 内核       | 核心       |
 | artifact           | アーティファクト       | 产物       | 產物       |
 | activity group     | アクティビティグループ | 活动分组   | 活動分組   |
@@ -78,6 +84,13 @@ Never translated, in any catalog:
 | reasoning effort   | 推論の強度             | 推理强度   | 推理強度   |
 | context            | コンテキスト           | 上下文     | 上下文     |
 | context compaction | コンテキスト圧縮       | 上下文压缩 | 上下文壓縮 |
+
+Translate `specialist`, `marketplace`, and `connector` when they describe generic Open Science
+roles or surfaces. Keep exact third-party names and technical identifiers, including
+`Claude Connectors Directory`, `Specialist Marketplace protocol`, `specialist.json`, and package
+filenames. See
+[`i18n-terminology-decisions.md`](i18n-terminology-decisions.md) for the candidate terms and decision
+tree behind these choices.
 
 ## Simplified / Traditional divergences
 

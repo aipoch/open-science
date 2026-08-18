@@ -95,11 +95,16 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term           | zh-Hans               | zh-Hant               | ja                    | Note                                                 |
-| -------------- | --------------------- | --------------------- | --------------------- | ---------------------------------------------------- |
-| Skill / Skills | **Skill** / **Skill** | **Skill** / **Skill** | **Skill** / **Skill** | Never translate to 技能/技巧 — keep the English word |
-| Agent          | **Agent**             | **Agent**             | **Agent**             | Keep as-is                                           |
-| Notebook       | **Notebook**          | **Notebook**          | **Notebook**          | Keep as-is                                           |
+| Term           | zh-Hans               | zh-Hant               | ja                     | Note                                                 |
+| -------------- | --------------------- | --------------------- | ---------------------- | ---------------------------------------------------- |
+| Skill / Skills | **Skill** / **Skill** | **Skill** / **Skill** | **Skill** / **Skill**  | Never translate to 技能/技巧 — keep the English word |
+| Agent          | **Agent**             | **Agent**             | **Agent**              | Keep as-is                                           |
+| Notebook       | **Notebook**          | **Notebook**          | **Notebook**           | Keep as-is                                           |
+| Specialist     | **专家**              | **專家**              | **スペシャリスト**     | Generic role; translate                              |
+| Marketplace    | **市场**              | **市集**              | **マーケットプレイス** | Generic surface; retain third-party product names    |
+| Connector      | **连接器**            | **連接器**            | **コネクタ**           | Generic domain noun; retain exact directory names    |
+| Main Agent     | **主 Agent**          | **主 Agent**          | **メイン Agent**       | Localize the qualifier, retain Agent                 |
+| Shell          | **Shell**             | **Shell**             | **シェル**             | Keep the precise technical term                      |
 
 ### Verifying your translations
 
