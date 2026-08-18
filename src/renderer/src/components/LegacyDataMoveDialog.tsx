@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { StorageMigrationModal } from '@/pages/settings/StorageMigrationModal'
+import type { DataRootInspection, DataRootRecoveryStatus } from '../../../shared/storage'
 
 type LegacyDataMoveDialogProps = {
   // App Shell presentation ownership may temporarily cover this prompt without discarding its state.
@@ -41,24 +42,36 @@ const LegacyDataMoveDialog = ({
   onDismiss
 }: LegacyDataMoveDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
-  // When set, hand off to the shared migration modal targeting this parent; null returns to the prompt.
-  const [migrationTarget, setMigrationTarget] = useState<string | null>(null)
+  // When set, hand off to the shared migration modal targeting this parent; a durable interrupted
+  // copy carries its recovery status so the modal resumes instead of recopying.
+  const [migrationTarget, setMigrationTarget] = useState<{
+    path: string
+    recoveryStatus?: DataRootRecoveryStatus
+  } | null>(null)
   // The exact <home>/OpenScience path "Move to OpenScience" would create. Resolved server-side via
   // inspectDataRoot(defaultParent) rather than getInfo's dataRoot, which for a legacy install is the
   // hidden config root itself.
   const [destination, setDestination] = useState<string | undefined>(undefined)
+  const [defaultInspection, setDefaultInspection] = useState<DataRootInspection | undefined>(
+    undefined
+  )
   const [pickError, setPickError] = useState<string | undefined>(undefined)
   const [isPicking, setIsPicking] = useState(false)
 
   useEffect(() => {
     void window.api.storage.inspectDataRoot(defaultParent).then((result) => {
       setDestination(result.dataRoot)
+      setDefaultInspection(result)
     })
   }, [defaultParent])
 
   const handleMoveToDefault = (): void => {
     setPickError(undefined)
-    setMigrationTarget(defaultParent)
+    setMigrationTarget({
+      path: defaultParent,
+      recoveryStatus:
+        defaultInspection?.kind === 'recover' ? defaultInspection.recoveryStatus : undefined
+    })
   }
 
   const handleChooseFolder = async (): Promise<void> => {
@@ -69,12 +82,16 @@ const LegacyDataMoveDialog = ({
     setIsPicking(true)
     try {
       const inspection = await window.api.storage.inspectDataRoot(picked)
-      if (inspection.kind === 'move') {
-        setMigrationTarget(picked)
+      if (inspection.kind === 'move' || inspection.kind === 'recover') {
+        setMigrationTarget({
+          path: picked,
+          recoveryStatus: inspection.kind === 'recover' ? inspection.recoveryStatus : undefined
+        })
         return
       }
-      // This prompt only moves data into a fresh location; an 'adopt' target (already holds data)
-      // would mean abandoning the legacy data, which isn't what "move it out" should do here.
+      // This prompt moves data into a fresh location or resumes the same interrupted move. An
+      // 'adopt' target (already holds unrelated data) would mean abandoning the legacy data, which
+      // isn't what "move it out" should do here.
       setPickError(
         inspection.kind === 'adopt'
           ? t(
@@ -96,7 +113,8 @@ const LegacyDataMoveDialog = ({
     return (
       <StorageMigrationModal
         active={active}
-        targetPath={migrationTarget}
+        targetPath={migrationTarget.path}
+        recoveryStatus={migrationTarget.recoveryStatus}
         onClose={() => setMigrationTarget(null)}
       />
     )

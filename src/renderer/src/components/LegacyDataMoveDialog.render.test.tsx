@@ -14,6 +14,9 @@ type MockStorageApi = {
   dismissLegacyMovePrompt: ReturnType<typeof vi.fn>
   detectActive: ReturnType<typeof vi.fn>
   migrate: ReturnType<typeof vi.fn>
+  cancelMigrate: ReturnType<typeof vi.fn>
+  commitAndRelaunch: ReturnType<typeof vi.fn>
+  discardMigratedCopy: ReturnType<typeof vi.fn>
   onProgress: ReturnType<typeof vi.fn>
 }
 
@@ -25,6 +28,9 @@ const installApi = (overrides: Partial<MockStorageApi> = {}): MockStorageApi => 
     dismissLegacyMovePrompt: vi.fn().mockResolvedValue(undefined),
     detectActive: vi.fn().mockResolvedValue([]),
     migrate: vi.fn().mockResolvedValue({ ok: true }),
+    cancelMigrate: vi.fn().mockResolvedValue(undefined),
+    commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
+    discardMigratedCopy: vi.fn().mockResolvedValue({ ok: true }),
     onProgress: vi.fn(() => () => {}),
     ...overrides
   }
@@ -167,6 +173,52 @@ describe('LegacyDataMoveDialog', () => {
     expect(api.detectActive).toHaveBeenCalled()
     // Declining/moving never wrote a dismissal here — moving sets dataRoot instead.
     expect(api.dismissLegacyMovePrompt).not.toHaveBeenCalled()
+  })
+
+  it('resumes a verified interrupted move at the default destination without recopying', async () => {
+    const api = installApi({
+      inspectDataRoot: vi.fn().mockResolvedValue({
+        kind: 'recover',
+        recoveryStatus: 'verified',
+        dataRoot: '/home/u/OpenScience'
+      })
+    })
+    await renderDialog()
+
+    await act(async () => {
+      clickButton(/Move to OpenScience/)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Verified data copy found')
+    expect(api.migrate).not.toHaveBeenCalled()
+  })
+
+  it('offers discard-only recovery for an interrupted chosen-folder copy', async () => {
+    const api = installApi({
+      pickDirectory: vi.fn().mockResolvedValue('/mnt/interrupted'),
+      inspectDataRoot: vi
+        .fn()
+        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/OpenScience' })
+        .mockResolvedValueOnce({
+          kind: 'recover',
+          recoveryStatus: 'copying',
+          dataRoot: '/mnt/interrupted/OpenScience'
+        })
+    })
+    await renderDialog()
+
+    await act(async () => {
+      clickButton(/Choose another folder/)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Incomplete data copy found')
+    expect(document.body.textContent).toContain('Discard incomplete copy')
+    expect(document.body.textContent).not.toContain('Finish move')
+    expect(api.migrate).not.toHaveBeenCalled()
   })
 
   it('a chosen empty folder starts the move; an unusable pick shows an inline error', async () => {
