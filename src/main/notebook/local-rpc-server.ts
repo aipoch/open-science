@@ -96,7 +96,8 @@ type NotebookLocalRpcServerOptions = {
         projectId?: string
         origin?: 'agent' | 'internal'
         specialistId?: string
-      }
+      },
+      signal?: AbortSignal
     ): Promise<unknown>
   }
   computeService?: {
@@ -1995,14 +1996,20 @@ class NotebookLocalRpcServer {
       const args = isRecord(params.args) ? params.args : {}
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
       const projectId = typeof params.projectId === 'string' ? params.projectId : undefined
-      return this.connectorService.call(server, toolMethod, args, {
-        sessionId,
-        ...(projectId ? { projectId } : {}),
-        origin: 'agent',
-        ...(sessionId && this.sessionSpecialists.get(sessionId)
-          ? { specialistId: this.sessionSpecialists.get(sessionId) }
-          : {})
-      })
+      return this.connectorService.call(
+        server,
+        toolMethod,
+        args,
+        {
+          sessionId,
+          ...(projectId ? { projectId } : {}),
+          origin: 'agent',
+          ...(sessionId && this.sessionSpecialists.get(sessionId)
+            ? { specialistId: this.sessionSpecialists.get(sessionId) }
+            : {})
+        },
+        signal
+      )
     }
 
     // computeCall routes compute API operations to ComputeService. Ownership comes only from the

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
 const fakeConnector = {
@@ -116,6 +116,56 @@ describe('mcpCall RPC', () => {
     expect(await res.json()).toEqual({
       result: { s: 'chemistry', m: 'pubchem_get_properties', a: { cids: [1] } }
     })
+  })
+
+  it('aborts the connector call when the RPC client disconnects', async () => {
+    let observedSignal: AbortSignal | undefined
+    let markCallStarted!: () => void
+    let releaseCall!: (value: { ok: true }) => void
+    const callStarted = new Promise<void>((resolve) => {
+      markCallStarted = resolve
+    })
+    const callPending = new Promise<{ ok: true }>((resolve) => {
+      releaseCall = resolve
+    })
+    const connector = {
+      call: async (
+        _server: string,
+        _method: string,
+        _args: Record<string, unknown>,
+        _context?: Record<string, unknown>,
+        signal?: AbortSignal
+      ) => {
+        observedSignal = signal
+        markCallStarted()
+        return callPending
+      }
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      connectorService: connector
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const disconnect = new AbortController()
+    const request = fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'mcpCall',
+        params: { server: 'chemistry', method: 'pubchem_get_properties', args: { cids: [1] } }
+      }),
+      signal: disconnect.signal
+    })
+
+    await callStarted
+    disconnect.abort()
+    try {
+      await expect(request).rejects.toThrow()
+      expect(observedSignal).toBeInstanceOf(AbortSignal)
+      await vi.waitFor(() => expect(observedSignal?.aborted).toBe(true))
+    } finally {
+      releaseCall({ ok: true })
+    }
   })
 
   it('uses the session-bound owner and ignores forged RPC owner fields', async () => {

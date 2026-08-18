@@ -138,19 +138,32 @@ export class McpClientManager {
     this.saveOAuthState = deps?.saveOAuthState
   }
 
-  async listTools(config: CustomMcpServerConfig): Promise<McpClientManagerTool[]> {
+  async listTools(
+    config: CustomMcpServerConfig,
+    signal?: AbortSignal
+  ): Promise<McpClientManagerTool[]> {
+    signal?.throwIfAborted()
     const client = await this.connect(config)
-    const { tools } = await client.listTools()
+    signal?.throwIfAborted()
+    const { tools } = signal
+      ? await client.listTools(undefined, { signal })
+      : await client.listTools()
     return tools
   }
 
   async call(
     config: CustomMcpServerConfig,
     method: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<unknown> {
+    signal?.throwIfAborted()
     const client = await this.connect(config)
-    const result = await client.callTool({ name: method, arguments: args })
+    signal?.throwIfAborted()
+    const input = { name: method, arguments: args }
+    const result = signal
+      ? await client.callTool(input, undefined, { signal })
+      : await client.callTool(input)
     return unwrapToolResult(result)
   }
 

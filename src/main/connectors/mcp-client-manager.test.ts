@@ -70,6 +70,24 @@ describe('McpClientManager', () => {
     expect(out).toEqual({ value: 'hello' })
   })
 
+  it('passes the caller signal to MCP discovery and tool requests', async () => {
+    const { createClient } = makeTestServer()
+    const listTools = vi.spyOn(Client.prototype, 'listTools')
+    const callTool = vi.spyOn(Client.prototype, 'callTool')
+    const manager = new McpClientManager({ createClient: () => createClient() })
+    const cancellation = new AbortController()
+
+    await manager.listTools(config, cancellation.signal)
+    await manager.call(config, 'echo', { value: 'hello' }, cancellation.signal)
+
+    expect(listTools).toHaveBeenCalledWith(undefined, { signal: cancellation.signal })
+    expect(callTool).toHaveBeenCalledWith(
+      { name: 'echo', arguments: { value: 'hello' } },
+      undefined,
+      { signal: cancellation.signal }
+    )
+  })
+
   it('throws when the tool result has isError set', async () => {
     const { createClient } = makeTestServer()
     const manager = new McpClientManager({ createClient: () => createClient() })

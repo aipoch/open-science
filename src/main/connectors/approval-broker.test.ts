@@ -62,6 +62,31 @@ describe('ApprovalBroker', () => {
     await expect(decision).resolves.toBe('deny')
   })
 
+  it('cancels and removes a pending request when its caller aborts', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    const broker = new ApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+    const cancellation = new AbortController()
+
+    const decision = broker.request(
+      { connector: 'biomart', method: 'get_data', argsPreview: '{}' },
+      cancellation.signal
+    )
+    cancellation.abort()
+
+    await expect(decision).resolves.toBe('deny')
+    expect(broker.getPending('id-1')).toBeNull()
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+    timer.fire()
+    expect(onSettled).toHaveBeenCalledOnce()
+  })
+
   it('pauses a Session timeout while Side chat owns the composer', async () => {
     let now = 0
     const timers: Array<{ fn: () => void; ms: number }> = []
