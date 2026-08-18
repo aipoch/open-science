@@ -525,6 +525,7 @@ class ContextUsageTracker {
     usage: AcpContextUsage,
     selectedContextWindow?: number
   ): void {
+    if (this.isUnconfirmedZeroRegression(sessionId, usage.used)) return
     this.observeActiveTurn(sessionId)
     const activeTurn = this.activeTurnsBySession.get(sessionId)
     if (activeTurn && !activeTurn.outcome) activeTurn.providerUsageObserved = true
@@ -538,7 +539,13 @@ class ContextUsageTracker {
 
   reconcileUsed(sessionId: string, used: number): boolean {
     const current = this.usageBySession.get(sessionId)
-    if (!current || !Number.isSafeInteger(used)) return false
+    if (
+      !current ||
+      !Number.isSafeInteger(used) ||
+      this.isUnconfirmedZeroRegression(sessionId, used)
+    ) {
+      return false
+    }
     this.observeActiveTurn(sessionId)
     const activeTurn = this.activeTurnsBySession.get(sessionId)
     if (activeTurn && !activeTurn.outcome) activeTurn.providerUsageObserved = true
@@ -902,6 +909,10 @@ class ContextUsageTracker {
   private replaceUsage(sessionId: string, usage: AcpContextUsage): void {
     this.usageBySession.set(sessionId, this.cloneUsage(usage))
     this.usageRevisions.set(sessionId, (this.usageRevisions.get(sessionId) ?? 0) + 1)
+  }
+
+  private isUnconfirmedZeroRegression(sessionId: string, used: number): boolean {
+    return used === 0 && (this.usageBySession.get(sessionId)?.used ?? 0) > 0
   }
 
   private deleteUsage(sessionId: string): void {

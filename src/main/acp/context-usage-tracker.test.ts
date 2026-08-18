@@ -703,6 +703,46 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('retains positive provider usage when a later update reports zero without a reset', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'glm-5.3' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 62_000,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+
+    tracker.deleteSession('s1')
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'glm-5.3' })
+    tracker.appendText('s1', 'messages', 'new conversation')
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 0,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
+  it('rejects a zero terminal reading after positive provider usage', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+
+    expect(tracker.reconcileUsed('s1', 0)).toBe(false)
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 62_000,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
   it('restores the last provider reading when a preflight estimate receives no fresh update', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
