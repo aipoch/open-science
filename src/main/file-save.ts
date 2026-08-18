@@ -18,7 +18,7 @@ import type {
   SaveSessionArtifactsRequest,
   SaveSessionArtifactsResult
 } from '../shared/file-save'
-import { englishNativeTranslator, type NativeTranslator } from './locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (

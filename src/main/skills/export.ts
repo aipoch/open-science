@@ -5,7 +5,7 @@ import { zipSync, type Zippable } from 'fflate'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
 import { canonicalSkillDocument } from './skill-document-name'
-import { englishNativeTranslator, type NativeTranslator } from '../locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import {
   inspectSkillPackage,
   SkillPackagePolicyError,

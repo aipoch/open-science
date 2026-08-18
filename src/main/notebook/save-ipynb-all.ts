@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 import type { ExportNotebookAllResult } from '../../shared/notebook'
-import { englishNativeTranslator, type NativeTranslator } from '../locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 export type SaveIpynbAllTarget = {
   kernel: 'python' | 'r'

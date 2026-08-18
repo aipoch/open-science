@@ -6,7 +6,7 @@ import {
   type LocalePreferenceSnapshot
 } from '../../shared/locale'
 import type { SettingsRepository } from '../settings/repository'
-import { translateNativeMessage, type NativeMessageKey } from './native-messages'
+import { translateNativeMessage, type NativeMessageKey } from './main-process-messages'
 
 type LocalePreferenceListener = (snapshot: LocalePreferenceSnapshot) => void
 
@@ -83,4 +83,4 @@ export class LocalePreferenceOwner {
   }
 }
 
-export type { NativeTranslator } from './native-messages'
+export type { NativeTranslator } from './main-process-messages'

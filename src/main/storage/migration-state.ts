@@ -1,6 +1,6 @@
 import { dialog, type App } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { englishNativeTranslator, type NativeTranslator } from '../locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 // Two module-level flags (not parameters) because the quit guard, the migrate IPC handler, and the
 // ACP/notebook write paths live in different modules but must agree on a single truth.

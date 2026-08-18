@@ -13,7 +13,7 @@ import {
   type ExportConversationResult
 } from '../../shared/conversation-export'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { englishNativeTranslator, type NativeTranslator } from '../locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 type ConversationExportPrintWindow = {
   loadFile(path: string): Promise<void>

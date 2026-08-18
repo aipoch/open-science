@@ -13,7 +13,7 @@ import { fetchManifest } from './manifest'
 import type { UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { englishNativeTranslator, type NativeTranslator } from '../locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
   channel: Channel,

@@ -307,7 +307,7 @@ import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
-import { englishNativeTranslator, type NativeTranslator } from './locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 
 const permissionGrantsLog = createLogger('permission-grants')
 

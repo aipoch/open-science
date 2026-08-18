@@ -2,7 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 
 import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../shared/storage'
-import { englishNativeTranslator, type NativeTranslator } from './locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import {
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,

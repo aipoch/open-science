@@ -4,7 +4,7 @@ import {
   type SpecialistPackageReport,
   type SpecialistPackageReportSaveResult
 } from '../../../shared/specialist-package'
-import { englishNativeTranslator, type NativeTranslator } from '../../locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
 
 type SpecialistExportDialog = {
   showSaveDialog: (options: {

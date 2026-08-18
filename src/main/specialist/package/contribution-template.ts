@@ -7,7 +7,7 @@ import {
   SPECIALIST_PACKAGE_SCHEMA_VERSION,
   type ContributionTemplateExportResult
 } from '../../../shared/specialist-package'
-import { englishNativeTranslator, type NativeTranslator } from '../../locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
 
 export const CONTRIBUTION_TEMPLATE_FILENAME = 'openscience-specialist-template.zip'
 

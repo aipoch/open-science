@@ -16,7 +16,7 @@ import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigat
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger } from './logger'
-import { englishNativeTranslator, type NativeTranslator } from './locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,

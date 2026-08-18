@@ -1,7 +1,7 @@
 import { Menu, Tray, nativeImage, screen, type NativeImage } from 'electron'
 
 import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../shared/settings'
-import { englishNativeTranslator, type NativeTranslator } from './locale/native-messages'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import { createLogger } from './logger'
 
 const logger = createLogger('tray')

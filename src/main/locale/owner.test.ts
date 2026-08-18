@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsRepository } from '../settings/repository'
 import { LocalePreferenceOwner } from './owner'
-import { translateNativeMessage } from './native-messages'
+import { translateNativeMessage } from './main-process-messages'
 
 const roots: string[] = []
 

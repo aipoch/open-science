@@ -7,7 +7,7 @@ import { createLogger } from '../logger'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'
 import type { InstallGate, UpdateStrategy } from './strategy'
-import type { NativeTranslator } from '../locale/native-messages'
+import type { NativeTranslator } from '../locale/main-process-messages'
 
 export type CreateStrategyOptions = {
   // Whether this is a packaged (installed) build. Defaults to app.isPackaged; injectable for tests.
