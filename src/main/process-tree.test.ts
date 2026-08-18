@@ -227,7 +227,7 @@ describe('terminateProcessTree (posix)', () => {
     expect(killSpy).toHaveBeenCalledWith(1000, 'SIGKILL')
   })
 
-  it('still kills the direct child when ps fails to produce a tree', async () => {
+  it('kills the direct child but reports unconfirmed when ps fails to produce a tree', async () => {
     setPlatform('darwin')
     const ps = new FakePs()
     spawnMock.mockReturnValueOnce(ps)
@@ -242,9 +242,28 @@ describe('terminateProcessTree (posix)', () => {
     await Promise.resolve()
 
     child.emit('exit', 0, null)
-    // No descendants discovered and the child exited, so the (degenerate) tree counts as reaped.
-    await expect(pending).resolves.toEqual({ reaped: true })
+    // The direct child exited, but failed discovery cannot prove there were no surviving descendants.
+    await expect(pending).resolves.toEqual({ reaped: false })
     expect(killSpy).not.toHaveBeenCalledWith(expect.any(Number), 'SIGTERM')
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('reports unconfirmed when ps exits non-zero without a process snapshot', async () => {
+    setPlatform('linux')
+    const ps = new FakePs()
+    spawnMock.mockReturnValueOnce(ps)
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw esrch()
+    })
+    const child = new FakeChild(1234)
+
+    const pending = terminateProcessTree(child as never)
+    ps.emit('close', 1)
+    await Promise.resolve()
+    await Promise.resolve()
+    child.emit('exit', 0, null)
+
+    await expect(pending).resolves.toEqual({ reaped: false })
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
 
