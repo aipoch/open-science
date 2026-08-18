@@ -10,7 +10,11 @@ import {
 } from '../../../../shared/session-persistence'
 import { i18next } from '@/i18n'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
-import { useSessionPersistence, type SessionPersistenceState } from './session-persistence'
+import {
+  flushSessionPersistence,
+  useSessionPersistence,
+  type SessionPersistenceState
+} from './session-persistence'
 
 const emptyLoadResult = (): LoadAllSessionsResult => ({
   sessions: [],
@@ -277,6 +281,39 @@ describe('session persistence startup', () => {
 
     expect(loadAll).toHaveBeenCalledTimes(2)
     expect(saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('clears an unresolved revision conflict after its Session is durably deleted', async () => {
+    const restored = createPersistedSession({ revision: 1 })
+    loadAll.mockReset().mockResolvedValue({
+      ...emptyLoadResult(),
+      sessions: [restored]
+    })
+    saveSession.mockRejectedValue(
+      Object.assign(new Error('Session revision conflict: expected 1, actual 2.'), {
+        code: 'session-revision-conflict'
+      })
+    )
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().renameSession('session-1', 'Conflicting title')
+      await Promise.resolve()
+    })
+    await expect(flushSessionPersistence()).rejects.toMatchObject({
+      code: 'session-revision-conflict'
+    })
+
+    await act(async () => {
+      // Production removes renderer state only after the authoritative delete IPC succeeds.
+      useSessionStore.getState().deleteSession('session-1')
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'changes saved'
+    )
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
   })
 
   it('automatically clears a failed write target after its session is durably deleted', async () => {

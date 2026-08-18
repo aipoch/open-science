@@ -465,13 +465,15 @@ type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => 
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
   sessions: readonly Pick<ChatSession, 'id'>[],
-  conflictRebaseFields?: Map<string, SessionConflictRebaseField[]>
+  conflictRebaseFields?: Map<string, SessionConflictRebaseField[]>,
+  ...relatedTargets: Set<string>[]
 ): void => {
   const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
   for (const target of targets) {
     if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
       targets.delete(target)
       conflictRebaseFields?.delete(target)
+      for (const related of relatedTargets) related.delete(target)
     }
   }
 }
@@ -861,7 +863,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
     pruneRemovedSessionWriteTargets(
       failedWriteTargets.current,
       state.sessions,
-      failedConflictRebaseFields.current
+      failedConflictRebaseFields.current,
+      revisionConflictTargets.current,
+      unresolvedSessionRevisionConflictTargets
     )
     if (failedWriteTargets.current.size === 0) {
       setWriteError(undefined)
@@ -976,6 +980,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
             if (isSessionRevisionConflictError(_error)) {
               revisionConflictTargets.current.add(target)
               unresolvedSessionRevisionConflictTargets.add(target)
+              pruneRemovedSessionWriteTargets(
+                failedWriteTargets.current,
+                useSessionStore.getState().sessions,
+                failedConflictRebaseFields.current,
+                revisionConflictTargets.current,
+                unresolvedSessionRevisionConflictTargets
+              )
+              if (!failedWriteTargets.current.has(target)) {
+                if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+                return
+              }
               setWriteError(translateRef.current(SESSION_REVISION_CONFLICT_WRITE_ERROR))
               return
             }
@@ -991,7 +1006,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
             pruneRemovedSessionWriteTargets(
               failedWriteTargets.current,
               useSessionStore.getState().sessions,
-              failedConflictRebaseFields.current
+              failedConflictRebaseFields.current,
+              revisionConflictTargets.current,
+              unresolvedSessionRevisionConflictTargets
             )
             // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
             // must not resurrect a retry target for a Session that no longer exists in the store.
@@ -1024,7 +1041,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
         pruneRemovedSessionWriteTargets(
           failedWriteTargets.current,
           state.sessions,
-          failedConflictRebaseFields.current
+          failedConflictRebaseFields.current,
+          revisionConflictTargets.current,
+          unresolvedSessionRevisionConflictTargets
         )
         if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         void save(state).catch(reportPersistenceError)
