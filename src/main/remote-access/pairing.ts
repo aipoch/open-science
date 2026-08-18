@@ -156,6 +156,7 @@ export class RemoteSessionPairingManager {
   private readonly pending = new Map<string, PendingPairing>()
   private readonly oneTimeSessions = new Map<string, OneTimeSession>()
   private readonly now: () => number
+  private storedMutationQueue: Promise<void> = Promise.resolve()
 
   private constructor(
     private readonly options: PairingManagerOptions,
@@ -182,8 +183,7 @@ export class RemoteSessionPairingManager {
   }
 
   async setModePreference(mode: StoredRemoteAccess['mode']): Promise<void> {
-    this.stored = { ...this.stored, mode }
-    await this.options.repository.save(this.stored)
+    await this.commitStoredMutation((stored) => ({ ...stored, mode }))
   }
 
   async setRemoteItServiceId(
@@ -199,26 +199,25 @@ export class RemoteSessionPairingManager {
     appServiceId?: string
     browserServiceId?: string
   }): Promise<void> {
-    const remoteItAppServiceId = services.appServiceId ?? this.stored.remoteItAppServiceId
-    const remoteItBrowserServiceId =
-      services.browserServiceId ?? this.stored.remoteItBrowserServiceId
-    if (
-      remoteItAppServiceId === this.stored.remoteItAppServiceId &&
-      remoteItBrowserServiceId === this.stored.remoteItBrowserServiceId
-    ) {
-      return
-    }
-    this.stored = {
-      ...this.stored,
-      remoteItAppServiceId,
-      remoteItBrowserServiceId
-    }
-    await this.options.repository.save(this.stored)
+    await this.commitStoredMutation((stored) => {
+      const remoteItAppServiceId = services.appServiceId ?? stored.remoteItAppServiceId
+      const remoteItBrowserServiceId = services.browserServiceId ?? stored.remoteItBrowserServiceId
+      if (
+        remoteItAppServiceId === stored.remoteItAppServiceId &&
+        remoteItBrowserServiceId === stored.remoteItBrowserServiceId
+      ) {
+        return undefined
+      }
+      return {
+        ...stored,
+        remoteItAppServiceId,
+        remoteItBrowserServiceId
+      }
+    })
   }
 
   async setRemoteItPublicUrl(url: string | undefined): Promise<void> {
-    this.stored = { ...this.stored, remoteItPublicUrl: url }
-    await this.options.repository.save(this.stored)
+    await this.commitStoredMutation((stored) => ({ ...stored, remoteItPublicUrl: url }))
   }
 
   pendingViews(): RemotePairingRequestView[] {
@@ -276,11 +275,10 @@ export class RemoteSessionPairingManager {
         createdAt: this.now(),
         lastSeenAt: this.now()
       }
-      this.stored = {
-        ...this.stored,
-        trustedBrowsers: [...this.stored.trustedBrowsers, trusted]
-      }
-      await this.options.repository.save(this.stored)
+      await this.commitStoredMutation((stored) => ({
+        ...stored,
+        trustedBrowsers: [...stored.trustedBrowsers, trusted]
+      }))
     }
     request.status = 'approved'
     request.grant = { decision, cookieValue }
@@ -298,12 +296,13 @@ export class RemoteSessionPairingManager {
   }
 
   async revoke(browserId: string): Promise<void> {
-    const next = this.stored.trustedBrowsers.filter((browser) => browser.id !== browserId)
-    if (next.length === this.stored.trustedBrowsers.length) {
-      throw new Error('Trusted browser not found.')
-    }
-    this.stored = { ...this.stored, trustedBrowsers: next }
-    await this.options.repository.save(this.stored)
+    await this.commitStoredMutation((stored) => {
+      const trustedBrowsers = stored.trustedBrowsers.filter((browser) => browser.id !== browserId)
+      if (trustedBrowsers.length === stored.trustedBrowsers.length) {
+        throw new Error('Trusted browser not found.')
+      }
+      return { ...stored, trustedBrowsers }
+    })
     this.options.onChanged()
   }
 
@@ -498,11 +497,41 @@ export class RemoteSessionPairingManager {
     const trusted = this.stored.trustedBrowsers.find((browser) => browser.id === id)
     if (!trusted || !safeHashEqual(trusted.tokenHash, tokenHash)) return undefined
     if (this.now() - trusted.lastSeenAt >= LAST_SEEN_WRITE_INTERVAL_MS) {
-      trusted.lastSeenAt = this.now()
-      await this.options.repository.save(this.stored)
-      this.options.onChanged()
+      let authorized = false
+      const changed = await this.commitStoredMutation((stored) => {
+        const current = stored.trustedBrowsers.find((browser) => browser.id === id)
+        if (!current || !safeHashEqual(current.tokenHash, tokenHash)) return undefined
+        authorized = true
+        const lastSeenAt = this.now()
+        if (lastSeenAt - current.lastSeenAt < LAST_SEEN_WRITE_INTERVAL_MS) return undefined
+        return {
+          ...stored,
+          trustedBrowsers: stored.trustedBrowsers.map((browser) =>
+            browser.id === id ? { ...browser, lastSeenAt } : browser
+          )
+        }
+      })
+      if (!authorized) return undefined
+      if (changed) this.options.onChanged()
     }
     return { kind: 'trusted', sessionId: id }
+  }
+
+  private commitStoredMutation(
+    update: (stored: StoredRemoteAccess) => StoredRemoteAccess | undefined
+  ): Promise<boolean> {
+    const operation = this.storedMutationQueue.then(async () => {
+      const stored = update(this.stored)
+      if (!stored) return false
+      await this.options.repository.save(stored)
+      this.stored = stored
+      return true
+    })
+    this.storedMutationQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
   }
 
   private pruneExpired(): void {
