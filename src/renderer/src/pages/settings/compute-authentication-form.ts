@@ -45,8 +45,6 @@ type ComputeAuthenticationStrategy = Readonly<{
   mode: ComputeAuthenticationMode
   introduction: ComputeAuthenticationIntroduction
   fieldSet: ComputeAuthenticationFieldSet
-  automaticallyOpensAdvanced: boolean
-  advancedCanCollapse: boolean
   usesPassword: boolean
   isAvailable(capability: ComputePasswordCapability | undefined): boolean
   choiceLabel(t: TFunction): string
@@ -102,8 +100,6 @@ const COMPUTE_AUTHENTICATION_STRATEGIES = {
         'Pick a host alias from your <path>~/.ssh/config</path>, or type one. Open Science will use it as a compute provider via your existing SSH key — no credentials are copied.'
     },
     fieldSet: 'ssh_config',
-    automaticallyOpensAdvanced: false,
-    advancedCanCollapse: true,
     usesPassword: false,
     isAvailable: () => true,
     choiceLabel: (t) => t('SSH configuration'),
@@ -121,8 +117,6 @@ const COMPUTE_AUTHENTICATION_STRATEGIES = {
         t('Enter a host alias and the account used for password-only SSH authentication.')
     },
     fieldSet: 'password',
-    automaticallyOpensAdvanced: true,
-    advancedCanCollapse: false,
     usesPassword: true,
     isAvailable: (capability) => capability?.available === true,
     choiceLabel: (t) => t('Username and password'),

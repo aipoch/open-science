@@ -205,7 +205,7 @@ describe('ComputeAddForm password authentication', () => {
     )
   })
 
-  it('keeps ssh_config Advanced settings collapsed until password mode opens its required fields', async () => {
+  it('keeps password requirements directly visible instead of labeling them Advanced', async () => {
     await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
     const advanced = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Advanced')
@@ -223,22 +223,16 @@ describe('ComputeAddForm password authentication', () => {
     const port = container.querySelector('#compute-password-port')
     const password = container.querySelector('#compute-password')
 
-    expect(advanced?.compareDocumentPosition(user!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(user?.compareDocumentPosition(port!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(port?.compareDocumentPosition(password!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(user?.closest('#compute-advanced-settings')).toBe(region)
-    expect(password?.closest('#compute-advanced-settings')).toBe(region)
-    expect(advanced?.getAttribute('aria-expanded')).toBe('true')
-    expect(advanced?.getAttribute('aria-controls')).toBe('compute-advanced-settings')
-    expect(advanced?.getAttribute('aria-disabled')).toBe('true')
-    expect(advanced?.classList.contains('cursor-not-allowed')).toBe(true)
-    expect(advanced?.classList.contains('opacity-50')).toBe(true)
-    expect(region?.hasAttribute('hidden')).toBe(false)
-    expect(advanced?.parentElement?.className).not.toContain('border')
-
-    act(() => advanced?.click())
-    expect(advanced?.getAttribute('aria-expanded')).toBe('true')
-    expect(region?.hasAttribute('hidden')).toBe(false)
+    expect(user?.closest('#compute-advanced-settings')).toBeNull()
+    expect(password?.closest('#compute-advanced-settings')).toBeNull()
+    expect(container.querySelector('#compute-advanced-settings')).toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).some((button) =>
+        button.textContent?.includes('Advanced')
+      )
+    ).toBe(false)
   })
 
   it('never renders an unclassified raw failure message', async () => {

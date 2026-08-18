@@ -200,22 +200,26 @@ type ComputeAdvancedSettingsProps = AuthenticationFieldProps &
     onOpenChange(open: boolean): void
   }>
 
+type ComputeAuthenticationFieldsProps = AuthenticationFieldProps &
+  Readonly<{ strategy: ComputeAuthenticationStrategy }>
+
+const ComputeAuthenticationFields = (
+  props: ComputeAuthenticationFieldsProps
+): React.JSX.Element => {
+  const Fields = AUTHENTICATION_FIELDS[props.strategy.fieldSet]
+  return <Fields {...props} />
+}
+
 const ComputeAdvancedSettings = (props: ComputeAdvancedSettingsProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const Fields = AUTHENTICATION_FIELDS[props.strategy.fieldSet]
   return (
     <div>
       <button
         type="button"
         aria-expanded={props.open}
         aria-controls="compute-advanced-settings"
-        aria-disabled={!props.strategy.advancedCanCollapse}
-        onClick={() => {
-          if (props.strategy.advancedCanCollapse) props.onOpenChange(!props.open)
-        }}
-        className={`flex w-full items-center gap-2 py-2.5 text-left text-sm font-medium text-foreground ${
-          props.strategy.advancedCanCollapse ? '' : 'cursor-not-allowed opacity-50'
-        }`}
+        onClick={() => props.onOpenChange(!props.open)}
+        className="flex w-full items-center gap-2 py-2.5 text-left text-sm font-medium text-foreground"
       >
         <ChevronDown
           className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
@@ -230,10 +234,15 @@ const ComputeAdvancedSettings = (props: ComputeAdvancedSettingsProps): React.JSX
         hidden={!props.open}
         className={props.open ? 'flex flex-col gap-4 pb-1 pl-6 pt-2' : 'hidden'}
       >
-        <Fields {...props} />
+        <ComputeAuthenticationFields {...props} />
       </div>
     </div>
   )
 }
 
-export { ComputeAdvancedSettings, ComputeAuthenticationIntroduction, ComputeAuthenticationSection }
+export {
+  ComputeAdvancedSettings,
+  ComputeAuthenticationFields,
+  ComputeAuthenticationIntroduction,
+  ComputeAuthenticationSection
+}

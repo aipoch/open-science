@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useComputeStore } from '@/stores/compute-store'
 import {
   ComputeAdvancedSettings,
+  ComputeAuthenticationFields,
   ComputeAuthenticationIntroduction,
   ComputeAuthenticationSection
 } from './ComputeAuthenticationSection'
@@ -187,24 +188,40 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
           onModeChange={(mode) => {
             const strategy = getComputeAuthenticationStrategy(mode)
             setAuthenticationMode(mode)
-            setAdvancedOpen(strategy.automaticallyOpensAdvanced)
+            setAdvancedOpen(false)
             if (!strategy.usesPassword) setPassword('')
           }}
         />
 
-        <ComputeAdvancedSettings
-          strategy={authenticationStrategy}
-          open={advancedOpen}
-          user={user}
-          port={port}
-          identityFile={identityFile}
-          password={password}
-          onOpenChange={setAdvancedOpen}
-          onUserChange={setUser}
-          onPortChange={setPort}
-          onIdentityFileChange={setIdentityFile}
-          onPasswordChange={setPassword}
-        />
+        {authenticationStrategy.fieldSet === 'password' ? (
+          <div className="flex flex-col gap-4">
+            <ComputeAuthenticationFields
+              strategy={authenticationStrategy}
+              user={user}
+              port={port}
+              identityFile={identityFile}
+              password={password}
+              onUserChange={setUser}
+              onPortChange={setPort}
+              onIdentityFileChange={setIdentityFile}
+              onPasswordChange={setPassword}
+            />
+          </div>
+        ) : (
+          <ComputeAdvancedSettings
+            strategy={authenticationStrategy}
+            open={advancedOpen}
+            user={user}
+            port={port}
+            identityFile={identityFile}
+            password={password}
+            onOpenChange={setAdvancedOpen}
+            onUserChange={setUser}
+            onPortChange={setPort}
+            onIdentityFileChange={setIdentityFile}
+            onPasswordChange={setPassword}
+          />
+        )}
 
         {error ? (
           <p role="alert" className="text-sm text-destructive">
