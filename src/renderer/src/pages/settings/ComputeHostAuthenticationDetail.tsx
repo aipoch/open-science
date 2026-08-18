@@ -66,6 +66,7 @@ export function ComputeHostAuthenticationDetail({
     ComputePasswordCapability | undefined
   >()
   const [previousEditing, setPreviousEditing] = useState(isEditing)
+  const [preserveFeedbackAfterSave, setPreserveFeedbackAfterSave] = useState(false)
   const [authenticationOperation, setAuthenticationOperation] = useState<
     AuthenticationOperation | undefined
   >()
@@ -73,7 +74,8 @@ export function ComputeHostAuthenticationDetail({
   if (previousEditing !== isEditing) {
     setPreviousEditing(isEditing)
     setAuthenticationOperation(undefined)
-    setFeedback(undefined)
+    if (preserveFeedbackAfterSave) setPreserveFeedbackAfterSave(false)
+    else setFeedback(undefined)
     setValidationError(undefined)
     setPassword('')
     if (!isEditing) {
@@ -122,7 +124,8 @@ export function ComputeHostAuthenticationDetail({
 
   const save = async (): Promise<void> => {
     const parsedPort = Number(port)
-    if (!username.trim()) {
+    const normalizedUsername = username.trim() || undefined
+    if (mode === 'password' && !normalizedUsername) {
       setValidationError({ field: 'username', text: t('Username is required.') })
       return
     }
@@ -133,15 +136,22 @@ export function ComputeHostAuthenticationDetail({
       })
       return
     }
-    if (mode === 'password' && !password) {
+    const normalizedIdentityFile =
+      mode === 'ssh_config' ? identityFile.trim() || undefined : undefined
+    const modeChanged = mode !== currentMode
+    const usernameChanged = normalizedUsername !== (host.sshOverrides?.user || undefined)
+    const portChanged = parsedPort !== (host.sshOverrides?.port ?? 22)
+    const identityFileChanged =
+      mode === 'ssh_config' &&
+      normalizedIdentityFile !== (host.sshOverrides?.identityFile || undefined)
+    const hasMaterialChange = modeChanged || usernameChanged || portChanged || identityFileChanged
+    if (mode === 'password' && hasMaterialChange && !password) {
       setValidationError({ field: 'password', text: t('Password is required.') })
       return
     }
     setBusy(true)
     setFeedback(undefined)
     setValidationError(undefined)
-    const normalizedIdentityFile =
-      mode === 'ssh_config' ? identityFile.trim() || undefined : undefined
     const operationStillBound =
       authenticationOperation?.providerId === host.providerId &&
       authenticationOperation.expectedRevision === currentRevision &&
@@ -161,22 +171,36 @@ export function ComputeHostAuthenticationDetail({
         expectedRevision: currentRevision,
         operationId: currentOperationId,
         authenticationMode: mode,
-        username: username.trim(),
+        username: normalizedUsername,
         port: parsedPort,
         ...(mode === 'ssh_config' && identityFile.trim()
           ? { identityFile: identityFile.trim() }
           : {}),
-        ...(mode === 'password' ? { password } : {})
+        ...(mode === 'password' && password ? { password } : {})
       })
       setAuthenticationOperation(undefined)
       setPassword('')
+      setPreserveFeedbackAfterSave(true)
       onEditingChange(false)
       setFeedback({
         kind: 'success',
-        text:
-          mode === 'ssh_config'
-            ? t('SSH configuration verified. Saved password deleted.')
-            : t('Password authentication verified and activated.')
+        text: modeChanged
+          ? mode === 'ssh_config'
+            ? t(
+                'SSH configuration verified and activated. Saved password deleted. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+              )
+            : t(
+                'Password authentication verified and activated. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+              )
+          : usernameChanged
+            ? t(
+                'Username changed. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+              )
+            : hasMaterialChange
+              ? t(
+                  'Connection settings verified and saved. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+                )
+              : t('Authentication settings are already up to date.')
       })
     } catch (error) {
       const code = errorCode(error)
@@ -253,11 +277,6 @@ export function ComputeHostAuthenticationDetail({
                 : t('Not yet verified')}
             </dd>
           </dl>
-          <div className="mt-4 flex justify-end">
-            <Button type="button" variant="outline" size="sm" onClick={() => onEditingChange(true)}>
-              {t('Edit')}
-            </Button>
-          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
@@ -314,6 +333,7 @@ export function ComputeHostAuthenticationDetail({
               autoFocus
               id="compute-detail-username"
               value={username}
+              placeholder={mode === 'ssh_config' ? t('From SSH configuration') : undefined}
               onChange={(event) => {
                 setUsername(event.target.value)
                 setAuthenticationOperation(undefined)

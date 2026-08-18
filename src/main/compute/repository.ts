@@ -70,15 +70,15 @@ const escapeSqlLike = (value: string): string =>
 type AuthenticationOperationKind = 'create_password' | 'reset_password' | 'change_authentication'
 
 const assertOperationBinding = (
-  operation: { providerId: string; operationKind: string; requestFingerprint: string | null },
+  operation: { providerId: string; operationKind: string; requestFingerprint: string },
   providerId: string,
   operationKind: AuthenticationOperationKind,
-  requestFingerprint: string | undefined
+  requestFingerprint: string
 ): void => {
   if (
     operation.providerId !== providerId ||
     operation.operationKind !== operationKind ||
-    operation.requestFingerprint !== (requestFingerprint ?? null)
+    operation.requestFingerprint !== requestFingerprint
   ) {
     throw new ComputeConnectionError('credential_conflict')
   }
@@ -136,16 +136,15 @@ class ComputeHostRepository {
 
   async getAuthenticationOperation(
     operationId: string
-  ): Promise<Readonly<{ requestFingerprint: string | undefined }> | null> {
+  ): Promise<Readonly<{ requestFingerprint: string }> | null> {
     const client = await this.getClient()
     const operation = await client.computeAuthOperation.findUnique({ where: { id: operationId } })
-    return operation ? { requestFingerprint: operation.requestFingerprint ?? undefined } : null
+    return operation ? { requestFingerprint: operation.requestFingerprint } : null
   }
 
   async preparePasswordCreate(
     request: PreparePasswordCreateRequest
   ): Promise<PasswordCreatePreparation> {
-    if (!request.requestFingerprint) throw new ComputeConnectionError('credential_conflict')
     const providerId = computeProviderId(request.sshAlias)
     const client = await this.getClient()
     const replay = await client.computeAuthOperation.findUnique({
@@ -228,7 +227,6 @@ class ComputeHostRepository {
   // Validated password Hosts and their encrypted credential are committed together. The operation
   // row makes a retried local command return the original result without creating a duplicate.
   async createPasswordHost(request: CreatePasswordHostPersistence): Promise<ComputeHost> {
-    if (!request.requestFingerprint) throw new ComputeConnectionError('credential_conflict')
     const detailsDoc = request.detailsDoc ?? ''
     if (detailsDoc.length > DETAILS_DOC_MAX_LENGTH) {
       throw new Error(
@@ -326,7 +324,6 @@ class ComputeHostRepository {
   async preparePasswordReset(
     request: PreparePasswordResetRequest
   ): Promise<PasswordResetPreparation> {
-    if (!request.requestFingerprint) throw new ComputeConnectionError('credential_conflict')
     const client = await this.getClient()
     const replay = await client.computeAuthOperation.findUnique({
       where: { id: request.operationId }
@@ -362,7 +359,6 @@ class ComputeHostRepository {
   }
 
   async resetPasswordHost(request: ResetPasswordHostPersistence): Promise<ComputeHost> {
-    if (!request.requestFingerprint) throw new ComputeConnectionError('credential_conflict')
     const client = await this.getClient()
     const row = await client.$transaction(async (transaction) => {
       const replay = await transaction.computeAuthOperation.findUnique({
@@ -430,9 +426,8 @@ class ComputeHostRepository {
   async replayAuthenticationChange(
     operationId: string,
     providerId: string,
-    requestFingerprint?: string
+    requestFingerprint: string
   ): Promise<ComputeHost | null> {
-    if (!requestFingerprint) throw new ComputeConnectionError('credential_conflict')
     const client = await this.getClient()
     const operation = await client.computeAuthOperation.findUnique({ where: { id: operationId } })
     if (!operation) return null
@@ -448,7 +443,6 @@ class ComputeHostRepository {
   async changeAuthentication(
     request: ChangeComputeHostAuthenticationPersistence
   ): Promise<ComputeHost> {
-    if (!request.requestFingerprint) throw new ComputeConnectionError('credential_conflict')
     const client = await this.getClient()
     const row = await client.$transaction(async (transaction) => {
       const replay = await transaction.computeAuthOperation.findUnique({

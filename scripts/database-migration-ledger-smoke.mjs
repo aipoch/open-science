@@ -43,7 +43,7 @@ const EXPECTED_MIGRATION_LEDGER = [
   },
   {
     id: '0010_compute_password_auth',
-    checksum: '46ca60feb95bb4fc0fde88401081e89d43acc45e610a50b55a3a407ecb9a3c85'
+    checksum: '351de2963203b618a4f9379ed4daaa7a187579e0c4183d92b9c50ecdf989c2a5'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

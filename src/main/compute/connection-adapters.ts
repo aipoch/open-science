@@ -33,6 +33,7 @@ import {
 type AskpassEnvironment = Readonly<{
   env: NodeJS.ProcessEnv
   wasAnswered(): boolean
+  wasUnsupportedPromptRejected?(): boolean
   dispose(): Promise<void>
 }>
 
@@ -88,6 +89,31 @@ const askpassResourcePath = (name: string): string =>
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+const hasHostUnreachableDiagnostic = (stderr: string): boolean => {
+  const normalized = stderr.toLowerCase()
+  return (
+    normalized.includes('connection refused') ||
+    normalized.includes('network is unreachable') ||
+    normalized.includes('no route to host') ||
+    normalized.includes('could not resolve hostname')
+  )
+}
+
+const classifyPasswordConnectionFailure = (
+  result: { exitCode: number | null; stderr: string; timedOut: boolean },
+  askpass: AskpassEnvironment
+): ComputeConnectionError | undefined => {
+  const failure = classifyConnectionFailure(result)
+  if (!failure || !askpass.wasUnsupportedPromptRejected?.()) return failure
+  if (
+    failure.code === 'authentication_failed' ||
+    (failure.code === 'host_unreachable' && !hasHostUnreachableDiagnostic(result.stderr))
+  ) {
+    return new ComputeConnectionError('unsupported_auth_configuration')
+  }
+  return failure
+}
+
 // Password-mode children receive only the operating-system context needed to locate OpenSSH,
 // resolve the user's SSH configuration/known_hosts, and create temporary files. Copying the whole
 // parent environment would turn every unrelated application secret into a generic child variable.
@@ -117,6 +143,7 @@ const createAskpassEnvironment = async (
   const capability = randomUUID()
   const socketPath = join(tmpdir(), `os-askpass-${randomUUID()}.sock`)
   let answered = false
+  let unsupportedPromptRejected = false
   const server = createServer((socket) => {
     let request = ''
     socket.setEncoding('utf8')
@@ -131,12 +158,12 @@ const createAskpassEnvironment = async (
         const targetPasswordPrompt = expectedAccounts.some((account) =>
           new RegExp(`^${escapeRegExp(account)}'s password:\\s*$`, 'i').test(prompt)
         )
-        if (
-          answered ||
-          payload.capability !== capability ||
-          !targetPasswordPrompt ||
-          rejected.test(prompt)
-        ) {
+        if (payload.capability !== capability) {
+          socket.end('{}')
+          return
+        }
+        if (answered || !targetPasswordPrompt || rejected.test(prompt)) {
+          unsupportedPromptRejected = true
           socket.end('{}')
           return
         }
@@ -173,6 +200,7 @@ const createAskpassEnvironment = async (
       ELECTRON_RUN_AS_NODE: '1'
     },
     wasAnswered: () => answered,
+    wasUnsupportedPromptRejected: () => unsupportedPromptRejected,
     dispose: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
       await rm(socketPath, { force: true })
@@ -260,7 +288,7 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
       const askpass = await this.createAskpass(password, prepared.expectedAccounts)
       try {
         const result = await operation(askpass)
-        if (!askpass.wasAnswered()) {
+        if (askpass.wasUnsupportedPromptRejected?.() || !askpass.wasAnswered()) {
           throw new ComputeConnectionError('unsupported_auth_configuration')
         }
         return result
@@ -276,7 +304,7 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
             env: askpass.env,
             signal: request.signal ?? options.signal
           })
-          const failure = classifyConnectionFailure(result)
+          const failure = classifyPasswordConnectionFailure(result, askpass)
           if (failure) throw failure
           return result
         }),
@@ -289,7 +317,7 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
             30 * 60 * 1000,
             { env: askpass.env, signal: request.signal }
           )
-          const failure = classifyConnectionFailure(result)
+          const failure = classifyPasswordConnectionFailure(result, askpass)
           if (failure) throw failure
           if (result.exitCode !== 0) throw new Error('Remote file upload failed.')
         }),
@@ -307,7 +335,7 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
             { env: askpass.env, signal: request.signal }
           )
           if (result.exceeded) return result
-          const failure = classifyConnectionFailure(result)
+          const failure = classifyPasswordConnectionFailure(result, askpass)
           if (failure) throw failure
           return result
         })

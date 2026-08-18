@@ -66,7 +66,7 @@ export const createInitialComputeState = (): ComputeStoreData => ({
 })
 
 // Renderer cache of the SQLite-backed compute host list; the DB remains the source of truth.
-export const useComputeStore = create<ComputeStore>((set) => ({
+export const useComputeStore = create<ComputeStore>((set, get) => ({
   ...createInitialComputeState(),
 
   // Loads the full host list. A DB/IPC failure is recorded (not thrown) so the panel can show an
@@ -135,6 +135,13 @@ export const useComputeStore = create<ComputeStore>((set) => ({
         host.providerId === result.host.providerId ? result.host : host
       )
     }))
+    // The committed reset clears the persisted probe snapshot (main nulls it because the result
+    // belongs to the previous credential revision). Re-probe so the Host's status refreshes on its
+    // own instead of sitting at "Not probed". Fire-and-forget, like the Add form's post-create
+    // probe: failures become probeResult.ok=false and surface in the detail UI.
+    void get()
+      .probeHost(result.host.providerId)
+      .catch(() => undefined)
     return result.host
   },
 
@@ -148,6 +155,12 @@ export const useComputeStore = create<ComputeStore>((set) => ({
       ),
       loadError: undefined
     }))
+    // Same as resetPassword: the commit clears the persisted probe snapshot, so re-probe in the
+    // background. Without this, a successful "Test and save" leaves the Host looking disconnected
+    // ("Not probed") even though the candidate connection was just verified.
+    void get()
+      .probeHost(host.providerId)
+      .catch(() => undefined)
     return host
   },
 

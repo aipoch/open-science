@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
-import { createComputeAuthenticationRuntime } from './authentication-runtime'
+import {
+  createComputeAuthenticationOwner,
+  createComputeAuthenticationRuntime
+} from './authentication-runtime'
 import type { PasswordSshAdapter } from './connection-adapters'
 import { ComputeConnectionError, type ComputeConnectionLease } from './connection-broker'
 import { CredentialVault, type ComputeCredentialCipher } from './credential-vault'
@@ -39,6 +42,60 @@ const cipher: ComputeCredentialCipher = {
 }
 
 describe('Compute authentication runtime', () => {
+  it('preserves Session enablement and Permission Grants for an unchanged edit', async () => {
+    const host = schedulerPasswordHost()
+    const changeAuthentication = vi.fn()
+    const pruneSessionEnabledHosts = vi.fn()
+    const finalizeOwnerDeletion = vi.fn()
+    const invalidateProvider = vi.fn()
+    const invalidateAuthenticationIdentity = vi.fn()
+    const owner = createComputeAuthenticationOwner({
+      repository: {
+        getAuthenticationOperation: vi.fn(async () => null),
+        replayAuthenticationChange: vi.fn(async () => null),
+        get: vi.fn(async () => host),
+        changeAuthentication
+      } as unknown as ComputeHostRepository,
+      vault: {
+        bindOperationIntent: vi.fn(() => 'fingerprint'),
+        encrypt: vi.fn()
+      } as unknown as CredentialVault,
+      passwordAdapter: { acquireWithPassword: vi.fn() } as unknown as PasswordSshAdapter,
+      sshRunner: { run: vi.fn() } as never,
+      scpRunner: {} as never,
+      approvalBroker: {
+        invalidateProvider,
+        completeProviderInvalidation: vi.fn()
+      },
+      hostLifecycle: { pruneSessionEnabledHosts },
+      permissionGrantRegistry: { finalizeOwnerDeletion } as never,
+      connectionBroker: {
+        acquire: vi.fn(),
+        invalidateAuthenticationIdentity,
+        beginHostDeletion: vi.fn(async () => undefined),
+        abortHostDeletion: vi.fn(),
+        completeHostDeletion: vi.fn()
+      } as never
+    })
+
+    await expect(
+      owner.changeAuthentication({
+        providerId: host.providerId,
+        expectedRevision: 4,
+        operationId: 'unchanged-edit',
+        authenticationMode: 'password',
+        username: 'researcher',
+        port: 22
+      })
+    ).resolves.toBe(host)
+
+    expect(changeAuthentication).not.toHaveBeenCalled()
+    expect(pruneSessionEnabledHosts).not.toHaveBeenCalled()
+    expect(finalizeOwnerDeletion).not.toHaveBeenCalled()
+    expect(invalidateProvider).not.toHaveBeenCalled()
+    expect(invalidateAuthenticationIdentity).not.toHaveBeenCalled()
+  })
+
   it('preserves a scheduler Host shape when persisting a background authentication failure', async () => {
     const host = schedulerPasswordHost()
     const updateAuthenticationFailure = vi.fn(async () => true)

@@ -11,7 +11,6 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertDialog } from 'radix-ui'
 
 import {
   DETAILS_DOC_MAX_LENGTH,
@@ -20,15 +19,6 @@ import {
 } from '../../../../shared/compute'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  dialogBodyClassName,
-  dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -40,6 +30,7 @@ import {
 } from './compute-runtime-recovery'
 import { SettingsSection } from './SettingsLayout'
 import { ComputeHostAuthenticationDetail } from './ComputeHostAuthenticationDetail'
+import { ComputeHostRemovalDialog } from './ComputeHostRemovalDialog'
 
 type ComputeHostDetailProps = {
   providerId: string
@@ -89,7 +80,6 @@ export function ComputeHostDetail({
   const hosts = useComputeStore((state) => state.hosts)
   const isLoaded = useComputeStore((state) => state.isLoaded)
   const loadHosts = useComputeStore((state) => state.loadHosts)
-  const deleteHost = useComputeStore((state) => state.deleteHost)
   const probeHost = useComputeStore((state) => state.probeHost)
   const probingIds = useComputeStore((state) => state.probingIds)
   const saveDetails = useComputeStore((state) => state.saveDetails)
@@ -104,6 +94,7 @@ export function ComputeHostDetail({
 
   const [probeError, setProbeError] = useState<DetailError | undefined>(undefined)
   const authenticationAlertRef = useRef<HTMLDivElement>(null)
+  const authenticationTestRef = useRef<HTMLButtonElement>(null)
   const [resolvedAuthenticationRequest, setResolvedAuthenticationRequest] = useState<
     string | number | undefined
   >()
@@ -113,24 +104,71 @@ export function ComputeHostDetail({
   const authenticationRetriesPaused =
     host?.probeResult?.authenticationCode === 'authentication_failed' &&
     host.probeResult.authenticationRevision === (host.authentication?.revision ?? 0)
-  const [configurationExpanded, setConfigurationExpanded] = useState(true)
 
-  useEffect(() => {
-    if (!showAuthenticationRecovery) return
-    const target = authenticationAlertRef.current
-    target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    target?.focus({ preventScroll: true })
-  }, [showAuthenticationRecovery, authenticationRequest, host?.providerId])
-  const [removeOpen, setRemoveOpen] = useState(false)
-  const [removeBusy, setRemoveBusy] = useState(false)
-  const [removeError, setRemoveError] = useState<string | undefined>(undefined)
-  const [deletionBlocked, setDeletionBlocked] = useState<boolean | undefined>(undefined)
   const [passwordCapability, setPasswordCapability] = useState<
     ComputePasswordCapability | undefined
   >(undefined)
   const [authenticationEditor, setAuthenticationEditor] = useState<
     'configuration' | 'password' | undefined
   >()
+  const secureStorageBlocksRecovery =
+    authenticationFocus === 'secure_storage_unavailable' || passwordCapability?.available === false
+  const recoveryRequestsPasswordEntry =
+    authenticationFocus === 'credential_required' ||
+    authenticationFocus === 'credential_unavailable' ||
+    authenticationFocus === 'authentication_failed' ||
+    authenticationFocus === 'credential_conflict' ||
+    authenticationFocus === 'reset_failed'
+  const authenticationRecoveryEditor = secureStorageBlocksRecovery
+    ? undefined
+    : host?.authentication?.mode === 'password' && recoveryRequestsPasswordEntry
+      ? 'password'
+      : 'configuration'
+  const recoveryCanPrepare =
+    showAuthenticationRecovery &&
+    host !== undefined &&
+    (host.authentication?.mode !== 'password' || passwordCapability !== undefined)
+  const recoveryPreparationKey = recoveryCanPrepare
+    ? `${host.providerId}:${String(authenticationRequest)}:${String(passwordCapability?.available)}`
+    : undefined
+  const [preparedAuthenticationRecovery, setPreparedAuthenticationRecovery] = useState<
+    string | undefined
+  >()
+
+  // Prepare each deep-link request before commit so the focus effect sees the actionable editor in
+  // the same committed tree. A repeated error code receives a new request id and reopens it.
+  if (
+    recoveryPreparationKey !== undefined &&
+    preparedAuthenticationRecovery !== recoveryPreparationKey
+  ) {
+    setPreparedAuthenticationRecovery(recoveryPreparationKey)
+    setAuthenticationEditor(authenticationRecoveryEditor)
+  }
+
+  useEffect(() => {
+    if (!showAuthenticationRecovery || !host) return
+    if (host.authentication?.mode === 'password' && passwordCapability === undefined) return
+    if (authenticationEditor !== authenticationRecoveryEditor) return
+
+    const target = secureStorageBlocksRecovery
+      ? authenticationTestRef.current
+      : document.getElementById(
+          authenticationRecoveryEditor === 'password'
+            ? 'compute-reset-password'
+            : 'compute-detail-username'
+        )
+    const destination = target ?? authenticationAlertRef.current
+    destination?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    destination?.focus({ preventScroll: true })
+  }, [
+    authenticationEditor,
+    authenticationRecoveryEditor,
+    authenticationRequest,
+    host,
+    passwordCapability,
+    secureStorageBlocksRecovery,
+    showAuthenticationRecovery
+  ])
 
   // Details editor state
   const [detailsDoc, setDetailsDoc] = useState<string>('')
@@ -221,31 +259,6 @@ export function ComputeHostDetail({
       : 'none'
 
   const probedAgo = probedLabel(host)
-
-  const openRemoveConfirmation = (): void => {
-    setRemoveOpen(true)
-    setRemoveError(undefined)
-    setDeletionBlocked(undefined)
-    void window.api.compute
-      .deletionStatus({ providerId: host.providerId })
-      .then(({ blockedByJobs }) => setDeletionBlocked(blockedByJobs))
-      .catch(() => setRemoveError(t('Could not check whether this Host can be removed.')))
-  }
-
-  const handleRemove = async (): Promise<void> => {
-    setRemoveBusy(true)
-    setRemoveError(undefined)
-    try {
-      await deleteHost(host.providerId)
-      setRemoveOpen(false)
-      onRemoved()
-    } catch {
-      setRemoveError(t('Could not remove this Compute Host.'))
-      setDeletionBlocked(true)
-    } finally {
-      setRemoveBusy(false)
-    }
-  }
 
   const handleProbe = async (): Promise<void> => {
     setProbeError(undefined)
@@ -390,59 +403,6 @@ export function ComputeHostDetail({
         </div>
       </div>
 
-      <AlertDialog.Root open={removeOpen} onOpenChange={setRemoveOpen}>
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
-          >
-            <div className={dialogHeaderClassName}>
-              <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Remove Compute Host?')}
-              </AlertDialog.Title>
-            </div>
-            <div className={dialogBodyClassName}>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                {host.authentication?.mode === 'password'
-                  ? t(
-                      'The local Compute Host and encrypted password will be deleted. The remote SSH account is unchanged, and the password cannot be recovered.'
-                    )
-                  : t(
-                      'The local Compute Host will be deleted. The remote SSH account is unchanged.'
-                    )}
-              </AlertDialog.Description>
-              {deletionBlocked ? (
-                <p role="alert" className="mt-3 text-sm text-destructive">
-                  {t(
-                    'This Host cannot be removed while Compute Jobs are active or still need harvesting or remote cleanup.'
-                  )}
-                </p>
-              ) : null}
-              {removeError ? (
-                <p role="alert" className="mt-3 text-sm text-destructive">
-                  {removeError}
-                </p>
-              ) : null}
-            </div>
-            <div className={dialogFooterClassName}>
-              <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline" disabled={removeBusy}>
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
-              <Button
-                type="button"
-                variant="destructive"
-                disabled={removeBusy || deletionBlocked !== false}
-                onClick={() => void handleRemove()}
-              >
-                {removeBusy ? t('Removing…') : t('Remove Host')}
-              </Button>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-
       {/* Probe failed banner — shown when the last probe returned ok:false */}
       {status === 'failed' && probed ? (
         <div
@@ -586,27 +546,18 @@ export function ComputeHostDetail({
           </>
         }
         action={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={
-              configurationExpanded ? t('Collapse configuration') : t('Expand configuration')
-            }
-            aria-expanded={configurationExpanded}
-            onClick={() => {
-              if (configurationExpanded) setAuthenticationEditor(undefined)
-              setConfigurationExpanded((expanded) => !expanded)
-            }}
-          >
-            {configurationExpanded ? (
-              <ChevronUp className="size-4" aria-hidden="true" />
-            ) : (
-              <ChevronDown className="size-4" aria-hidden="true" />
-            )}
-          </Button>
+          authenticationEditor !== 'configuration' ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setAuthenticationEditor('configuration')}
+            >
+              {t('Edit')}
+            </Button>
+          ) : null
         }
-        contentClassName={configurationExpanded ? 'mt-0' : 'hidden'}
       >
         {showAuthenticationRecovery ? (
           <div
@@ -616,7 +567,21 @@ export function ComputeHostDetail({
             tabIndex={-1}
             className="mt-3 rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-sm text-status-failure-strong outline-none"
           >
-            {computeRuntimeRecoveryCopy(authenticationFocus, t)}
+            <p>{computeRuntimeRecoveryCopy(authenticationFocus, t)}</p>
+            {authenticationFocus === 'secure_storage_unavailable' ||
+            passwordCapability?.available === false ? (
+              <Button
+                ref={authenticationTestRef}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={isProbing}
+                onClick={() => void handleProbe()}
+              >
+                {t('Test connection')}
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {host.authentication?.mode === 'password' &&
@@ -660,16 +625,12 @@ export function ComputeHostDetail({
             <ComputeHostAuthenticationDetail
               host={host}
               isEditing={authenticationEditor === 'configuration'}
-              onEditingChange={(isEditing) => {
-                setConfigurationExpanded(true)
+              onEditingChange={(isEditing) =>
                 setAuthenticationEditor((current) =>
                   isEditing ? 'configuration' : current === 'configuration' ? undefined : current
                 )
-              }}
-              onUpdatePassword={() => {
-                setConfigurationExpanded(true)
-                setAuthenticationEditor('password')
-              }}
+              }
+              onUpdatePassword={() => setAuthenticationEditor('password')}
               changeAuthentication={changeAuthentication}
             />
             <ComputePasswordResetSection
@@ -976,21 +937,7 @@ export function ComputeHostDetail({
         )}
       </div>
 
-      <SettingsSection
-        className="mt-8"
-        title={t('Danger zone')}
-        separated
-        description={t(
-          'Removing this Compute Host deletes its local configuration and cannot be undone.'
-        )}
-        action={
-          <Button type="button" variant="destructive" size="sm" onClick={openRemoveConfirmation}>
-            {t('Remove Host')}
-          </Button>
-        }
-      >
-        <></>
-      </SettingsSection>
+      <ComputeHostRemovalDialog host={host} onRemoved={onRemoved} />
     </div>
   )
 }

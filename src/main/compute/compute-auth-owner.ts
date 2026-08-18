@@ -49,7 +49,7 @@ type ChangeComputeHostAuthenticationPersistence = Readonly<{
   operationId: string
   requestFingerprint: string
   authenticationMode: ComputeAuthenticationMode
-  username: string
+  username: string | undefined
   port: number
   identityFile?: string
   ciphertext?: Buffer
@@ -59,7 +59,7 @@ type ChangeComputeHostAuthenticationPersistence = Readonly<{
 type ComputeAuthRepository = Readonly<{
   getAuthenticationOperation(
     operationId: string
-  ): Promise<Readonly<{ requestFingerprint: string | undefined }> | null>
+  ): Promise<Readonly<{ requestFingerprint: string }> | null>
   preparePasswordCreate(request: PreparePasswordCreateRequest): Promise<PasswordCreatePreparation>
   createPasswordHost(request: CreatePasswordHostPersistence): Promise<ComputeHost>
   preparePasswordReset(request: PreparePasswordResetRequest): Promise<PasswordResetPreparation>
@@ -68,7 +68,7 @@ type ComputeAuthRepository = Readonly<{
   replayAuthenticationChange?(
     operationId: string,
     providerId: string,
-    requestFingerprint?: string
+    requestFingerprint: string
   ): Promise<ComputeHost | null>
   changeAuthentication(request: ChangeComputeHostAuthenticationPersistence): Promise<ComputeHost>
 }>
@@ -84,7 +84,7 @@ type ComputeAuthOwnerDependencies = Readonly<{
   now?: () => Date
 }>
 
-const clean = (value: string, label: string): string => {
+const requireValidTrimmedField = (value: string, label: string): string => {
   const result = value.trim()
   if (!result || result.length > 255 || /[\0\r\n]/.test(result)) {
     throw new ComputeConnectionError(
@@ -144,9 +144,12 @@ class ComputeAuthOwner {
     if (request.authenticationMode !== 'password') {
       throw new ComputeConnectionError('unsupported_auth_configuration')
     }
-    const alias = clean(request.sshAlias, 'SSH alias')
-    const username = clean(request.username, 'Username')
-    const operationId = clean(request.operationId, 'Credential operation identifier')
+    const alias = requireValidTrimmedField(request.sshAlias, 'SSH alias')
+    const username = requireValidTrimmedField(request.username, 'Username')
+    const operationId = requireValidTrimmedField(
+      request.operationId,
+      'Credential operation identifier'
+    )
     if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65_535) {
       throw new ComputeConnectionError(
         'unsupported_auth_configuration',
@@ -204,8 +207,11 @@ class ComputeAuthOwner {
   }
 
   resetPassword(request: ResetPasswordComputeHostRequest): Promise<ComputeHost> {
-    const providerId = clean(request.providerId, 'Compute Host identity')
-    const operationId = clean(request.operationId, 'Credential operation identifier')
+    const providerId = requireValidTrimmedField(request.providerId, 'Compute Host identity')
+    const operationId = requireValidTrimmedField(
+      request.operationId,
+      'Credential operation identifier'
+    )
     if (
       !Number.isInteger(request.expectedAuthenticationRevision) ||
       request.expectedAuthenticationRevision < 1
@@ -254,7 +260,10 @@ class ComputeAuthOwner {
   async changeAuthentication(
     request: ChangeComputeHostAuthenticationRequest
   ): Promise<ComputeHost> {
-    const providerId = clean(request.providerId, 'Compute Host provider identifier')
+    const providerId = requireValidTrimmedField(
+      request.providerId,
+      'Compute Host provider identifier'
+    )
     return this.enqueueMutation(providerId, () =>
       this.changeAuthenticationSerialized(providerId, request)
     )
@@ -264,10 +273,22 @@ class ComputeAuthOwner {
     providerId: string,
     request: ChangeComputeHostAuthenticationRequest
   ): Promise<ComputeHost> {
-    const operationId = clean(request.operationId, 'Credential operation identifier')
-    const username = clean(request.username, 'Username')
+    const operationId = requireValidTrimmedField(
+      request.operationId,
+      'Credential operation identifier'
+    )
+    // An absent username is only valid for ssh_config mode, where ~/.ssh/config supplies the User.
+    const username = request.username?.trim()
+      ? requireValidTrimmedField(request.username, 'Username')
+      : undefined
     if (request.authenticationMode !== 'ssh_config' && request.authenticationMode !== 'password') {
       throw new ComputeConnectionError('unsupported_auth_configuration')
+    }
+    if (request.authenticationMode === 'password' && !username) {
+      throw new ComputeConnectionError(
+        'unsupported_auth_configuration',
+        'Username is required for password authentication.'
+      )
     }
     if (!Number.isInteger(request.expectedRevision) || request.expectedRevision < 1) {
       throw new ComputeConnectionError('credential_conflict')
@@ -279,14 +300,14 @@ class ComputeAuthOwner {
       )
     }
     const identityFile = request.identityFile
-      ? clean(request.identityFile, 'Identity file')
+      ? requireValidTrimmedField(request.identityFile, 'Identity file')
       : undefined
     const requestFingerprint = await this.bindOperationIntent(operationId, [
       'change_authentication',
       providerId,
       request.expectedRevision,
       request.authenticationMode,
-      username,
+      username ?? null,
       request.port,
       identityFile ?? null,
       request.password ?? null
@@ -299,13 +320,24 @@ class ComputeAuthOwner {
     if (replay) return replay
     const host = await this.dependencies.repository.get(providerId)
     if (!host) throw new Error(`No compute host found with provider id "${providerId}".`)
+    if ((host.authentication?.revision ?? 1) !== request.expectedRevision) {
+      throw new ComputeConnectionError('credential_conflict')
+    }
+    const currentIdentityFile =
+      host.authentication?.mode === 'ssh_config' ? host.sshOverrides?.identityFile : undefined
+    const hasMaterialChange =
+      host.authentication?.mode !== request.authenticationMode ||
+      host.sshOverrides?.user !== username ||
+      (host.sshOverrides?.port ?? 22) !== request.port ||
+      (request.authenticationMode === 'ssh_config' && currentIdentityFile !== identityFile)
+    if (!hasMaterialChange) return host
     if (await this.dependencies.hasBlockingJobs?.(providerId)) {
       throw new ComputeConnectionError('credential_change_blocked_by_jobs')
     }
     const candidate: ComputeHost = {
       ...host,
       sshOverrides: {
-        user: username,
+        ...(username ? { user: username } : {}),
         port: request.port,
         ...(request.authenticationMode === 'ssh_config' && identityFile ? { identityFile } : {})
       },

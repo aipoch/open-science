@@ -431,8 +431,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeHost_probeResultJson_check" CHECK ("probeResult" IS NULL OR (json_valid("probeResult") AND json_type("probeResult") = 'object'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ComputeCredential" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "computeHostId" TEXT NOT NULL,
+    "computeHostId" TEXT NOT NULL PRIMARY KEY,
     "ciphertext" BLOB NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
@@ -441,13 +440,12 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
   `CREATE TABLE IF NOT EXISTS "ComputeAuthOperation" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "providerId" TEXT NOT NULL,
-    "operationKind" TEXT NOT NULL DEFAULT 'legacy',
-    "requestFingerprint" TEXT,
+    "operationKind" TEXT NOT NULL,
+    "requestFingerprint" TEXT NOT NULL,
     "resultRevision" INTEGER NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ComputeAuthOperation_resultRevision_check" CHECK ("resultRevision" >= 1),
-    CONSTRAINT "ComputeAuthOperation_operationKind_check" CHECK ("operationKind" IN ('legacy', 'create_password', 'reset_password', 'change_authentication')),
-    CONSTRAINT "ComputeAuthOperation_requestFingerprint_check" CHECK (("operationKind" = 'legacy' AND "requestFingerprint" IS NULL) OR ("operationKind" <> 'legacy' AND "requestFingerprint" IS NOT NULL))
+    CONSTRAINT "ComputeAuthOperation_operationKind_check" CHECK ("operationKind" IN ('create_password', 'reset_password', 'change_authentication'))
 );`,
   `CREATE TABLE IF NOT EXISTS "GrantedLocalRoot" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -510,7 +508,6 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeJob_status_idx" ON "ComputeJob"("status");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId");`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeCredential_computeHostId_key" ON "ComputeCredential"("computeHostId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeAuthOperation_providerId_idx" ON "ComputeAuthOperation"("providerId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`
 ] as const

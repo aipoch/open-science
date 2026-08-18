@@ -593,6 +593,63 @@ describe('Compute authentication identity-change application handler', () => {
     ...overrides
   })
 
+  it('returns the current Host without validation or mutation when authentication settings are unchanged', async () => {
+    const validateSshConfig = vi.fn()
+    const hasBlockingJobs = vi.fn()
+    const changeAuthentication = vi.fn()
+    const invalidateAuthenticationIdentity = vi.fn()
+    const owner = new ComputeAuthOwner({
+      repository: authRepository({
+        get: vi.fn(async () => passwordHost),
+        changeAuthentication
+      }),
+      vault: credentialVault({ encrypt: vi.fn() }),
+      passwordAdapter: { acquireWithPassword: vi.fn() } as unknown as PasswordSshAdapter,
+      validateSshConfig,
+      hasBlockingJobs,
+      invalidateAuthenticationIdentity
+    })
+
+    await expect(
+      owner.changeAuthentication(
+        request({
+          authenticationMode: 'password',
+          username: 'researcher',
+          port: 22
+        })
+      )
+    ).resolves.toBe(passwordHost)
+
+    expect(hasBlockingJobs).not.toHaveBeenCalled()
+    expect(validateSshConfig).not.toHaveBeenCalled()
+    expect(changeAuthentication).not.toHaveBeenCalled()
+    expect(invalidateAuthenticationIdentity).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unchanged request carrying a stale authentication revision', async () => {
+    const changeAuthentication = vi.fn()
+    const owner = new ComputeAuthOwner({
+      repository: authRepository({
+        get: vi.fn(async () => passwordHost),
+        changeAuthentication
+      }),
+      vault: credentialVault({ encrypt: vi.fn() }),
+      passwordAdapter: {} as PasswordSshAdapter
+    })
+
+    await expect(
+      owner.changeAuthentication(
+        request({
+          expectedRevision: 2,
+          authenticationMode: 'password',
+          username: 'researcher',
+          port: 22
+        })
+      )
+    ).rejects.toMatchObject({ code: 'credential_conflict' })
+    expect(changeAuthentication).not.toHaveBeenCalled()
+  })
+
   it('validates candidate SSH configuration before atomically switching and deleting the credential', async () => {
     const committed = {
       ...passwordHost,
@@ -660,6 +717,33 @@ describe('Compute authentication identity-change application handler', () => {
       code: 'authentication_failed'
     })
     expect(changeAuthentication).not.toHaveBeenCalled()
+  })
+
+  it('keeps the old durable identity when the application stops after validation but before commit', async () => {
+    const durableHost = passwordHost
+    const validateSshConfig = vi.fn(async () => undefined)
+    const changeAuthentication = vi.fn(async () => {
+      throw new Error('application terminated before durable commit')
+    })
+    const get = vi.fn<(providerId: string) => Promise<ComputeHost>>().mockResolvedValue(durableHost)
+    const owner = new ComputeAuthOwner({
+      repository: authRepository({ get, changeAuthentication }),
+      vault: credentialVault({ encrypt: vi.fn() }),
+      passwordAdapter: {} as PasswordSshAdapter,
+      validateSshConfig
+    })
+
+    await expect(owner.changeAuthentication(request())).rejects.toThrow(
+      'application terminated before durable commit'
+    )
+
+    expect(validateSshConfig).toHaveBeenCalledOnce()
+    expect(changeAuthentication).toHaveBeenCalledAfter(validateSshConfig)
+    await expect(get(durableHost.providerId)).resolves.toBe(durableHost)
+    expect(durableHost).toMatchObject({
+      sshOverrides: { user: 'researcher', port: 22 },
+      authentication: { mode: 'password', revision: 1 }
+    })
   })
 
   it('switches SSH configuration to password only after password-only candidate validation', async () => {

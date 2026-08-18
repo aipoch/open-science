@@ -127,7 +127,7 @@ describe('ComputeHostDetail', () => {
     }
   })
 
-  it('renders one expanded Configuration section without a duplicate connection test action', async () => {
+  it('renders a single Configuration section with Edit in its header', async () => {
     useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true })
 
     await act(async () => {
@@ -144,19 +144,21 @@ describe('ComputeHostDetail', () => {
     const connectionTests = Array.from(container.querySelectorAll('button')).filter(
       (button) => button.textContent?.trim() === 'Test connection'
     )
+    const editButtons = Array.from(
+      authenticationSections[0]?.querySelectorAll('button') ?? []
+    ).filter((button) => button.textContent?.trim() === 'Edit')
 
     expect(authenticationSections).toHaveLength(1)
     expect(authenticationHeadings).toHaveLength(1)
     expect(connectionTests).toHaveLength(0)
-    expect(authenticationSections[0]?.textContent).toContain('Edit')
+    // Exactly one Edit action remains — the header one; the old bottom-right duplicate is gone.
+    expect(editButtons).toHaveLength(1)
     expect(authenticationSections[0]?.textContent).toContain('Update')
     expect(authenticationSections[0]?.textContent).toContain('Configured · cannot be viewed')
     expect(authenticationSections[0]?.querySelector('input[type="radio"]')).toBeNull()
     expect(
-      authenticationSections[0]
-        ?.querySelector('[aria-label="Collapse configuration"]')
-        ?.getAttribute('aria-expanded')
-    ).toBe('true')
+      authenticationSections[0]?.querySelector('[aria-label="Collapse configuration"]')
+    ).toBeNull()
   })
 
   it('resets a password inline and clears the renderer-local secret after success', async () => {
@@ -486,8 +488,26 @@ describe('ComputeHostDetail', () => {
     }
   )
 
-  it('requires explicit destructive confirmation before deleting a password Host', async () => {
+  it('shows only the bottom-right Remove Host action without Danger zone copy', () => {
+    useComputeStore.setState({ hosts: [host()], isLoaded: true })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+
+    const removeActions = Array.from(container.querySelectorAll('button')).filter(
+      (button) => button.textContent?.trim() === 'Remove Host'
+    )
+
+    expect(container.textContent).not.toContain('Danger zone')
+    expect(container.textContent).not.toContain(
+      'Removing this Compute Host deletes its local configuration and cannot be undone.'
+    )
+    expect(removeActions).toHaveLength(1)
+    expect(removeActions[0]?.parentElement?.classList.contains('justify-end')).toBe(true)
+  })
+
+  it('checks eligibility and requires explicit confirmation before deleting a password Host', async () => {
     const deleteHost = vi.fn(async () => undefined)
+    const onRemoved = vi.fn()
     useComputeStore.setState({
       hosts: [
         host({
@@ -501,7 +521,7 @@ describe('ComputeHostDetail', () => {
       ],
       deleteHost
     })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={onRemoved} />))
 
     const remove = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Remove Host'
@@ -509,6 +529,7 @@ describe('ComputeHostDetail', () => {
     await act(async () => remove?.click())
 
     expect(deleteHost).not.toHaveBeenCalled()
+    expect(window.api.compute.deletionStatus).toHaveBeenCalledWith({ providerId: 'ssh:biowulf' })
     expect(document.body.textContent).toContain(
       'The local Compute Host and encrypted password will be deleted.'
     )
@@ -520,6 +541,52 @@ describe('ComputeHostDetail', () => {
     ).find((button) => button.textContent?.trim() === 'Remove Host')
     await act(async () => confirm?.click())
     expect(deleteHost).toHaveBeenCalledWith('ssh:biowulf')
+    expect(onRemoved).toHaveBeenCalledOnce()
+  })
+
+  it('keeps removal blocked while Compute Jobs still need attention', async () => {
+    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({ blockedByJobs: true })
+    const deleteHost = vi.fn(async () => undefined)
+    useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+
+    const remove = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Remove Host'
+    )
+    await act(async () => remove?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const confirm = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Remove Host'
+    )
+    expect(dialog?.textContent).toContain(
+      'This Host cannot be removed while Compute Jobs are active or still need harvesting or remote cleanup.'
+    )
+    expect(confirm?.disabled).toBe(true)
+    expect(deleteHost).not.toHaveBeenCalled()
+  })
+
+  it('keeps the dialog open and reports a deletion failure without claiming success', async () => {
+    const deleteHost = vi.fn(async () => {
+      throw new Error('delete failed')
+    })
+    const onRemoved = vi.fn()
+    useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={onRemoved} />))
+
+    const remove = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Remove Host'
+    )
+    await act(async () => remove?.click())
+    const confirm = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')
+    ).find((button) => button.textContent?.trim() === 'Remove Host')
+    await act(async () => confirm?.click())
+
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Could not remove this Compute Host.'
+    )
+    expect(onRemoved).not.toHaveBeenCalled()
   })
 
   it('shows Details, Scratch root, and Concurrent job limit sections', () => {
@@ -613,6 +680,136 @@ describe('ComputeHostDetail', () => {
     )
 
     await act(async () => release(passwordHost()))
+    expect(authSection?.textContent).toContain(
+      'SSH configuration verified and activated. Saved password deleted. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+    )
+  })
+
+  it('confirms password activation and lifecycle consequences when switching from SSH configuration', async () => {
+    const sshHost = host({
+      sshOverrides: { user: 'researcher', port: 22 },
+      authentication: {
+        mode: 'ssh_config',
+        credentialStatus: 'missing',
+        revision: 3,
+        lastVerifiedAt: undefined
+      }
+    })
+    const changed = passwordHost()
+    const changeAuthentication = vi
+      .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
+      .mockResolvedValue(changed)
+    useComputeStore.setState({ hosts: [sshHost], isLoaded: true, changeAuthentication })
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+
+    const click = async (label: string): Promise<void> => {
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent?.trim() === label
+      )
+      await act(async () => button?.click())
+    }
+    await click('Edit')
+    act(() =>
+      container
+        .querySelector<HTMLInputElement>('input[value="password"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    )
+    act(() => pastePassword(container.querySelector('#compute-detail-password'), 'candidate'))
+    await click('Test and save')
+
+    expect(container.textContent).toContain(
+      'Password authentication verified and activated. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+    )
+  })
+
+  it('explains the re-enable and reapproval consequences after a username change', async () => {
+    const changeAuthentication = vi
+      .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
+      .mockResolvedValue(passwordHost())
+    useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true, changeAuthentication })
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+
+    const enter = (id: string, value: string): void => {
+      const input = container.querySelector<HTMLInputElement>(`#${id}`)!
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+          input,
+          value
+        )
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    const click = async (label: string): Promise<void> => {
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent?.trim() === label
+      )
+      await act(async () => button?.click())
+    }
+
+    await click('Edit')
+    enter('compute-detail-username', 'new-user')
+    act(() => pastePassword(container.querySelector('#compute-detail-password'), 'candidate'))
+    await click('Test and save')
+
+    expect(container.textContent).toContain(
+      'Username changed. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+    )
+  })
+
+  it('allows an unchanged password configuration to save without a password', async () => {
+    const current = passwordHost()
+    const changeAuthentication = vi
+      .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
+      .mockResolvedValue(current)
+    useComputeStore.setState({ hosts: [current], isLoaded: true, changeAuthentication })
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+
+    const click = async (label: string): Promise<void> => {
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent?.trim() === label
+      )
+      await act(async () => button?.click())
+    }
+    await click('Edit')
+    await click('Test and save')
+
+    expect(changeAuthentication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authenticationMode: 'password',
+        username: 'researcher',
+        port: 22
+      })
+    )
+    expect(changeAuthentication.mock.calls[0]?.[0]).not.toHaveProperty('password')
+    expect(container.textContent).toContain('Authentication settings are already up to date.')
+  })
+
+  it('reports other connection changes separately from username and method changes', async () => {
+    const current = passwordHost()
+    const changeAuthentication = vi
+      .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
+      .mockResolvedValue(current)
+    useComputeStore.setState({ hosts: [current], isLoaded: true, changeAuthentication })
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+
+    const click = async (label: string): Promise<void> => {
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent?.trim() === label
+      )
+      await act(async () => button?.click())
+    }
+    await click('Edit')
+    const port = container.querySelector<HTMLInputElement>('#compute-detail-port')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(port, '2222')
+      port.dispatchEvent(new Event('input', { bubbles: true }))
+      pastePassword(container.querySelector('#compute-detail-password'), 'candidate')
+    })
+    await click('Test and save')
+
+    expect(container.textContent).toContain(
+      'Connection settings verified and saved. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+    )
   })
 
   it('validates a changed username with the current password method and renders a Job block inline', async () => {
@@ -831,6 +1028,7 @@ describe('ComputeHostDetail', () => {
     expectInvalid('compute-detail-port', 'Port must be an integer from 1 through 65535.')
 
     enter('compute-detail-port', '22')
+    enter('compute-detail-username', 'new-researcher')
     enter('compute-detail-password', '')
     click('Test and save')
     expectInvalid('compute-detail-password', 'Password is required.')
@@ -934,7 +1132,7 @@ describe('ComputeHostDetail', () => {
     expect(saveDetails).toHaveBeenCalled()
   })
 
-  it('focuses the Authentication recovery alert with safe guidance', async () => {
+  it('opens and focuses the saved-password reset editor from credential recovery', async () => {
     const scrollIntoView = vi.fn()
     HTMLElement.prototype.scrollIntoView = scrollIntoView
     useComputeStore.setState({
@@ -960,13 +1158,48 @@ describe('ComputeHostDetail', () => {
         />
       )
     })
-    await act(async () => Promise.resolve())
+    await act(async () => {
+      await Promise.resolve()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
 
     const alert = container.querySelector<HTMLElement>('[data-compute-authentication-alert]')
+    const password = container.querySelector<HTMLInputElement>('#compute-reset-password')
     expect(alert?.textContent).toContain('The saved username or password was rejected')
-    expect(alert).toBe(document.activeElement)
+    expect(password).toBe(document.activeElement)
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
     expect(container.querySelector('#compute-detail-password')).toBeNull()
+  })
+
+  it('focuses an actionable connection test when secure storage blocks password editing', async () => {
+    const scrollIntoView = vi.fn()
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+    vi.mocked(window.api.compute.passwordCapability).mockResolvedValueOnce({
+      available: false,
+      reason: 'secure_storage_unavailable'
+    })
+    useComputeStore.setState({ hosts: [passwordHost()], isLoaded: true })
+
+    act(() => {
+      root.render(
+        <ComputeHostDetail
+          providerId="ssh:biowulf"
+          onRemoved={vi.fn()}
+          authenticationFocus="secure_storage_unavailable"
+        />
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const testConnection = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Test connection'
+    )
+    expect(testConnection).toBe(document.activeElement)
+    expect(container.querySelector('#compute-reset-password')).toBeNull()
+    expect(container.textContent).toContain('Unlock system credential storage')
   })
 
   it('clears stale recovery guidance after a successful probe', async () => {

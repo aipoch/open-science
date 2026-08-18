@@ -32,11 +32,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
 import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
-import {
-  decodeRemoteFsError,
-  resolveRemotePath,
-  validateRemotePath
-} from '../../../../shared/remote-fs'
+import { resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
 import { Button } from '@/components/ui/button'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
@@ -44,10 +40,8 @@ import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import {
-  computeRuntimeRecoveryAction,
-  computeRuntimeRecoveryCopy
-} from './compute-runtime-recovery'
+import { computeRuntimeRecoveryAction } from './compute-runtime-recovery'
+import { fileBrowserRemoteError } from './file-browser-remote-error'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -215,19 +209,12 @@ function DetailPanel({
         filePath: result.path
       })
     } catch (err) {
-      const e = err as Error & {
-        remoteFsError?: {
-          detail: string
-          remoteKind: string
-          authenticationCode?: ComputeAuthenticationErrorCode
-        }
-      }
-      const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
-      const authenticationCode = fsErr?.authenticationCode
-      const detail = authenticationCode
-        ? computeRuntimeRecoveryCopy(authenticationCode, t)
-        : (fsErr?.detail ?? e.message ?? t('Download failed'))
-      setActionStatus({ kind: 'error', message: detail, authenticationCode })
+      const decoded = fileBrowserRemoteError(err, t, t('Download failed'))
+      setActionStatus({
+        kind: 'error',
+        message: decoded.detail,
+        authenticationCode: decoded.authenticationCode
+      })
     }
   }
 
@@ -464,27 +451,16 @@ export function FileBrowserModal({
         setAddressInput(listing.resolvedPath)
       } catch (err) {
         if (!isCurrent()) return
-        const e = err as Error & {
-          remoteFsError?: {
-            detail: string
-            remoteKind: string
-            authenticationCode?: ComputeAuthenticationErrorCode
-          }
-        }
-        const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
-        const authenticationCode = fsErr?.authenticationCode
-        const detail = authenticationCode
-          ? computeRuntimeRecoveryCopy(authenticationCode, t)
-          : (fsErr?.detail ?? e.message ?? t('Unknown error'))
+        const decoded = fileBrowserRemoteError(err, t, t('Unknown error'))
         setBrowserState({
           kind: 'error',
-          detail,
-          kind_hint: fsErr?.remoteKind,
-          authenticationCode
+          detail: decoded.detail,
+          kind_hint: decoded.remoteKind,
+          authenticationCode: decoded.authenticationCode
         })
         // Connection failure means the probe result is stale — re-probe in the background so
         // the host chip reflects the current unreachable state (green → grey).
-        if (fsErr?.remoteKind === 'connection') {
+        if (decoded.remoteKind === 'connection') {
           void probeHost(providerId).catch(() => undefined)
         }
       }

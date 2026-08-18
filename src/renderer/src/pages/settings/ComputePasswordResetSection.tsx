@@ -7,6 +7,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useComputeStore } from '@/stores/compute-store'
 import { MaskedPasswordField } from './MaskedPasswordField'
+import {
+  computeAuthenticationPresentation,
+  isComputeAuthenticationErrorCode
+} from './compute-authentication-presentation'
 
 type ComputePasswordResetSectionProps = Readonly<{
   host: ComputeHost
@@ -63,22 +67,10 @@ export function ComputePasswordResetSection({
       setSucceeded(true)
     } catch (caught) {
       const code = (caught as { code?: string }).code
-      const messages: Record<string, string> = {
-        credential_conflict: t('The Compute Host credentials changed. Start the operation again.'),
-        authentication_failed: t('Authentication failed. Verify the username and password.'),
-        secure_storage_unavailable: t(
-          'Secure credential storage is unavailable. Unlock the system keychain and retry.'
-        ),
-        host_key_unknown: t(
-          'The SSH host key is unknown. Verify it in a terminal before connecting.'
-        ),
-        host_key_changed: t(
-          'The SSH host key changed. Verify known hosts in a terminal before connecting.'
-        ),
-        host_unreachable: t('The Compute Host could not be reached.'),
-        timeout: t('The Compute Host connection timed out.')
-      }
-      setError(messages[code ?? ''] ?? t('Could not update the saved password.'))
+      const presentation = isComputeAuthenticationErrorCode(code)
+        ? computeAuthenticationPresentation(code, 'password_reset')
+        : undefined
+      setError(presentation?.copy(t) ?? t('Could not update the saved password.'))
       if (code === 'credential_conflict') setOperationId(undefined)
     } finally {
       setIsResetting(false)

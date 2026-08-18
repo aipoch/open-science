@@ -517,8 +517,7 @@ model ComputeHost {
 
 // Main-process-only password ciphertext. The renderer has no query path to this record.
 model ComputeCredential {
-  id            String      @id @default(cuid())
-  computeHostId String      @unique
+  computeHostId String      @id
   ciphertext    Bytes
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -529,8 +528,8 @@ model ComputeCredential {
 model ComputeAuthOperation {
   id             String   @id
   providerId     String
-  operationKind  String   @default("legacy")
-  requestFingerprint String?
+  operationKind  String
+  requestFingerprint String
   resultRevision Int
   createdAt      DateTime @default(now())
 

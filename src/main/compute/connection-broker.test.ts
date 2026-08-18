@@ -1050,7 +1050,7 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     )
   })
 
-  it('releases the password only for one exact target prompt and rejects interactive variants', async () => {
+  it('fails closed after rejecting any interactive variant or repeated target prompt', async () => {
     const secret = 'distinctive target-only secret'
     const responses: Array<Record<string, string>> = []
     const runner: SshRunner = {
@@ -1097,11 +1097,239 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     )
 
     const lease = await adapter.acquire(host, { intent: 'direct_command' })
-    await lease.run('true', { timeoutMs: 1000 })
+    await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
+      code: 'unsupported_auth_configuration'
+    })
 
     expect(responses.slice(0, 6)).toEqual([{}, {}, {}, {}, {}, {}])
     expect(responses[6]).toEqual({ password: secret })
     expect(responses[7]).toEqual({})
+  })
+
+  it.each([
+    ['passphrase', ["Enter passphrase for key '/tmp/id_ed25519':"]],
+    ['other-account password', ["proxy@bastion's password:"]],
+    ['keyboard-interactive', ['Keyboard-interactive authentication:']],
+    ['one-time password', ['One-time password (OTP):']],
+    ['MFA', ['MFA verification code:']],
+    [
+      'repeated target password',
+      ["researcher@cluster's password:", "researcher@cluster's password:"]
+    ]
+  ] as const)(
+    'classifies a rejected %s prompt as unsupported when SSH exits with permission denied',
+    async (_label, prompts) => {
+      const runner: SshRunner = {
+        run: vi
+          .fn()
+          .mockResolvedValueOnce({
+            exitCode: 255,
+            stdout: '',
+            stderr: 'Permission denied',
+            truncated: false,
+            timedOut: false
+          })
+          .mockImplementationOnce(async (_target, _command, options) => {
+            for (const prompt of prompts) await askAskpass(options.env ?? {}, prompt)
+            return {
+              exitCode: 255,
+              stdout: '',
+              stderr: 'Permission denied (password).',
+              truncated: false,
+              timedOut: false
+            }
+          })
+      }
+      const adapter = new PasswordSshAdapter(
+        {
+          acquirePasswordLease: vi.fn(async () => ({
+            withPassword: (operation: (password: string) => Promise<unknown>) =>
+              operation('prompt-classification-secret')
+          }))
+        } as unknown as CredentialVault,
+        runner,
+        vi.fn(async () => target),
+        vi.fn(async () => ({}))
+      )
+
+      const lease = await adapter.acquire(host, { intent: 'direct_command' })
+
+      await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
+        code: 'unsupported_auth_configuration'
+      })
+    }
+  )
+
+  it.each([
+    [
+      'network failure',
+      {
+        exitCode: 255,
+        stdout: '',
+        stderr: 'ssh: connect to host cluster port 2222: Connection refused',
+        truncated: false,
+        timedOut: false
+      },
+      'host_unreachable'
+    ],
+    [
+      'timeout',
+      {
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: true
+      },
+      'timeout'
+    ]
+  ] as const)(
+    'preserves a password-mode %s without a rejected prompt',
+    async (_label, result, code) => {
+      const runner: SshRunner = {
+        run: vi
+          .fn()
+          .mockResolvedValueOnce({
+            exitCode: 255,
+            stdout: '',
+            stderr: 'Permission denied',
+            truncated: false,
+            timedOut: false
+          })
+          .mockResolvedValueOnce(result)
+      }
+      const adapter = new PasswordSshAdapter(
+        {
+          acquirePasswordLease: vi.fn(async () => ({
+            withPassword: (operation: (password: string) => Promise<unknown>) =>
+              operation('unused-on-transport-failure')
+          }))
+        } as unknown as CredentialVault,
+        runner,
+        vi.fn(async () => target),
+        vi.fn(async () => ({}))
+      )
+
+      const lease = await adapter.acquire(host, { intent: 'direct_command' })
+
+      await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({ code })
+    }
+  )
+
+  it('keeps an answered target-password failure classified and persisted as authentication_failed', async () => {
+    const passwordHost = {
+      ...host,
+      authentication: {
+        mode: 'password' as const,
+        credentialStatus: 'configured' as const,
+        revision: 1,
+        lastVerifiedAt: undefined
+      }
+    }
+    const runner: SshRunner = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 255,
+          stdout: '',
+          stderr: 'Permission denied',
+          truncated: false,
+          timedOut: false
+        })
+        .mockImplementationOnce(async (_target, _command, options) => {
+          await askAskpass(options.env ?? {}, "researcher@cluster's password:")
+          return {
+            exitCode: 255,
+            stdout: '',
+            stderr: 'Permission denied (password).',
+            truncated: false,
+            timedOut: false
+          }
+        })
+    }
+    const passwordAdapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operation: (password: string) => Promise<unknown>) =>
+            operation('incorrect-target-password')
+        }))
+      } as unknown as CredentialVault,
+      runner,
+      vi.fn(async () => target),
+      vi.fn(async () => ({}))
+    )
+    const persistAuthenticationFailure = vi.fn(async () => undefined)
+    const broker = new SshConfigComputeConnectionBroker({
+      getHost: vi.fn(async () => passwordHost),
+      runner,
+      passwordAdapter,
+      persistAuthenticationFailure
+    })
+
+    const lease = await broker.acquire(host.providerId, { intent: 'direct_command' })
+
+    await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
+      code: 'authentication_failed'
+    })
+    expect(persistAuthenticationFailure).toHaveBeenCalledWith(passwordHost)
+  })
+
+  it('does not persist a rejected proxy prompt as an authentication failure', async () => {
+    const passwordHost = {
+      ...host,
+      authentication: {
+        mode: 'password' as const,
+        credentialStatus: 'configured' as const,
+        revision: 1,
+        lastVerifiedAt: undefined
+      }
+    }
+    const runner: SshRunner = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 255,
+          stdout: '',
+          stderr: 'Permission denied',
+          truncated: false,
+          timedOut: false
+        })
+        .mockImplementationOnce(async (_target, _command, options) => {
+          await askAskpass(options.env ?? {}, "proxy@bastion's password:")
+          return {
+            exitCode: 255,
+            stdout: '',
+            stderr: 'Permission denied (password).',
+            truncated: false,
+            timedOut: false
+          }
+        })
+    }
+    const passwordAdapter = new PasswordSshAdapter(
+      {
+        acquirePasswordLease: vi.fn(async () => ({
+          withPassword: (operation: (password: string) => Promise<unknown>) =>
+            operation('must-not-be-released')
+        }))
+      } as unknown as CredentialVault,
+      runner,
+      vi.fn(async () => target),
+      vi.fn(async () => ({}))
+    )
+    const persistAuthenticationFailure = vi.fn(async () => undefined)
+    const broker = new SshConfigComputeConnectionBroker({
+      getHost: vi.fn(async () => passwordHost),
+      runner,
+      passwordAdapter,
+      persistAuthenticationFailure
+    })
+
+    const lease = await broker.acquire(host.providerId, { intent: 'direct_command' })
+
+    await expect(lease.run('true', { timeoutMs: 1000 })).rejects.toMatchObject({
+      code: 'unsupported_auth_configuration'
+    })
+    expect(persistAuthenticationFailure).not.toHaveBeenCalled()
   })
 
   it('returns a stable authentication error without raw transfer diagnostics', async () => {

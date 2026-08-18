@@ -128,7 +128,8 @@ export type ChangeComputeHostAuthenticationRequest = Readonly<{
   expectedRevision: number
   operationId: string
   authenticationMode: ComputeAuthenticationMode
-  username: string
+  // Absent in ssh_config mode: the User (and port fallback) then come from ~/.ssh/config.
+  username?: string
   port: number
   identityFile?: string
   password?: string

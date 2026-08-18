@@ -20,7 +20,7 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      '46ca60feb95bb4fc0fde88401081e89d43acc45e610a50b55a3a407ecb9a3c85'
+      '351de2963203b618a4f9379ed4daaa7a187579e0c4183d92b9c50ecdf989c2a5'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
@@ -61,13 +61,27 @@ describe('packaged database migration ledger smoke', () => {
       const jobColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
         `PRAGMA table_info('ComputeJob')`
       )
-      const operationColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
-        `PRAGMA table_info('ComputeAuthOperation')`
+      const credentialColumns = await client.$queryRawUnsafe<Array<{ name: string; pk: bigint }>>(
+        `PRAGMA table_info('ComputeCredential')`
       )
+      const operationColumns = await client.$queryRawUnsafe<
+        Array<{ name: string; notnull: bigint; dflt_value: string | null }>
+      >(`PRAGMA table_info('ComputeAuthOperation')`)
       expect(jobColumns.map(({ name }) => name)).not.toContain('lastHarvestError')
+      expect(credentialColumns.map(({ name }) => name)).not.toContain('id')
+      expect(credentialColumns.find(({ name }) => name === 'computeHostId')).toMatchObject({
+        pk: 1n
+      })
       expect(operationColumns.map(({ name }) => name)).toEqual(
         expect.arrayContaining(['operationKind', 'requestFingerprint'])
       )
+      expect(operationColumns.find(({ name }) => name === 'operationKind')).toMatchObject({
+        notnull: 1n,
+        dflt_value: null
+      })
+      expect(operationColumns.find(({ name }) => name === 'requestFingerprint')).toMatchObject({
+        notnull: 1n
+      })
 
       const tableSchemas = await client.$queryRawUnsafe<Array<{ name: string; sql: string }>>(
         `SELECT "name", "sql" FROM "sqlite_schema"
@@ -86,9 +100,7 @@ describe('packaged database migration ledger smoke', () => {
       expect(schemaByTable.get('ComputeAuthOperation')).toContain(
         'CONSTRAINT "ComputeAuthOperation_operationKind_check"'
       )
-      expect(schemaByTable.get('ComputeAuthOperation')).toContain(
-        'CONSTRAINT "ComputeAuthOperation_requestFingerprint_check"'
-      )
+      expect(schemaByTable.get('ComputeAuthOperation')).not.toContain("'legacy'")
     } finally {
       await client.$disconnect()
       await rm(root, { force: true, recursive: true })

@@ -1,7 +1,6 @@
 import type { TFunction } from 'i18next'
 
 import type {
-  ComputeAuthenticationErrorCode,
   ComputeAuthenticationMode,
   ComputeHost,
   ComputePasswordCapability,
@@ -9,6 +8,10 @@ import type {
   CreatePasswordComputeHostRequest,
   SshOverrides
 } from '../../../../shared/compute'
+import {
+  computeAuthenticationPresentation,
+  isComputeAuthenticationErrorCode
+} from './compute-authentication-presentation'
 
 type ComputeAuthenticationValues = Readonly<{
   mode: ComputeAuthenticationMode
@@ -158,29 +161,10 @@ const computeAuthenticationErrorCopy = (error: unknown, t: TFunction): string =>
     typeof error === 'object' && error !== null && 'code' in error
       ? (error as { code?: unknown }).code
       : undefined
-  switch (code as ComputeAuthenticationErrorCode | undefined) {
-    case 'credential_required':
-      return t('A password must be configured before this Compute Host can connect.')
-    case 'credential_unavailable':
-      return t('The saved credential is unavailable on this device.')
-    case 'secure_storage_unavailable':
-      return t('Secure credential storage is unavailable. Unlock the system keychain and retry.')
-    case 'authentication_failed':
-      return t('Authentication failed. Verify the username and password.')
-    case 'host_key_unknown':
-      return t('The SSH host key is unknown. Verify it in a terminal before connecting.')
-    case 'host_key_changed':
-      return t('The SSH host key changed. Verify known hosts in a terminal before connecting.')
-    case 'host_unreachable':
-      return t('The Compute Host could not be reached.')
-    case 'timeout':
-      return t('The Compute Host connection timed out.')
-    case 'unsupported_auth_configuration':
-      return t('This SSH authentication configuration is not supported.')
-    case 'create_failed':
-    default:
-      return t('Could not add host.')
-  }
+  const presentation = isComputeAuthenticationErrorCode(code)
+    ? computeAuthenticationPresentation(code, 'create')
+    : undefined
+  return presentation?.copy(t) ?? t('Could not add host.')
 }
 
 export {

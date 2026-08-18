@@ -132,7 +132,13 @@ describe('compute host prisma client (integration)', () => {
 
     await expect(
       client.computeAuthOperation.create({
-        data: { id: 'invalid-result-revision', providerId: 'ssh:test', resultRevision: 0 }
+        data: {
+          id: 'invalid-result-revision',
+          providerId: 'ssh:test',
+          operationKind: 'create_password',
+          requestFingerprint: 'invalid-result-revision-fingerprint',
+          resultRevision: 0
+        }
       })
     ).rejects.toThrow(/constraint/i)
   })

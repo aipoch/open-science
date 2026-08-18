@@ -403,12 +403,7 @@
     {
       "tableName": "ComputeAuthOperation",
       "name": "ComputeAuthOperation_operationKind_check",
-      "expression": "\"operationKind\" IN ('legacy', 'create_password', 'reset_password', 'change_authentication')"
-    },
-    {
-      "tableName": "ComputeAuthOperation",
-      "name": "ComputeAuthOperation_requestFingerprint_check",
-      "expression": "(\"operationKind\" = 'legacy' AND \"requestFingerprint\" IS NULL) OR (\"operationKind\" <> 'legacy' AND \"requestFingerprint\" IS NOT NULL)"
+      "expression": "\"operationKind\" IN ('create_password', 'reset_password', 'change_authentication')"
     },
     {
       "tableName": "GrantedLocalRoot",

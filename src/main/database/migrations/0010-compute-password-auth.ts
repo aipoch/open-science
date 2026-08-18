@@ -1,8 +1,7 @@
 const authenticationModeExpression = `"authenticationMode" IN ('ssh_config', 'password')`
 const authenticationRevisionExpression = `"authenticationRevision" >= 1`
 const resultRevisionExpression = `"resultRevision" >= 1`
-const operationKindExpression = `"operationKind" IN ('legacy', 'create_password', 'reset_password', 'change_authentication')`
-const requestFingerprintExpression = `("operationKind" = 'legacy' AND "requestFingerprint" IS NULL) OR ("operationKind" <> 'legacy' AND "requestFingerprint" IS NOT NULL)`
+const operationKindExpression = `"operationKind" IN ('create_password', 'reset_password', 'change_authentication')`
 
 const computeAuthenticationJobErrors = [
   'approval_denied',
@@ -32,8 +31,7 @@ const computePasswordAuthMigration = {
     `ALTER TABLE "ComputeHost" ADD COLUMN "authenticationRevision" INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE "ComputeHost" ADD COLUMN "lastVerifiedAt" DATETIME`,
     `CREATE TABLE IF NOT EXISTS "ComputeCredential" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "computeHostId" TEXT NOT NULL,
+      "computeHostId" TEXT NOT NULL PRIMARY KEY,
       "ciphertext" BLOB NOT NULL,
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" DATETIME NOT NULL,
@@ -42,13 +40,12 @@ const computePasswordAuthMigration = {
     `CREATE TABLE IF NOT EXISTS "ComputeAuthOperation" (
       "id" TEXT NOT NULL PRIMARY KEY,
       "providerId" TEXT NOT NULL,
-      "operationKind" TEXT NOT NULL DEFAULT 'legacy',
-      "requestFingerprint" TEXT,
+      "operationKind" TEXT NOT NULL,
+      "requestFingerprint" TEXT NOT NULL,
       "resultRevision" INTEGER NOT NULL,
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "ComputeAuthOperation_resultRevision_check" CHECK (${resultRevisionExpression}),
-      CONSTRAINT "ComputeAuthOperation_operationKind_check" CHECK (${operationKindExpression}),
-      CONSTRAINT "ComputeAuthOperation_requestFingerprint_check" CHECK (${requestFingerprintExpression})
+      CONSTRAINT "ComputeAuthOperation_operationKind_check" CHECK (${operationKindExpression})
     )`
   ] as const,
   operations: [
@@ -112,14 +109,13 @@ const computePasswordAuthMigration = {
         {
           tableName: 'ComputeCredential',
           canonicalTableDdl: `CREATE TABLE IF NOT EXISTS "ComputeCredential" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "computeHostId" TEXT NOT NULL,
+    "computeHostId" TEXT NOT NULL PRIMARY KEY,
     "ciphertext" BLOB NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "ComputeCredential_computeHostId_fkey" FOREIGN KEY ("computeHostId") REFERENCES "ComputeHost" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`,
-          columns: ['id', 'computeHostId', 'ciphertext', 'createdAt', 'updatedAt']
+          columns: ['computeHostId', 'ciphertext', 'createdAt', 'updatedAt']
         },
         {
           tableName: 'ComputeJob',
@@ -208,7 +204,6 @@ const computePasswordAuthMigration = {
       dropOrder: ['ComputeCredential', 'ComputeJob', 'ComputeHost'],
       indexes: [
         `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId");`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeCredential_computeHostId_key" ON "ComputeCredential"("computeHostId");`,
         `CREATE INDEX IF NOT EXISTS "ComputeAuthOperation_providerId_idx" ON "ComputeAuthOperation"("providerId");`,
         `CREATE INDEX IF NOT EXISTS "ComputeJob_providerId_idx" ON "ComputeJob"("providerId");`,
         `CREATE INDEX IF NOT EXISTS "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId");`,
@@ -258,10 +253,6 @@ const computePasswordAuthMigration = {
             {
               name: 'ComputeAuthOperation_operationKind_check',
               expression: operationKindExpression
-            },
-            {
-              name: 'ComputeAuthOperation_requestFingerprint_check',
-              expression: requestFingerprintExpression
             }
           ]
         },
@@ -278,10 +269,6 @@ const computePasswordAuthMigration = {
         {
           name: 'ComputeHost_providerId_key',
           sql: `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId")`
-        },
-        {
-          name: 'ComputeCredential_computeHostId_key',
-          sql: `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeCredential_computeHostId_key" ON "ComputeCredential"("computeHostId")`
         },
         {
           name: 'ComputeAuthOperation_providerId_idx',
