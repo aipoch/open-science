@@ -599,6 +599,8 @@ export const buildConnectorTemplateExport = (
   }
   const contents = templateJson(definition)
   const parsed = parseConnectorTemplate(contents)
+  // This digest detects a stale export preview; it never protects or stores credentials.
+  // lgtm[js/insufficient-password-hash]
   const digest = parsed.ready ? createHash('sha256').update(contents).digest('hex') : undefined
   return {
     preview: {
