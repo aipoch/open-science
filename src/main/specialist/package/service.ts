@@ -204,6 +204,10 @@ export class SpecialistPackageService {
     this.now = options.now ?? (() => new Date())
   }
 
+  async recover(): Promise<void> {
+    await this.transaction.recover()
+  }
+
   private async validationCatalog(): Promise<SpecialistPackageCatalogSnapshot> {
     const [catalog, document] = await Promise.all([
       this.options.catalog(),

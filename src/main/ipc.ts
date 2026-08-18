@@ -1065,6 +1065,14 @@ const createApplicationModules = async (
       await settingsRepository.setSkillsEnabled([...new Set(ids)], enabled)
     }
   })
+  try {
+    await marketplaceService.recover()
+  } catch (error) {
+    createLogger('specialist:marketplace').error(
+      'Marketplace install recovery incomplete; Marketplace remains fail-closed',
+      diagnosticErrorFields(error)
+    )
+  }
   settingsService.setSkillDeletionGuard((skillId) =>
     specialistPackageService.assertSkillDeletionAllowed(skillId)
   )

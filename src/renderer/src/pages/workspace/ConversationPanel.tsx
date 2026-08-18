@@ -1026,15 +1026,15 @@ const ConversationPanel = ({
                       role="status"
                       aria-live="polite"
                       data-testid="specialist-unavailable-notice"
-                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2"
+                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-warning-100/50 bg-warning-100/10 px-3 py-2"
                     >
                       <AlertTriangle
-                        className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                        className="mt-0.5 size-3.5 shrink-0 text-warning-900"
                         strokeWidth={2}
                         aria-hidden="true"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium leading-5 text-amber-700 dark:text-amber-300">
+                        <div className="text-[12px] font-medium leading-5 text-warning-900">
                           {t('This Specialist is no longer available')}
                         </div>
                         <div className="text-[11px] leading-4 text-text-100">
@@ -1046,7 +1046,7 @@ const ConversationPanel = ({
                         type="button"
                         variant="outline"
                         size="xs"
-                        className="ml-auto border-amber-500/30 bg-transparent text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
+                        className="ml-auto border-warning-100/50 bg-transparent text-warning-900 hover:bg-warning-100/20 hover:text-warning-900"
                         onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
                       >
                         {t('Choose Specialist')}

@@ -385,6 +385,92 @@ describe('ConnectorsPanel (groups)', () => {
     )
   })
 
+  it('blocks Connector removal until Specialist references can be checked', async () => {
+    let finishRetry!: () => void
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('specialist store unavailable'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRetry = resolve
+          })
+      )
+    useSpecialistStore.setState({ load })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain(
+      'Specialist references could not be checked. Retry before removing this Connector.'
+    )
+    const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Remove Connector'
+    )
+    expect(confirm?.disabled).toBe(true)
+    act(() => confirm?.click())
+    expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
+
+    await act(async () => {
+      const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Retry'
+      )
+      retry?.click()
+      retry?.click()
+      await Promise.resolve()
+    })
+
+    expect(load).toHaveBeenCalledTimes(3)
+    expect(document.body.textContent).toContain('Checking…')
+    expect(confirm?.disabled).toBe(true)
+
+    await act(async () => finishRetry())
+    expect(confirm?.disabled).toBe(false)
+  })
+
+  it('does not reopen a removal dialog after cancelling a pending retry check', async () => {
+    let finishRetry!: () => void
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('specialist store unavailable'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRetry = resolve
+          })
+      )
+    useSpecialistStore.setState({ load })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')?.click()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Retry'
+      )
+      retry?.click()
+      await Promise.resolve()
+    })
+
+    act(() => {
+      const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Cancel'
+      )
+      cancel?.click()
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+
+    await act(async () => finishRetry())
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
   it('offers validated configuration import from the Add connector menu', () => {
     const onNavigate = vi.fn()
     act(() => {

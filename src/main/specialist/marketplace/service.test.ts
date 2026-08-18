@@ -408,6 +408,166 @@ describe('MarketplaceService', () => {
     expect(disabled.size).toBe(0)
   })
 
+  it('recovers pending install side effects from the exact installed archive digest', async () => {
+    const repository = new MarketplaceRepository(
+      await mkdtemp(join(tmpdir(), 'marketplace-recovery-'))
+    )
+    const installed = {
+      sourceId: 'official',
+      specialistId: 'installed-specialist',
+      publisher: 'Example',
+      version: '1.0.0',
+      releasePath: 'releases/installed-specialist/1.0.0.json',
+      releaseDigest: 'a'.repeat(64),
+      artifactDigest: 'b'.repeat(64),
+      installedArchiveDigest: 'c'.repeat(64),
+      upstreamCommit: 'd'.repeat(40),
+      selectedSkillIds: ['installed-skill'],
+      selectedConnectorIds: [],
+      installedAt: '2026-08-18T00:00:00.000Z'
+    }
+    const rolledBack = {
+      ...installed,
+      specialistId: 'rolled-back-specialist',
+      installedArchiveDigest: 'e'.repeat(64),
+      selectedSkillIds: ['rolled-back-skill']
+    }
+    await repository.beginInstallation({
+      provenance: installed,
+      newlyDisabledSkillIds: ['installed-skill']
+    })
+    await repository.beginInstallation({
+      provenance: rolledBack,
+      newlyDisabledSkillIds: ['rolled-back-skill']
+    })
+    const disabled = new Set(['installed-skill', 'rolled-back-skill'])
+    const packages = { recover: vi.fn().mockResolvedValue(undefined) }
+    const service = new MarketplaceService({
+      repository,
+      packages: packages as never,
+      fetch: vi.fn<typeof fetch>(),
+      getDisabledSkillIds: async () => [...disabled],
+      getInstalledSpecialists: async () => [
+        {
+          id: installed.specialistId,
+          origin: 'imported',
+          archiveDigest: installed.installedArchiveDigest
+        }
+      ],
+      setSkillsMainEnabled: async (ids, enabled) => {
+        for (const id of ids) {
+          if (enabled) disabled.delete(id)
+          else disabled.add(id)
+        }
+      }
+    })
+
+    await service.recover()
+
+    expect(packages.recover).toHaveBeenCalledOnce()
+    expect(disabled).toEqual(new Set(['installed-skill']))
+    await expect(repository.getAll()).resolves.toMatchObject({
+      pendingInstallations: [],
+      installations: [installed]
+    })
+  })
+
+  it('serializes recovery behind an active Marketplace installation', async () => {
+    const repository = new MarketplaceRepository(
+      await mkdtemp(join(tmpdir(), 'marketplace-install-queue-'))
+    )
+    const provenance = {
+      sourceId: 'official',
+      specialistId: 'queued-specialist',
+      publisher: 'Example',
+      version: '1.0.0',
+      releasePath: 'releases/queued-specialist/1.0.0.json',
+      releaseDigest: 'a'.repeat(64),
+      artifactDigest: 'b'.repeat(64),
+      installedArchiveDigest: 'c'.repeat(64),
+      upstreamCommit: 'd'.repeat(40),
+      selectedSkillIds: ['queued-skill'],
+      selectedConnectorIds: [],
+      installedAt: '2026-08-18T00:00:00.000Z'
+    }
+    let finishInstall!: () => void
+    let installed = false
+    const packages = {
+      recover: vi.fn().mockResolvedValue(undefined),
+      install: vi.fn(
+        () =>
+          new Promise<{ status: 'installed'; specialist: { id: string } }>((resolve) => {
+            finishInstall = () => {
+              installed = true
+              resolve({ status: 'installed', specialist: { id: provenance.specialistId } })
+            }
+          })
+      )
+    }
+    const disabled = new Set<string>()
+    const service = new MarketplaceService({
+      repository,
+      packages: packages as never,
+      fetch: vi.fn<typeof fetch>(),
+      getDisabledSkillIds: async () => [...disabled],
+      getInstalledSpecialists: async () =>
+        installed
+          ? [
+              {
+                id: provenance.specialistId,
+                origin: 'imported' as const,
+                archiveDigest: provenance.installedArchiveDigest
+              }
+            ]
+          : [],
+      setSkillsMainEnabled: async (ids, enabled) => {
+        for (const id of ids) {
+          if (enabled) disabled.delete(id)
+          else disabled.add(id)
+        }
+      }
+    })
+    Reflect.set(
+      service,
+      'installCandidates',
+      new Map([
+        [
+          'queued-candidate',
+          {
+            expiresAt: Date.now() + 60_000,
+            ownerId: 17,
+            sourceId: provenance.sourceId,
+            packageCandidateToken: 'queued-candidate',
+            newSkillIds: ['queued-skill'],
+            provenance
+          }
+        ]
+      ])
+    )
+
+    const installPromise = service.install({ candidateToken: 'queued-candidate' }, 17)
+    await vi.waitFor(() => expect(packages.install).toHaveBeenCalledOnce())
+    expect(disabled).toEqual(new Set(['queued-skill']))
+
+    let recoverySettled = false
+    const recoveryPromise = service.recover().then(() => {
+      recoverySettled = true
+    })
+    await Promise.resolve()
+    expect(recoverySettled).toBe(false)
+    expect((await repository.getAll()).pendingInstallations).toHaveLength(1)
+
+    finishInstall()
+    await expect(installPromise).resolves.toMatchObject({
+      status: 'installed',
+      provenanceLinked: true
+    })
+    await recoveryPromise
+
+    expect(disabled).toEqual(new Set(['queued-skill']))
+    expect((await repository.getAll()).pendingInstallations).toEqual([])
+  })
+
   it('preserves Main settings when every selected Skill is already installed', async () => {
     const setSkillsMainEnabled = vi.fn()
     const packages = {
@@ -523,8 +683,8 @@ describe('MarketplaceService', () => {
       marketplaceId: 'example',
       name: 'Example',
       keyId: 'example-2026-01',
-      publicKey: 'unused',
-      keyFingerprint: 'unused',
+      publicKey: Buffer.from('unused').toString('base64'),
+      keyFingerprint: 'f'.repeat(64),
       createdAt: '2026-08-17T00:00:00.000Z'
     })
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -549,6 +709,162 @@ describe('MarketplaceService', () => {
     expect(snapshot.failures).toMatchObject([{ sourceId: 'github-example', code: 'schema' }])
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(fetcher.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('continues to the next mirror when a successful response fails verification', async () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    const publicKeyBase64 = publicKey.export({ format: 'der', type: 'spki' }).toString('base64')
+    const archive = zipSync({
+      'manifest.json': strToU8(
+        JSON.stringify({
+          schema_version: 1,
+          id: 'mirror-specialist',
+          version: '1.0.0',
+          exported_with_app_version: '0.16.0'
+        })
+      ),
+      'specialist.json': strToU8(
+        JSON.stringify({
+          name: 'MIRROR_SPECIALIST',
+          description: 'Mirror fallback',
+          system_prompt: 'Use verified mirrors.',
+          skill_ids: [],
+          connector_ids: []
+        })
+      )
+    })
+    const release = encoder.encode(
+      JSON.stringify({
+        schema_version: 1,
+        specialist_id: 'mirror-specialist',
+        version: '1.0.0',
+        source: {
+          repository: 'https://github.com/example/upstream',
+          commit: 'c'.repeat(40),
+          license: 'MIT'
+        },
+        artifact: {
+          path: 'specialists/mirror-specialist/1.0.0/mirror.zip',
+          github_release: { tag: 'mirror-v1.0.0', asset_name: 'mirror.zip' },
+          sha256: sha256(archive),
+          compressed_bytes: archive.byteLength,
+          uncompressed_bytes: 1,
+          file_count: 2
+        },
+        defaults: { skill_ids: [], connector_ids: [] },
+        skills: [],
+        connectors: []
+      })
+    )
+    const root = encoder.encode(
+      JSON.stringify({
+        schema_version: 1,
+        revision: '1',
+        marketplace: { id: 'mirror', name: 'Mirror Marketplace' },
+        specialists: [
+          {
+            id: 'mirror-specialist',
+            display_name: 'Mirror Specialist',
+            summary: 'Mirror fallback.',
+            publisher: { id: 'example', name: 'Example' },
+            latest: {
+              version: '1.0.0',
+              release: {
+                path: 'releases/mirror-specialist/1.0.0.json',
+                sha256: sha256(release)
+              }
+            }
+          }
+        ]
+      })
+    )
+    const signature = encoder.encode(
+      JSON.stringify({
+        schema_version: 1,
+        algorithm: 'ed25519',
+        key_id: 'mirror-2026-01',
+        public_key: publicKeyBase64,
+        signature: sign(null, root, privateKey).toString('base64')
+      })
+    )
+    const metadataBases = [
+      'https://marketplace-cdn.example/',
+      'https://raw.githubusercontent.com/example/mirror/main/'
+    ]
+    const artifactBase = 'https://artifacts-cdn.example/'
+    const githubArtifact =
+      'https://github.com/example/mirror/releases/download/mirror-v1.0.0/mirror.zip'
+    const responses = new Map<string, Uint8Array>([
+      [new URL('marketplace.json', metadataBases[0]).href, encoder.encode('{}')],
+      [new URL('marketplace.json.sig', metadataBases[0]).href, signature],
+      [new URL('marketplace.json', metadataBases[1]).href, root],
+      [new URL('marketplace.json.sig', metadataBases[1]).href, signature],
+      [
+        new URL('releases/mirror-specialist/1.0.0.json', metadataBases[0]).href,
+        encoder.encode('{}')
+      ],
+      [new URL('releases/mirror-specialist/1.0.0.json', metadataBases[1]).href, release],
+      [
+        new URL('specialists/mirror-specialist/1.0.0/mirror.zip', artifactBase).href,
+        new Uint8Array(archive.byteLength)
+      ],
+      [githubArtifact, archive]
+    ])
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const bytes = responses.get(String(input))
+      return bytes
+        ? new Response(Buffer.from(bytes), {
+            status: 200,
+            headers: { 'content-length': String(bytes.byteLength) }
+          })
+        : new Response('missing', { status: 404 })
+    })
+    const packages = {
+      preview: vi.fn().mockResolvedValue({
+        candidateToken: 'mirror-candidate',
+        summary: {
+          id: 'mirror-specialist',
+          version: '1.0.0',
+          skills: [],
+          connectorIds: []
+        },
+        diagnostics: [],
+        installable: true
+      }),
+      candidateNewSkillIds: vi.fn().mockReturnValue([]),
+      cancel: vi.fn(),
+      dispose: vi.fn()
+    }
+    const service = new MarketplaceService({
+      repository: new MarketplaceRepository(await mkdtemp(join(tmpdir(), 'marketplace-mirror-'))),
+      packages: packages as never,
+      fetch: fetcher,
+      officialSource: {
+        id: 'mirror-official',
+        name: 'Mirror Marketplace',
+        repositoryUrl: 'https://github.com/example/mirror',
+        ref: 'main',
+        metadataBaseUrls: metadataBases,
+        artifactBaseUrls: [artifactBase],
+        trustedKeys: { 'mirror-2026-01': publicKeyBase64 }
+      },
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [],
+      setSkillsMainEnabled: async () => undefined
+    })
+
+    await expect(
+      service.prepareInstall({
+        sourceId: 'mirror-official',
+        specialistId: 'mirror-specialist',
+        version: '1.0.0',
+        selectedSkillIds: [],
+        selectedConnectorIds: []
+      })
+    ).resolves.toMatchObject({ package: { candidateToken: 'mirror-candidate' } })
+
+    expect(fetcher).toHaveBeenCalledWith(new URL(githubArtifact), expect.any(Object))
+    expect(packages.preview).toHaveBeenCalledOnce()
   })
 
   it('falls back to signature- and digest-verified root and release caches', async () => {

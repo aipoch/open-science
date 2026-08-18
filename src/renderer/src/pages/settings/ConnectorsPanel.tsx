@@ -11,7 +11,7 @@ import {
   X
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -157,7 +157,10 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     specialistNames?: string[]
   } | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [checkingRemoval, setCheckingRemoval] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
+  const removalCheckSequence = useRef(0)
+  const removalCheckInFlight = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     void loadConnectors()
@@ -267,9 +270,14 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   }
 
   const requestRemoval = async (server: CustomServerView): Promise<void> => {
+    if (removalCheckInFlight.current !== undefined) return
+    const requestId = ++removalCheckSequence.current
+    removalCheckInFlight.current = requestId
+    setCheckingRemoval(true)
     setRemovalError(null)
     try {
       await useSpecialistStore.getState().load()
+      if (removalCheckSequence.current !== requestId) return
       setRemoval({
         server,
         specialistNames: specialistsUsingConnector(useSpecialistStore.getState().items, server).map(
@@ -277,12 +285,26 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         )
       })
     } catch {
+      if (removalCheckSequence.current !== requestId) return
       setRemoval({ server })
+    } finally {
+      if (removalCheckInFlight.current === requestId) {
+        removalCheckInFlight.current = undefined
+        setCheckingRemoval(false)
+      }
     }
   }
 
+  const cancelRemoval = (): void => {
+    removalCheckSequence.current += 1
+    removalCheckInFlight.current = undefined
+    setCheckingRemoval(false)
+    setRemoval(null)
+    setRemovalError(null)
+  }
+
   const confirmRemoval = async (): Promise<void> => {
-    if (!removal || removing) return
+    if (!removal || removal.specialistNames === undefined || removing || checkingRemoval) return
     setRemoving(true)
     setRemovalError(null)
     try {
@@ -759,10 +781,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       <AlertDialog.Root
         open={removal !== null}
         onOpenChange={(open) => {
-          if (!open && !removing) {
-            setRemoval(null)
-            setRemovalError(null)
-          }
+          if (!open && !removing) cancelRemoval()
         }}
       >
         <AlertDialog.Portal>
@@ -813,12 +832,24 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                     {removal.specialistNames.join(', ')}
                   </p>
                 </div>
-              ) : removal?.specialistNames === undefined ? (
-                <p className="mt-4 text-xs text-muted-foreground">
-                  {tCommon(
-                    'Specialist references could not be checked. You can still remove this Connector.'
-                  )}
-                </p>
+              ) : removal && removal.specialistNames === undefined ? (
+                <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
+                  <p>
+                    {tCommon(
+                      'Specialist references could not be checked. Retry before removing this Connector.'
+                    )}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    disabled={removing || checkingRemoval}
+                    onClick={() => void requestRemoval(removal.server)}
+                  >
+                    {checkingRemoval ? tCommon('Checking…') : tCommon('Retry')}
+                  </Button>
+                </div>
               ) : null}
               {removalError ? (
                 <div
@@ -845,7 +876,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               <Button
                 type="button"
                 variant="destructive"
-                disabled={removing}
+                disabled={removing || checkingRemoval || removal?.specialistNames === undefined}
                 onClick={() => void confirmRemoval()}
               >
                 {removing ? t('Removing…') : t('Remove Connector')}

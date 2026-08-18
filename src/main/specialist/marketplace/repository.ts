@@ -34,6 +34,11 @@ export type MarketplaceInstallProvenance = {
   installedAt: string
 }
 
+export type MarketplacePendingInstallation = {
+  provenance: MarketplaceInstallProvenance
+  newlyDisabledSkillIds: string[]
+}
+
 type MarketplaceRootCache = {
   sourceId: string
   rootBase64: string
@@ -53,6 +58,7 @@ type MarketplaceDocument = {
   version: 1
   sources: StoredMarketplaceSource[]
   installations: MarketplaceInstallProvenance[]
+  pendingInstallations: MarketplacePendingInstallation[]
   rootCaches: MarketplaceRootCache[]
   releaseCaches: MarketplaceReleaseCache[]
 }
@@ -61,12 +67,38 @@ const emptyDocument = (): MarketplaceDocument => ({
   version: 1,
   sources: [],
   installations: [],
+  pendingInstallations: [],
   rootCaches: [],
   releaseCaches: []
 })
 
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string')
+
+const isSha256 = (value: unknown): value is string =>
+  typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value)
+
+const isGitCommit = (value: unknown): value is string =>
+  typeof value === 'string' && /^[a-f0-9]{40}$/i.test(value)
+
+const isIsoTimestamp = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value
+}
+
+const isCanonicalBase64 = (value: unknown, maxLength: number): value is string => {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > maxLength ||
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return false
+  }
+  return Buffer.from(value, 'base64').toString('base64') === value
+}
 
 const sanitizeSource = (value: unknown): StoredMarketplaceSource | undefined => {
   if (!value || typeof value !== 'object') return undefined
@@ -81,9 +113,10 @@ const sanitizeSource = (value: unknown): StoredMarketplaceSource | undefined => 
     typeof source.marketplaceId !== 'string' ||
     typeof source.name !== 'string' ||
     typeof source.keyId !== 'string' ||
-    typeof source.publicKey !== 'string' ||
-    typeof source.keyFingerprint !== 'string' ||
-    typeof source.createdAt !== 'string'
+    !isCanonicalBase64(source.publicKey, 1_024) ||
+    !isSha256(source.keyFingerprint) ||
+    !isIsoTimestamp(source.createdAt) ||
+    (source.lastRefreshedAt !== undefined && !isIsoTimestamp(source.lastRefreshedAt))
   ) {
     return undefined
   }
@@ -100,9 +133,7 @@ const sanitizeSource = (value: unknown): StoredMarketplaceSource | undefined => 
     publicKey: source.publicKey,
     keyFingerprint: source.keyFingerprint,
     createdAt: source.createdAt,
-    ...(typeof source.lastRefreshedAt === 'string'
-      ? { lastRefreshedAt: source.lastRefreshedAt }
-      : {})
+    ...(source.lastRefreshedAt ? { lastRefreshedAt: source.lastRefreshedAt } : {})
   }
 }
 
@@ -115,21 +146,42 @@ const sanitizeInstallation = (value: unknown): MarketplaceInstallProvenance | un
     typeof item.publisher !== 'string' ||
     typeof item.version !== 'string' ||
     typeof item.releasePath !== 'string' ||
-    typeof item.releaseDigest !== 'string' ||
-    typeof item.artifactDigest !== 'string' ||
-    typeof item.upstreamCommit !== 'string' ||
+    !isSha256(item.releaseDigest) ||
+    !isSha256(item.artifactDigest) ||
+    (item.installedArchiveDigest !== undefined && !isSha256(item.installedArchiveDigest)) ||
+    !isGitCommit(item.upstreamCommit) ||
     !isStringArray(item.selectedSkillIds) ||
     !isStringArray(item.selectedConnectorIds) ||
-    typeof item.installedAt !== 'string'
+    !isIsoTimestamp(item.installedAt)
   ) {
     return undefined
   }
   return {
-    ...(item as MarketplaceInstallProvenance),
-    ...(typeof item.installedArchiveDigest === 'string'
-      ? { installedArchiveDigest: item.installedArchiveDigest }
-      : {})
+    sourceId: item.sourceId,
+    specialistId: item.specialistId,
+    publisher: item.publisher,
+    version: item.version,
+    releasePath: item.releasePath,
+    releaseDigest: item.releaseDigest,
+    artifactDigest: item.artifactDigest,
+    ...(item.installedArchiveDigest ? { installedArchiveDigest: item.installedArchiveDigest } : {}),
+    upstreamCommit: item.upstreamCommit,
+    selectedSkillIds: item.selectedSkillIds,
+    selectedConnectorIds: item.selectedConnectorIds,
+    installedAt: item.installedAt
   }
+}
+
+const sanitizePendingInstallation = (
+  value: unknown
+): MarketplacePendingInstallation | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const item = value as Partial<MarketplacePendingInstallation>
+  const provenance = sanitizeInstallation(item.provenance)
+  if (!provenance?.installedArchiveDigest || !isStringArray(item.newlyDisabledSkillIds)) {
+    return undefined
+  }
+  return { provenance, newlyDisabledSkillIds: item.newlyDisabledSkillIds }
 }
 
 const sanitizeRootCache = (value: unknown): MarketplaceRootCache | undefined => {
@@ -137,15 +189,18 @@ const sanitizeRootCache = (value: unknown): MarketplaceRootCache | undefined => 
   const item = value as Partial<MarketplaceRootCache>
   if (
     typeof item.sourceId !== 'string' ||
-    typeof item.rootBase64 !== 'string' ||
-    item.rootBase64.length > 3 * 1024 * 1024 ||
-    typeof item.signatureBase64 !== 'string' ||
-    item.signatureBase64.length > 3 * 1024 * 1024 ||
-    typeof item.cachedAt !== 'string'
+    !isCanonicalBase64(item.rootBase64, 3 * 1024 * 1024) ||
+    !isCanonicalBase64(item.signatureBase64, 3 * 1024 * 1024) ||
+    !isIsoTimestamp(item.cachedAt)
   ) {
     return undefined
   }
-  return item as MarketplaceRootCache
+  return {
+    sourceId: item.sourceId,
+    rootBase64: item.rootBase64,
+    signatureBase64: item.signatureBase64,
+    cachedAt: item.cachedAt
+  }
 }
 
 const sanitizeReleaseCache = (value: unknown): MarketplaceReleaseCache | undefined => {
@@ -154,14 +209,19 @@ const sanitizeReleaseCache = (value: unknown): MarketplaceReleaseCache | undefin
   if (
     typeof item.sourceId !== 'string' ||
     typeof item.path !== 'string' ||
-    typeof item.digest !== 'string' ||
-    typeof item.bytesBase64 !== 'string' ||
-    item.bytesBase64.length > 12 * 1024 * 1024 ||
-    typeof item.cachedAt !== 'string'
+    !isSha256(item.digest) ||
+    !isCanonicalBase64(item.bytesBase64, 12 * 1024 * 1024) ||
+    !isIsoTimestamp(item.cachedAt)
   ) {
     return undefined
   }
-  return item as MarketplaceReleaseCache
+  return {
+    sourceId: item.sourceId,
+    path: item.path,
+    digest: item.digest,
+    bytesBase64: item.bytesBase64,
+    cachedAt: item.cachedAt
+  }
 }
 
 const sanitizeDocument = (value: unknown): MarketplaceDocument => {
@@ -170,6 +230,7 @@ const sanitizeDocument = (value: unknown): MarketplaceDocument => {
     version?: unknown
     sources?: unknown
     installations?: unknown
+    pendingInstallations?: unknown
     rootCaches?: unknown
     releaseCaches?: unknown
   }
@@ -181,6 +242,9 @@ const sanitizeDocument = (value: unknown): MarketplaceDocument => {
       : [],
     installations: Array.isArray(document.installations)
       ? document.installations.flatMap((item) => sanitizeInstallation(item) ?? [])
+      : [],
+    pendingInstallations: Array.isArray(document.pendingInstallations)
+      ? document.pendingInstallations.flatMap((item) => sanitizePendingInstallation(item) ?? [])
       : [],
     rootCaches: Array.isArray(document.rootCaches)
       ? document.rootCaches.flatMap((item) => sanitizeRootCache(item) ?? [])
@@ -244,6 +308,48 @@ export class MarketplaceRepository {
         ),
         provenance
       ]
+    }))
+  }
+
+  async beginInstallation(pending: MarketplacePendingInstallation): Promise<void> {
+    await this.mutate((document) => ({
+      ...document,
+      pendingInstallations: [
+        ...document.pendingInstallations.filter(
+          (item) =>
+            item.provenance.sourceId !== pending.provenance.sourceId ||
+            item.provenance.specialistId !== pending.provenance.specialistId
+        ),
+        pending
+      ]
+    }))
+  }
+
+  async completeInstallation(provenance: MarketplaceInstallProvenance): Promise<void> {
+    await this.mutate((document) => ({
+      ...document,
+      installations: [
+        ...document.installations.filter(
+          (item) =>
+            item.sourceId !== provenance.sourceId || item.specialistId !== provenance.specialistId
+        ),
+        provenance
+      ],
+      pendingInstallations: document.pendingInstallations.filter(
+        (item) =>
+          item.provenance.sourceId !== provenance.sourceId ||
+          item.provenance.specialistId !== provenance.specialistId
+      )
+    }))
+  }
+
+  async clearPendingInstallation(sourceId: string, specialistId: string): Promise<void> {
+    await this.mutate((document) => ({
+      ...document,
+      pendingInstallations: document.pendingInstallations.filter(
+        (item) =>
+          item.provenance.sourceId !== sourceId || item.provenance.specialistId !== specialistId
+      )
     }))
   }
 

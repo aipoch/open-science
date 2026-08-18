@@ -24,6 +24,7 @@ import type {
   MarketplaceSpecialistRelease
 } from '../../../../shared/specialist-marketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
+import { SettingsIconAction } from './SettingsLayout'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
   skillConflictResolutionList,
@@ -108,6 +109,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const [installBusy, setInstallBusy] = useState(false)
   const [installPreview, setInstallPreview] = useState<MarketplaceInstallPreview>()
   const [installError, setInstallError] = useState<string>()
+  const [installRecoveryPending, setInstallRecoveryPending] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<MarketplaceDownloadProgress>()
   const [skillConflictResolutions, setSkillConflictResolutions] =
     useState<SkillConflictResolutionMap>({})
@@ -187,6 +189,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       setReleaseLoading(true)
       setReviewing(false)
       setInstallPreview(undefined)
+      setInstallError(undefined)
+      setInstallRecoveryPending(false)
       setDownloadProgress(undefined)
       setSkillConflictResolutions({})
       try {
@@ -336,6 +340,18 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         useSpecialistStore.getState().load(),
         useSettingsStore.getState().loadSkills()
       ])
+      if (result.provenanceLinked === false) {
+        setInstallPreview(undefined)
+        setInstallRecoveryPending(true)
+        setDownloadProgress(undefined)
+        setSkillConflictResolutions({})
+        setInstallError(
+          t(
+            'This Specialist was installed, but Marketplace status is still being recovered. Return to Marketplace or restart the app to finish recovery.'
+          )
+        )
+        return
+      }
       onNavigate({ kind: 'edit', id: result.specialist.id })
     } catch {
       setDownloadProgress(undefined)
@@ -452,15 +468,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     </p>
                   </div>
                   {source.removable ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t('Remove {{name}}', { name: source.name })}
+                    <SettingsIconAction
+                      label={t('Remove {{name}}', { name: source.name })}
+                      icon={Trash2}
+                      danger
                       onClick={() => void removeSource(source.id)}
-                    >
-                      <Trash2 aria-hidden="true" />
-                    </Button>
+                    />
                   ) : null}
                 </li>
               ))}
@@ -630,7 +643,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                 {installPreview && !marketplacePreviewBlocked && marketplaceConflictsResolved ? (
                   <div
                     role="status"
-                    className="mt-3 flex gap-2 rounded-md border border-green-200 bg-green-50 p-3 text-xs text-green-800"
+                    className="mt-3 flex gap-2 rounded-md border border-status-success-accent/30 bg-status-success-surface p-3 text-xs text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground"
                   >
                     <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                     <div>
@@ -700,6 +713,10 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     variant="outline"
                     disabled={installBusy}
                     onClick={() => {
+                      if (installRecoveryPending) {
+                        onNavigate({ kind: 'marketplace' })
+                        return
+                      }
                       cancelCandidate(installCandidateTokenRef.current)
                       installCandidateTokenRef.current = undefined
                       setReviewing(false)
@@ -708,26 +725,28 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                       setSkillConflictResolutions({})
                     }}
                   >
-                    {t('Back')}
+                    {installRecoveryPending ? t('Back to Marketplace') : t('Back')}
                   </Button>
-                  <Button
-                    type="button"
-                    disabled={
-                      installBusy ||
-                      marketplacePreviewBlocked ||
-                      (marketplaceSkillConflicts.length > 0 && !marketplaceConflictsResolved)
-                    }
-                    onClick={() => void install()}
-                  >
-                    {installBusy ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-                    {installBusy
-                      ? t('Downloading and verifying…')
-                      : installPreview
-                        ? installPreview.package.overwrite
-                          ? t('Update Specialist')
-                          : t('Install Specialist')
-                        : t('Download and review')}
-                  </Button>
+                  {!installRecoveryPending ? (
+                    <Button
+                      type="button"
+                      disabled={
+                        installBusy ||
+                        marketplacePreviewBlocked ||
+                        (marketplaceSkillConflicts.length > 0 && !marketplaceConflictsResolved)
+                      }
+                      onClick={() => void install()}
+                    >
+                      {installBusy ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+                      {installBusy
+                        ? t('Downloading and verifying…')
+                        : installPreview
+                          ? installPreview.package.overwrite
+                            ? t('Update Specialist')
+                            : t('Install Specialist')
+                          : t('Download and review')}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             )}

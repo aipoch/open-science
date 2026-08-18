@@ -241,6 +241,20 @@ describe('Specialist Marketplace settings', () => {
     })
   })
 
+  it('uses the shared tooltip-backed danger action for source removal', async () => {
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace view={{ kind: 'marketplace-sources' }} onNavigate={vi.fn()} />
+      )
+    })
+
+    const remove = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Remove Example Marketplace"]'
+    )
+    expect(remove?.getAttribute('data-state')).toBe('closed')
+    expect(remove?.className).toContain('hover:text-destructive')
+  })
+
   it('opens an installed Marketplace Specialist instead of starting another install', async () => {
     const onNavigate = vi.fn()
     window.api.specialist.listMarketplace = vi.fn().mockResolvedValue({
@@ -378,6 +392,11 @@ describe('Specialist Marketplace settings', () => {
     expect(container.textContent).toContain('Update from v1.0.0 to v2.0.0')
     expect(container.textContent).toContain('Local changes')
     expect(container.textContent).not.toContain('Back to Marketplace')
+    const verified = Array.from(container.querySelectorAll<HTMLElement>('[role="status"]')).find(
+      (element) => element.textContent?.includes('Package verified')
+    )
+    expect(verified?.className).toContain('bg-status-success-surface')
+    expect(verified?.className).not.toMatch(/(?:bg|border|text)-green-/)
 
     await act(async () => {
       fireEvent.click(
@@ -392,6 +411,87 @@ describe('Specialist Marketplace settings', () => {
       skillConflictResolutions: []
     })
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'example-specialist' })
+  })
+
+  it('does not present a provenance-pending installation as fully complete', async () => {
+    const onNavigate = vi.fn()
+    window.api.specialist.getMarketplaceRelease = vi.fn().mockResolvedValue(release)
+    window.api.specialist.prepareMarketplaceInstall = vi.fn().mockResolvedValue({
+      release,
+      package: { candidateToken: 'pending-provenance', diagnostics: [], installable: true }
+    })
+    window.api.specialist.installMarketplace = vi.fn().mockResolvedValue({
+      status: 'installed',
+      specialist: { id: 'example-specialist' },
+      provenanceLinked: false
+    })
+
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace
+          view={{
+            kind: 'marketplace-release',
+            sourceId: 'github-example',
+            id: 'example-specialist',
+            version: '2.0.0'
+          }}
+          onNavigate={onNavigate}
+        />
+      )
+    })
+    fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes('Review installation')
+      )!
+    )
+    await act(async () => {
+      fireEvent.click(
+        Array.from(container.querySelectorAll('button')).find((button) =>
+          button.textContent?.includes('Download and review')
+        )!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        Array.from(container.querySelectorAll('button')).find((button) =>
+          button.textContent?.includes('Install Specialist')
+        )!
+      )
+    })
+
+    expect(onNavigate).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(
+      'This Specialist was installed, but Marketplace status is still being recovered.'
+    )
+    expect(container.textContent).not.toContain('Package verified')
+    expect(container.textContent).not.toContain('Download and review')
+    fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes('Back to Marketplace')
+      )!
+    )
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'marketplace' })
+
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace
+          view={{
+            kind: 'marketplace-release',
+            sourceId: 'github-example',
+            id: 'another-specialist',
+            version: '1.0.0'
+          }}
+          onNavigate={onNavigate}
+        />
+      )
+      await Promise.resolve()
+    })
+    fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes('Review installation')
+      )!
+    )
+    expect(container.textContent).not.toContain('Marketplace status is still being recovered.')
   })
 
   it('requires a fresh download after an installation attempt consumes its candidate', async () => {

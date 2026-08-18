@@ -65,7 +65,8 @@ type MarketplaceServiceOptions = {
   packages: Pick<
     SpecialistPackageService,
     'preview' | 'install' | 'candidateNewSkillIds' | 'cancel' | 'dispose'
-  >
+  > &
+    Partial<Pick<SpecialistPackageService, 'recover'>>
   fetch: typeof fetch
   officialSource?: OfficialMarketplaceSourceConfig
   now?: () => Date
@@ -261,13 +262,50 @@ export class MarketplaceService {
   private readonly token: () => string
   private readonly sourceCandidates = new Map<string, SourceCandidateState>()
   private readonly installCandidates = new Map<string, InstallCandidateState>()
+  private packageRecovery?: Promise<void>
+  private operationQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: MarketplaceServiceOptions) {
     this.now = options.now ?? (() => new Date())
     this.token = options.token ?? randomUUID
   }
 
+  async recover(): Promise<void> {
+    await this.runExclusive(() => this.recoverUnlocked())
+  }
+
+  private async recoverUnlocked(): Promise<void> {
+    this.packageRecovery ??= this.options.packages.recover?.() ?? Promise.resolve()
+    await this.packageRecovery
+    const [document, installedSpecialists] = await Promise.all([
+      this.options.repository.getAll(),
+      this.options.getInstalledSpecialists()
+    ])
+    for (const pending of document.pendingInstallations) {
+      const provenance = pending.provenance
+      const installed = installedSpecialists.some(
+        (specialist) =>
+          specialist.id === provenance.specialistId &&
+          specialist.origin === 'imported' &&
+          provenance.installedArchiveDigest !== undefined &&
+          specialist.archiveDigest === provenance.installedArchiveDigest
+      )
+      if (installed) {
+        await this.options.repository.completeInstallation(provenance)
+        continue
+      }
+      if (pending.newlyDisabledSkillIds.length > 0) {
+        await this.options.setSkillsMainEnabled(pending.newlyDisabledSkillIds, true)
+      }
+      await this.options.repository.clearPendingInstallation(
+        provenance.sourceId,
+        provenance.specialistId
+      )
+    }
+  }
+
   async list(): Promise<MarketplaceSnapshot> {
+    await this.recover()
     const [sources, document, installedSpecialists] = await Promise.all([
       this.sources(),
       this.options.repository.getAll(),
@@ -418,6 +456,7 @@ export class MarketplaceService {
     ownerId?: number,
     onDownloadProgress?: (progress: MarketplaceDownloadProgress) => void
   ): Promise<MarketplaceInstallPreview> {
+    await this.recover()
     const loaded = await this.loadRelease(request)
     const requestedSkills = [...new Set(request.selectedSkillIds)]
     const requestedConnectors = [...new Set(request.selectedConnectorIds)]
@@ -529,6 +568,13 @@ export class MarketplaceService {
     request: MarketplaceInstallRequest,
     ownerId?: number
   ): Promise<MarketplaceInstallResult> {
+    return this.runExclusive(() => this.installExclusive(request, ownerId))
+  }
+
+  private async installExclusive(
+    request: MarketplaceInstallRequest,
+    ownerId?: number
+  ): Promise<MarketplaceInstallResult> {
     const candidate = this.installCandidates.get(request?.candidateToken)
     if (!candidate || candidate.ownerId !== ownerId) {
       return { status: 'failed', code: 'candidate-invalid' }
@@ -537,33 +583,61 @@ export class MarketplaceService {
       this.cancel(request.candidateToken, ownerId)
       return { status: 'failed', code: 'candidate-expired' }
     }
+    await this.recoverUnlocked()
     const disabledBefore = new Set(await this.options.getDisabledSkillIds())
     const newlyDisabled = candidate.newSkillIds.filter((id) => !disabledBefore.has(id))
-    if (candidate.newSkillIds.length > 0) {
-      await this.options.setSkillsMainEnabled(candidate.newSkillIds, false)
-    }
+    await this.options.repository.beginInstallation({
+      provenance: candidate.provenance,
+      newlyDisabledSkillIds: newlyDisabled
+    })
     let result: MarketplaceInstallResult
     try {
+      if (candidate.newSkillIds.length > 0) {
+        await this.options.setSkillsMainEnabled(candidate.newSkillIds, false)
+      }
       result = await this.options.packages.install(request, ownerId)
     } catch (error) {
-      if (newlyDisabled.length > 0) {
-        await this.options.setSkillsMainEnabled(newlyDisabled, true).catch(() => undefined)
-      }
+      await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
       throw error
     }
     if (result.status !== 'installed') {
-      if (newlyDisabled.length > 0) {
-        await this.options.setSkillsMainEnabled(newlyDisabled, true).catch(() => undefined)
-      }
+      await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
       return result
     }
     this.installCandidates.delete(request.candidateToken)
     try {
-      await this.options.repository.recordInstallation(candidate.provenance)
+      await this.options.repository.completeInstallation(candidate.provenance)
       return { ...result, provenanceLinked: true }
     } catch {
-      return { ...result, provenanceLinked: false }
+      try {
+        await this.recoverUnlocked()
+        return { ...result, provenanceLinked: true }
+      } catch {
+        return { ...result, provenanceLinked: false }
+      }
     }
+  }
+
+  private async rollbackPendingInstallation(
+    provenance: MarketplaceInstallProvenance,
+    newlyDisabledSkillIds: readonly string[]
+  ): Promise<void> {
+    if (newlyDisabledSkillIds.length > 0) {
+      await this.options.setSkillsMainEnabled(newlyDisabledSkillIds, true)
+    }
+    await this.options.repository.clearPendingInstallation(
+      provenance.sourceId,
+      provenance.specialistId
+    )
+  }
+
+  private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.operationQueue.then(operation)
+    this.operationQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
   }
 
   cancel(candidateToken: unknown, ownerId?: number): void {
@@ -656,25 +730,27 @@ export class MarketplaceService {
       return root
     }
     let remoteError: unknown
-    try {
-      const rootBytes = await this.fetchFrom(
-        source.metadataBaseUrls.map((base) => new URL('marketplace.json', base).href),
-        ROOT_MAX_BYTES,
-        source
-      )
-      const signatureBytes = await this.fetchFrom(
-        source.metadataBaseUrls.map((base) => new URL('marketplace.json.sig', base).href),
-        ROOT_MAX_BYTES,
-        source
-      )
-      const root = verifiedRoot(rootBytes, signatureBytes)
-      const refreshedAt = this.now().toISOString()
-      await this.options.repository
-        .cacheRoot(source.id, rootBytes, signatureBytes, refreshedAt)
-        .catch(() => undefined)
-      return { root, refreshedAt, usingCachedMetadata: false }
-    } catch (error) {
-      remoteError = error
+    for (const base of source.metadataBaseUrls) {
+      try {
+        const rootBytes = await this.fetchOne(
+          new URL('marketplace.json', base).href,
+          ROOT_MAX_BYTES,
+          source
+        )
+        const signatureBytes = await this.fetchOne(
+          new URL('marketplace.json.sig', base).href,
+          ROOT_MAX_BYTES,
+          source
+        )
+        const root = verifiedRoot(rootBytes, signatureBytes)
+        const refreshedAt = this.now().toISOString()
+        await this.options.repository
+          .cacheRoot(source.id, rootBytes, signatureBytes, refreshedAt)
+          .catch(() => undefined)
+        return { root, refreshedAt, usingCachedMetadata: false }
+      } catch (error) {
+        remoteError = error
+      }
     }
     const cached = await this.options.repository.getCachedRoot(source.id).catch(() => undefined)
     if (cached) {
@@ -750,11 +826,16 @@ export class MarketplaceService {
       releaseBytes = await this.fetchFrom(
         source.metadataBaseUrls.map((base) => new URL(releasePath, base).href),
         RELEASE_MAX_BYTES,
-        source
+        source,
+        false,
+        undefined,
+        undefined,
+        (bytes) => {
+          if (sha256(bytes) !== listing.latest.release.sha256) {
+            throw new MarketplaceError('verification', 'Marketplace release digest does not match.')
+          }
+        }
       )
-      if (sha256(releaseBytes) !== listing.latest.release.sha256) {
-        throw new MarketplaceError('verification', 'Marketplace release digest does not match.')
-      }
       await this.options.repository
         .cacheRelease(
           source.id,
@@ -830,14 +911,16 @@ export class MarketplaceService {
       loaded.source,
       true,
       loaded.release.artifact.compressed_bytes,
-      onProgress
+      onProgress,
+      (bytes) => {
+        if (
+          bytes.byteLength !== loaded.release.artifact.compressed_bytes ||
+          sha256(bytes) !== loaded.release.artifact.sha256
+        ) {
+          throw new MarketplaceError('verification', 'Marketplace artifact verification failed.')
+        }
+      }
     )
-    if (
-      bytes.byteLength !== loaded.release.artifact.compressed_bytes ||
-      sha256(bytes) !== loaded.release.artifact.sha256
-    ) {
-      throw new MarketplaceError('verification', 'Marketplace artifact verification failed.')
-    }
     return bytes
   }
 
@@ -861,12 +944,13 @@ export class MarketplaceService {
     source?: ResolvedSource,
     allowArtifactRedirects = false,
     expectedTotal?: number,
-    onProgress?: (transferred: number, total: number) => void
+    onProgress?: (transferred: number, total: number) => void,
+    verify?: (bytes: Uint8Array) => void
   ): Promise<Uint8Array> {
     let lastError: unknown
     for (const url of urls) {
       try {
-        return await this.fetchOne(
+        const bytes = await this.fetchOne(
           url,
           maxBytes,
           source,
@@ -874,6 +958,8 @@ export class MarketplaceService {
           expectedTotal,
           onProgress
         )
+        verify?.(bytes)
+        return bytes
       } catch (error) {
         lastError = error
       }

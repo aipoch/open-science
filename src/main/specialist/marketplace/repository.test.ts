@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -20,8 +20,8 @@ describe('MarketplaceRepository', () => {
       marketplaceId: 'example',
       name: 'Example Marketplace',
       keyId: 'example-2026-01',
-      publicKey: 'public-key',
-      keyFingerprint: 'fingerprint',
+      publicKey: Buffer.from('public-key').toString('base64'),
+      keyFingerprint: 'f'.repeat(64),
       createdAt: '2026-08-17T00:00:00.000Z'
     })
     await repository.recordInstallation({
@@ -89,5 +89,214 @@ describe('MarketplaceRepository', () => {
     await expect(
       reloaded.getCachedRelease('github-example', 'releases/example/1.0.0.json', 'a'.repeat(64))
     ).resolves.toBeUndefined()
+  })
+
+  it('reconstructs persisted records from known, validated fields', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'marketplace-sanitize-'))
+    await writeFile(
+      join(root, 'specialist-marketplace.json'),
+      JSON.stringify({
+        version: 1,
+        sources: [
+          {
+            id: 'github-example',
+            kind: 'github',
+            repositoryUrl: 'https://github.com/example/marketplace',
+            owner: 'example',
+            repository: 'marketplace',
+            ref: 'main',
+            marketplaceId: 'example',
+            name: 'Example Marketplace',
+            keyId: 'example-2026-01',
+            publicKey: Buffer.from('public-key').toString('base64'),
+            keyFingerprint: 'f'.repeat(64),
+            createdAt: '2026-08-18T00:00:00.000Z',
+            injected: 'discard-me'
+          },
+          {
+            id: 'invalid-source',
+            kind: 'github',
+            repositoryUrl: 'https://github.com/example/invalid',
+            owner: 'example',
+            repository: 'invalid',
+            ref: 'main',
+            marketplaceId: 'invalid',
+            name: 'Invalid Marketplace',
+            keyId: 'invalid-2026-01',
+            publicKey: 'not base64',
+            keyFingerprint: 'not-a-digest',
+            createdAt: 'not-a-date'
+          }
+        ],
+        installations: [
+          {
+            sourceId: 'official',
+            specialistId: 'example-specialist',
+            publisher: 'Example',
+            version: '1.0.0',
+            releasePath: 'releases/example-specialist/1.0.0.json',
+            releaseDigest: 'a'.repeat(64),
+            artifactDigest: 'b'.repeat(64),
+            installedArchiveDigest: 'c'.repeat(64),
+            upstreamCommit: 'd'.repeat(40),
+            selectedSkillIds: ['example-skill'],
+            selectedConnectorIds: [],
+            installedAt: '2026-08-18T00:00:00.000Z',
+            injected: 'discard-me'
+          },
+          {
+            sourceId: 'invalid',
+            specialistId: 'invalid',
+            publisher: 'Invalid',
+            version: '1.0.0',
+            releasePath: 'invalid.json',
+            releaseDigest: 'not-a-digest',
+            artifactDigest: 'b'.repeat(64),
+            upstreamCommit: 'd'.repeat(40),
+            selectedSkillIds: [],
+            selectedConnectorIds: [],
+            installedAt: 'not-a-date'
+          }
+        ],
+        rootCaches: [
+          {
+            sourceId: 'official',
+            rootBase64: Buffer.from('root').toString('base64'),
+            signatureBase64: Buffer.from('signature').toString('base64'),
+            cachedAt: '2026-08-18T00:00:01.000Z',
+            injected: 'discard-me'
+          },
+          {
+            sourceId: 'invalid',
+            rootBase64: 'not base64',
+            signatureBase64: Buffer.from('signature').toString('base64'),
+            cachedAt: '2026-08-18T00:00:01.000Z'
+          }
+        ],
+        releaseCaches: [
+          {
+            sourceId: 'official',
+            path: 'releases/example-specialist/1.0.0.json',
+            digest: 'a'.repeat(64),
+            bytesBase64: Buffer.from('release').toString('base64'),
+            cachedAt: '2026-08-18T00:00:02.000Z',
+            injected: 'discard-me'
+          },
+          {
+            sourceId: 'invalid',
+            path: 'invalid.json',
+            digest: 'not-a-digest',
+            bytesBase64: Buffer.from('release').toString('base64'),
+            cachedAt: '2026-08-18T00:00:02.000Z'
+          }
+        ],
+        pendingInstallations: [
+          {
+            provenance: {
+              sourceId: 'official',
+              specialistId: 'missing-exact-digest',
+              publisher: 'Example',
+              version: '1.0.0',
+              releasePath: 'releases/missing-exact-digest/1.0.0.json',
+              releaseDigest: 'a'.repeat(64),
+              artifactDigest: 'b'.repeat(64),
+              upstreamCommit: 'd'.repeat(40),
+              selectedSkillIds: [],
+              selectedConnectorIds: [],
+              installedAt: '2026-08-18T00:00:00.000Z'
+            },
+            newlyDisabledSkillIds: ['missing-exact-digest-skill']
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    const document = await new MarketplaceRepository(root).getAll()
+
+    expect(document.sources).toEqual([
+      {
+        id: 'github-example',
+        kind: 'github',
+        repositoryUrl: 'https://github.com/example/marketplace',
+        owner: 'example',
+        repository: 'marketplace',
+        ref: 'main',
+        marketplaceId: 'example',
+        name: 'Example Marketplace',
+        keyId: 'example-2026-01',
+        publicKey: Buffer.from('public-key').toString('base64'),
+        keyFingerprint: 'f'.repeat(64),
+        createdAt: '2026-08-18T00:00:00.000Z'
+      }
+    ])
+    expect(document.installations).toEqual([
+      {
+        sourceId: 'official',
+        specialistId: 'example-specialist',
+        publisher: 'Example',
+        version: '1.0.0',
+        releasePath: 'releases/example-specialist/1.0.0.json',
+        releaseDigest: 'a'.repeat(64),
+        artifactDigest: 'b'.repeat(64),
+        installedArchiveDigest: 'c'.repeat(64),
+        upstreamCommit: 'd'.repeat(40),
+        selectedSkillIds: ['example-skill'],
+        selectedConnectorIds: [],
+        installedAt: '2026-08-18T00:00:00.000Z'
+      }
+    ])
+    expect(document.rootCaches).toEqual([
+      {
+        sourceId: 'official',
+        rootBase64: Buffer.from('root').toString('base64'),
+        signatureBase64: Buffer.from('signature').toString('base64'),
+        cachedAt: '2026-08-18T00:00:01.000Z'
+      }
+    ])
+    expect(document.releaseCaches).toEqual([
+      {
+        sourceId: 'official',
+        path: 'releases/example-specialist/1.0.0.json',
+        digest: 'a'.repeat(64),
+        bytesBase64: Buffer.from('release').toString('base64'),
+        cachedAt: '2026-08-18T00:00:02.000Z'
+      }
+    ])
+    expect(document.pendingInstallations).toEqual([])
+  })
+
+  it('atomically moves a pending installation into provenance', async () => {
+    const repository = new MarketplaceRepository(
+      await mkdtemp(join(tmpdir(), 'marketplace-pending-'))
+    )
+    const provenance = {
+      sourceId: 'official',
+      specialistId: 'example-specialist',
+      publisher: 'Example',
+      version: '1.0.0',
+      releasePath: 'releases/example-specialist/1.0.0.json',
+      releaseDigest: 'a'.repeat(64),
+      artifactDigest: 'b'.repeat(64),
+      installedArchiveDigest: 'c'.repeat(64),
+      upstreamCommit: 'd'.repeat(40),
+      selectedSkillIds: ['example-skill'],
+      selectedConnectorIds: [],
+      installedAt: '2026-08-18T00:00:00.000Z'
+    }
+
+    await repository.beginInstallation({
+      provenance,
+      newlyDisabledSkillIds: ['personal-example-skill']
+    })
+    expect((await repository.getAll()).pendingInstallations).toEqual([
+      { provenance, newlyDisabledSkillIds: ['personal-example-skill'] }
+    ])
+
+    await repository.completeInstallation(provenance)
+    await expect(repository.getAll()).resolves.toMatchObject({
+      pendingInstallations: [],
+      installations: [provenance]
+    })
   })
 })
