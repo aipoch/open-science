@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, posix } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
@@ -159,15 +159,6 @@ export const planCliLauncher = (env: CliLauncherEnv): CliLauncherPlan => {
   }
 }
 
-const exists = async (path: string): Promise<boolean> => {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
-  }
-}
-
 // Runs a command synchronously and reports success (exit 0). Injectable so the Windows PATH edit can
 // be asserted in tests without invoking a real shell.
 export type CommandRunner = (command: string, args: string[]) => boolean
@@ -195,6 +186,25 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
   return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
 
+const readCliLauncher = async (target: string): Promise<string | undefined> => {
+  try {
+    return await readFile(target, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+const isManagedCliLauncher = (content: string): boolean =>
+  content.includes('Open Science command-line launcher. Managed by the app')
+
+const refuseUnmanagedCliLauncher = (target: string): never => {
+  throw new Error(
+    `Refusing to modify ${target} because it is not managed by Open Science. ` +
+      'Move or rename the existing file, then try again.'
+  )
+}
+
 // Writes the launcher shim and, on Windows, ensures its dir is on the user PATH. Returns the resulting
 // status (installed + whether `open-science` is callable, with a hint when a manual step remains).
 export const installCliLauncher = async (
@@ -203,6 +213,10 @@ export const installCliLauncher = async (
 ): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
   await mkdir(plan.binDir, { recursive: true })
+  const existing = await readCliLauncher(plan.target)
+  if (existing !== undefined && !isManagedCliLauncher(existing)) {
+    refuseUnmanagedCliLauncher(plan.target)
+  }
   await writeFile(plan.target, plan.shim, plan.mode !== undefined ? { mode: plan.mode } : {})
   if (plan.mode !== undefined) await chmod(plan.target, plan.mode)
 
@@ -224,29 +238,22 @@ export const installCliLauncher = async (
 
 export const uninstallCliLauncher = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
+  const existing = await readCliLauncher(plan.target)
+  if (existing !== undefined && !isManagedCliLauncher(existing)) {
+    refuseUnmanagedCliLauncher(plan.target)
+  }
   await rm(plan.target, { force: true })
   return { installed: false, target: plan.target, onPath: false }
 }
 
-const readCliLauncher = async (target: string): Promise<string | undefined> => {
-  try {
-    return await readFile(target, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  }
-}
-
-const isManagedCliLauncher = (content: string): boolean =>
-  content.includes('Open Science command-line launcher. Managed by the app')
-
 // AppImage status is content-aware: a legacy shim can exist while still pointing at an unmounted
-// FUSE path. Other packages retain the existing existence-only status contract.
+// FUSE path. Other packages report installed only when the existing launcher is app-managed.
 export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
+  const content = await readCliLauncher(plan.target)
   const installed = isLinuxAppImage(env)
-    ? (await readCliLauncher(plan.target)) === plan.shim
-    : await exists(plan.target)
+    ? content === plan.shim
+    : content !== undefined && isManagedCliLauncher(content)
   return {
     installed,
     target: plan.target,
