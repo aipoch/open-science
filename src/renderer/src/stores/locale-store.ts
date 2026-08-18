@@ -32,7 +32,7 @@ export const useLocaleStore = create<LocaleStore>((set) => ({
     applyHtmlLang(locale)
     persistPreference(preference)
     set({ preference, locale })
-    void window.api.locale
+    void window.api?.locale
       ?.setPreference({ preference })
       .then((snapshot) => {
         if (useLocaleStore.getState().preference === preference) applyLocaleSnapshot(snapshot)
@@ -55,7 +55,7 @@ let stopLocalePreferenceSync: (() => void) | undefined
 // Web builds expose no locale bridge, so they keep using navigator.languages unchanged.
 export const startLocalePreferenceSync = (): (() => void) => {
   stopLocalePreferenceSync?.()
-  const localeApi = window.api.locale
+  const localeApi = window.api?.locale
   if (!localeApi) return () => undefined
 
   const unsubscribe = localeApi.onChanged(applyLocaleSnapshot)
