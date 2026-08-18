@@ -46,9 +46,17 @@ export type ValidateResult = { ok: true } | { ok: false; error: string }
 // Classification of a candidate data root relative to the current one. 'move' = empty and
 // writable, safe for the copy-in migration engine. 'adopt' = already holds our data (a prior
 // migration, or the user's own pre-existing folder) - the pointer should switch to it as-is,
-// never be moved into. 'invalid' carries a user-facing reason.
-export type DataRootKind = 'move' | 'adopt' | 'invalid'
-export type ClassifyResult = { kind: DataRootKind; error?: string }
+// never be moved into. 'recover' is a marker-confirmed copy left by an interrupted migration;
+// 'invalid' carries a user-facing reason.
+export type DataRootKind = 'move' | 'adopt' | 'recover' | 'invalid'
+export type DataRootRecoveryStatus = 'copying' | 'verified'
+export type ClassifyResult =
+  | { kind: 'recover'; recoveryStatus: DataRootRecoveryStatus; error?: string }
+  | {
+      kind: Exclude<DataRootKind, 'recover'>
+      recoveryStatus?: never
+      error?: string
+    }
 
 // Windows' historical MAX_PATH. Long-path opt-outs exist but aren't something we can rely on across
 // every tool a user's Python/R environment might shell out to, so the app guards against it directly.
@@ -257,10 +265,24 @@ export const classifyDataRoot = async (
     return { kind: 'invalid', error: 'The selected folder is not usable.' }
   }
 
-  // A marker means this folder is an in-progress/uncommitted staging copy from a migration that never
-  // finished (e.g. a crash). Never adopt it — that would bypass the commit gate and switch to a possibly
-  // incomplete snapshot — and never populate over it; the user must finish or discard that move first.
+  // A trustworthy marker identifies an interrupted staging copy. Surface it as an explicit recovery
+  // state rather than adopt (which would bypass commit validation) or move (which would overwrite it).
+  // Corrupt/foreign markers remain invalid and are never made actionable.
   if (entries.some((entry) => entry.name === MIGRATION_MARKER_FILENAME)) {
+    const marker = await readMigrationMarker(target)
+    if (
+      marker &&
+      samePath(marker.source, current) &&
+      samePath(marker.target, target) &&
+      !samePath(target, current)
+    ) {
+      return {
+        kind: 'recover',
+        recoveryStatus: marker.status,
+        error:
+          'This folder holds an unfinished data move. Finish or discard that move before using it here.'
+      }
+    }
     return {
       kind: 'invalid',
       error:
@@ -298,6 +320,14 @@ export const validateNewDataRoot = async (
     return {
       ok: false,
       error: 'The selected folder already contains Open Science data. Pick an empty folder.'
+    }
+  }
+  if (result.kind === 'recover') {
+    return {
+      ok: false,
+      error:
+        result.error ??
+        'This folder holds an unfinished data move. Finish or discard that move before using it here.'
     }
   }
 
@@ -339,10 +369,8 @@ const sameInventory = (left: MigrationInventory, right: MigrationInventory): boo
   left.dirs.length === right.dirs.length &&
   left.dirs.every((dir, index) => dir === right.dirs[index])
 
-type MigrationCopyDeps = {
-  currentDataRoot: string
+type DataRootWriterPauseDeps = {
   logger?: Logger
-  diagnosticCorrelationId?: string
   runtime: { disconnect: () => Promise<unknown> }
   // Return ignored (awaited only), so kept as Promise<unknown> — mirrors runtime.disconnect above and
   // stays compatible with both the real service (now returns { reaped }) and void test fakes.
@@ -350,6 +378,21 @@ type MigrationCopyDeps = {
   // Releases the shared SQLite authority connection before migration validation opens its dedicated
   // checkpoint client. Injectable so ordering remains testable without module-level state.
   disconnectProjectDb?: () => Promise<void>
+}
+
+// Re-establishes the quiescent-data-root invariant used by both a fresh copy and a recovered commit.
+// The caller raises the migration write gate before invoking this helper so no new writer can enter
+// while existing leases drain.
+export const pauseDataRootWriters = async (deps: DataRootWriterPauseDeps): Promise<void> => {
+  await deps.runtime.disconnect()
+  await deps.notebook.shutdownAll()
+  await (deps.disconnectProjectDb ?? disconnectProjectDbClient)()
+  await waitForDataRootWriters()
+}
+
+type MigrationCopyDeps = DataRootWriterPauseDeps & {
+  currentDataRoot: string
+  diagnosticCorrelationId?: string
   // Exports each conda env under the old runtime to an @EXPLICIT lock at the new root (offline
   // reconstruction bundle). Returns the env names preserved; [] when nothing could be exported.
   // Injectable/optional so tests and non-notebook contexts skip it. Best-effort (must not throw).
@@ -442,10 +485,7 @@ export const runDataRootMigration = async (
   // clean up the staging dir and abort rather than swallow the failure and press on.
   operation.phase('pause-writers')
   try {
-    await deps.runtime.disconnect()
-    await deps.notebook.shutdownAll()
-    await (deps.disconnectProjectDb ?? disconnectProjectDbClient)()
-    await waitForDataRootWriters()
+    await pauseDataRootWriters(deps)
   } catch (err) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
     operation.fail(err)
@@ -746,9 +786,11 @@ export const commitDataRootSwitch = async (
 // Throws away an uncommitted staged copy at `<parent>/OpenScience` (the user chose "Keep current
 // location" on the done stage). Refuses unless the target is genuinely a staging copy for the current
 // root — never the live data location, and only when a marker confirms this source→target pair — so a
-// misrouted parent can never rm the folder the app is actively using.
+// misrouted parent can never rm the folder the app is actively using. A fresh process may also discard
+// a 'copying' marker: no writer from that dead process remains, and an incomplete copy is never
+// committable, so deletion is the only safe recovery.
 export const discardStagedCopy = async (
-  deps: { currentDataRoot: string; expectedToken: string },
+  deps: { currentDataRoot: string; expectedToken: string; allowIncomplete?: boolean },
   parent: string
 ): Promise<{ ok: boolean; error?: string }> => {
   const target = dataRootForPicked(parent)
@@ -760,14 +802,15 @@ export const discardStagedCopy = async (
   const marker = await readMigrationMarker(target)
   if (
     !marker ||
-    marker.status !== 'verified' ||
+    (marker.status !== 'verified' &&
+      !(deps.allowIncomplete === true && marker.status === 'copying')) ||
     !samePath(marker.target, target) ||
     !samePath(marker.source, deps.currentDataRoot) ||
     !deps.expectedToken ||
     marker.token !== deps.expectedToken
   ) {
-    // status must be 'verified' (never delete a dir mid-copy) and the token must match this session's
-    // staged copy — a stale renderer call for another/earlier path is refused rather than obeyed.
+    // The owner blocks discard while its own copy is active. Source, target, and token still have to
+    // match so a stale renderer call for another/earlier path is refused rather than obeyed.
     return { ok: false, error: 'Refused: not a completed, matching staged copy.' }
   }
 

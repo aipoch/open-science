@@ -924,8 +924,8 @@ export interface OpenScienceAPI {
     // Onboarding location step: check a candidate parent before letting the user commit to it.
     // The final data root is always `<parent>/OpenScience`, never the parent itself.
     validateDataRoot(parent: string): Promise<DataRootValidationResult>
-    // Settings + onboarding: classify a candidate parent (move/adopt/invalid) without committing;
-    // `dataRoot` on the result is the derived `<parent>/OpenScience` path.
+    // Settings + onboarding: classify a candidate parent (move/adopt/recover/invalid) without
+    // committing; `dataRoot` on the result is the derived `<parent>/OpenScience` path.
     inspectDataRoot(parent: string): Promise<DataRootInspection>
     migrate(parent: string): Promise<MigrationOutcome>
     // No-move pointer switch: set dataRoot then relaunch. Accepts both a 'move' (first-run, no

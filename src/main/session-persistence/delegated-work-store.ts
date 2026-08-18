@@ -43,7 +43,10 @@ type DelegatedWorkSessionRepository = {
 
 type SessionDelegatedWorkStoreOptions = {
   repository: DelegatedWorkSessionRepository
-  runExclusive: <Result>(work: () => Promise<Result>) => Promise<Result>
+  runExclusive: <Result>(
+    key: SessionKey | undefined,
+    work: () => Promise<Result>
+  ) => Promise<Result>
   assertMutable: (projectId: string, sessionId: string) => void
   markStartupRecoveryComplete: () => void
   notifySessionUpdated: (session: PersistedChatSession) => void
@@ -165,7 +168,7 @@ class SessionDelegatedWorkStore {
     ) => Result,
     options: Readonly<{ rejectNewQuestionQuarantine?: boolean }> = {}
   ): Promise<Result> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(key, async () => {
       if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
         throw new Error('Session runtime context expected revision must be a non-negative integer.')
       }
@@ -238,7 +241,7 @@ class SessionDelegatedWorkStore {
     key: SessionKey,
     input: AttachDelegatedMessageArtifactsInput
   ): Promise<void> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(key, async () => {
       this.options.assertMutable(key.projectId, key.sessionId)
       const session = await this.loadRuntimeContextSession(key.projectId, key.sessionId, 'patch')
       const materialized = materializeSessionConversationGraph(session)
@@ -316,7 +319,7 @@ class SessionDelegatedWorkStore {
   }
 
   readChildren(key: SessionKey, parentFrameId: string): Promise<readonly ChildRecord[]> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(key, async () => {
       const session = await this.loadRuntimeContextSession(key.projectId, key.sessionId, 'read')
       const materialized = materializeSessionConversationGraph(session)
       const graph = materialized.conversationGraph
@@ -343,7 +346,7 @@ class SessionDelegatedWorkStore {
   }
 
   recoverInterruptedDelegatedWork(): Promise<readonly { frameId: string; attemptId: string }[]> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(undefined, async () => {
       const scan = await this.options.repository.loadAllWithDiagnostics({ mode: 'read-only' })
       if (!scan.isComplete) {
         throw new Error('Cannot recover Delegated Work from an incomplete Session catalog.')

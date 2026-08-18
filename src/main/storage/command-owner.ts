@@ -34,10 +34,12 @@ import {
   classifyDataRoot,
   commitDataRootSwitch,
   discardStagedCopy,
+  pauseDataRootWriters,
   runDataRootMigration,
   validateNewDataRoot,
   type ValidateResult
 } from './migration-service'
+import { readMigrationMarker } from './migration-marker'
 import { availableBytes, computeStorageUsage } from './usage'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { RELOCATABLE_DATA_DIRS } from './data-directories'
@@ -87,6 +89,7 @@ type StorageCommandOwnerDeps = {
   exportRuntimeLocks?: typeof exportRuntimeLocks
   discardStagedCopy?: typeof discardStagedCopy
   runDataRootMigration?: typeof runDataRootMigration
+  pauseDataRootWriters?: typeof pauseDataRootWriters
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -103,13 +106,15 @@ const defaultBroadcast = (progress: MigrationProgress): void => {
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   let activeMigration: AbortController | undefined
-  // The token + target of the copy THIS session staged (set when a copy verifies, cleared when the
-  // migration resolves). commit/discard require it so a stale renderer call can't act on a foreign copy.
-  let activeStaged: { token: string; target: string; correlationId: string } | undefined
+  // The token + target of the active staged copy (set when this process verifies a copy, or recovered
+  // from its durable marker after restart; cleared when the migration resolves).
+  let activeStaged:
+    { token: string; target: string; correlationId: string; recovered: boolean } | undefined
   let resolutionInProgress = false
   const cleanupRuntimeCache = deps.cleanupRuntimeCache ?? removeMicromambaCacheForRoot
   const discardStagedCopyImpl = deps.discardStagedCopy ?? discardStagedCopy
   const runDataRootMigrationImpl = deps.runDataRootMigration ?? runDataRootMigration
+  const pauseDataRootWritersImpl = deps.pauseDataRootWriters ?? pauseDataRootWriters
   const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
   const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
     try {
@@ -273,7 +278,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           signal: controller.signal,
           onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress),
           onVerified: (staged) => {
-            activeStaged = { ...staged, correlationId }
+            activeStaged = { ...staged, correlationId, recovered: false }
           }
         }
       )
@@ -305,6 +310,27 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     activeMigration?.abort()
   }
 
+  // Rehydrates the durable authority for a staging copy after process restart. The marker token is
+  // never exposed to the renderer; source, target, and status are checked again at this command
+  // boundary before commit/discard receives it. A fresh correlation id starts the recovery attempt's
+  // diagnostics because the original process-local operation is gone.
+  const recoverStagedFromMarker = async (
+    target: string,
+    allowedStatuses: ReadonlySet<'copying' | 'verified'>
+  ): Promise<NonNullable<typeof activeStaged> | undefined> => {
+    const marker = await readMigrationMarker(target)
+    if (
+      !marker ||
+      !allowedStatuses.has(marker.status) ||
+      !samePath(marker.source, resolveDataRoot()) ||
+      !samePath(marker.target, target) ||
+      samePath(target, resolveDataRoot())
+    ) {
+      return undefined
+    }
+    return { token: marker.token, target, correlationId: randomUUID(), recovered: true }
+  }
+
   // Discards a completed-but-uncommitted copy at `<parent>/OpenScience` when the user picks "Keep
   // current location" on the done stage. Since the copy phase never touched settings.dataRoot or the
   // old root, this just removes the new copy and leaves the app on its current root. discardStagedCopy
@@ -323,15 +349,34 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       logger.warn('staged data root discard ignored', { reason: 'resolution-in-progress' })
       return { ok: false, error: 'A migration is already being resolved.' }
     }
-    if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
-      logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
-      return { ok: false, error: 'No matching staged data copy was found.' }
+    let target: string
+    try {
+      target = dataRootForPicked(request.parent)
+    } catch (err) {
+      logger.warn('staged data root discard ignored', {
+        reason: 'invalid-request',
+        ...diagnosticErrorFields(err)
+      })
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-    const staged = activeStaged
     resolutionInProgress = true
     try {
+      const staged = activeStaged
+        ? samePath(activeStaged.target, target)
+          ? activeStaged
+          : undefined
+        : await recoverStagedFromMarker(target, new Set(['copying', 'verified']))
+      if (!staged) {
+        logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
+        return { ok: false, error: 'No matching staged data copy was found.' }
+      }
+      activeStaged = staged
       const result = await discardStagedCopyImpl(
-        { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
+        {
+          currentDataRoot: resolveDataRoot(),
+          expectedToken: staged.token,
+          allowIncomplete: staged.recovered
+        },
         request.parent
       )
       if (result.ok) {
@@ -383,14 +428,65 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     if (activeMigration) {
       return { ok: false, error: 'A migration copy is still in progress.' }
     }
-    if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
-      return { ok: false, error: 'No completed migration from this app session was found.' }
-    }
     if (resolutionInProgress) {
       return { ok: false, error: 'A migration is already being resolved.' }
     }
-    const staged = activeStaged
+    let target: string
+    try {
+      target = dataRootForPicked(request.parent)
+    } catch (err) {
+      logger.warn('staged data root commit refused', {
+        reason: 'invalid-request',
+        ...diagnosticErrorFields(err)
+      })
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
     resolutionInProgress = true
+    const staged = activeStaged
+      ? samePath(activeStaged.target, target)
+        ? activeStaged
+        : undefined
+      : await recoverStagedFromMarker(target, new Set(['verified']))
+    if (!staged) {
+      resolutionInProgress = false
+      return { ok: false, error: 'No completed migration copy was found.' }
+    }
+
+    if (staged.recovered) {
+      // Recovery happens in a fresh process: the original write gate and paused runtimes are gone.
+      // Re-establish those invariants before inventory verification and pointer persistence.
+      if (deps.getActiveDelegatedSessions().length > 0) {
+        resolutionInProgress = false
+        return {
+          ok: false,
+          error:
+            'Subagents are still running. Return to their tasks and stop them before finishing the move.'
+        }
+      }
+      beginMigration()
+      try {
+        await pauseDataRootWritersImpl({
+          logger,
+          runtime: deps.runtime,
+          notebook: deps.notebook
+        })
+        activeStaged = staged
+      } catch (err) {
+        logger.error('recovered data root pause failed', diagnosticErrorFields(err))
+        clearMigrationPending()
+        activeStaged = undefined
+        resolutionInProgress = false
+        return {
+          ok: false,
+          error: 'Could not pause running work to finish moving your data safely. Please try again.'
+        }
+      } finally {
+        // Keep the write gate pending through commit, but avoid treating the subsequent clean
+        // relaunch as an in-progress copy in the quit guard.
+        endMigrationCopy()
+      }
+    }
+
     const previousDataRoot = resolveDataRoot()
     let outcome: MigrationOutcome
     try {
@@ -453,8 +549,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
   // Settings + onboarding recovery: classify a candidate parent without committing to it, so the
   // caller can route to the right UI (migrate confirm for 'move', adopt confirm for 'adopt',
-  // inline error for 'invalid') and display the derived `<parent>/OpenScience` path regardless of
-  // kind. Never throws.
+  // staged-copy resolution for 'recover', inline error for 'invalid') and display the derived
+  // `<parent>/OpenScience` path regardless of kind. Never throws.
   const inspectDataRoot = async (request: StorageParentRequest): Promise<DataRootInspection> => {
     const dataRoot = dataRootForPicked(request.parent)
     try {
@@ -474,8 +570,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // - used both for onboarding's first-run apply (no data exists yet to move) and for adopting an
   // existing data folder from Settings (data already lives at the derived target; only the
   // pointer changes).
-  // Unlike storage:migrate there is no copy phase and no session-interrupt step. Accepts both
-  // 'move' and 'adopt' targets (classify != 'invalid') - the migration engine's own
+  // Unlike storage:migrate there is no copy phase and no session-interrupt step. Accepts only
+  // 'move' and 'adopt' targets; a 'recover' target must use the marker-gated resolution flow. The
+  // migration engine's own
   // validateNewDataRoot is stricter (move-only) and is never called here.
   //
   // `markOnboarding` is stamped here (not by a separate renderer completeOnboarding() call) so it
@@ -492,8 +589,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     operation.phase('classify-target')
     try {
       const classification = await classifyDataRoot(request.parent, resolveDataRoot())
-      if (classification.kind === 'invalid') {
-        operation.fail(new Error(classification.error ?? 'invalid target'), { mode: 'invalid' })
+      if (classification.kind !== 'move' && classification.kind !== 'adopt') {
+        operation.fail(new Error(classification.error ?? 'invalid target'), {
+          mode: classification.kind
+        })
         return { ok: false, error: classification.error ?? 'The selected folder is not usable.' }
       }
 

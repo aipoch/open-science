@@ -47,4 +47,20 @@ describe('molecule preview handler', () => {
     )
     expect(writeArtifactForCurrentRun).not.toHaveBeenCalled()
   })
+
+  it('does not publish an Artifact after its connector call is cancelled', async () => {
+    const writeArtifactForCurrentRun = vi.fn()
+    const handler = createMoleculePreviewHandler({ writeArtifactForCurrentRun })
+    const cancellation = new AbortController()
+    cancellation.abort()
+
+    await expect(
+      handler(
+        { smiles: ASPIRIN_SMILES, filename: 'aspirin' },
+        { sessionId: 's-1' },
+        cancellation.signal
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(writeArtifactForCurrentRun).not.toHaveBeenCalled()
+  })
 })

@@ -135,6 +135,29 @@ describe('ConnectorPermissionBroker', () => {
     expect(remember).not.toHaveBeenCalled()
   })
 
+  it('passes the caller signal to an approval prompt and stops when it aborts', async () => {
+    const { registry, remember } = createRegistry()
+    let observedSignal: AbortSignal | undefined
+    const prompt = vi.fn(
+      async (_info: unknown, signal?: AbortSignal): Promise<'once'> =>
+        new Promise((_, reject) => {
+          observedSignal = signal
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+    const broker = new ConnectorPermissionBroker(registry, prompt)
+    const cancellation = new AbortController()
+
+    const authorization = broker.authorize(createRequest(), 'require_approval', {
+      signal: cancellation.signal
+    })
+    await vi.waitFor(() => expect(observedSignal).toBe(cancellation.signal))
+    cancellation.abort()
+
+    await expect(authorization).rejects.toMatchObject({ name: 'AbortError' })
+    expect(remember).not.toHaveBeenCalled()
+  })
+
   it('fails closed when approval is denied or durable grant storage fails', async () => {
     const denied = new ConnectorPermissionBroker(
       createRegistry().registry,

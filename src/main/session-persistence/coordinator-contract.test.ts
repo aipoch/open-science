@@ -114,7 +114,7 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {
-  it('serializes every mutation and snapshot through one failure-tolerant queue', async () => {
+  it('keeps scoped lanes failure-tolerant and snapshots behind a global barrier', async () => {
     const gate = createDeferred()
     const order: string[] = []
     const { repository } = createRepository()
@@ -134,20 +134,215 @@ describe('SessionPersistenceCoordinator contracts', () => {
       return value
     })
 
-    await vi.waitFor(() => expect(order).toEqual(['mutation:start']))
+    await vi.waitFor(() => expect(order).toEqual(['mutation:start', 'manifest']))
     gate.resolve()
     await expect(mutation).resolves.toBeUndefined()
     await expect(manifest).resolves.toBeUndefined()
     await expect(snapshot).resolves.toEqual({ sessions: [], isComplete: false })
-    expect(order).toEqual(['mutation:start', 'mutation:end', 'manifest', 'snapshot'])
+    expect(order).toEqual(['mutation:start', 'manifest', 'mutation:end', 'snapshot'])
 
     await expect(
       coordinator.runSessionMutation('project-1', 'session-1', async () => {
         throw new Error('isolated failure')
       })
     ).rejects.toThrow('isolated failure')
+    await expect(
+      coordinator.runSessionMutation('project-1', 'session-1', async () => {
+        order.push('mutation:recovered')
+      })
+    ).resolves.toBeUndefined()
     await expect(coordinator.saveManifest({ lastProjectId: 'project-1' })).resolves.toBeUndefined()
+    expect(order.slice(-2)).toEqual(['mutation:recovered', 'manifest'])
     expect(repository.saveManifest).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let a blocked Project mutation stall an independent Project', async () => {
+    const projectOneGate = createDeferred()
+    const projectTwoStarted = createDeferred()
+    const { repository } = createRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const projectOne = coordinator.runSessionMutation('project-1', 'session-1', async () => {
+      await projectOneGate.promise
+    })
+    const projectTwo = coordinator.runSessionMutation('project-2', 'session-2', async () => {
+      projectTwoStarted.resolve()
+    })
+
+    const outcome = await Promise.race([
+      projectTwoStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+    projectOneGate.resolve()
+    await Promise.all([projectOne, projectTwo])
+
+    expect(outcome).toBe('started')
+  })
+
+  it('keeps one Session identity owner while different Projects save concurrently', async () => {
+    const firstWriteGate = createDeferred()
+    const firstWriteStarted = createDeferred()
+    const { repository, sessions } = createRepository([])
+    repository.saveSession = vi.fn(async (session) => {
+      if (session.projectId === 'project-1') {
+        firstWriteStarted.resolve()
+        await firstWriteGate.promise
+      }
+      sessions.set(session.id, structuredClone(session))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const first = coordinator.saveSession(
+      createSession({ id: 'shared-session', projectId: 'project-1' })
+    )
+    await firstWriteStarted.promise
+
+    const conflicting = coordinator.saveSession(
+      createSession({ id: 'shared-session', projectId: 'project-2' })
+    )
+    firstWriteGate.resolve()
+    await expect(first).resolves.toMatchObject({ projectId: 'project-1' })
+    await expect(conflicting).rejects.toThrow(/already owned by another Project/)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('holds deleted Session identities until Project cleanup finishes', async () => {
+    const projectCleanupGate = createDeferred()
+    const projectCleanupStarted = createDeferred()
+    const reusedSessionSaveStarted = createDeferred()
+    const { repository, sessions } = createRepository([
+      createSession({ id: 'shared-session', projectId: 'project-1' })
+    ])
+    repository.saveSession = vi.fn(async (session) => {
+      reusedSessionSaveStarted.resolve()
+      sessions.set(session.id, structuredClone(session))
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({
+        softDeleteProject: vi.fn(async () => {
+          projectCleanupStarted.resolve()
+          await projectCleanupGate.promise
+          return 'project-delete-token'
+        })
+      })
+    )
+    await coordinator.loadAll()
+    vi.mocked(repository.loadProjectWithDiagnostics).mockResolvedValueOnce({
+      sessions: [],
+      isComplete: false
+    })
+
+    const deletion = coordinator.deleteProjectSessions('project-1')
+    await projectCleanupStarted.promise
+    const reuse = coordinator.saveSession(
+      createSession({ id: 'shared-session', projectId: 'project-2' })
+    )
+    const outcome = await Promise.race([
+      reusedSessionSaveStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+
+    expect(outcome).toBe('blocked')
+    projectCleanupGate.resolve()
+    await expect(deletion).resolves.toEqual({ status: 'completed' })
+    await expect(reuse).resolves.toMatchObject({
+      id: 'shared-session',
+      projectId: 'project-2'
+    })
+  })
+
+  it('holds legacy Project Session identities while upload deletion authority is prepared', async () => {
+    const uploadPreparationGate = createDeferred()
+    const uploadPreparationStarted = createDeferred()
+    const reusedSessionSaveStarted = createDeferred()
+    const committedSession = createSession({
+      id: 'shared-session',
+      projectId: 'project-1'
+    })
+    const { repository, sessions } = createRepository([], {
+      getProjectSessionDeletionState: vi.fn(async () => 'legacy-committed' as const),
+      loadCommittedProjectWithDiagnostics: vi.fn(async () => ({
+        sessions: [structuredClone(committedSession)],
+        isComplete: true
+      }))
+    })
+    repository.saveSession = vi.fn(async (session) => {
+      reusedSessionSaveStarted.resolve()
+      sessions.set(session.id, structuredClone(session))
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      {
+        upgradeLegacySessionUploads: vi.fn(async (session) => {
+          if (session.projectId === 'project-1') {
+            uploadPreparationStarted.resolve()
+            await uploadPreparationGate.promise
+          }
+          return session
+        })
+      }
+    )
+
+    const deletion = coordinator.deleteProjectSessions('project-1')
+    await uploadPreparationStarted.promise
+    const reuse = coordinator.saveSession(
+      createSession({ id: 'shared-session', projectId: 'project-2' })
+    )
+    const outcome = await Promise.race([
+      reusedSessionSaveStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+
+    expect(outcome).toBe('blocked')
+    uploadPreparationGate.resolve()
+    await expect(deletion).resolves.toEqual({ status: 'completed' })
+    await expect(reuse).resolves.toMatchObject({
+      id: 'shared-session',
+      projectId: 'project-2'
+    })
+  })
+
+  it('runs post-delete catalog reconciliation behind a global barrier', async () => {
+    const reconciliationGate = createDeferred()
+    const reconciliationStarted = createDeferred()
+    const independentSaveStarted = createDeferred()
+    const { repository, sessions } = createRepository([
+      createSession({ id: 'deleted-session', projectId: 'project-1' })
+    ])
+    repository.saveSession = vi.fn(async (session) => {
+      independentSaveStarted.resolve()
+      sessions.set(session.id, structuredClone(session))
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({
+        reconcileActiveSessions: vi.fn(async () => {
+          reconciliationStarted.resolve()
+          await reconciliationGate.promise
+        })
+      })
+    )
+
+    const deletion = coordinator.deleteSession('project-1', 'deleted-session')
+    await reconciliationStarted.promise
+    const independentSave = coordinator.saveSession(
+      createSession({ id: 'new-session', projectId: 'project-2' })
+    )
+    const outcome = await Promise.race([
+      independentSaveStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+
+    expect(outcome).toBe('blocked')
+    reconciliationGate.resolve()
+    await expect(deletion).resolves.toBeUndefined()
+    await expect(independentSave).resolves.toMatchObject({
+      id: 'new-session',
+      projectId: 'project-2'
+    })
   })
 
   it('publishes metadata only from queued durable state and marks degraded projections incomplete', async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 
@@ -41,9 +41,9 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()
 }
 
-const createSession = (id: string): PersistedChatSession => ({
+const createSession = (id: string, projectId = 'project-a'): PersistedChatSession => ({
   id,
-  projectId: 'project-a',
+  projectId,
   title: id,
   cwd: '/workspace/project',
   status: 'idle',
@@ -53,6 +53,10 @@ const createSession = (id: string): PersistedChatSession => ({
 })
 
 describe('session persistence repository save ordering', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
   it('does not start a later session write while an earlier one is still writing', async () => {
     const firstWrite = createDeferred<void>()
     const secondWrite = createDeferred<void>()
@@ -76,14 +80,42 @@ describe('session persistence repository save ordering', () => {
 
     firstWrite.resolve(undefined)
     await firstSave
-    await flushMicrotasks()
-
-    expect(fsMock.writeFile).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(fsMock.writeFile).toHaveBeenCalledTimes(2))
 
     secondWrite.resolve(undefined)
     await secondSave
 
     expect(writes[0]).toContain('first-session')
     expect(writes[1]).toContain('second-session')
+  })
+
+  it('does not let one Project write stall an independent Project write', async () => {
+    const projectOneGate = createDeferred<void>()
+    const projectOneStarted = createDeferred<void>()
+    const projectTwoStarted = createDeferred<void>()
+    const repository = new SessionRepository('/session-storage')
+
+    fsMock.mkdir.mockResolvedValue(undefined)
+    fsMock.rename.mockResolvedValue(undefined)
+    fsMock.writeFile.mockImplementation((path: string) => {
+      if (path.includes('project-a')) {
+        projectOneStarted.resolve(undefined)
+        return projectOneGate.promise
+      }
+      projectTwoStarted.resolve(undefined)
+      return Promise.resolve()
+    })
+
+    const projectOne = repository.saveSession(createSession('session-a', 'project-a'))
+    await projectOneStarted.promise
+    const projectTwo = repository.saveSession(createSession('session-b', 'project-b'))
+    const outcome = await Promise.race([
+      projectTwoStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+    projectOneGate.resolve(undefined)
+    await Promise.all([projectOne, projectTwo])
+
+    expect(outcome).toBe('started')
   })
 })

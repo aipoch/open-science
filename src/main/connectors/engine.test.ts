@@ -92,6 +92,72 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it('aborts an active request without retrying it', async () => {
+    let observedSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Promise((_, reject) => {
+          observedSignal = init?.signal ?? undefined
+          observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), {
+            once: true
+          })
+        })
+    )
+    const engine = new ParserEngine({ fetchImpl, retries: 2, retryBackoffMs: 0 })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test',
+      parse: (raw) => raw
+    }
+    const cancellation = new AbortController()
+
+    const call = engine.call(desc, {}, {}, cancellation.signal)
+    await vi.waitFor(() => expect(observedSignal).toBeInstanceOf(AbortSignal))
+    cancellation.abort()
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('aborts retry backoff before another request starts', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('ECONNRESET'))
+    const engine = new ParserEngine({ fetchImpl, retries: 2, retryBackoffMs: 60_000 })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test',
+      parse: (raw) => raw
+    }
+    const cancellation = new AbortController()
+
+    const call = engine.call(desc, {}, {}, cancellation.signal)
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    cancellation.abort()
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('exposes the caller signal to run-style descriptors', async () => {
+    const engine = new ParserEngine({ fetchImpl: vi.fn() })
+    const cancellation = new AbortController()
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      run: async (ctx) => ctx.signal
+    }
+
+    await expect(engine.call(desc, {}, {}, cancellation.signal)).resolves.toBe(cancellation.signal)
+  })
+
   it('does not retry a client error (4xx other than 429)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 400 } as Response)
     const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })

@@ -92,6 +92,8 @@ beforeEach(() => {
       detectActive: vi.fn().mockResolvedValue([]),
       migrate: vi.fn().mockResolvedValue({ ok: true }),
       cancelMigrate: vi.fn().mockResolvedValue(undefined),
+      commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
+      discardMigratedCopy: vi.fn().mockResolvedValue({ ok: true }),
       onProgress: vi.fn(() => () => {})
     }
   }
@@ -786,6 +788,67 @@ describe('StoragePanel', () => {
         (button) => button.textContent?.trim() === 'Use this folder'
       )
     ).toBe(false)
+  })
+
+  it('a recoverable verified copy opens recovery and refreshes the target after discard', async () => {
+    ;(
+      window as unknown as { api: { storage: { pickDirectory: ReturnType<typeof vi.fn> } } }
+    ).api.storage.pickDirectory.mockResolvedValue('/mnt/interrupted')
+    ;(
+      window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
+    ).api.storage.inspectDataRoot
+      .mockResolvedValueOnce({
+        kind: 'recover',
+        recoveryStatus: 'verified',
+        dataRoot: '/mnt/interrupted/OpenScience'
+      })
+      .mockResolvedValue({
+        kind: 'move',
+        dataRoot: '/mnt/interrupted/OpenScience'
+      })
+
+    await act(async () => {
+      root.render(<StoragePanel />)
+      await Promise.resolve()
+    })
+    await openEditor()
+    await act(async () => {
+      clickButton((button) => button.textContent?.includes('Browse') ?? false)
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('verified copy from an interrupted move')
+    expect(container.textContent).toContain('/mnt/interrupted/OpenScience')
+
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Resolve unfinished move')
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Verified data copy found')
+    expect(
+      (window as unknown as { api: { storage: { migrate: ReturnType<typeof vi.fn> } } }).api.storage
+        .migrate
+    ).not.toHaveBeenCalled()
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Discard copy')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Verified data copy found')
+    expect(container.textContent).not.toContain('verified copy from an interrupted move')
+    expect(container.textContent).toContain('Your existing data')
+    expect(
+      (
+        window as unknown as {
+          api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } }
+        }
+      ).api.storage.inspectDataRoot
+    ).toHaveBeenCalledTimes(2)
   })
 
   it('offers return-to-default inside the editor only when the current root is custom', async () => {

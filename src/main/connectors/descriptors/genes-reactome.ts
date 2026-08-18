@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../types'
 import { netFetchStandard } from '../../skills/net-fetch'
 
 // Reactome AnalysisService (over-representation / pathway projection).
@@ -45,14 +45,20 @@ type RxNotFoundRow = { id?: string }
 
 // Global-fetch wrapper with the shared User-Agent and an abort timeout (ctx methods can't set the
 // text/plain content-type Reactome requires — see the file header).
-async function reactomeFetch(url: string, init?: RequestInit): Promise<Response> {
+async function reactomeFetch(
+  url: string,
+  init?: RequestInit,
+  signal?: AbortSignal
+): Promise<Response> {
+  signal?.throwIfAborted()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS)
+  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
   try {
     return await netFetchStandard(url, {
       ...init,
       headers: { 'user-agent': USER_AGENT, accept: 'application/json', ...init?.headers },
-      signal: controller.signal
+      signal: requestSignal
     })
   } finally {
     clearTimeout(timer)
@@ -70,19 +76,27 @@ function projectionUrl(species: string, resource: string, includeDisease: boolea
 }
 
 // POST a newline-joined identifier body as text/plain and parse the analysis result.
-async function submitProjection(url: string, body: string): Promise<RxAnalysis> {
-  const res = await reactomeFetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'text/plain' },
-    body
-  })
+async function submitProjection(
+  url: string,
+  body: string,
+  signal?: AbortSignal
+): Promise<RxAnalysis> {
+  const res = await reactomeFetch(
+    url,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body
+    },
+    signal
+  )
   if (!res.ok) throw new Error(`Reactome AnalysisService projection failed (HTTP ${res.status})`)
   return (await res.json()) as RxAnalysis
 }
 
 // The token from summary.token is already percent-encoded; use it verbatim in the path.
-async function fetchNotFound(token: string): Promise<string[]> {
-  const res = await reactomeFetch(`${BASE}/token/${token}/notFound`)
+async function fetchNotFound(token: string, signal?: AbortSignal): Promise<string[]> {
+  const res = await reactomeFetch(`${BASE}/token/${token}/notFound`, undefined, signal)
   if (!res.ok) return []
   const rows = (await res.json()) as RxNotFoundRow[]
   return (Array.isArray(rows) ? rows : [])
@@ -91,15 +105,20 @@ async function fetchNotFound(token: string): Promise<string[]> {
 }
 
 // Reactome database release (e.g. "97") as plain text; null when unavailable (never fails the tool).
-async function fetchVersion(): Promise<string | null> {
+async function fetchVersion(signal?: AbortSignal): Promise<string | null> {
   try {
-    const res = await reactomeFetch(`${BASE}/database/version`, {
-      headers: { accept: 'text/plain' }
-    })
+    const res = await reactomeFetch(
+      `${BASE}/database/version`,
+      {
+        headers: { accept: 'text/plain' }
+      },
+      signal
+    )
     if (!res.ok) return null
     const text = (await res.text()).trim()
     return text || null
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error
     return null
   }
 }
@@ -163,7 +182,7 @@ export const GENES_REACTOME_TOOLS: ToolDescriptor[] = [
       'compact {tool, reactome_version, id_type, species, resource, include_disease, n_input, genes:{identifier:{found, n_lowlevel_pathways, pathways:[{stId,name,species}]}}}; full replaces each pathways[] with full stats {stId,name,species,low_level,in_disease,entities:{total,found,ratio,p_value,fdr},reactions:{total,found,ratio}} and adds batch_summary {n_input, n_found, n_not_found, identifiers_not_found, distinct_lowlevel_pathways, batch_pathways_found}.',
     example:
       'const result = await host.mcp("genes", "map_reactome_pathways", {"identifiers": ["TP53", "EGFR", "BRCA1"], "id_type": "symbol"})',
-    run: async (_ctx, a) => {
+    run: async (ctx: ToolContext, a) => {
       const rawIds = a.identifiers
       if (!Array.isArray(rawIds)) throw new Error('identifiers must be an array of strings')
       const identifiers = rawIds.map((v) => String(v).trim()).filter((v) => v.length > 0)
@@ -186,10 +205,10 @@ export const GENES_REACTOME_TOOLS: ToolDescriptor[] = [
 
       // Batch submission: one text/plain POST of all identifiers newline-joined. Its token yields the
       // authoritative not-found split; batch.pathwaysFound is the pooled pathway count.
-      const version = await fetchVersion()
-      const batch = await submitProjection(url, identifiers.join('\n'))
+      const version = await fetchVersion(ctx.signal)
+      const batch = await submitProjection(url, identifiers.join('\n'), ctx.signal)
       const token = batch.summary?.token
-      const batchNotFound = new Set(token ? await fetchNotFound(token) : [])
+      const batchNotFound = new Set(token ? await fetchNotFound(token, ctx.signal) : [])
 
       const genes: Record<string, unknown> = {}
       const notFoundIds: string[] = []
@@ -202,7 +221,7 @@ export const GENES_REACTOME_TOOLS: ToolDescriptor[] = [
           notFoundIds.push(id)
           continue
         }
-        const single = await submitProjection(url, id)
+        const single = await submitProjection(url, id, ctx.signal)
         // Robust fallback: an identifier is found only if its own submission mapped it.
         if ((single.identifiersNotFound ?? 0) !== 0) {
           genes[id] = notFoundEntry(compact)

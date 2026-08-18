@@ -62,7 +62,7 @@ const assertCurrentRunningAttempt = (
 }
 
 // Owns durable Delegated Work CAS mutations behind one small command interface. The coordinator
-// contributes only its queue and deletion guard, so delegation state cannot bypass Session ordering.
+// contributes only its scheduler and deletion guard, so delegation state cannot bypass Session ordering.
 class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommands {
   private readonly messageDeliveryOwner = new SessionMessageDeliveryPersistenceOwner()
   private readonly store: SessionDelegatedWorkStore

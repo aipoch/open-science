@@ -9,7 +9,23 @@ const DEFAULT_RETRIES = 2
 const DEFAULT_BACKOFF_MS = 400
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted()
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+
+  return new Promise((resolve, reject) => {
+    const finish = (): void => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }
+    const abort = (): void => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(finish, ms)
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
 
 // Some public APIs (e.g. AlphaFold EBI) reject requests without a User-Agent; send a stable one.
 const USER_AGENT =
@@ -58,13 +74,19 @@ export class ParserEngine {
   async call(
     descriptor: ToolDescriptor,
     args: Record<string, unknown>,
-    credentials: ConnectorCredentials
+    credentials: ConnectorCredentials,
+    signal?: AbortSignal
   ): Promise<unknown> {
+    signal?.throwIfAborted()
     for (const key of descriptor.required ?? []) {
       if (args[key] == null) throw new Error(`missing required arg: ${key}`)
     }
-    const ctx = this.makeContext(credentials)
-    if (descriptor.run) return descriptor.run(ctx, args)
+    const ctx = this.makeContext(credentials, signal)
+    if (descriptor.run) {
+      const result = await descriptor.run(ctx, args)
+      signal?.throwIfAborted()
+      return result
+    }
     if (!descriptor.url || !descriptor.parse) {
       throw new Error(`descriptor ${descriptor.id} needs either run() or url()+parse()`)
     }
@@ -73,7 +95,7 @@ export class ParserEngine {
     return descriptor.parse(raw, args)
   }
 
-  private makeContext(credentials: ConnectorCredentials): ToolContext {
+  private makeContext(credentials: ConnectorCredentials, signal?: AbortSignal): ToolContext {
     // Delay before the next attempt: honour a numeric Retry-After (seconds, capped), else exponential
     // backoff with jitter off the configured base.
     const nextDelay = (attempt: number, retryAfter: string | null): number => {
@@ -86,33 +108,41 @@ export class ParserEngine {
       for (let attempt = 0; ; attempt++) {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+        const requestSignal = signal
+          ? AbortSignal.any([controller.signal, signal])
+          : controller.signal
         let res: Response
         try {
           res = await this.fetchImpl(url, {
             ...init,
             headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
-            signal: controller.signal
+            signal: requestSignal
           })
         } catch (err) {
+          if (signal?.aborted) throw err
           // Network failure or timeout abort — retry a bounded number of times, then give up.
           if (attempt < this.retries) {
-            await sleep(nextDelay(attempt, null))
+            await sleep(nextDelay(attempt, null), signal)
             continue
           }
           throw err
         } finally {
           clearTimeout(timer)
         }
-        if (res.ok) return res
+        if (res.ok) {
+          signal?.throwIfAborted()
+          return res
+        }
         // Retry only transient upstream statuses; client errors (4xx except 429) fail fast.
         if (attempt < this.retries && RETRYABLE_STATUS.has(res.status)) {
-          await sleep(nextDelay(attempt, res.headers?.get?.('retry-after') ?? null))
+          await sleep(nextDelay(attempt, res.headers?.get?.('retry-after') ?? null), signal)
           continue
         }
         throw new Error(`HTTP ${res.status} for ${redactUrl(url)}`)
       }
     }
     return {
+      ...(signal ? { signal } : {}),
       credentials,
       fetchJson: async (url) => (await doFetch(url, 'application/json')).json(),
       fetchJsonWithHeaders: async (url) => {

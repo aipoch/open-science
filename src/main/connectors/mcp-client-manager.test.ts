@@ -70,6 +70,105 @@ describe('McpClientManager', () => {
     expect(out).toEqual({ value: 'hello' })
   })
 
+  it('passes the caller signal to MCP discovery and tool requests', async () => {
+    const { createClient } = makeTestServer()
+    const listTools = vi.spyOn(Client.prototype, 'listTools')
+    const callTool = vi.spyOn(Client.prototype, 'callTool')
+    const manager = new McpClientManager({ createClient: () => createClient() })
+    const cancellation = new AbortController()
+
+    await manager.listTools(config, cancellation.signal)
+    await manager.call(config, 'echo', { value: 'hello' }, cancellation.signal)
+
+    expect(listTools).toHaveBeenCalledWith(undefined, { signal: cancellation.signal })
+    expect(callTool).toHaveBeenCalledWith(
+      { name: 'echo', arguments: { value: 'hello' } },
+      undefined,
+      { signal: cancellation.signal }
+    )
+  })
+
+  it('cancels a sole initial connection and discards a client that resolves afterward', async () => {
+    let resolveFirst!: (client: Client) => void
+    const firstConnection = new Promise<Client>((resolve) => {
+      resolveFirst = resolve
+    })
+    const firstClient = {
+      close: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [] }))
+    } as unknown as Client
+    const secondClient = {
+      close: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: 'echo' }] }))
+    } as unknown as Client
+    const connectionSignals: AbortSignal[] = []
+    const createClient = vi.fn(
+      async (
+        _config: CustomMcpServerConfig,
+        _authProvider?: PersistentOAuthClientProvider,
+        signal?: AbortSignal
+      ) => {
+        if (signal) connectionSignals.push(signal)
+        return createClient.mock.calls.length === 1 ? firstConnection : secondClient
+      }
+    )
+    const manager = new McpClientManager({ createClient })
+    const cancellation = new AbortController()
+
+    const pending = manager.listTools(config, cancellation.signal)
+    await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce())
+    cancellation.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(connectionSignals[0]?.aborted).toBe(true)
+
+    await expect(manager.listTools(config)).resolves.toEqual([{ name: 'echo' }])
+    expect(createClient).toHaveBeenCalledTimes(2)
+
+    resolveFirst(firstClient)
+    await vi.waitFor(() => expect(firstClient.close).toHaveBeenCalledOnce())
+    await manager.closeAll()
+  })
+
+  it('keeps a shared initial connection alive while another caller is still waiting', async () => {
+    let resolveConnection!: (client: Client) => void
+    const connection = new Promise<Client>((resolve) => {
+      resolveConnection = resolve
+    })
+    const client = {
+      close: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: 'echo' }] }))
+    } as unknown as Client
+    let connectionSignal: AbortSignal | undefined
+    const createClient = vi.fn(
+      async (
+        _config: CustomMcpServerConfig,
+        _authProvider?: PersistentOAuthClientProvider,
+        signal?: AbortSignal
+      ) => {
+        connectionSignal = signal
+        return connection
+      }
+    )
+    const manager = new McpClientManager({ createClient })
+    const cancelledCaller = new AbortController()
+    const activeCaller = new AbortController()
+
+    const cancelled = manager.listTools(config, cancelledCaller.signal)
+    const active = manager.listTools(config, activeCaller.signal)
+    await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce())
+    cancelledCaller.abort()
+
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(connectionSignal?.aborted).toBe(false)
+
+    resolveConnection(client)
+    await expect(active).resolves.toEqual([{ name: 'echo' }])
+    expect(createClient).toHaveBeenCalledOnce()
+    expect(client.close).not.toHaveBeenCalled()
+    await manager.closeAll()
+  })
+
   it('throws when the tool result has isError set', async () => {
     const { createClient } = makeTestServer()
     const manager = new McpClientManager({ createClient: () => createClient() })

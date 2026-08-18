@@ -70,6 +70,7 @@ import {
   recoverInterruptedDelegatedWorkSession,
   SessionDelegatedWorkPersistenceOwner
 } from './delegated-work-owner'
+import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -168,10 +169,11 @@ const assertSessionIdentityOwnership = async (
   await repository.assertSessionIdentityOwnership(session.id, session.projectId)
 }
 
-// Serializes authoritative session JSON and derived file-index mutations through one queue. This is
-// the consistency boundary that prevents a late save from racing or reviving a durable deletion.
+// Serializes authoritative Session JSON and derived file-index mutations at their owning Project and
+// Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
+// without allowing a late save to race or revive durable deletion authority.
 class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
-  private queue: Promise<unknown> = Promise.resolve()
+  private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
   private readonly stateOwner: SessionPersistenceStateOwner
@@ -249,7 +251,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
     this.delegatedWorkOwner = new SessionDelegatedWorkPersistenceOwner({
       repository,
-      runExclusive: (work) => this.enqueue(work),
+      runExclusive: (key, work) =>
+        key
+          ? this.operationScheduler.runSession(key.projectId, key.sessionId, work)
+          : this.operationScheduler.runGlobal(work),
       assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
@@ -271,13 +276,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     messageId: string
   ): Promise<boolean> {
-    return this.enqueue(() =>
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.stateOwner.containsMessageOnActiveBranch(projectId, sessionId, messageId)
     )
   }
 
   loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
       const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
       if (loaded.status !== 'found') {
         throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
@@ -293,7 +298,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   sessionMetadataSnapshot(): Promise<SessionMetadataSnapshot> {
-    return this.enqueue(async () => this.stateOwner.metadataSnapshot())
+    return this.operationScheduler.runGlobal(async () => this.stateOwner.metadataSnapshot())
   }
 
   /**
@@ -302,7 +307,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    * navigable, while the incomplete marker keeps writes blocked until a full retry succeeds.
    */
   loadAllReadOnly(): Promise<LoadAllSessionsResult> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runGlobal(async () => {
       this.stateOwner.beginHydration()
       // Once any renderer has observed a degraded snapshot, later loads are no longer allowed to
       // treat the process as an untouched startup boundary for destructive cleanup.
@@ -348,7 +353,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    * complete scan has restored active ownership. Chat hydration remains available on any failure.
    */
   loadAll(): Promise<LoadAllSessionsResult> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runGlobal(async () => {
       this.stateOwner.beginHydration()
       // Public loadAll can be called by multiple renderers/tasks. Only the first invocation in this
       // process is a startup boundary; consume it before any await so failures and partial scans cannot
@@ -511,7 +516,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   readSessionRuntimeContext(projectId: string, sessionId: string): Promise<SessionRuntimeContext> {
-    return this.enqueue(() => this.stateOwner.readRuntimeContext(projectId, sessionId))
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.stateOwner.readRuntimeContext(projectId, sessionId)
+    )
   }
 
   loadPersistedSideChats(): Promise<{
@@ -527,31 +534,41 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     }>
     isComplete: boolean
   }> {
-    return this.enqueue(() => this.sideChatOwner.loadCatalog())
+    return this.operationScheduler.runGlobal(() => this.sideChatOwner.loadCatalog())
   }
 
   saveSideChatProjection(command: SaveSideChatProjectionCommand): Promise<PersistedSideChat> {
-    return this.enqueue(() => this.sideChatOwner.saveProjection(command))
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.sideChatOwner.saveProjection(command)
+    )
   }
 
   appendSideChatRelay(command: AppendSideChatRelayCommand): Promise<void> {
-    return this.enqueue(() => this.sideChatOwner.appendRelay(command))
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.sideChatOwner.appendRelay(command)
+    )
   }
 
   commitSideChatRelays(
     command: CommitSideChatRelaysCommand
   ): Promise<readonly PersistedChatMessage[]> {
-    return this.enqueue(() => this.sideChatOwner.commitRelays(command))
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.sideChatOwner.commitRelays(command)
+    )
   }
 
   clearSideChat(command: ClearSideChatCommand): Promise<boolean> {
-    return this.enqueue(() => this.sideChatOwner.clear(command))
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.sideChatOwner.clear(command)
+    )
   }
 
   patchSessionRuntimeContext(
     command: PatchSessionRuntimeContextCommand
   ): Promise<SessionRuntimeContext> {
-    return this.enqueue(() => this.stateOwner.patchRuntimeContext(command))
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.stateOwner.patchRuntimeContext(command)
+    )
   }
 
   createChildren(
@@ -657,7 +674,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   appendUserMessageToInteraction(
     command: AppendUserMessageToInteractionCommand
   ): Promise<PersistedChatMessage> {
-    return this.enqueue(() => this.stateOwner.appendUserMessage(command))
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.stateOwner.appendUserMessage(command)
+    )
   }
 
   // Project archive must fail closed when even one child Session cannot be read. A partial catalog
@@ -666,19 +685,25 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     projectId: string,
     isRuntimeBusy: (sessionId: string) => boolean = () => false
   ): Promise<string[]> {
-    return this.enqueue(() => this.deletionOwner.assertProjectArchivable(projectId, isRuntimeBusy))
+    return this.operationScheduler.runProject(projectId, () =>
+      this.deletionOwner.assertProjectArchivable(projectId, isRuntimeBusy)
+    )
   }
 
   // Used by runtime admission checks after resolving a known project/session pair. It is intentionally
   // read-only: restoring an item never attaches or resumes an agent session by itself.
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void> {
-    return this.enqueue(() => this.deletionOwner.assertSessionAvailable(projectId, sessionId))
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.deletionOwner.assertSessionAvailable(projectId, sessionId)
+    )
   }
 
   // Finds a persisted Session's owner for runtime admission. Fresh, unsaved sessions have no durable
   // archive state and deliberately return undefined.
   sessionProjectId(sessionId: string): Promise<string | undefined> {
-    return this.enqueue(async () => this.stateOwner.sessionProjectId(sessionId))
+    return this.operationScheduler.runSessionIdentity(sessionId, async () =>
+      this.stateOwner.sessionProjectId(sessionId)
+    )
   }
 
   // Dedicated main-owned archive mutation. Unlike full renderer saves it preserves updatedAt and
@@ -687,7 +712,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     request: UpdateSessionArchiveRequest,
     isRuntimeBusy: () => boolean = () => false
   ): Promise<PersistedChatSession> {
-    return this.enqueue(() => this.deletionOwner.updateArchive(request, isRuntimeBusy))
+    return this.operationScheduler.runSession(request.projectId, request.sessionId, () =>
+      this.deletionOwner.updateArchive(request, isRuntimeBusy)
+    )
   }
 
   // Persists authoritative JSON before updating the derived index. If indexing fails, the save stays
@@ -697,7 +724,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
       return this.stateOwner.saveSession(session, options)
     })
@@ -710,7 +737,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     specialistId: string | undefined,
     specialistBindingPending = false
   ): Promise<PersistedChatSession> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
       return this.stateOwner.saveSession(
         {
@@ -728,7 +755,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     policy: DelegationPolicy
   ): Promise<PersistedChatSession> {
-    return this.enqueue(() => this.stateOwner.setDelegationPolicy(projectId, sessionId, policy))
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.stateOwner.setDelegationPolicy(projectId, sessionId, policy)
+    )
   }
 
   setSessionEnabledComputeHosts(
@@ -736,7 +765,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     providerIds: readonly string[]
   ): Promise<PersistedChatSession> {
-    return this.enqueue(() =>
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.stateOwner.setEnabledComputeHosts(projectId, sessionId, providerIds)
     )
   }
@@ -749,7 +778,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       providerIds: string[]
     }>
   }> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runGlobal(async () => {
       const scan = await this.repository.loadAllWithDiagnostics()
       if (!scan.isComplete) {
         throw new Error('Cannot prune Compute Hosts without a complete Session catalog.')
@@ -776,7 +805,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     mutation: () => Promise<Result>
   ): Promise<Result> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
       if (this.deletedProjects.has(projectId)) {
         throw new Error('Cannot mutate a session whose project has been deleted.')
       }
@@ -804,10 +833,14 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     projectId: string,
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runProject(projectId, async (scope) => {
       this.deletedProjects.add(projectId)
       try {
-        return await this.deletionOwner.deleteProjectSessions(projectId, options)
+        return await this.deletionOwner.deleteProjectSessions(
+          projectId,
+          (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
+          options
+        )
       } catch (error) {
         try {
           const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
@@ -825,19 +858,27 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   getProjectSessionDeletionState(projectId: string): Promise<ProjectSessionDeletionState> {
-    return this.enqueue(() => this.deletionOwner.getProjectSessionDeletionState(projectId))
+    return this.operationScheduler.runProject(projectId, () =>
+      this.deletionOwner.getProjectSessionDeletionState(projectId)
+    )
   }
 
   markCommittedProjectSessionsPrepared(projectId: string): Promise<void> {
-    return this.enqueue(() => this.deletionOwner.markCommittedProjectSessionsPrepared(projectId))
+    return this.operationScheduler.runProject(projectId, () =>
+      this.deletionOwner.markCommittedProjectSessionsPrepared(projectId)
+    )
   }
 
   completeProjectSessionDeletion(projectId: string): Promise<void> {
-    return this.enqueue(() => this.deletionOwner.completeProjectSessionDeletion(projectId))
+    return this.operationScheduler.runProject(projectId, () =>
+      this.deletionOwner.completeProjectSessionDeletion(projectId)
+    )
   }
 
   listLegacyProjectSessionTombstones(): Promise<string[]> {
-    return this.enqueue(() => this.deletionOwner.listLegacyProjectSessionTombstones())
+    return this.operationScheduler.runGlobal(() =>
+      this.deletionOwner.listLegacyProjectSessionTombstones()
+    )
   }
 
   /**
@@ -848,7 +889,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    * failure that succeeds on the final pass does not make the repair IPC report a false failure.
    */
   repairProjectFiles(projectId: string): Promise<void> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runGlobal(async () => {
       const scan = await this.repository.loadAllWithDiagnostics()
       if (!scan.isComplete) {
         this.fileIndex.markReconciliationIncomplete()
@@ -881,7 +922,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   saveManifest(request: SaveSessionManifestRequest): Promise<void> {
-    return this.enqueue(() => this.repository.saveManifest(request))
+    return this.operationScheduler.runManifest(() => this.repository.saveManifest(request))
   }
 
   /**
@@ -892,32 +933,27 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    * deleted-owner event so already loaded renderer pages invalidate in the same operation.
    */
   deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.enqueue(async () => {
-      const key = sessionKey(projectId, sessionId)
-      this.deletedSessions.add(key)
-      try {
-        await this.deletionOwner.deleteSession(projectId, sessionId)
-      } catch (error) {
+    return this.operationScheduler.runSessionThenGlobal(
+      projectId,
+      sessionId,
+      async () => {
+        const key = sessionKey(projectId, sessionId)
+        this.deletedSessions.add(key)
         try {
-          const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
-          if (authority.status === 'found') this.deletedSessions.delete(key)
-        } catch {
-          // Authority cannot be proven live, so retain the tombstone fail-closed.
+          return await this.deletionOwner.deleteSession(projectId, sessionId)
+        } catch (error) {
+          try {
+            const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+            if (authority.status === 'found') this.deletedSessions.delete(key)
+          } catch {
+            // Authority cannot be proven live, so retain the tombstone fail-closed.
+          }
+          throw error
         }
-        throw error
-      }
-    })
-  }
-
-  // Rejections are absorbed only by the queue tail, not by the returned task promise. Later mutations
-  // therefore continue in order while each caller still receives its own failure.
-  private enqueue<Result>(task: () => Promise<Result>): Promise<Result> {
-    const run = this.queue.then(task, task)
-    this.queue = run.then(
-      () => undefined,
-      () => undefined
+      },
+      (receiptKind) =>
+        this.deletionOwner.reconcileSessionDeletion(projectId, sessionId, receiptKind)
     )
-    return run
   }
 
   // Renderer notifications are derived state. They must never change the result of an authoritative

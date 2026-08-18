@@ -6,13 +6,16 @@ import type {
 } from '../../shared/permission-grants'
 import type { PermissionGrantRegistry } from './registry'
 
-type ConnectorPermissionPrompt = (info: {
-  connector: string
-  method: string
-  args: Record<string, unknown>
-  sessionId?: string
-  availableScopes: ConnectorApprovalScope[]
-}) => Promise<ApprovalDecision>
+type ConnectorPermissionPrompt = (
+  info: {
+    connector: string
+    method: string
+    args: Record<string, unknown>
+    sessionId?: string
+    availableScopes: ConnectorApprovalScope[]
+  },
+  signal?: AbortSignal
+) => Promise<ApprovalDecision>
 
 type ConnectorPolicyInput = {
   aliases: readonly string[]
@@ -31,7 +34,7 @@ type ConnectorPermissionRequest = {
 }
 
 type ConnectorPolicyDecision = 'allow' | 'require_approval'
-type ConnectorAuthorizationOptions = { deferRemember?: boolean }
+type ConnectorAuthorizationOptions = { deferRemember?: boolean; signal?: AbortSignal }
 
 class ConnectorPermissionBroker {
   constructor(
@@ -62,9 +65,11 @@ class ConnectorPermissionBroker {
     policyDecision: ConnectorPolicyDecision = this.preflight(request),
     options: ConnectorAuthorizationOptions = {}
   ): Promise<PermissionGrantScope | undefined> {
+    options.signal?.throwIfAborted()
     if (policyDecision === 'allow') return undefined
 
     if (await this.registry?.resolve(request.capability, request.context)) return undefined
+    options.signal?.throwIfAborted()
     if (!this.prompt) {
       throw new Error(`approval unavailable: ${request.connector}/${request.method}`)
     }
@@ -76,13 +81,17 @@ class ConnectorPermissionBroker {
       availableScopes.push('global')
     }
 
-    const decision = await this.prompt({
+    const prompt = {
       connector: request.connector,
       method: request.method,
       args: request.args,
       ...(request.context.sessionId ? { sessionId: request.context.sessionId } : {}),
       availableScopes
-    })
+    }
+    const decision = options.signal
+      ? await this.prompt(prompt, options.signal)
+      : await this.prompt(prompt)
+    options.signal?.throwIfAborted()
     if (decision === 'deny' || !availableScopes.includes(decision)) {
       throw new Error(`tool call denied by user: ${request.connector}/${request.method}`)
     }
@@ -101,6 +110,7 @@ class ConnectorPermissionBroker {
 
     if (options.deferRemember) return scope
 
+    options.signal?.throwIfAborted()
     await this.remember(request, scope)
     return undefined
   }

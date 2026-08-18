@@ -6,7 +6,9 @@ import {
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
 import {
+  createSessionFile,
   materializeSessionConversationGraph,
+  normalizeSessionFile,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
@@ -361,10 +363,69 @@ describe('ACP Save as skill workflow', () => {
     )
   })
 
-  it('rejects pending full replay without a fresh durable Runtime Segment', async () => {
+  it.each<readonly [string, AgentFrameworkId, AgentModelRoute]>([
+    ['Claude Code', 'claude-code', 'claude-anthropic'],
+    ['OpenCode', 'opencode', 'opencode-openai'],
+    ['Codex Responses', 'codex', 'codex-responses'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ])(
+    'accepts pending context-reset replay after the prepared control is normalized on read for %s',
+    async (_name, frameworkId, modelRoute) => {
+      const harness = createHarness((session) => {
+        session.agentFrameworkId = frameworkId
+        session.pendingHistoryReplay = { kind: 'all' }
+        session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+          id: 'runtime-segment-after-context-reset',
+          frameworkId,
+          startedAt: 3,
+          forceNew: true
+        })
+      })
+      const normalized = normalizeSessionFile(createSessionFile(harness.session))
+      expect(normalized).toMatchObject({
+        status: 'error',
+        pendingHistoryReplay: { kind: 'all' },
+        resumeRecovery: {
+          kind: 'resume-required',
+          promptMessageId: harness.request.promptMessageId
+        }
+      })
+      const normalizedFrame = normalized?.conversationGraph?.frames.find(
+        ({ id }) => id === normalized.conversationGraph?.activeFrameId
+      )
+      const normalizedMessages =
+        normalized?.conversationGraph && normalizedFrame
+          ? resolveMessageBranchPath(normalized.conversationGraph, normalizedFrame.activeBranchId)
+          : []
+      expect(normalizedMessages.slice(-2).map(({ runtimeSegmentId }) => runtimeSegmentId)).toEqual([
+        expect.not.stringMatching('runtime-segment-after-context-reset'),
+        'runtime-segment-after-context-reset'
+      ])
+      Object.assign(harness.session, normalized)
+      harness.captureSessionBackend.mockReturnValue({
+        framework: { id: frameworkId },
+        modelRoute,
+        context: { window: 100_000, supportsImageInput: true }
+      } as never)
+
+      await harness.workflows.saveAsSkill(harness.request)
+
+      expect(harness.startContinuation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contextReset: true,
+          provenanceContext: expect.objectContaining({
+            runtimeSegmentId: 'runtime-segment-after-context-reset'
+          })
+        })
+      )
+    }
+  )
+
+  it('rejects normalized pending full replay without a fresh durable Runtime Segment', async () => {
     const harness = createHarness((session) => {
       session.pendingHistoryReplay = { kind: 'all' }
     })
+    Object.assign(harness.session, normalizeSessionFile(createSessionFile(harness.session)))
 
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'requires a prepared Session'
@@ -372,7 +433,7 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it('rejects pending interrupted-turn replay after a context reset', async () => {
+  it('rejects normalized pending interrupted-turn replay after a context reset', async () => {
     const harness = createHarness((session) => {
       session.pendingHistoryReplay = { kind: 'before-message', messageId: 'prompt-1' }
       session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
@@ -382,6 +443,7 @@ describe('ACP Save as skill workflow', () => {
         forceNew: true
       })
     })
+    Object.assign(harness.session, normalizeSessionFile(createSessionFile(harness.session)))
 
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'requires a prepared Session'

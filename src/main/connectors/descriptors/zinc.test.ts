@@ -72,6 +72,57 @@ describe('zinc / registration', () => {
   })
 })
 
+describe('zinc / cancellation', () => {
+  it('aborts an active direct ZINC request', async () => {
+    let observedSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(
+      async (_url: string, init?: RequestInit): Promise<Response> =>
+        new Promise((_, reject) => {
+          observedSignal = init?.signal ?? undefined
+          observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), {
+            once: true
+          })
+        })
+    )
+    vi.stubGlobal('fetch', fetchImpl)
+    const cancellation = new AbortController()
+
+    const pending = byId.run!(
+      { ...ctx, signal: cancellation.signal },
+      {
+        zinc_ids: ['ZINC000000000012']
+      }
+    )
+    await vi.waitFor(() => expect(observedSignal).toBeInstanceOf(AbortSignal))
+    cancellation.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('aborts polling backoff before another request starts', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(textRes(200, { task: 'ZTASK-CANCEL' }))
+      .mockResolvedValueOnce(textRes(200, { status: 'PENDING' }))
+    vi.stubGlobal('fetch', fetchImpl)
+    const cancellation = new AbortController()
+
+    const pending = byId.run!(
+      { ...ctx, signal: cancellation.signal },
+      {
+        zinc_ids: ['ZINC000000000012']
+      }
+    )
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2))
+    await Promise.resolve()
+    cancellation.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('zinc / zinc_search_by_id', () => {
   it('POSTs form-encoded fields to substances.txt, polls to SUCCESS, and returns the bounded shape', async () => {
     const { out, fetchImpl } = await drive(byId, { zinc_ids: ['ZINC000000000012'] }, [

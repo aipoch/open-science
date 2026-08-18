@@ -16,6 +16,7 @@ import {
   type SessionLoadWarning
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
+import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 
 const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
@@ -181,11 +182,11 @@ const assertSafeSegment = (segment: string): string => {
   return segment
 }
 
-// Owns per-session durable reads/writes: one file per session under sessions/<projectId>/<id>.json,
-// plus a small manifest for the last-open selection. Writes are serialized and atomic (temp + rename),
-// while malformed JSON is backed up and I/O failures preserve the existing file for later recovery.
+// Owns per-session durable reads/writes: one file per Session under sessions/<projectId>/<id>.json,
+// plus a small manifest for the last-open selection. Writes are atomic (temp + rename) and serialized
+// at their Project/Session scope, while malformed JSON is backed up for later recovery.
 class SessionRepository {
-  private saveQueue: Promise<void> = Promise.resolve()
+  private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private writeSequence = 0
   private backupSequence = 0
   private readonly dependencies: SessionRepositoryDependencies
@@ -404,13 +405,15 @@ class SessionRepository {
     )
   }
 
-  // Writes one session file (serialized through the save queue to preserve write order).
+  // Writes one Session file behind its Project/Session lane to preserve authority order.
   async saveSession(session: PersistedChatSession): Promise<void> {
-    return this.enqueue(() => this.writeSession(session))
+    return this.operationScheduler.runSession(session.projectId, session.id, () =>
+      this.writeSession(session)
+    )
   }
 
   async saveCommittedProjectSession(session: PersistedChatSession): Promise<void> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       if ((await this.getProjectSessionDeletionState(session.projectId)) !== 'legacy-committed') {
         throw new Error('Cannot save a Session outside committed Project deletion authority.')
       }
@@ -420,7 +423,7 @@ class SessionRepository {
 
   // Removes a single session file.
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
       const safeProjectId = assertSafeSegment(projectId)
       const safeSessionId = assertSafeSegment(sessionId)
       const diagnostic = await this.loadSessionWithDiagnostics(safeProjectId, safeSessionId)
@@ -460,7 +463,7 @@ class SessionRepository {
   // retained until Project deletion finishes so recovery can distinguish a committed Session phase
   // from an attempt that failed before the rename, including for Projects with no Session files.
   async deleteProjectSessions(projectId: string): Promise<void> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runProject(projectId, async () => {
       const safeProjectId = assertSafeSegment(projectId)
       const state = await this.getProjectSessionDeletionState(safeProjectId)
       if (state === 'legacy-committed' || state === 'prepared') return
@@ -526,7 +529,7 @@ class SessionRepository {
   }
 
   async markCommittedProjectSessionsPrepared(projectId: string): Promise<void> {
-    await this.enqueue(async () => {
+    await this.operationScheduler.runProject(projectId, async () => {
       if ((await this.getProjectSessionDeletionState(projectId)) !== 'legacy-committed') return
       await this.atomicWrite(
         join(this.deletedProjectDir(assertSafeSegment(projectId)), PROJECT_DELETION_COMMIT_MARKER),
@@ -536,7 +539,7 @@ class SessionRepository {
   }
 
   async completeProjectSessionDeletion(projectId: string): Promise<void> {
-    await this.enqueue(() =>
+    await this.operationScheduler.runProject(projectId, () =>
       this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
         recursive: true,
         force: true
@@ -574,19 +577,7 @@ class SessionRepository {
 
   // Persists the last-open project/session pointer.
   async saveManifest(request: SaveSessionManifestRequest): Promise<void> {
-    return this.enqueue(() => this.writeManifest(request))
-  }
-
-  // Serializes writes so an older save cannot finish after a newer one.
-  private enqueue(operation: () => Promise<unknown>): Promise<void> {
-    const run = this.saveQueue.then(() => operation()).then(() => undefined)
-
-    this.saveQueue = run.then(
-      () => undefined,
-      () => undefined
-    )
-
-    return run
+    return this.operationScheduler.runManifest(() => this.writeManifest(request))
   }
 
   // Writes through a unique temp file, then atomically replaces the target session file.

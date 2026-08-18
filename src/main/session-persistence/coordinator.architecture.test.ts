@@ -466,7 +466,7 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      ['enqueue', 'notifyFilesChanged', 'notifySessionsDeleted'].sort()
+      ['notifyFilesChanged', 'notifySessionsDeleted'].sort()
     )
     expect(publicNonMethodMembers(facade)).toEqual([])
 
@@ -523,7 +523,7 @@ describe('Session persistence coordinator architecture', () => {
         'delegatedWorkOwner',
         'onDelegatedWorkSessionUpdated',
         'onFilesChanged',
-        'queue',
+        'operationScheduler',
         'reconciliationOwner',
         'repository',
         'sessionDeletionHandlers',
@@ -535,7 +535,6 @@ describe('Session persistence coordinator architecture', () => {
       [
         'delegatedStartupRecoveryComplete',
         'destructiveStartupWindowOpen',
-        'queue',
         'sessionDeletionHandlers'
       ].sort()
     )
@@ -621,17 +620,65 @@ describe('Session persistence coordinator architecture', () => {
     expect(constructionSites('SessionDelegatedQuestionPersistenceOwner')).toEqual([
       'src/main/session-persistence/delegated-work-owner.ts:constructor'
     ])
+    expect(constructionSites('SessionPersistenceOperationScheduler')).toEqual([
+      'src/main/session-persistence/coordinator.ts:module',
+      'src/main/session-persistence/repository.ts:module'
+    ])
   })
 
-  it('keeps one coordinator queue around every asynchronous public operation', () => {
+  it('routes every asynchronous public operation through its owning scheduler scope', () => {
     const handlerSetter = methodFrom(facade, 'setSessionDeletionHandlers')
     expect(hasModifier(handlerSetter, SyntaxKind.AsyncKeyword)).toBe(false)
     expect(handlerSetter.type?.kind).toBe(SyntaxKind.VoidKeyword)
     expect(walk(handlerSetter, isAwaitExpression)).toEqual([])
-    const queuedMethods = methods(facade, 'public').filter(
+    const schedulerRoutes: Record<string, string[]> = {
+      runGlobal: [
+        'listLegacyProjectSessionTombstones',
+        'loadAll',
+        'loadAllReadOnly',
+        'loadPersistedSideChats',
+        'pruneSessionEnabledComputeHosts',
+        'repairProjectFiles',
+        'sessionMetadataSnapshot'
+      ],
+      runManifest: ['saveManifest'],
+      runProject: [
+        'assertProjectArchivable',
+        'completeProjectSessionDeletion',
+        'deleteProjectSessions',
+        'getProjectSessionDeletionState',
+        'markCommittedProjectSessionsPrepared'
+      ],
+      runSession: [
+        'appendSideChatRelay',
+        'appendUserMessageToInteraction',
+        'assertSessionAvailable',
+        'clearSideChat',
+        'commitSideChatRelays',
+        'containsMessageOnActiveBranch',
+        'loadSessionForContinuation',
+        'patchSessionRuntimeContext',
+        'readSessionRuntimeContext',
+        'runSessionMutation',
+        'saveSession',
+        'saveSessionSpecialistBinding',
+        'saveSideChatProjection',
+        'setSessionDelegationPolicy',
+        'setSessionEnabledComputeHosts',
+        'updateArchive'
+      ],
+      runSessionThenGlobal: ['deleteSession'],
+      runSessionIdentity: ['sessionProjectId']
+    }
+    const expectedSchedulerRoute = new Map(
+      Object.entries(schedulerRoutes).flatMap(([route, names]) =>
+        names.map((name) => [name, route] as const)
+      )
+    )
+    const asynchronousMethods = methods(facade, 'public').filter(
       (name) => name !== 'setSessionDeletionHandlers'
     )
-    for (const name of queuedMethods) {
+    for (const name of asynchronousMethods) {
       const method = methodFrom(facade, name)
       expect(method.body?.statements, name).toHaveLength(1)
       const statement = method.body?.statements[0]
@@ -642,14 +689,19 @@ describe('Session persistence coordinator architecture', () => {
       expect(isCallExpression(statement.expression), name).toBe(true)
       if (!isCallExpression(statement.expression)) continue
       const target = statement.expression.expression
-      expect(
-        isPropertyAccessExpression(target) &&
-          ((target.expression.kind === SyntaxKind.ThisKeyword && target.name.text === 'enqueue') ||
-            (isPropertyAccessExpression(target.expression) &&
-              target.expression.expression.kind === SyntaxKind.ThisKeyword &&
-              target.expression.name.text === 'delegatedWorkOwner')),
-        name
-      ).toBe(true)
+      expect(isPropertyAccessExpression(target), name).toBe(true)
+      if (!isPropertyAccessExpression(target)) continue
+      const owner = target.expression
+      expect(isPropertyAccessExpression(owner), name).toBe(true)
+      if (!isPropertyAccessExpression(owner)) continue
+      expect(owner.expression.kind, name).toBe(SyntaxKind.ThisKeyword)
+      const schedulerRoute = expectedSchedulerRoute.get(name)
+      if (schedulerRoute) {
+        expect(owner.name.text, name).toBe('operationScheduler')
+        expect(target.name.text, name).toBe(schedulerRoute)
+      } else {
+        expect(owner.name.text, name).toBe('delegatedWorkOwner')
+      }
     }
 
     for (const owner of [
@@ -667,11 +719,10 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    const enqueue = methodFrom(facade, 'enqueue')
-    const enqueueSource = enqueue.getText(facadeFile)
-    expect(enqueueSource).toContain('this.queue.then(task, task)')
-    expect(enqueueSource).toContain('this.queue = run.then(')
-    expect(enqueueSource).toMatch(/return\s+run\s*\n/)
+    expect(expectedSchedulerRoute.size).toBe(31)
+    const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
+    expect(constructorSource).toContain('this.operationScheduler.runSession(')
+    expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
   })
 
   it('closes the destructive startup window before awaiting and never reopens it', () => {
@@ -825,6 +876,7 @@ describe('Session persistence coordinator architecture', () => {
         'getProjectSessionDeletionState',
         'listLegacyProjectSessionTombstones',
         'markCommittedProjectSessionsPrepared',
+        'reconcileSessionDeletion',
         'updateArchive'
       ].sort()
     )
@@ -875,7 +927,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletionOwner.deleteProjectSessions',
         'deletionOwner.getProjectSessionDeletionState'
       ],
-      deleteSession: ['deletionOwner.deleteSession'],
+      deleteSession: ['deletionOwner.deleteSession', 'deletionOwner.reconcileSessionDeletion'],
       getProjectSessionDeletionState: ['deletionOwner.getProjectSessionDeletionState'],
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],

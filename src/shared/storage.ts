@@ -67,12 +67,22 @@ export type DataRootValidationResult = { ok: true } | { ok: false; error: string
 
 // Classification of a candidate data root, mirroring main's ClassifyResult
 // (src/main/storage/migration-service.ts). 'move' = empty writable target (copy-in migration).
-// 'adopt' = already contains our data (pointer switch only, no move). 'invalid' carries a reason.
+// 'adopt' = already contains our data (pointer switch only, no move). 'recover' = a durable marker
+// from an interrupted copy that Settings can explicitly finish or discard. 'invalid' carries a reason.
 // `dataRoot` is the derived `<parent>/OpenScience` path, always present so the caller can display
 // the final location regardless of kind.
-export type DataRootKind = 'move' | 'adopt' | 'invalid'
-export type DataRootInspection = {
-  kind: DataRootKind
-  dataRoot: string
-  error?: string
-}
+export type DataRootKind = 'move' | 'adopt' | 'recover' | 'invalid'
+export type DataRootRecoveryStatus = 'copying' | 'verified'
+export type DataRootInspection =
+  | {
+      kind: 'recover'
+      dataRoot: string
+      recoveryStatus: DataRootRecoveryStatus
+      error?: string
+    }
+  | {
+      kind: Exclude<DataRootKind, 'recover'>
+      dataRoot: string
+      recoveryStatus?: never
+      error?: string
+    }

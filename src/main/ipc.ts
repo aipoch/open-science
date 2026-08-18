@@ -1311,14 +1311,17 @@ const createApplicationModules = async (
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
     permissionGrantRegistry,
-    requestApproval: ({ connector, method, args, sessionId, availableScopes }) =>
-      approvalBroker.request({
-        connector,
-        method,
-        argsPreview: previewArgs(args),
-        ...(sessionId ? { sessionId } : {}),
-        availableScopes
-      }),
+    requestApproval: ({ connector, method, args, sessionId, availableScopes }, signal) =>
+      approvalBroker.request(
+        {
+          connector,
+          method,
+          argsPreview: previewArgs(args),
+          ...(sessionId ? { sessionId } : {}),
+          availableScopes
+        },
+        signal
+      ),
     resolveSpecialistProfile: async (specialistId) => {
       try {
         return await profileService.resolveRunnableById(specialistId)

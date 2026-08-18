@@ -19,11 +19,12 @@ import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/sett
 import type { SpecialistProfileView } from '../../shared/specialist'
 
 type McpClientManagerLike = {
-  listTools(config: CustomMcpServerConfig): Promise<Array<{ name: string }>>
+  listTools(config: CustomMcpServerConfig, signal?: AbortSignal): Promise<Array<{ name: string }>>
   call(
     config: CustomMcpServerConfig,
     method: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<unknown>
 }
 
@@ -39,15 +40,18 @@ type ConnectorServiceDeps = {
   // Human approval gate for a tool call that isn't pre-approved. A connector call sends data to an
   // external service, so a call that is neither pre-allowed nor skip-approved fails closed when this
   // transport is absent.
-  requestApproval?: (info: {
-    connector: string
-    method: string
-    args: Record<string, unknown>
-    // The session that triggered the call, when one is known, so the resulting notification can
-    // open the right conversation.
-    sessionId?: string
-    availableScopes: ConnectorApprovalScope[]
-  }) => Promise<ApprovalDecision>
+  requestApproval?: (
+    info: {
+      connector: string
+      method: string
+      args: Record<string, unknown>
+      // The session that triggered the call, when one is known, so the resulting notification can
+      // open the right conversation.
+      sessionId?: string
+      availableScopes: ConnectorApprovalScope[]
+    },
+    signal?: AbortSignal
+  ) => Promise<ApprovalDecision>
   // Handlers for bundled tools that run privileged local code (e.g. write an artifact, open a preview)
   // instead of the read-only HTTP ParserEngine. Keyed by `${connector}/${method}`; invoked after the
   // same enable/policy/approval gate as any other bundled call. The call context carries the id of the
@@ -55,7 +59,11 @@ type ConnectorServiceDeps = {
   // to the right session instead of a global "current" one.
   localToolHandlers?: Record<
     string,
-    (args: Record<string, unknown>, context: ConnectorCallContext) => Promise<unknown>
+    (
+      args: Record<string, unknown>,
+      context: ConnectorCallContext,
+      signal?: AbortSignal
+    ) => Promise<unknown>
   >
   // Resolves the current specialist profile immediately before agent dispatch. This is intentionally
   // a function (rather than a session-start snapshot) so edited/deleted profiles take effect on the
@@ -206,21 +214,25 @@ export class ConnectorService {
     connector: string,
     method: string,
     args: Record<string, unknown>,
-    context: ConnectorCallContext = {}
+    context: ConnectorCallContext = {},
+    signal?: AbortSignal
   ): Promise<unknown> {
+    signal?.throwIfAborted()
     const descriptor = getDescriptor(connector, method)
     const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
     if (isBundled) {
-      const access = await this.resolveAccess(connector, context)
-      return this.callBundled(connector, method, args, descriptor, context, access)
+      const access = await this.resolveAccess(connector, context, [connector], signal)
+      return this.callBundled(connector, method, args, descriptor, context, access, signal)
     }
 
     const customServers = (await this.currentConnectors())?.customMcpServers ?? []
+    signal?.throwIfAborted()
     const custom = customServers.find((server) => server.name === connector)
     const access = await this.resolveAccess(
       connector,
       context,
-      custom ? [custom.id, custom.name] : [connector]
+      custom ? [custom.id, custom.name] : [connector],
+      signal
     )
     if (!custom) {
       throw new ConnectorGateError(
@@ -228,14 +240,16 @@ export class ConnectorService {
         access.specialistScoped ? undefined : `connector not enabled: ${connector}`
       )
     }
-    return this.callCustom(custom, customServers, method, args, context, access)
+    return this.callCustom(custom, customServers, method, args, context, access, signal)
   }
 
   private async resolveAccess(
     connector: string,
     context: ConnectorCallContext,
-    aliases: readonly string[] = [connector]
+    aliases: readonly string[] = [connector],
+    signal?: AbortSignal
   ): Promise<ConnectorAccess> {
+    signal?.throwIfAborted()
     if (context.origin === 'internal') {
       return { bypassMainEnablement: false, bypassMainPolicy: false, specialistScoped: false }
     }
@@ -248,6 +262,7 @@ export class ConnectorService {
     if (!this.deps.resolveSpecialistProfile) throw new ConnectorGateError('specialist_unavailable')
 
     const profile = await this.deps.resolveSpecialistProfile(context.specialistId)
+    signal?.throwIfAborted()
     if (!profile || !profile.enabled) throw new ConnectorGateError('specialist_unavailable')
 
     const allowed =
@@ -267,21 +282,36 @@ export class ConnectorService {
     args: Record<string, unknown>,
     descriptor: ToolDescriptor | undefined,
     context: ConnectorCallContext,
-    access: ConnectorAccess
+    access: ConnectorAccess,
+    signal?: AbortSignal
   ): Promise<unknown> {
     if (!descriptor)
       throw new ConnectorGateError('connector_unavailable', `unknown tool: ${connector}/${method}`)
 
     const authorizedConnectors = access.bypassMainPolicy
       ? undefined
-      : await this.ensureAuthorized(connector, connector, [connector], method, args, context)
+      : await this.ensureAuthorized(
+          connector,
+          connector,
+          [connector],
+          method,
+          args,
+          context,
+          signal
+        )
 
     // Bundled tools that need privileged local behavior run here, after the same gate, instead of the
     // read-only HTTP engine.
+    signal?.throwIfAborted()
     const localHandler = this.deps.localToolHandlers?.[`${connector}/${method}`]
-    if (localHandler) return localHandler(args, context)
+    if (localHandler) {
+      return signal ? localHandler(args, context, signal) : localHandler(args, context)
+    }
 
-    return this.engine.call(descriptor, args, this.credentials(authorizedConnectors))
+    const credentials = this.credentials(authorizedConnectors)
+    return signal
+      ? this.engine.call(descriptor, args, credentials, signal)
+      : this.engine.call(descriptor, args, credentials)
   }
 
   private async callCustom(
@@ -290,8 +320,10 @@ export class ConnectorService {
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
-    access: ConnectorAccess
+    access: ConnectorAccess,
+    signal?: AbortSignal
   ): Promise<unknown> {
+    signal?.throwIfAborted()
     const generation = this.assertCustomServerCurrent(custom)
     const failureEpoch = this.customServerFailureEpochs.get(custom.id) ?? 0
     const physicalFailure = this.unavailableCustomConnectors.get(custom.id)
@@ -319,14 +351,18 @@ export class ConnectorService {
       args,
       context,
       access,
-      generation
+      generation,
+      signal
     )
     const config = toCustomMcpConfig(authorization.custom)
 
     let tools: Array<{ name: string }>
     try {
-      tools = await this.deps.mcpClientManager.listTools(config)
+      tools = signal
+        ? await this.deps.mcpClientManager.listTools(config, signal)
+        : await this.deps.mcpClientManager.listTools(config)
     } catch (error) {
+      if (signal?.aborted) throw error
       // Never relay a transport error: custom server URLs, headers, or server-provided diagnostics
       // can contain credentials. Record only the availability category for subsequent fail-closed
       // dispatches; a successful connection clears the transient state.
@@ -348,10 +384,13 @@ export class ConnectorService {
       context,
       access,
       generation,
+      signal,
       authorization
     )
     if (authorization.deferredScope) {
+      signal?.throwIfAborted()
       await this.permissionBroker.remember(authorization.request, authorization.deferredScope)
+      signal?.throwIfAborted()
     }
 
     await this.authorizeCustomForCurrentPolicy(
@@ -361,11 +400,14 @@ export class ConnectorService {
       context,
       access,
       generation,
+      signal,
       authorization
     )
 
     try {
-      const result = await this.deps.mcpClientManager.call(config, method, args)
+      const result = signal
+        ? await this.deps.mcpClientManager.call(config, method, args, signal)
+        : await this.deps.mcpClientManager.call(config, method, args)
       if ((this.customServerFailureEpochs.get(custom.id) ?? 0) === failureEpoch) {
         if (this.unavailableCustomConnectors.delete(custom.id)) {
           this.deps.onCustomServerAvailabilityChanged?.(custom.id, undefined)
@@ -373,6 +415,7 @@ export class ConnectorService {
       }
       return result
     } catch (error) {
+      if (signal?.aborted) throw error
       const availability = classifyCustomMcpFailure(error)
       // A structured tool error proves the MCP server is reachable. Keep connector-managed login
       // tools callable, but publish stale host-managed OAuth so Settings can offer sign-in recovery.
@@ -436,11 +479,14 @@ export class ConnectorService {
     policyIds: readonly string[],
     method: string,
     args: Record<string, unknown>,
-    context: ConnectorCallContext
+    context: ConnectorCallContext,
+    signal?: AbortSignal
   ): Promise<StoredConnectors | undefined> {
     let requireApprovalSatisfied = false
     for (;;) {
+      signal?.throwIfAborted()
       const connectors = await this.currentConnectors()
+      signal?.throwIfAborted()
       if (!this.isEnabled(connectorLabel, connectors)) {
         throw new ConnectorGateError(
           'connector_disabled',
@@ -459,7 +505,7 @@ export class ConnectorService {
       const policyDecision = this.permissionBroker.preflight(request)
       if (policyDecision === 'allow' || requireApprovalSatisfied) return connectors
 
-      await this.permissionBroker.authorize(request, policyDecision)
+      await this.permissionBroker.authorize(request, policyDecision, { signal })
       requireApprovalSatisfied = true
     }
   }
@@ -471,6 +517,7 @@ export class ConnectorService {
     context: ConnectorCallContext,
     access: ConnectorAccess,
     generation: number,
+    signal?: AbortSignal,
     prior?: {
       requireApprovalSatisfied: boolean
       deferredScope?: PermissionGrantScope
@@ -485,7 +532,9 @@ export class ConnectorService {
     let deferredScope = prior?.deferredScope
 
     for (;;) {
+      signal?.throwIfAborted()
       const connectors = await this.currentConnectors()
+      signal?.throwIfAborted()
       const customServers = connectors?.customMcpServers ?? []
       const current = customServers.find((server) => server.id === custom.id)
       if (!current) throw new ConnectorGateError('connector_unavailable')
@@ -527,7 +576,8 @@ export class ConnectorService {
       }
 
       deferredScope = await this.permissionBroker.authorize(request, policyDecision, {
-        deferRemember: true
+        deferRemember: true,
+        signal
       })
       requireApprovalSatisfied = true
     }
