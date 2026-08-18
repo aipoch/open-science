@@ -622,6 +622,37 @@ describe('notebook runtime service', () => {
     service.releaseProjectDeletion('project-1')
   })
 
+  it('rejects session-scoped installs during deletion when projectId is omitted', async () => {
+    const root = await createStorageRoot()
+    const installPackagesImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      needsRestart: false,
+      log: 'installed',
+      method: 'pip'
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      installPackagesImpl
+    })
+
+    service.beginProjectDeletion('default-project')
+
+    await expect(
+      service.managePackages({
+        sessionId: 'session-1',
+        language: 'python',
+        packages: ['numpy']
+      })
+    ).rejects.toThrow('Project is being deleted.')
+    expect(installPackagesImpl).not.toHaveBeenCalled()
+
+    service.releaseProjectDeletion('default-project')
+  })
+
   it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
@@ -3408,6 +3439,82 @@ describe('notebook runtime service', () => {
     const settled = await restarting
 
     expect(settled.kernelStatus).toBe('idle')
+  })
+
+  it('reports and persists error when an in-place restart fails', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository,
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true }),
+        restart: async () => {
+          throw new Error('restart failed')
+        }
+      })
+    })
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    await service.execute({ ...request, code: '1' })
+
+    await expect(service.restart(request)).rejects.toThrow('restart failed')
+
+    expect((await service.state(request)).kernelStatus).toBe('error')
+    expect(
+      (await new NotebookRunRepository(root).findExisting('default-project', 'session-1'))?.kernel
+    ).toMatchObject({ lastKnownStatus: 'error' })
+  })
+
+  it('preserves terminated kernel evidence when restart fails', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    let lifecycle!: NotebookExecutorLifecycleCallbacks
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository,
+      executorFactory: (_sessionId, callbacks) => {
+        lifecycle = callbacks
+        return {
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => ({ reaped: true }),
+          restart: async () => {
+            throw new Error('restart failed')
+          }
+        }
+      }
+    })
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    await service.execute({ ...request, code: '1' })
+    await lifecycle.onTerminated('python', DEFAULT_PY_ENV)
+
+    await expect(service.restart(request)).rejects.toThrow('restart failed')
+
+    expect((await service.state(request)).kernelStatus).toBe('terminated')
+    expect(
+      (await new NotebookRunRepository(root).findExisting('default-project', 'session-1'))?.kernel
+    ).toMatchObject({
+      lastKnownStatus: 'terminated',
+      terminatedKernelInstances: [{ kind: 'python', environment: DEFAULT_PY_ENV }]
+    })
   })
 
   it('does not create a live environment entry when restarting before any kernel spawned', async () => {

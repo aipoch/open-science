@@ -884,7 +884,9 @@ class NotebookRuntimeService {
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the
   // executor's own in-place restart (keeps the same instance, e.g. NotebookKernelExecutor tears down
   // and lazily respawns its loops) and only shuts down + recreates for executors that don't support it.
-  // Reports 'restarting' for the duration and settles back to 'idle' once the fresh process is ready.
+  // Reports 'restarting' for the duration. A successful restart clears stale termination evidence and
+  // settles to 'idle'; a failed restart keeps that evidence and reports 'error' for kernels that were
+  // not already known to be terminated.
   async restart(request: NotebookSessionRequest): Promise<NotebookSessionState> {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
@@ -892,28 +894,48 @@ class NotebookRuntimeService {
       // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
       // is cleared. Snapshot the keys before teardown drops them from kernelStatuses.
       const envKeys = session.kernelProcessKeys()
+      const statusesBeforeRestart = new Map(
+        envKeys.map((processKey) => [processKey, session.kernelStatus(processKey)] as const)
+      )
 
       envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
-      await this.repository.clearKernelTerminations({
+      const restartingDocument = await this.repository.updateKernelStatus({
         projectId: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
         status: 'restarting'
       })
-      session.clearAllDurableKernelTerminations()
+      const hadDurableTerminations =
+        session.hasUnknownDurableKernelTermination() ||
+        (restartingDocument.kernel.terminatedKernelInstances?.length ?? 0) > 0
       this.sessionLifecycle.notifyChanged(session)
 
       try {
         await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
         this.environmentOperations.clearRestartRecommendations(envKeys)
-      } finally {
-        envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
-        await this.repository.updateKernelStatus({
+        await this.repository.clearKernelTerminations({
           projectId: session.projectId,
           sessionId: session.sessionId,
           lane: session.lane,
           status: 'idle'
         })
+        session.clearAllDurableKernelTerminations()
+        envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
+      } catch (error) {
+        await this.repository.updateKernelStatus({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          status: hadDurableTerminations ? 'terminated' : 'error'
+        })
+        envKeys.forEach((processKey) =>
+          session.setKernelStatus(
+            processKey,
+            statusesBeforeRestart.get(processKey) === 'terminated' ? 'terminated' : 'error'
+          )
+        )
+        this.sessionLifecycle.notifyChanged(session)
+        throw error
       }
       this.sessionLifecycle.notifyChanged(session)
 
@@ -940,7 +962,7 @@ class NotebookRuntimeService {
   // DIFFERENT envs proceed concurrently (the lock is keyed by resolved env name, not language).
   async managePackages(request: InstallRequest): Promise<InstallResult> {
     const manage = (): Promise<InstallResult> => this.packageOperations.manage(request)
-    if (request.projectId === undefined && request.projectId === undefined) return manage()
+    if (request.projectId === undefined && request.sessionId === undefined) return manage()
 
     // Project admission is keyed only by project identity. InstallRequest intentionally keeps the
     // session fields optional because settings and repair flows can manage a global environment.
