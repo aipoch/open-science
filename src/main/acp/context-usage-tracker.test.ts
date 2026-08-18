@@ -743,6 +743,39 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('accepts a deferred zero provider reading when provider compaction completes', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+
+    expect(tracker.usage('s1')?.used).toBe(62_000)
+    expect(tracker.confirmProviderCompaction('s1')).toBe(true)
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 0,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
+  it('accepts only the first zero provider reading after provider compaction completes', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+
+    expect(tracker.confirmProviderCompaction('s1')).toBe(false)
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+    expect(tracker.usage('s1')?.used).toBe(0)
+
+    tracker.reconcileProviderUsage('s1', { used: 10_000, size: 1_000_000 })
+    expect(tracker.confirmProviderCompaction('s1')).toBe(false)
+    tracker.reconcileProviderUsage('s1', { used: 8_000, size: 1_000_000 })
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+    expect(tracker.usage('s1')?.used).toBe(8_000)
+  })
+
   it('restores the last provider reading when a preflight estimate receives no fresh update', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })

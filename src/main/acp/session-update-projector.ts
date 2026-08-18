@@ -64,7 +64,12 @@ type AcpSessionUpdateProjectorOptions = Readonly<{
   registry: Pick<AcpSessionRegistry, 'lookup'>
   contextUsage: Pick<
     ContextUsageTracker,
-    'beginSession' | 'observeSessionUpdate' | 'reconcileProviderUsage' | 'refreshUsage' | 'usage'
+    | 'beginSession'
+    | 'confirmProviderCompaction'
+    | 'observeSessionUpdate'
+    | 'reconcileProviderUsage'
+    | 'refreshUsage'
+    | 'usage'
   >
   contextPolicy: Pick<AcpContextUsagePolicy, 'resolve'>
   hasActiveSession: (sessionId: string) => boolean
@@ -107,6 +112,10 @@ type AcpSessionUpdateEffect =
       kind: 'provider-usage'
       sessionId: string
       usage: Readonly<AcpContextUsage>
+    }>
+  | Readonly<{
+      kind: 'provider-compaction-completed'
+      sessionId: string
     }>
   | Readonly<{
       kind: 'current-mode'
@@ -279,6 +288,20 @@ class AcpSessionUpdateProjector {
       )
     }
 
+    if (
+      !routing.reconnectPending &&
+      routing.framework === 'codex' &&
+      event.kind === 'compaction' &&
+      event.status === 'completed'
+    ) {
+      effects.push(
+        deepFreeze({
+          kind: 'provider-compaction-completed' as const,
+          sessionId: routed.sessionId
+        })
+      )
+    }
+
     if (event.contextUsage) {
       effects.push(
         deepFreeze({
@@ -377,6 +400,9 @@ class AcpSessionUpdateProjector {
           this.options.contextPolicy.resolve(effect.sessionId).selectedWindow
         )
         emitState()
+        break
+      case 'provider-compaction-completed':
+        if (this.options.contextUsage.confirmProviderCompaction(effect.sessionId)) emitState()
         break
       case 'context-refresh':
         if (this.options.contextUsage.usage(effect.sessionId)?.breakdown?.status !== 'reconciled') {

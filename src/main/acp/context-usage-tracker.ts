@@ -356,6 +356,7 @@ class ContextUsageTracker {
   private readonly usageRevisions = new Map<string, number>()
   private readonly providerUsageRevisions = new Map<string, number>()
   private readonly pendingZeroProviderUsageBySession = new Map<string, PendingZeroProviderUsage>()
+  private readonly providerCompactionAwaitingUsageBySession = new Set<string>()
   private readonly activeTurnsBySession = new Map<string, ContextUsageTurn>()
   private nextTurnRevision = 0
   private nextProviderUsageRevision = 0
@@ -541,7 +542,9 @@ class ContextUsageTracker {
     selectedContextWindow?: number
   ): void {
     const revision = this.recordProviderUsage(sessionId)
-    if (this.isUnconfirmedZeroRegression(sessionId, usage.used)) {
+    const providerCompactionConfirmed =
+      this.providerCompactionAwaitingUsageBySession.delete(sessionId)
+    if (!providerCompactionConfirmed && this.isUnconfirmedZeroRegression(sessionId, usage.used)) {
       this.pendingZeroProviderUsageBySession.set(sessionId, {
         usage: this.cloneUsage(usage),
         ...(selectedContextWindow === undefined ? {} : { selectedContextWindow }),
@@ -550,6 +553,14 @@ class ContextUsageTracker {
       return
     }
     this.pendingZeroProviderUsageBySession.delete(sessionId)
+    this.acceptProviderUsage(sessionId, usage, selectedContextWindow)
+  }
+
+  private acceptProviderUsage(
+    sessionId: string,
+    usage: Readonly<AcpContextUsage>,
+    selectedContextWindow?: number
+  ): void {
     this.observeActiveTurn(sessionId)
     const activeTurn = this.activeTurnsBySession.get(sessionId)
     if (activeTurn && !activeTurn.outcome) activeTurn.providerUsageObserved = true
@@ -565,7 +576,9 @@ class ContextUsageTracker {
     const current = this.usageBySession.get(sessionId)
     if (!current || !Number.isSafeInteger(used)) return false
     const revision = this.recordProviderUsage(sessionId)
-    if (this.isUnconfirmedZeroRegression(sessionId, used)) {
+    const providerCompactionConfirmed =
+      this.providerCompactionAwaitingUsageBySession.delete(sessionId)
+    if (!providerCompactionConfirmed && this.isUnconfirmedZeroRegression(sessionId, used)) {
       this.pendingZeroProviderUsageBySession.set(sessionId, {
         usage: {
           used,
@@ -586,6 +599,19 @@ class ContextUsageTracker {
       ...(current.size === undefined ? {} : { size: current.size }),
       breakdown: this.compare(sessionId, used, 'reconciled')
     })
+    return true
+  }
+
+  confirmProviderCompaction(sessionId: string): boolean {
+    const pendingZero = this.pendingZeroProviderUsageBySession.get(sessionId)
+    if (!pendingZero) {
+      this.providerCompactionAwaitingUsageBySession.add(sessionId)
+      return false
+    }
+
+    this.pendingZeroProviderUsageBySession.delete(sessionId)
+    this.providerCompactionAwaitingUsageBySession.delete(sessionId)
+    this.acceptProviderUsage(sessionId, pendingZero.usage, pendingZero.selectedContextWindow)
     return true
   }
 
@@ -636,6 +662,7 @@ class ContextUsageTracker {
     const pendingZero = this.pendingZeroProviderUsageBySession.get(sessionId)
     this.resetSession(sessionId, input)
     this.pendingZeroProviderUsageBySession.delete(sessionId)
+    this.providerCompactionAwaitingUsageBySession.delete(sessionId)
     if (pendingZero && pendingZero.revision > checkpoint.providerUsageRevision) {
       const breakdown = this.compare(sessionId, pendingZero.usage.used, 'reconciled')
       this.replaceUsage(sessionId, {
@@ -974,6 +1001,7 @@ class ContextUsageTracker {
     this.usageRevisions.delete(sessionId)
     this.providerUsageRevisions.delete(sessionId)
     this.pendingZeroProviderUsageBySession.delete(sessionId)
+    this.providerCompactionAwaitingUsageBySession.delete(sessionId)
   }
 
   clear(): void {
@@ -984,6 +1012,7 @@ class ContextUsageTracker {
     this.usageRevisions.clear()
     this.providerUsageRevisions.clear()
     this.pendingZeroProviderUsageBySession.clear()
+    this.providerCompactionAwaitingUsageBySession.clear()
   }
 }
 
