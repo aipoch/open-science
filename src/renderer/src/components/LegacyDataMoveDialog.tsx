@@ -51,27 +51,53 @@ const LegacyDataMoveDialog = ({
   // The exact <home>/OpenScience path "Move to OpenScience" would create. Resolved server-side via
   // inspectDataRoot(defaultParent) rather than getInfo's dataRoot, which for a legacy install is the
   // hidden config root itself.
-  const [destination, setDestination] = useState<string | undefined>(undefined)
-  const [defaultInspection, setDefaultInspection] = useState<DataRootInspection | undefined>(
-    undefined
-  )
+  const [defaultInspectionState, setDefaultInspectionState] = useState<
+    { parent: string; result: DataRootInspection } | undefined
+  >(undefined)
+  const defaultInspection =
+    defaultInspectionState?.parent === defaultParent ? defaultInspectionState.result : undefined
   const [pickError, setPickError] = useState<string | undefined>(undefined)
   const [isPicking, setIsPicking] = useState(false)
 
   useEffect(() => {
     void window.api.storage.inspectDataRoot(defaultParent).then((result) => {
-      setDestination(result.dataRoot)
-      setDefaultInspection(result)
+      setDefaultInspectionState({ parent: defaultParent, result })
     })
   }, [defaultParent])
 
+  const refreshDefaultDestination = (): void => {
+    setDefaultInspectionState(undefined)
+    void window.api.storage.inspectDataRoot(defaultParent).then((result) => {
+      setDefaultInspectionState({ parent: defaultParent, result })
+    })
+  }
+
+  const handleMigrationClose = (): void => {
+    const resolvedTarget = migrationTarget
+    setMigrationTarget(null)
+    if (resolvedTarget?.path === defaultParent) {
+      refreshDefaultDestination()
+    }
+  }
+
   const handleMoveToDefault = (): void => {
     setPickError(undefined)
-    setMigrationTarget({
-      path: defaultParent,
-      recoveryStatus:
-        defaultInspection?.kind === 'recover' ? defaultInspection.recoveryStatus : undefined
-    })
+    if (!defaultInspection) return
+    if (defaultInspection.kind === 'move' || defaultInspection.kind === 'recover') {
+      setMigrationTarget({
+        path: defaultParent,
+        recoveryStatus:
+          defaultInspection.kind === 'recover' ? defaultInspection.recoveryStatus : undefined
+      })
+      return
+    }
+    setPickError(
+      defaultInspection.kind === 'adopt'
+        ? t(
+            'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
+          )
+        : (defaultInspection.error ?? t('That folder can’t be used. Pick another one.'))
+    )
   }
 
   const handleChooseFolder = async (): Promise<void> => {
@@ -115,7 +141,7 @@ const LegacyDataMoveDialog = ({
         active={active}
         targetPath={migrationTarget.path}
         recoveryStatus={migrationTarget.recoveryStatus}
-        onClose={() => setMigrationTarget(null)}
+        onClose={handleMigrationClose}
       />
     )
   }
@@ -154,7 +180,7 @@ const LegacyDataMoveDialog = ({
                 className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border-200 bg-bg-10 px-2.5 py-1.5 font-mono text-xs text-text-000"
                 aria-label={t('New data location')}
               >
-                {destination ?? t('Resolving…')}
+                {defaultInspection?.dataRoot ?? t('Resolving…')}
               </pre>
             </div>
 
@@ -166,7 +192,11 @@ const LegacyDataMoveDialog = ({
           </div>
 
           <div className={cn(dialogFooterClassName, 'flex-col items-stretch')}>
-            <Button type="button" disabled={isPicking} onClick={handleMoveToDefault}>
+            <Button
+              type="button"
+              disabled={isPicking || defaultInspection === undefined}
+              onClick={handleMoveToDefault}
+            >
               <FolderInput aria-hidden="true" />
               {t('Move to OpenScience')}
             </Button>

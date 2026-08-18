@@ -175,13 +175,16 @@ describe('LegacyDataMoveDialog', () => {
     expect(api.dismissLegacyMovePrompt).not.toHaveBeenCalled()
   })
 
-  it('resumes a verified interrupted move at the default destination without recopying', async () => {
+  it('resumes a verified default move and refreshes the destination after discard', async () => {
     const api = installApi({
-      inspectDataRoot: vi.fn().mockResolvedValue({
-        kind: 'recover',
-        recoveryStatus: 'verified',
-        dataRoot: '/home/u/OpenScience'
-      })
+      inspectDataRoot: vi
+        .fn()
+        .mockResolvedValueOnce({
+          kind: 'recover',
+          recoveryStatus: 'verified',
+          dataRoot: '/home/u/OpenScience'
+        })
+        .mockResolvedValue({ kind: 'move', dataRoot: '/home/u/OpenScience' })
     })
     await renderDialog()
 
@@ -193,6 +196,55 @@ describe('LegacyDataMoveDialog', () => {
 
     expect(document.body.textContent).toContain('Verified data copy found')
     expect(api.migrate).not.toHaveBeenCalled()
+
+    await act(async () => {
+      clickButton(/Discard copy/)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Verified data copy found')
+    expect(document.body.textContent).toContain('Move your data to a visible folder?')
+    expect(api.inspectDataRoot).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      clickButton(/Move to OpenScience/)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(api.migrate).toHaveBeenCalledWith('/home/u')
+  })
+
+  it('waits for default inspection before enabling the move action', async () => {
+    let resolveInspection!: (result: {
+      kind: 'recover'
+      recoveryStatus: 'verified'
+      dataRoot: string
+    }) => void
+    installApi({
+      inspectDataRoot: vi.fn().mockReturnValue(
+        new Promise((resolve) => {
+          resolveInspection = resolve
+        })
+      )
+    })
+    await renderDialog()
+
+    const moveButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Move to OpenScience'
+    )
+    expect(moveButton?.disabled).toBe(true)
+
+    await act(async () => {
+      resolveInspection({
+        kind: 'recover',
+        recoveryStatus: 'verified',
+        dataRoot: '/home/u/OpenScience'
+      })
+      await Promise.resolve()
+    })
+
+    expect(moveButton?.disabled).toBe(false)
   })
 
   it('offers discard-only recovery for an interrupted chosen-folder copy', async () => {
