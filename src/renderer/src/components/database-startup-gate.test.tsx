@@ -3,6 +3,7 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import type { DatabaseStartupState } from '../../../shared/database-startup'
 import { DatabaseStartupGate } from './database-startup-gate'
 
@@ -12,9 +13,10 @@ describe('DatabaseStartupGate', () => {
   const retry = vi.fn<() => Promise<DatabaseStartupState>>()
   const quit = vi.fn<() => Promise<void>>()
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
     vi.restoreAllMocks()
+    await i18next.changeLanguage('en')
   })
 
   beforeEach(() => {
@@ -164,6 +166,51 @@ describe('DatabaseStartupGate', () => {
     expect(screen.getByText(/database_startup_unavailable/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.queryByText('Checking database…')).toBeNull()
+    expect(screen.queryByText('Business application')).toBeNull()
+  })
+
+  it('keeps a ready application mounted when the locale changes', async () => {
+    getState.mockResolvedValue({ phase: 'ready' })
+
+    render(
+      <DatabaseStartupGate>
+        <div>Business application</div>
+      </DatabaseStartupGate>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Business application')).toBeTruthy()
+    })
+
+    getState.mockRejectedValue(new Error('No handler registered for database-startup:get-state'))
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+
+    expect(screen.getByText('Business application')).toBeTruthy()
+    expect(screen.queryByText("Open Science couldn't start")).toBeNull()
+    expect(getState).toHaveBeenCalledOnce()
+  })
+
+  it('translates the unavailable startup copy when the locale changes', async () => {
+    getState.mockRejectedValue(new Error('No handler registered for database-startup:get-state'))
+
+    render(
+      <DatabaseStartupGate>
+        <div>Business application</div>
+      </DatabaseStartupGate>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Open Science could not finish checking its database.')).toBeTruthy()
+    })
+
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+
+    expect(screen.getByText('Open Science 无法完成数据库检查。')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
     expect(screen.queryByText('Business application')).toBeNull()
   })
 

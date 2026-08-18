@@ -9,14 +9,22 @@ import type { DatabaseStartupState } from '../../../shared/database-startup'
 
 type DatabaseStartupGateProps = { children: ReactNode }
 
-const unavailableStartupState = (message: string): DatabaseStartupState => ({
+const UNAVAILABLE_STARTUP_MESSAGE = 'Open Science could not finish checking its database.'
+
+const unavailableStartupState: DatabaseStartupState = {
   phase: 'blocked',
   error: {
     code: 'database_startup_unavailable',
-    message,
+    message: UNAVAILABLE_STARTUP_MESSAGE,
     retryable: true
   }
-})
+}
+
+const applyUnavailableStartupFallback = (current: DatabaseStartupState): DatabaseStartupState =>
+  current.phase === 'checking' ? unavailableStartupState : current
+
+const restoreUnavailableUnlessReady = (current: DatabaseStartupState): DatabaseStartupState =>
+  current.phase === 'ready' ? current : unavailableStartupState
 
 const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -40,17 +48,13 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
         if (!disposed && !receivedEvent) setState(current)
       })
       .catch(() => {
-        if (!disposed && !receivedEvent) {
-          setState(
-            unavailableStartupState(t('Open Science could not finish checking its database.'))
-          )
-        }
+        if (!disposed && !receivedEvent) setState(applyUnavailableStartupFallback)
       })
     return () => {
       disposed = true
       unsubscribe()
     }
-  }, [databaseStartup, t])
+  }, [databaseStartup])
 
   if (state.phase === 'ready') return <>{children}</>
 
@@ -61,7 +65,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
       .retry()
       .then(setState)
       .catch(() => {
-        setState(unavailableStartupState(t('Open Science could not finish checking its database.')))
+        setState(restoreUnavailableUnlessReady)
       })
       .finally(() => setRetrying(false))
   }
@@ -84,7 +88,11 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
             <h1 className="text-lg font-semibold text-card-foreground">
               {t("Open Science couldn't start")}
             </h1>
-            <p className="mt-3 text-sm leading-6 text-muted-foreground">{state.error.message}</p>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              {state.error.code === 'database_startup_unavailable'
+                ? t('Open Science could not finish checking its database.')
+                : state.error.message}
+            </p>
             <p className="mt-4 font-mono text-xs text-muted-foreground">
               {t('Error code:')} {state.error.code}
               {state.error.migrationId
