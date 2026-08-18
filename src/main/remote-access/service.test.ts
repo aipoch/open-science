@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -107,6 +107,48 @@ const createReadyDeps = (): {
 }
 
 describe('RemoteAccessService', () => {
+  it('keeps the app available and blocks mutations when persisted configuration cannot load', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-service-invalid-config-'))
+    roots.push(root)
+    const path = join(root, 'remote-access.json')
+    await writeFile(path, '{')
+    const repository = new RemoteAccessRepository(root)
+    const save = vi.spyOn(repository, 'save')
+    const deps = createReadyDeps()
+
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+
+    expect(service.snapshot(true, true)).toMatchObject({
+      canManage: false,
+      canManagePairing: false,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'error',
+      error: expect.stringContaining('Remote access configuration could not be loaded')
+    })
+    await expect(service.detect()).resolves.toMatchObject({ lifecycle: 'error' })
+    await expect(service.setMode('remoteit')).rejects.toThrow(
+      'Remote access configuration could not be loaded'
+    )
+    await expect(service.approve({ requestId: 'request-1', decision: 'always' })).rejects.toThrow(
+      'Remote access configuration could not be loaded'
+    )
+    expect(() => service.reject('request-1')).toThrow(
+      'Remote access configuration could not be loaded'
+    )
+    await expect(service.revoke('browser-1')).rejects.toThrow(
+      'Remote access configuration could not be loaded'
+    )
+    expect(deps.detectRemoteIt).not.toHaveBeenCalled()
+    expect(deps.enableRemoteIt).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+    await expect(readFile(path, 'utf8')).resolves.toBe('{')
+  })
+
   it('creates a private App service and explicitly disables its Persistent Public URL', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()

@@ -62,6 +62,13 @@ const normalizeRemoteItPublicUrl = (value: string): string => {
   return `${parsed.origin}/`
 }
 
+const configurationLoadError = (error: unknown): Error => {
+  const detail = error instanceof Error ? error.message : String(error)
+  return new Error(
+    `Remote access configuration could not be loaded. Fix or remove remote-access.json, then restart Open Science. ${detail}`
+  )
+}
+
 export class RemoteAccessService {
   private lifecycle: RemoteAccessSnapshot['lifecycle'] = 'disabled'
   private remoteIt: RemoteItInstallation = {
@@ -96,30 +103,52 @@ export class RemoteAccessService {
         | 'disableRemoteItLink'
         | 'broadcast'
       >
-    >
+    >,
+    private readonly configurationError?: Error
   ) {
     this.remoteItAppServiceId = pairing.preferences.remoteItAppServiceId
     this.remoteItBrowserServiceId = pairing.preferences.remoteItBrowserServiceId
+    if (configurationError) {
+      this.lifecycle = 'error'
+      this.error = configurationError.message
+    }
   }
 
   static async create(options: RemoteAccessServiceDeps = {}): Promise<RemoteAccessService> {
     const repository = options.repository ?? new RemoteAccessRepository(resolveConfigRoot())
     const context: { service?: RemoteAccessService } = {}
-    const pairing = await RemoteSessionPairingManager.create({
+    const pairingOptions = {
       repository,
       isAllowedRemoteHost: (hostname) => context.service?.isAllowedRemoteHost(hostname) === true,
       isEnabled: () => context.service?.runtimeEnabled === true,
       authorizationGeneration: () => context.service?.authorizationGeneration ?? 0,
       onChanged: () => context.service?.notifyChanged()
-    })
-    const service = new RemoteAccessService(pairing, {
-      detectRemoteIt: options.detectRemoteIt ?? detectRemoteIt,
-      enableRemoteIt: options.enableRemoteIt ?? enableRemoteItServices,
-      ensureRemoteItLink: options.ensureRemoteItLink ?? ensureRemoteItConnectLink,
-      disableRemoteItLink: options.disableRemoteItLink ?? disableRemoteItConnectLink,
-      broadcast: options.broadcast ?? broadcastToRenderers
-    })
+    }
+    let configurationError: Error | undefined
+    let loadFailure: unknown
+    let pairing: RemoteSessionPairingManager
+    try {
+      pairing = await RemoteSessionPairingManager.create(pairingOptions)
+    } catch (error) {
+      loadFailure = error
+      configurationError = configurationLoadError(error)
+      pairing = RemoteSessionPairingManager.createUnavailable(pairingOptions)
+    }
+    const service = new RemoteAccessService(
+      pairing,
+      {
+        detectRemoteIt: options.detectRemoteIt ?? detectRemoteIt,
+        enableRemoteIt: options.enableRemoteIt ?? enableRemoteItServices,
+        ensureRemoteItLink: options.ensureRemoteItLink ?? ensureRemoteItConnectLink,
+        disableRemoteItLink: options.disableRemoteItLink ?? disableRemoteItConnectLink,
+        broadcast: options.broadcast ?? broadcastToRenderers
+      },
+      configurationError
+    )
     context.service = service
+    if (configurationError) {
+      service.log.error('Remote access configuration load failed', loadFailure)
+    }
     return service
   }
 
@@ -143,9 +172,10 @@ export class RemoteAccessService {
   }
 
   snapshot(canManage: boolean, canManagePairing = canManage): RemoteAccessSnapshot {
+    const configurationAvailable = this.configurationError === undefined
     return {
-      canManage,
-      canManagePairing,
+      canManage: configurationAvailable && canManage,
+      canManagePairing: configurationAvailable && canManagePairing,
       mode: this.activeMode,
       enabled: this.runtimeEnabled,
       lifecycle: this.lifecycle,
@@ -161,6 +191,7 @@ export class RemoteAccessService {
   }
 
   async restore(): Promise<void> {
+    if (this.configurationError) return
     if (this.pairing.preferences.mode === 'off') return
     await this.setMode(this.pairing.preferences.mode, {
       persistPreference: false,
@@ -173,7 +204,7 @@ export class RemoteAccessService {
   }
 
   private async detectSerialized(): Promise<RemoteAccessSnapshot> {
-    if (this.shutdownStarted) return this.snapshot(true)
+    if (this.shutdownStarted || this.configurationError) return this.snapshot(true)
     try {
       await this.refreshInstallation()
       if (this.shutdownStarted) return this.snapshot(true)
@@ -232,6 +263,7 @@ export class RemoteAccessService {
     }
   ): Promise<RemoteAccessSnapshot> {
     if (this.shutdownStarted) return this.snapshot(true)
+    this.assertConfigurationAvailable()
     if (
       mode === this.activeMode &&
       this.lifecycle === 'running' &&
@@ -334,11 +366,13 @@ export class RemoteAccessService {
     canManage = true,
     canManagePairing = canManage
   ): Promise<RemoteAccessSnapshot> {
+    this.assertConfigurationAvailable()
     await this.pairing.approve(request.requestId, request.decision)
     return this.snapshot(canManage, canManagePairing)
   }
 
   reject(requestId: string, canManage = true, canManagePairing = canManage): RemoteAccessSnapshot {
+    this.assertConfigurationAvailable()
     this.pairing.reject(requestId)
     return this.snapshot(canManage, canManagePairing)
   }
@@ -348,6 +382,7 @@ export class RemoteAccessService {
     canManage = true,
     canManagePairing = canManage
   ): Promise<RemoteAccessSnapshot> {
+    this.assertConfigurationAvailable()
     const revocation = this.pairing.revoke(browserId)
     this.authorizationGeneration += 1
     this.webController?.closeExternalConnections(browserId)
@@ -373,6 +408,10 @@ export class RemoteAccessService {
 
   private notifyChanged(): void {
     this.deps.broadcast(REMOTE_ACCESS_CHANGED_CHANNEL, {})
+  }
+
+  private assertConfigurationAvailable(): void {
+    if (this.configurationError) throw this.configurationError
   }
 
   private invalidateExternalAccess(closeConnections = true): void {

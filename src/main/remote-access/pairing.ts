@@ -13,6 +13,7 @@ import type {
 } from '../web-service/http-server'
 import { REMOTE_PAIR_STATUS_PATH, renderPairingPage } from './pairing-page'
 import {
+  defaultRemoteAccessState,
   RemoteAccessRepository,
   type StoredRemoteAccess,
   type StoredTrustedBrowser
@@ -169,6 +170,10 @@ export class RemoteSessionPairingManager {
 
   static async create(options: PairingManagerOptions): Promise<RemoteSessionPairingManager> {
     return new RemoteSessionPairingManager(options, await options.repository.load())
+  }
+
+  static createUnavailable(options: PairingManagerOptions): RemoteSessionPairingManager {
+    return new RemoteSessionPairingManager(options, defaultRemoteAccessState())
   }
 
   get preferences(): Pick<
