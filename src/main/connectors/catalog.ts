@@ -99,7 +99,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: true
   },
   {
-    id: 'clinical_trials',
+    id: 'clinical-trials',
     displayName: 'Clinical Trials',
     description:
       'Clinical trials from ClinicalTrials.gov — search, details, sponsors, investigators, endpoints, and eligibility.',
@@ -111,7 +111,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     group: 'directory'
   },
   {
-    id: 'clinical_genomics',
+    id: 'clinical-genomics',
     displayName: 'Clinical Genomics',
     aliases: ['ClinGen', 'CIViC', 'Open Targets'],
     description:
@@ -158,7 +158,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     group: 'directory'
   },
   {
-    id: 'drug_regulatory',
+    id: 'drug-regulatory',
     displayName: 'Drug Regulatory',
     description: 'Drugs@FDA applications, labels, and corpus statistics via openFDA.',
     useWhen:
@@ -168,7 +168,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
-    id: 'human_genetics',
+    id: 'human-genetics',
     displayName: 'Human Genetics',
     description:
       'Human genetic association evidence — GWAS Catalog, eQTL Catalogue, and PheWeb PheWAS portals (FinnGen, BioBank Japan).',
@@ -189,7 +189,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
-    id: 'protein_annotation',
+    id: 'protein-annotation',
     displayName: 'Protein Annotation',
     description:
       'Protein domain architecture, family/clan membership, expression atlas and interaction networks via InterPro/Pfam, the Human Protein Atlas and STRING.',
@@ -200,7 +200,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
-    id: 'cancer_models',
+    id: 'cancer-models',
     displayName: 'Cancer Models',
     description: 'Cancer genomics study records via the cBioPortal REST API.',
     useWhen:
@@ -220,7 +220,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
-    id: 'omics_archives',
+    id: 'omics-archives',
     displayName: 'Omics Archives',
     description:
       'Omics data archives — expression (ArrayExpress, GEO), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).',
@@ -253,7 +253,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
-    id: 'research_resources',
+    id: 'research-resources',
     displayName: 'Research Resources',
     description:
       'Funding-opportunity search (Grants.gov) and antibody catalog lookups (Antibody Registry).',

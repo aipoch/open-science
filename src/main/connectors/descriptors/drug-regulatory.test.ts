@@ -55,7 +55,7 @@ const LIPITOR: Record<string, unknown> = {
   }
 }
 
-describe('drug_regulatory / search_drug_applications', () => {
+describe('drug-regulatory / search_drug_applications', () => {
   it('builds an ANDed search with a date range and shapes flattened openfda fields', async () => {
     const { out, urls } = await run(
       'search_drug_applications',
@@ -138,7 +138,7 @@ describe('drug_regulatory / search_drug_applications', () => {
   })
 })
 
-describe('drug_regulatory / get_drug_application', () => {
+describe('drug-regulatory / get_drug_application', () => {
   it('fetches one application by number', async () => {
     const { out, urls } = await run('get_drug_application', { application_number: 'NDA020702' }, [
       okJson({ meta: { results: { total: 1 } }, results: [LIPITOR] })
@@ -157,7 +157,7 @@ describe('drug_regulatory / get_drug_application', () => {
   })
 })
 
-describe('drug_regulatory / count_drug_applications', () => {
+describe('drug-regulatory / count_drug_applications', () => {
   it('resolves a friendly count field, sums buckets, and reports the api field', async () => {
     const { out, urls } = await run('count_drug_applications', { count_field: 'dosage_form' }, [
       okJson({
@@ -195,7 +195,7 @@ describe('drug_regulatory / count_drug_applications', () => {
   })
 })
 
-describe('drug_regulatory / get_drug_statistics', () => {
+describe('drug-regulatory / get_drug_statistics', () => {
   it('assembles corpus stats from a base query plus four count queries', async () => {
     const { out, urls } = await run('get_drug_statistics', {}, [
       okJson({
@@ -238,7 +238,7 @@ describe('drug_regulatory / get_drug_statistics', () => {
   })
 })
 
-describe('drug_regulatory / list_pharmacologic_classes', () => {
+describe('drug-regulatory / list_pharmacologic_classes', () => {
   it('counts the harmonized pharm-class field for the chosen class type', async () => {
     const { out, urls } = await run(
       'list_pharmacologic_classes',
@@ -274,7 +274,7 @@ describe('drug_regulatory / list_pharmacologic_classes', () => {
   })
 })
 
-describe('drug_regulatory / get_generic_equivalents', () => {
+describe('drug-regulatory / get_generic_equivalents', () => {
   it('resolves the brand, extracts the ingredient set, and keeps exact-set matches', async () => {
     const generic: Record<string, unknown> = {
       application_number: 'ANDA076543',
@@ -327,7 +327,7 @@ describe('drug_regulatory / get_generic_equivalents', () => {
   })
 })
 
-describe('drug_regulatory / search_drug_labels', () => {
+describe('drug-regulatory / search_drug_labels', () => {
   const TYLENOL: Record<string, unknown> = {
     set_id: '015a6179-bacb-452d-b594-4de628ddc11d',
     version: 11,

@@ -221,7 +221,7 @@ async function fetchAssociations(
 export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   {
     id: 'gwas_associations_for_variant',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       "GWAS Catalog associations reported for one variant (rsID), most significant first. Args: rs_id (dbSNP rsID e.g. rs7412 APOE or rs699 AGT; must be the catalog's current rsID — merged/retired IDs may return zero rows rather than an error); max_records (output cap default 500; trait-hub variants can carry 1000+ associations; rows are server-sorted by p-value ascending, so a capped result is the top-signal prefix). Returns {rs_id, api_total, returned, truncated, associations}. api_total is the catalog's own total; truncated flags a capped fetch. Each association row: {association_id, p_value, pvalue_mantissa, pvalue_exponent, pvalue_description, or_value, beta, ci_lower, ci_upper, range, risk_frequency, snp_effect_alleles, rs_ids, locations, mapped_genes, efo_traits:[{efo_id, efo_trait}], bg_efo_traits, reported_trait, multi_snp_haplotype, snp_interaction, study_accession_id, pubmed_id, first_author}. or_value and beta are mutually exclusive per row (binary vs quantitative); p_value of 0.0 means p < ~1e-308 (use mantissa/exponent).",
     input: {
@@ -236,7 +236,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{rs_id, api_total (page.totalElements), returned, truncated (api_total > returned), associations[]} — each row the shared association shape.',
     example:
-      'const result = await host.mcp("human_genetics", "gwas_associations_for_variant", {"rs_id": "rs7412", "max_records": 100})',
+      'const result = await host.mcp("human-genetics", "gwas_associations_for_variant", {"rs_id": "rs7412", "max_records": 100})',
     run: async (ctx, a) => {
       const rsId = String(a.rs_id)
       const maxRecords = clampInt(a.max_records, 500, 1, 10000)
@@ -246,7 +246,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'gwas_associations_for_gene',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       "GWAS Catalog associations whose variants are MAPPED to a gene (catalog's Ensembl pipeline mapping, not author-reported), most significant first. Args: gene_symbol (HGNC symbol, exact match, e.g. PCSK9, APOE; case-sensitive upstream — pass canonical uppercase; intergenic variants map to flanking genes, so rows may sit outside the gene body); max_records (cap default 500; rows server-sorted by p-value ascending). Returns {gene_symbol, api_total, returned, truncated, associations} with the same row shape as gwas_associations_for_variant. A nonexistent symbol returns api_total=0, not an error.",
     input: {
@@ -261,7 +261,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{gene_symbol, api_total, returned, truncated, associations[]} — the shared association row shape.',
     example:
-      'const result = await host.mcp("human_genetics", "gwas_associations_for_gene", {"gene_symbol": "PCSK9", "max_records": 100})',
+      'const result = await host.mcp("human-genetics", "gwas_associations_for_gene", {"gene_symbol": "PCSK9", "max_records": 100})',
     run: async (ctx, a) => {
       const geneSymbol = String(a.gene_symbol)
       const maxRecords = clampInt(a.max_records, 500, 1, 10000)
@@ -271,7 +271,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'gwas_associations_for_trait',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'GWAS Catalog associations annotated to one EFO trait, most significant first. Args: efo_id (ontology term short form as used by the catalog, e.g. MONDO_0005010, EFO_0004340, HP_0003124; the catalog migrated many historical EFO ids to MONDO/HP — resolve current ids with gwas_search_traits first; pass exactly one of efo_id/efo_trait); efo_trait (exact trait LABEL alternative); max_records (cap default 500; rows p-value ascending). Returns {efo_id|efo_trait, api_total, returned, truncated, associations} with the same row shape as gwas_associations_for_variant. An unknown id/label returns api_total=0, not an error.',
     input: {
@@ -285,7 +285,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{efo_id|efo_trait, api_total, returned, truncated, associations[]} — the shared association row shape.',
     example:
-      'const result = await host.mcp("human_genetics", "gwas_associations_for_trait", {"efo_id": "MONDO_0005010", "max_records": 100})',
+      'const result = await host.mcp("human-genetics", "gwas_associations_for_trait", {"efo_id": "MONDO_0005010", "max_records": 100})',
     run: async (ctx, a) => {
       const efoId = a.efo_id != null && String(a.efo_id).trim() !== '' ? String(a.efo_id) : null
       const efoTrait =
@@ -302,7 +302,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'gwas_search_traits',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'Search GWAS Catalog EFO trait annotations by label substring — the entry point for resolving a disease/phenotype name to the ontology ids that gwas_associations_for_trait / gwas_search_studies take. Args: query (case-insensitive substring of the trait label, e.g. "coronary" matches coronary artery disorder MONDO_0005010 etc.; the catalog mixes EFO, MONDO, HP and OBA ids — don\'t assume an EFO_ prefix); max_records (cap default 500). Returns {query, api_total, returned, truncated, efo_traits}; each row {efo_id, efo_trait, uri} sorted by label. Count-verified against the catalog\'s own total when not capped.',
     input: {
@@ -316,7 +316,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns: '{query, api_total, returned, truncated, efo_traits:[{efo_id, efo_trait, uri}]}.',
     example:
-      'const result = await host.mcp("human_genetics", "gwas_search_traits", {"query": "coronary", "max_records": 50})',
+      'const result = await host.mcp("human-genetics", "gwas_search_traits", {"query": "coronary", "max_records": 50})',
     run: async (ctx, a) => {
       const query = String(a.query)
       const maxRecords = clampInt(a.max_records, 500, 1, 10000)
@@ -336,7 +336,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'gwas_search_studies',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       "Search GWAS Catalog studies by trait annotation or publication. Args: efo_id (ontology short form, e.g. MONDO_0005010, resolve via gwas_search_traits; filters combine AND — usually pass one); efo_trait (exact trait label alternative); pubmed_id (PubMed ID of the study's publication, e.g. 38714703); max_records (cap default 500). Returns {filters, api_total, returned, truncated, studies}; each study row {accession_id, disease_trait, efo_traits, bg_efo_traits, pubmed_id, initial_sample_size, replication_sample_size, discovery_ancestry, replication_ancestry, genotyping_technologies, platforms, cohort, full_summary_stats_available, imputed, gxe, gxg}. Count-verified against the catalog total when not capped. At least one filter is required (the unfiltered catalog is ~90k studies).",
     input: {
@@ -351,7 +351,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{filters, api_total, returned, truncated, studies[]} — each study the lean study shape.',
     example:
-      'const result = await host.mcp("human_genetics", "gwas_search_studies", {"efo_id": "MONDO_0005010", "max_records": 50})',
+      'const result = await host.mcp("human-genetics", "gwas_search_studies", {"efo_id": "MONDO_0005010", "max_records": 50})',
     run: async (ctx, a) => {
       const filters: Record<string, string> = {}
       if (a.efo_id != null && String(a.efo_id).trim() !== '') filters['efo_id'] = String(a.efo_id)
@@ -382,7 +382,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'gwas_get_study',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'Fetch one GWAS Catalog study by its GCST accession. Args: accession_id (study accession, e.g. GCST90841394; listed in every association row as study_accession_id and in study search results). Returns {found, accession_id, study} where study is the same row shape as gwas_search_studies (null when the accession is unknown).',
     input: {
@@ -395,7 +395,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     required: ['accession_id'],
     returns: '{found, accession_id, study} — study is the lean study shape, null when unknown.',
     example:
-      'const result = await host.mcp("human_genetics", "gwas_get_study", {"accession_id": "GCST90841394"})',
+      'const result = await host.mcp("human-genetics", "gwas_get_study", {"accession_id": "GCST90841394"})',
     run: async (ctx, a) => {
       const accessionId = String(a.accession_id)
       try {
@@ -411,7 +411,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'gwas_get_variant',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'Fetch one GWAS Catalog variant record (position, mapped genes, consequence) by rsID — lighter than pulling its associations. Args: rs_id (dbSNP rsID e.g. rs7412). Returns {found, rs_id, variant}; variant is {rs_id, merged, functional_class, most_severe_consequence, alleles (e.g. "C/T (forward)"), mapped_genes, locations:[{chromosome, position, region}], last_update_date} — positions GRCh38 — or null when the rsID is not in the catalog. merged=1 means the rsID was merged into another record upstream.',
     input: {
@@ -425,7 +425,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{found, rs_id, variant} — variant is the lean variant shape, null when not in catalog.',
     example:
-      'const result = await host.mcp("human_genetics", "gwas_get_variant", {"rs_id": "rs7412"})',
+      'const result = await host.mcp("human-genetics", "gwas_get_variant", {"rs_id": "rs7412"})',
     run: async (ctx, a) => {
       const rsId = String(a.rs_id)
       try {

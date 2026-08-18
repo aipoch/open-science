@@ -526,11 +526,11 @@ describe('provisionClaudeRuntime', () => {
     const assets = await provisionClaudeRuntime({
       storageRoot: root,
       materializeProjection: async (projectionRoot) => {
-        const skillDir = join(projectionRoot, '.claude', 'skills', 'mcp-human_genetics')
+        const skillDir = join(projectionRoot, '.claude', 'skills', 'mcp-human-genetics')
         await mkdir(skillDir, { recursive: true })
         await writeFile(
           join(skillDir, 'SKILL.md'),
-          '---\nname: mcp-human_genetics\ndescription: Human genetics.\nsource: connector\n---\nBody',
+          '---\nname: mcp-human-genetics\ndescription: Human genetics.\nsource: connector\n---\nBody',
           'utf8'
         )
       }
@@ -538,7 +538,7 @@ describe('provisionClaudeRuntime', () => {
 
     await expect(
       readFile(
-        join(assets.skillProjection.root, '.claude', 'skills', 'mcp-human_genetics', 'SKILL.md'),
+        join(assets.skillProjection.root, '.claude', 'skills', 'mcp-human-genetics', 'SKILL.md'),
         'utf8'
       )
     ).resolves.toContain('source: connector')

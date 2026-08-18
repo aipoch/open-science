@@ -727,12 +727,12 @@ async function resolveHpaSymbol(ctx: ToolContext, symbol: string): Promise<strin
 }
 
 // ---------------------------------------------------------------------------
-// Descriptors — connector 'protein_annotation' (InterPro/Pfam, Human Protein Atlas, STRING v12.0)
+// Descriptors — connector 'protein-annotation' (InterPro/Pfam, Human Protein Atlas, STRING v12.0)
 // ---------------------------------------------------------------------------
 export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   {
     id: 'get_domain_architecture',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Complete InterPro domain architecture for one or more UniProt proteins (all matching entries, member-DB signatures, fragment coordinates), with pagination verified against the API count.',
     input: {
@@ -750,7 +750,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "summaries": { <accession>: { "protein": str, "protein_length": int, "entry_count": int, "entries": [ { "accession": str, "name": str, "type": str, "member_db_signatures": [ { "database": str, "accession": str, "name": str } ], "locations": [ { "fragments": [ { "start": int, "end": int } ], ... } ] } ] } }, "stats": { "http_requests": int, "bytes_downloaded": int } }` — entries sorted by (type, accession); default location fields (model/score/representative, fragment dc_status "CONTINUOUS") are omitted.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_domain_architecture", {"accessions": ["P04637"]})',
+      'const result = await host.mcp("protein-annotation", "get_domain_architecture", {"accessions": ["P04637"]})',
     run: async (ctx, a) => {
       const accessions = (a.accessions as string[]).map(String)
       const stats = { requests: 0, bytes: 0 }
@@ -764,7 +764,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_interpro_entries',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Keyword search over InterPro or member-database entries (Pfam, SMART, PROSITE, PANTHER, CDD), complete cursor walk verified against the API count.',
     input: {
@@ -790,7 +790,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "count": int, "results": [ { "accession": str, "name": str, "type": str, "source_database": str, "integrated": str|null, "member_db_signatures"?: [...], "go_terms"?: [...] } ] }` — rows sorted by accession; `count` is the API total.',
     example:
-      'const result = await host.mcp("protein_annotation", "search_interpro_entries", {"query": "kinase", "source_db": "pfam"})',
+      'const result = await host.mcp("protein-annotation", "search_interpro_entries", {"query": "kinase", "source_db": "pfam"})',
     run: async (ctx, a) => {
       const sourceDb = String(a.source_db ?? 'interpro')
       const url = `${INTERPRO_BASE}/entry/${encodeURIComponent(sourceDb)}/${qs([
@@ -804,7 +804,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_interpro_entry',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Detail record for an InterPro entry (IPRxxxxxx) or Pfam family (PFxxxxx) — route chosen by accession prefix.',
     input: {
@@ -821,7 +821,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "accession": str, "name": { "name": str, "short": str|null }, "type": str, "source_database": str, "integrated": str|null, "hierarchy": ..., "set_info": ..., "member_db_signatures"?: [...], "go_terms"?: [...], "n_literature_refs"?: int }` — a Pfam family\'s clan appears under `set_info`.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_interpro_entry", {"accession": "IPR000719"})',
+      'const result = await host.mcp("protein-annotation", "get_interpro_entry", {"accession": "IPR000719"})',
     run: async (ctx, a) => {
       const acc = String(a.accession).trim().toUpperCase()
       const db = acc.startsWith('IPR') ? 'interpro' : acc.startsWith('PF') ? 'pfam' : null
@@ -837,7 +837,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_pfam_clans',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description: 'Keyword search over Pfam clans (InterPro sets, accessions CLxxxx).',
     input: {
       type: 'object',
@@ -848,7 +848,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "count": int, "results": [ { "accession": str, "name": str, "source_database": str } ] }` — rows sorted by accession; an empty upstream result yields count 0.',
     example:
-      'const result = await host.mcp("protein_annotation", "search_pfam_clans", {"query": "kinase"})',
+      'const result = await host.mcp("protein-annotation", "search_pfam_clans", {"query": "kinase"})',
     run: async (ctx, a) => {
       const url = `${INTERPRO_BASE}/set/pfam/${qs([
         ['search', a.query ?? null],
@@ -859,7 +859,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_pfam_clan',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description: 'Pfam clan detail including the complete sorted member-family list.',
     input: {
       type: 'object',
@@ -872,7 +872,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "accession": str, "name": str, "source_database": str, "member_count": int, "members": [ { "accession": str, "name": str, "short_name": str, "type": str } ] }` — members sorted by accession.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_pfam_clan", {"clan_accession": "CL0016"})',
+      'const result = await host.mcp("protein-annotation", "get_pfam_clan", {"clan_accession": "CL0016"})',
     run: async (ctx, a) => {
       const acc = String(a.clan_accession).trim().toUpperCase()
       const { data } = await getJsonMaybe(
@@ -885,7 +885,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_pfam_family_proteins',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Member proteins of a Pfam family (complete count-verified walk or count only). Use count_only for very large families.',
     input: {
@@ -911,7 +911,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "count": int, "results": [ { "accession": str, "name": str, "source_database": str, "length": int, "tax_id": int, "organism": str } ] | null }` — `results` is null in count_only mode; otherwise sorted by accession.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_pfam_family_proteins", {"pfam_accession": "PF00069", "count_only": true})',
+      'const result = await host.mcp("protein-annotation", "get_pfam_family_proteins", {"pfam_accession": "PF00069", "count_only": true})',
     run: async (ctx, a) => {
       const acc = String(a.pfam_accession).trim().toUpperCase()
       const db = a.reviewed_only ? 'reviewed' : 'uniprot'
@@ -941,7 +941,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_pfam_family_proteomes',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Proteomes containing members of a Pfam family. count_only defaults true — the upstream proteome cursor pagination is defective for deep walks.',
     input: {
@@ -960,7 +960,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "count": int, "results": [ { "accession": str, "name": str, "is_reference": bool, "taxonomy": ... } ] | null }` — `results` is null in count_only mode; a full walk raises if upstream pagination is defective.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_pfam_family_proteomes", {"pfam_accession": "PF00069"})',
+      'const result = await host.mcp("protein-annotation", "get_pfam_family_proteomes", {"pfam_accession": "PF00069"})',
     run: async (ctx, a) => {
       const acc = String(a.pfam_accession).trim().toUpperCase()
       const base = `${INTERPRO_BASE}/proteome/uniprot/entry/pfam/${encodeURIComponent(acc)}/`
@@ -977,7 +977,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_protein_atlas_gene',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Human Protein Atlas per-gene record (release 25.x): tissue/subcellular/pathology/blood/brain expression and antibody info. Accepts an Ensembl gene ID or a gene symbol.',
     input: {
@@ -1000,7 +1000,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`full=false`: `{ "identity": {...}, "tissue_expression": {...}, "single_cell_expression": {...}, "blood_expression": {...}, "brain_expression": {...}, "cancer_expression": {...}, "subcellular": {...}, "antibody": {...}, "pathology": { "prognostics": { <cancer>: ... } } }`. `full=true`: HPA\'s complete raw ~119-key per-gene record.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_protein_atlas_gene", {"gene": "TP53"})',
+      'const result = await host.mcp("protein-annotation", "get_protein_atlas_gene", {"gene": "TP53"})',
     run: async (ctx, a) => {
       const gene = String(a.gene).trim()
       const ensg = ENSG_RE.test(gene) ? gene : await resolveHpaSymbol(ctx, gene)
@@ -1012,7 +1012,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_protein_atlas',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description: 'Column-selected bulk search over the Human Protein Atlas (search_download).',
     input: {
       type: 'object',
@@ -1034,7 +1034,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`[ { <HPA field name>: value } ]` — a list of row dicts keyed by the human-readable field names selected via `columns`; `[]` when nothing matches.',
     example:
-      'const result = await host.mcp("protein_annotation", "search_protein_atlas", {"query": "kinase"})',
+      'const result = await host.mcp("protein-annotation", "search_protein_atlas", {"query": "kinase"})',
     run: async (ctx, a) => {
       const columns = String(a.columns ?? 'g,gs,eg,gd,up,chr,chrp,scl')
       return ctx.fetchJson(
@@ -1049,7 +1049,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'map_string_ids',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Map gene symbols/aliases to STRING protein identifiers (v12.0). Every input symbol is either mapped or listed in unmapped — the two partition the input.',
     input: {
@@ -1072,7 +1072,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "string_version": { "string_version": str, "stable_address": str }, "species": int, "mapped": [ { "query": str, "string_id": str, "preferred_name": str, "ncbi_taxon_id": int } ], "unmapped": [ str ] }`.',
     example:
-      'const result = await host.mcp("protein_annotation", "map_string_ids", {"symbols": ["TP53", "BRCA1", "EGFR"]})',
+      'const result = await host.mcp("protein-annotation", "map_string_ids", {"symbols": ["TP53", "BRCA1", "EGFR"]})',
     run: async (ctx, a) => {
       const species = Number(a.species ?? DEFAULT_SPECIES)
       const { version } = await stringVersion(ctx)
@@ -1086,7 +1086,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_string_network',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'STRING protein-protein interaction network for a gene list (v12.0) at a confidence threshold. Maps symbols first (unmapped reported), then retrieves nodes, edges, summary and provenance.',
     input: {
@@ -1114,7 +1114,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "tool", "tool_version", "query", "string_version", "nodes": [ { "query", "name", "string_id", "degree" } ], "unmapped": [ str ], "edges": [ { "a": str, "b": str, "score": float, "evidence": { <channel>: float } } ], "summary": { node/edge counts, score stats }, "provenance": {...} }` — edges deterministically ordered; isolated nodes visible (degree 0).',
     example:
-      'const result = await host.mcp("protein_annotation", "get_string_network", {"symbols": ["TP53", "BRCA1", "EGFR"], "required_score": 700})',
+      'const result = await host.mcp("protein-annotation", "get_string_network", {"symbols": ["TP53", "BRCA1", "EGFR"], "required_score": 700})',
     run: async (ctx, a) => {
       const species = Number(a.species ?? DEFAULT_SPECIES)
       const requiredScore = Number(a.required_score ?? 700)
@@ -1171,7 +1171,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_string_similarity_scores',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       "Smith-Waterman protein similarity bitscores among a gene set (STRING /homology). Sparse: pairs absent from STRING's data are not listed (absence means no recorded similarity, not zero).",
     input: {
@@ -1194,7 +1194,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "species": int, "mapped": [...], "unmapped": [ str ], "n_pairs": int, "n_self": int, "pairs": [ { "id_a": str, "id_b": str, "taxon_a": int, "taxon_b": int, "bitscore": float, "self": bool, "name_a": str, "name_b": str } ] }` — one record per reported unordered pair (incl. self-scores), id_a <= id_b.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_string_similarity_scores", {"symbols": ["TP53", "MDM2", "MDM4"]})',
+      'const result = await host.mcp("protein-annotation", "get_string_similarity_scores", {"symbols": ["TP53", "MDM2", "MDM4"]})',
     run: async (ctx, a) => {
       const species = Number(a.species ?? DEFAULT_SPECIES)
       const { mapped, unmapped } = await mapStringIds(
@@ -1227,7 +1227,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_string_best_similarity_hits',
-    connector: 'protein_annotation',
+    connector: 'protein-annotation',
     description:
       'Best homology hit per input protein in a target species (STRING /homology_best). target_species=null asks for the best hit across all species.',
     input: {
@@ -1254,7 +1254,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "species": int, "species_b": int|null, "mapped": [...], "unmapped": [ str ], "n_hits": int, "hits": [ { "query_id": str, "query_name": str, "query_taxon": int, "hit_id": str, "hit_taxon": int, "bitscore": float } ] }` — one best-hit record per query protein, sorted by query STRING ID.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_string_best_similarity_hits", {"symbols": ["TP53"], "target_species": 10090})',
+      'const result = await host.mcp("protein-annotation", "get_string_best_similarity_hits", {"symbols": ["TP53"], "target_species": 10090})',
     run: async (ctx, a) => {
       const species = Number(a.species ?? DEFAULT_SPECIES)
       const targetSpecies = a.target_species != null ? Number(a.target_species) : null

@@ -26,8 +26,8 @@ const errRes = (status: number): Response =>
 const engine = (fetchImpl: typeof fetch): ParserEngine =>
   new ParserEngine({ fetchImpl, retries: 0 })
 
-describe('omics_archives tool set', () => {
-  it('exposes exactly the 17 upstream tools, all on connector omics_archives', () => {
+describe('omics-archives tool set', () => {
+  it('exposes exactly the 17 upstream tools, all on connector omics-archives', () => {
     expect(OMICS_ARCHIVES_TOOLS.map((t) => t.id).sort()).toEqual(
       [
         'arrayexpress_get_experiment',
@@ -49,7 +49,7 @@ describe('omics_archives tool set', () => {
         'pride_search_projects'
       ].sort()
     )
-    expect(OMICS_ARCHIVES_TOOLS.every((t) => t.connector === 'omics_archives')).toBe(true)
+    expect(OMICS_ARCHIVES_TOOLS.every((t) => t.connector === 'omics-archives')).toBe(true)
   })
 })
 
@@ -504,7 +504,7 @@ describe('pride_find_projects_for_protein', () => {
 // -----------------------------------------------------------------------------
 // LIVE integration tests — hit the real EBI/NCBI backends. Opt in with LIVE_API=1.
 // -----------------------------------------------------------------------------
-describe.skipIf(!process.env.LIVE_API)('omics_archives (LIVE)', () => {
+describe.skipIf(!process.env.LIVE_API)('omics-archives (LIVE)', () => {
   const live = new ParserEngine()
   const call = (id: string, args: Record<string, unknown>): Promise<unknown> =>
     live.call(tool(id), args, { ncbiEmail: 'openscience-tests@example.org' })
