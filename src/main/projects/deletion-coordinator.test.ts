@@ -859,6 +859,16 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.listDeletionIntents).toHaveBeenCalledOnce()
   })
 
+  it('restores sticky recovery completion after deletion without suppressed failures', async () => {
+    const projects = createProjects()
+    const coordinator = new ProjectDeletionCoordinator(projects, createSessions())
+
+    await coordinator.deleteProject('project-1')
+    await coordinator.waitForProjectOperations([])
+
+    expect(projects.listDeletionIntents).toHaveBeenCalledOnce()
+  })
+
   it('makes concurrent recovery wait for a newly started deletion', async () => {
     const deletionGate = createDeferred<void>()
     const coordinator = new ProjectDeletionCoordinator(

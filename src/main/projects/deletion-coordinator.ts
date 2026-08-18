@@ -156,11 +156,17 @@ class ProjectDeletionCoordinator {
   deleteProject(projectId: string): Promise<void> {
     const deletion = this.operationQueue.then(() =>
       withDataRootWrite(async () => {
-        await this.waitForProjectOperationsNow([projectId])
-        // A scoped wait may have suppressed failures owned by other Projects. Keep recovery
-        // incomplete after this deletion so those durable intents remain eligible for retry.
+        const recoveryComplete = await this.waitForProjectOperationsNow([projectId])
         this.isRecoveryComplete = false
-        await this.runDeletion(projectId)
+        try {
+          await this.runDeletion(projectId)
+          // Preserve sticky completion only when scoped admission did not suppress failures owned by
+          // other Projects. Suppressed durable intents must remain eligible for retry.
+          this.isRecoveryComplete = recoveryComplete
+        } catch (error) {
+          this.isRecoveryComplete = false
+          throw error
+        }
       })
     )
     this.operationQueue = deletion.catch(() => undefined)
@@ -179,7 +185,7 @@ class ProjectDeletionCoordinator {
   // could not be established safely. An empty set represents Project list/create operations.
   async waitForProjectOperations(projectIds: readonly string[]): Promise<void> {
     await this.operationQueue
-    return withDataRootWrite(() => this.waitForProjectOperationsNow(projectIds))
+    await withDataRootWrite(() => this.waitForProjectOperationsNow(projectIds))
   }
 
   // Restores fail-closed in-memory barriers from local durable authority only. Startup waits for this
@@ -217,12 +223,14 @@ class ProjectDeletionCoordinator {
     }
   }
 
-  private async waitForProjectOperationsNow(projectIds: readonly string[]): Promise<void> {
+  private async waitForProjectOperationsNow(projectIds: readonly string[]): Promise<boolean> {
     try {
       await this.recoverPendingDeletionsNow()
+      return true
     } catch (error) {
       if (!(error instanceof ProjectDeletionRecoveryError)) throw error
       if (error.affectsAny(new Set(projectIds))) throw error
+      return false
     }
   }
 
