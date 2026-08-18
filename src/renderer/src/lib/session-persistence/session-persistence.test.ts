@@ -309,6 +309,39 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('recovers a forced revision conflict without re-entering the ordered save queue', async () => {
+    const persisted = createPersistedSession({
+      projectId: 'project-a',
+      revision: 1,
+      title: 'Original'
+    })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const durableBase = toPersistedSession(useSessionStore.getState().sessions[0])
+    const authoritative = { ...durableBase, revision: 2, updatedAt: persisted.updatedAt + 1 }
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 3 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Local rename')
+    await expect(
+      save(useSessionStore.getState(), {
+        forceTargets: new Set(['session:session-1'])
+      })
+    ).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1]).toEqual([
+      expect.objectContaining({ revision: 2, title: 'Local rename' }),
+      { conflictRebaseFields: ['title'] }
+    ])
+  })
+
   it('does not persist unbound pending sessions', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

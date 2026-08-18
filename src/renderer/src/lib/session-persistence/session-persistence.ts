@@ -705,7 +705,7 @@ const createStoreSaver = (
                       error,
                       persisted,
                       saveOptions,
-                      persistence.saveSession
+                      api.saveSession
                     )
                   } catch (finalError) {
                     reportPersistenceError(finalError, 'session-save')
