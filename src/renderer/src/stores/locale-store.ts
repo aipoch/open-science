@@ -50,19 +50,21 @@ const applyLocaleSnapshot = (snapshot: LocalePreferenceSnapshot): void => {
 
 let stopLocalePreferenceSync: (() => void) | undefined
 
-// Electron's main process owns native-surface locale resolution for the current process. The
-// renderer remains the persistence source and projects its stored choice into that owner on startup.
-// Web builds expose no locale bridge, so they keep using navigator.languages unchanged.
+// Electron Main owns the durable preference. localStorage remains a synchronous first-paint cache
+// and the one-time source for historical installs whose settings.json has no localePreference yet.
+// Web builds expose no locale bridge, so they keep browser-local ownership unchanged.
 export const startLocalePreferenceSync = (): (() => void) => {
   stopLocalePreferenceSync?.()
   const localeApi = window.api?.locale
   if (!localeApi) return () => undefined
 
   const unsubscribe = localeApi.onChanged(applyLocaleSnapshot)
+  const cachedPreference = useLocaleStore.getState().preference
   void localeApi
-    .setPreference({ preference: useLocaleStore.getState().preference })
+    .initialize({ cachedPreference })
     .then((snapshot) => {
-      if (useLocaleStore.getState().preference === snapshot.preference) {
+      // A user choice made while startup IPC was in flight wins over the older startup reply.
+      if (useLocaleStore.getState().preference === cachedPreference) {
         applyLocaleSnapshot(snapshot)
       }
     })

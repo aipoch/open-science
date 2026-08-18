@@ -254,7 +254,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createDatabaseStartupOwner },
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
         { getProjectDbClient },
-        { resolveStorageRoot }
+        { resolveStorageRoot },
+        { SettingsDocumentStore },
+        { SettingsRepository }
       ] = await Promise.all([
         import('./ipc'),
         import('./managed-preview-protocol'),
@@ -281,14 +283,26 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./database/database-startup-owner'),
         import('./database/database-startup-ipc'),
         import('./projects/prisma-client'),
-        import('./storage-root')
+        import('./storage-root'),
+        import('./settings/document-store'),
+        import('./settings/repository')
       ])
 
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
       startupDiagnostics?.phase('prepare-shell')
       const managedPreviewProtocolBridge = createManagedPreviewProtocolBridge(protocol)
-      const localeOwner = new LocalePreferenceOwner(app.getPreferredSystemLanguages())
+      // Create the settings document owner before any native surface. The startup locale repository
+      // and the later application Settings repository share this store, so every settings.json
+      // mutation uses one serialization queue and one atomic-write implementation.
+      const settingsStore = new SettingsDocumentStore(resolveStorageRoot())
+      const startupSettingsRepository = new SettingsRepository(settingsStore)
+      const startupSettings = await startupSettingsRepository.getSettings()
+      const localeOwner = new LocalePreferenceOwner(
+        app.getPreferredSystemLanguages(),
+        startupSettingsRepository,
+        startupSettings.localePreference
+      )
       const translate = localeOwner.t.bind(localeOwner)
       const disposeLocalePreferenceIpc = registerLocalePreferenceIpc(localeOwner)
 
@@ -398,6 +412,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           dispose: disposeApplicationRuntime
         } = await registerIpcHandlers({
           mainEntryPath,
+          settingsStore,
           translate,
           managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
           handoffRuntime: 'production',

@@ -25,6 +25,7 @@ import {
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import type { LanguagePreference } from '../../shared/locale'
 import {
   type StoredComputeGrant,
   type StoredConnectors,
@@ -317,30 +318,29 @@ class SettingsRepository {
     return this.mutate((settings) => ({ ...settings, conversationSkillImportEnabled: enabled }))
   }
 
-  // Persists the Windows titlebar-close behavior; undefined restores the confirmation dialog.
+  async setLocalePreference(preference: LanguagePreference): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, localePreference: preference }))
+  }
+
   async setClosePreference(preference: CloseActionPreference | undefined): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, closePreference: preference }))
   }
 
-  // Persists the selected app-icon look; applied live to the window and dock/taskbar by the caller.
   async setAppIconVariant(variant: AppIconVariant): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, appIconVariant: variant }))
   }
 
-  // Persists the approval profile applied to conversations created after this preference changes.
   async setDefaultPermissionProfile(profile: PermissionProfileId): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, defaultPermissionProfile: profile }))
   }
 
-  // Persists the Files-tab source filter; undefined restores the default ("All artifacts").
   async setProjectFilesFilter(
     filter: ProjectFilesFilterPreference | undefined
   ): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, projectFilesFilter: filter }))
   }
 
-  // Removes the legacy settings.grantedLocalRoots field after the one-time import into the
-  // GrantedLocalRoot table has landed every row. Production never writes this field again.
+  // Removes settings.grantedLocalRoots after its one-time import; production never writes it again.
   async clearGrantedLocalRoots(): Promise<void> {
     await this.mutate((settings) => {
       const next = { ...settings }

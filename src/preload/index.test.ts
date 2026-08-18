@@ -325,6 +325,7 @@ describe('preload bridge — public surface inventory', () => {
       'localFs.removeGrantedRoot',
       'localFs.reveal',
       'localFs.setGrantedRootAccess',
+      'locale.initialize',
       'locale.onChanged',
       'locale.setPreference',
       'logs.getPath',

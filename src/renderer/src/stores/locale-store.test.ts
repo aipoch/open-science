@@ -11,17 +11,20 @@ import { startLocalePreferenceSync, useLocaleStore } from './locale-store'
 describe('locale store desktop synchronization', () => {
   let changed:
     ((snapshot: { preference: 'system' | 'ja'; locale: 'en' | 'ja' }) => void) | undefined
+  const initialize = vi.fn()
   const setPreference = vi.fn()
   const unsubscribe = vi.fn()
 
   beforeEach(() => {
     localStorage.clear()
     setI18nLocale.mockClear()
+    initialize.mockReset()
     setPreference.mockReset()
     unsubscribe.mockClear()
     changed = undefined
     ;(window as unknown as { api: unknown }).api = {
       locale: {
+        initialize,
         setPreference,
         onChanged: (listener: typeof changed) => {
           changed = listener
@@ -36,14 +39,15 @@ describe('locale store desktop synchronization', () => {
     vi.restoreAllMocks()
   })
 
-  it('projects the stored preference to main and applies its resolved locale', async () => {
-    setPreference.mockResolvedValue({ preference: 'system', locale: 'ja' })
+  it('loads the persisted main preference and refreshes the renderer cache', async () => {
+    initialize.mockResolvedValue({ preference: 'ja', locale: 'ja' })
 
     const stop = startLocalePreferenceSync()
 
-    expect(setPreference).toHaveBeenCalledWith({ preference: 'system' })
+    expect(initialize).toHaveBeenCalledWith({ cachedPreference: 'system' })
     await vi.waitFor(() => expect(useLocaleStore.getState().locale).toBe('ja'))
     expect(document.documentElement.lang).toBe('ja')
+    expect(localStorage.getItem('open-science-language')).toBe('ja')
 
     changed?.({ preference: 'ja', locale: 'ja' })
     expect(localStorage.getItem('open-science-language')).toBe('ja')
@@ -53,6 +57,7 @@ describe('locale store desktop synchronization', () => {
   })
 
   it('updates the renderer immediately while synchronizing an explicit choice', () => {
+    initialize.mockResolvedValue({ preference: 'system', locale: 'en' })
     setPreference.mockResolvedValue({ preference: 'ja', locale: 'ja' })
 
     useLocaleStore.getState().setPreference('ja')
@@ -64,13 +69,13 @@ describe('locale store desktop synchronization', () => {
 
   it('ignores a stale startup reply after the user chooses another locale', async () => {
     let resolveStartup: ((snapshot: { preference: 'system'; locale: 'en' }) => void) | undefined
-    setPreference.mockImplementation(({ preference }: { preference: 'system' | 'ja' }) =>
-      preference === 'system'
-        ? new Promise((resolve) => {
-            resolveStartup = resolve
-          })
-        : Promise.resolve({ preference: 'ja', locale: 'ja' })
+    initialize.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStartup = resolve
+        })
     )
+    setPreference.mockResolvedValue({ preference: 'ja', locale: 'ja' })
 
     const stop = startLocalePreferenceSync()
     useLocaleStore.getState().setPreference('ja')

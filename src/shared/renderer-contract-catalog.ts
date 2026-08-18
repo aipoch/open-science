@@ -211,7 +211,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['getClientId', 'lifecycle:client-id'],
   ]),
   group('locale', 'locale', [
-    ['onChanged', 'locale:changed', ELECTRON_EVENT], ['setPreference', 'locale:set-preference', ELECTRON],
+    ['initialize', 'locale:initialize', ELECTRON], ['onChanged', 'locale:changed', ELECTRON_EVENT], ['setPreference', 'locale:set-preference', ELECTRON],
   ]),
   group('local-fs', 'localFs', [
     ['getRoots', 'local-fs:get-roots', LOCAL], ['grantRoot', 'local-fs:grant-root', LOCAL], ['listDir', 'local-fs:list-dir', LOCAL],

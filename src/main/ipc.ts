@@ -208,6 +208,7 @@ import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
+import type { SettingsDocumentStore } from './settings/document-store'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
@@ -312,6 +313,9 @@ const permissionGrantsLog = createLogger('permission-grants')
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
+  // Startup and the application runtime share one settings.json transaction owner. Tests and
+  // non-desktop compositions may omit it and receive the existing default store.
+  settingsStore?: SettingsDocumentStore
   translate?: NativeTranslator
   managedPreviewProtocol: PreviewProtocolRegistrar
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
@@ -371,6 +375,7 @@ const previewArgs = (args: Record<string, unknown>): string => {
 const createApplicationModules = async (
   {
     mainEntryPath,
+    settingsStore,
     managedPreviewProtocol,
     headless = false,
     translate = englishNativeTranslator,
@@ -404,8 +409,9 @@ const createApplicationModules = async (
   )
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
-  const settingsRepository = new SettingsRepository(resolveStorageRoot(), (operation) =>
-    specialistPackageSkillAdapter.runMutationExclusive(operation)
+  const settingsRepository = new SettingsRepository(
+    settingsStore ?? resolveStorageRoot(),
+    (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)

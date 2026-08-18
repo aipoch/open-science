@@ -417,6 +417,7 @@ describe('Settings backend ownership architecture', () => {
       'setDataRoot',
       'setDefaultPermissionProfile',
       'setGitHubToken',
+      'setLocalePreference',
       'setManualInterpreters',
       'setNcbiCredentials',
       'setNetworkProxy',
@@ -538,7 +539,9 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the current production importer graph at the public seams', () => {
     expect(importersOf(settingsPaths.repository)).toEqual([
+      'src/main/index.ts',
       'src/main/ipc.ts',
+      'src/main/locale/owner.ts',
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
@@ -560,7 +563,11 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/document-store.ts',
       'src/main/settings/repository.ts'
     ])
-    expect(importersOf(settingsPaths.documentStore)).toEqual(['src/main/settings/repository.ts'])
+    expect(importersOf(settingsPaths.documentStore)).toEqual([
+      'src/main/index.ts',
+      'src/main/ipc.ts',
+      'src/main/settings/repository.ts'
+    ])
     expect(importersOf(settingsPaths.computeGrantPort)).toEqual(['src/main/compute/ipc.ts'])
     expect(importersOf(settingsPaths.providerAccounts)).toEqual([
       'src/main/settings/agent-runtime-manager.ts',
@@ -693,6 +700,7 @@ describe('Settings backend ownership architecture', () => {
       'githubTokenRef',
       'grantedLocalRoots',
       'legacyDataMovePromptDismissedAt',
+      'localePreference',
       'networkProxy',
       'notebookManualInterpreters',
       'notebookRuntimeEnablement',
@@ -738,8 +746,9 @@ describe('Settings backend ownership architecture', () => {
     )
   })
 
-  it('locks one production Settings arbitration owner and the narrow Compute legacy port', () => {
+  it('locks one production Settings document owner and the narrow Compute legacy port', () => {
     expect(constructorSitesFor(settingsPaths.repository, 'SettingsRepository')).toEqual([
+      'src/main/index.ts',
       'src/main/ipc.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts'
@@ -751,6 +760,15 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants.hasComputeGrant(grant)')
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
     const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
+    const mainIndex = readSource(resolve(projectRoot, 'src/main/index.ts'))
+    expect(mainIndex).toContain(
+      'const settingsStore = new SettingsDocumentStore(resolveStorageRoot())'
+    )
+    expect(mainIndex).toContain(
+      'const startupSettingsRepository = new SettingsRepository(settingsStore)'
+    )
+    expect(mainIndex).toContain('settingsStore,\n          translate,')
+    expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
     expect(mainIpc).toContain(
       'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      applyNetworkProxy:'
     )

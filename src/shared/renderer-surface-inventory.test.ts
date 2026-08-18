@@ -62,6 +62,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'handoff.list',
   'handoff.onChanged',
   'handoff.retry',
+  'locale.initialize',
   'locale.onChanged',
   'locale.setPreference',
   'network.checkConnectivity',
