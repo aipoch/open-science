@@ -43,6 +43,11 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     list: vi.fn(async () => [host]),
     get: vi.fn(async () => host),
     create: vi.fn(async () => host),
+    createPassword: vi.fn(async () => ({ ok: true as const, host })),
+    resetPassword: vi.fn(async () => ({ ok: true as const, host })),
+    changeAuthentication: vi.fn(async () => ({ ok: true as const, host })),
+    passwordCapability: vi.fn(async () => ({ available: true })),
+    deletionStatus: vi.fn(async () => ({ blockedByJobs: false })),
     delete: vi.fn(async () => undefined),
     sshConfigAliases: vi.fn(async () => ['cluster']),
     probe: vi.fn(async () => ({ ok: true })),
@@ -85,14 +90,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 23 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 28 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(23)
+    expect(publicComputeChannels).toHaveLength(28)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -113,8 +118,47 @@ describe('Compute application commands', () => {
     await router.dispatcher.invoke(computeApplicationCommands.list, invocation([]))
     await router.dispatcher.invoke(computeApplicationCommands.get, invocation(['ssh:cluster']))
     await router.dispatcher.invoke(computeApplicationCommands.create, invocation([createRequest]))
+    const passwordRequest = {
+      sshAlias: 'cluster-password',
+      authenticationMode: 'password' as const,
+      username: 'researcher',
+      port: 22,
+      password: 'secret',
+      operationId: 'operation-1'
+    }
+    const createPasswordResult = await router.dispatcher.invoke(
+      computeApplicationCommands.createPassword,
+      invocation([passwordRequest])
+    )
+    const resetPasswordRequest = {
+      providerId: 'ssh:cluster',
+      password: 'replacement',
+      operationId: 'reset-operation-1',
+      expectedAuthenticationRevision: 1
+    }
+    await router.dispatcher.invoke(
+      computeApplicationCommands.resetPassword,
+      invocation([resetPasswordRequest])
+    )
+    const changeRequest = {
+      providerId: 'ssh:cluster',
+      expectedRevision: 1,
+      operationId: 'operation-change-1',
+      authenticationMode: 'ssh_config' as const,
+      username: 'researcher',
+      port: 22
+    }
+    await router.dispatcher.invoke(
+      computeApplicationCommands.changeAuthentication,
+      invocation([changeRequest])
+    )
+    await router.dispatcher.invoke(computeApplicationCommands.passwordCapability, invocation([]))
     await router.dispatcher.invoke(
       computeApplicationCommands.delete,
+      invocation([{ providerId: 'ssh:cluster' }])
+    )
+    await router.dispatcher.invoke(
+      computeApplicationCommands.deletionStatus,
       invocation([{ providerId: 'ssh:cluster' }])
     )
     await router.dispatcher.invoke(computeApplicationCommands.sshConfigAliases, invocation([]))
@@ -184,7 +228,14 @@ describe('Compute application commands', () => {
     )
 
     expect(dependencies.compute.create).toHaveBeenCalledWith(createRequest)
-    expect(dependencies.compute.delete).toHaveBeenCalledWith('ssh:cluster')
+    expect(dependencies.compute.createPassword).toHaveBeenCalledWith(passwordRequest)
+    expect(dependencies.compute.resetPassword).toHaveBeenCalledWith(resetPasswordRequest)
+    expect(dependencies.compute.changeAuthentication).toHaveBeenCalledWith(changeRequest)
+    expect(createPasswordResult).toEqual({ ok: true, host })
+    expect(dependencies.compute.passwordCapability).toHaveBeenCalledOnce()
+    expect(dependencies.compute.delete).toHaveBeenCalledWith('ssh:cluster', {
+      allowPasswordCredentialDeletion: true
+    })
     expect(dependencies.compute.detailsSave).toHaveBeenCalledWith(
       'ssh:cluster',
       'new',
@@ -255,7 +306,33 @@ describe('Compute application commands', () => {
     ).rejects.toBe(plainFailure)
   })
 
-  it('rejects native filesystem commands from remote callers before invoking their owners', async () => {
+  it('serializes a stable authentication code without raw SSH diagnostics', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerComputeApplicationCommands(router.registrar, dependencies)
+    const remoteFsError = {
+      detail: 'Authentication failed. Verify the username and password.',
+      remoteKind: 'connection' as const,
+      authenticationCode: 'authentication_failed' as const
+    }
+    vi.mocked(dependencies.compute.listDir).mockRejectedValueOnce(
+      Object.assign(new Error(remoteFsError.detail), { remoteFsError })
+    )
+
+    const failure = await router.dispatcher
+      .invoke(computeApplicationCommands.listDir, invocation(['ssh:cluster', '/work']))
+      .then(
+        () => {
+          throw new Error('Expected authentication failure.')
+        },
+        (error: unknown) => error as Error
+      )
+
+    expect(decodeRemoteFsError(failure.message)).toEqual(remoteFsError)
+    expect(failure.message).not.toContain('Permission denied')
+  })
+
+  it('rejects local-only commands from remote callers before invoking their owners', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerComputeApplicationCommands(router.registrar, dependencies)
@@ -273,9 +350,87 @@ describe('Compute application commands', () => {
         invocation(['/tmp/result.csv'], callerContext)
       )
     ).rejects.toThrow('Channel only available from the local app: compute:reveal-in-folder')
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.passwordCapability,
+        invocation([], callerContext)
+      )
+    ).rejects.toThrow('Channel only available from the local app: compute:password-capability')
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.createPassword,
+        invocation(
+          [
+            {
+              sshAlias: 'cluster',
+              authenticationMode: 'password',
+              username: 'researcher',
+              port: 22,
+              password: 'secret',
+              operationId: 'operation-1'
+            }
+          ],
+          callerContext
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: compute:create-password')
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.resetPassword,
+        invocation(
+          [
+            {
+              providerId: 'ssh:cluster',
+              password: 'secret',
+              operationId: 'reset-operation-1',
+              expectedAuthenticationRevision: 1
+            }
+          ],
+          callerContext
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: compute:reset-password')
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.changeAuthentication,
+        invocation(
+          [
+            {
+              providerId: 'ssh:cluster',
+              expectedRevision: 1,
+              operationId: 'operation-change-1',
+              authenticationMode: 'ssh_config',
+              username: 'researcher',
+              port: 22
+            }
+          ],
+          callerContext
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: compute:change-authentication')
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.delete,
+        invocation([{ providerId: 'ssh:cluster' }], callerContext)
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.deletionStatus,
+        invocation([{ providerId: 'ssh:cluster' }], callerContext)
+      )
+    ).resolves.toEqual({ blockedByJobs: false })
 
     expect(dependencies.compute.download).not.toHaveBeenCalled()
     expect(dependencies.compute.revealInFolder).not.toHaveBeenCalled()
+    expect(dependencies.compute.createPassword).not.toHaveBeenCalled()
+    expect(dependencies.compute.resetPassword).not.toHaveBeenCalled()
+    expect(dependencies.compute.changeAuthentication).not.toHaveBeenCalled()
+    expect(dependencies.compute.passwordCapability).not.toHaveBeenCalled()
+    expect(dependencies.compute.delete).toHaveBeenCalledWith('ssh:cluster', {
+      allowPasswordCredentialDeletion: false
+    })
+    expect(dependencies.compute.deletionStatus).toHaveBeenCalledOnce()
   })
 
   it('accepts Compute approval responses only from current human-originated callers', async () => {

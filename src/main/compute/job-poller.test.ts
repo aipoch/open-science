@@ -7,6 +7,11 @@ import type { ComputeJob } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
 import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
+import {
+  ComputeConnectionError,
+  SshConfigComputeConnectionBroker,
+  type ComputeConnectionBrokerAcquirer
+} from './connection-broker'
 import { JobPoller } from './job-poller'
 import { DispatchTracker } from './dispatch-tracker'
 import type { HarvestFn } from './job-poller'
@@ -42,6 +47,20 @@ const withNonce = (lines: string[]): string =>
 
 const makeSshRunner = (result: Awaited<ReturnType<SshRunner['run']>>): SshRunner => ({
   run: vi.fn(() => Promise.resolve(result))
+})
+
+const brokerFromRunner = (runner: SshRunner): ComputeConnectionBrokerAcquirer => ({
+  acquire: vi.fn(async () => ({
+    run: (command, options) => runner.run({} as ResolvedSshTarget, command, options),
+    upload: vi.fn(async () => undefined),
+    download: vi.fn(async () => ({
+      exitCode: 0,
+      stderr: '',
+      timedOut: false,
+      bytesWritten: 0,
+      exceeded: false
+    }))
+  }))
 })
 
 const guardStatusUpdate = (
@@ -124,13 +143,15 @@ describe('JobPoller', () => {
       findNonTerminal: vi.fn(async () => [])
     } as unknown as ComputeJobRepository
     const poller = new JobPoller({
-      runner: makeSshRunner({
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-        truncated: false,
-        timedOut: false
-      }),
+      connectionBroker: brokerFromRunner(
+        makeSshRunner({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+      ),
       hostRepository: {} as ComputeHostRepository,
       jobRepository: jobRepo,
       harvestFn: harvest
@@ -179,8 +200,9 @@ describe('JobPoller', () => {
     })
 
     const onJobUpdated = vi.fn()
+    const connectionBroker = brokerFromRunner(runner)
     const poller = new JobPoller({
-      runner,
+      connectionBroker,
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       onJobUpdated,
@@ -189,6 +211,9 @@ describe('JobPoller', () => {
 
     await poller.tick()
 
+    expect(connectionBroker.acquire).toHaveBeenCalledWith(job.provider_id, {
+      intent: 'job_poll'
+    })
     expect(update).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({ status: 'success', exitCode: 0 })
@@ -226,7 +251,7 @@ describe('JobPoller', () => {
     const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
 
     await new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       onJobUpdated,
@@ -274,7 +299,7 @@ describe('JobPoller', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE
@@ -316,7 +341,7 @@ describe('JobPoller', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE
@@ -360,7 +385,7 @@ describe('JobPoller', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE
@@ -409,7 +434,7 @@ describe('JobPoller', () => {
     }
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE
@@ -466,7 +491,7 @@ describe('JobPoller', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE
@@ -504,7 +529,11 @@ describe('JobPoller', () => {
       timedOut: true
     })
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo
+    })
     await poller.tick()
 
     // update should not be called (host unreachable — leave job alone).
@@ -534,7 +563,11 @@ describe('JobPoller', () => {
       timedOut: false
     })
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo
+    })
     await poller.tick()
 
     // Status must NOT be changed (design.md §8 boundary 2).
@@ -546,10 +579,11 @@ describe('JobPoller', () => {
     expect(update).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({
-        lastPollError: expect.stringContaining('Connection refused'),
+        lastPollError: 'host_unreachable',
         retryAfterUserAction: true
       })
     )
+    expect(JSON.stringify(update.mock.calls)).not.toContain('biowulf port 22')
   })
 
   it('disambiguates exit 137: elapsed >= timeout_seconds → timeout', async () => {
@@ -592,7 +626,7 @@ describe('JobPoller', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE
@@ -642,7 +676,7 @@ describe('JobPoller', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE
@@ -708,7 +742,7 @@ describe('JobPoller', () => {
     const onJobUpdated = vi.fn()
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       onJobUpdated,
@@ -795,7 +829,7 @@ describe('JobPoller', () => {
     const onJobUpdated = vi.fn()
     const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: {
         get: vi.fn(() => Promise.resolve(sampleHost()))
       } as unknown as ComputeHostRepository,
@@ -840,7 +874,7 @@ describe('JobPoller', () => {
     })
 
     await new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: {
         get: vi.fn(() => Promise.resolve(sampleHost()))
       } as unknown as ComputeHostRepository,
@@ -852,46 +886,51 @@ describe('JobPoller', () => {
     expect(runner.run).toHaveBeenCalledOnce()
   })
 
-  it('marks submitted job without pid as error/dispatch_failed on restart', async () => {
-    // A submitted job with no remote_handle AND no in-flight dispatch = dispatch was interrupted by
-    // an app restart (the tracker is empty after a restart). Mark it error/dispatch_failed.
-    const job = makeJob({ status: 'submitted', remote_handle: undefined })
-    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
-    const jobRepo = {
-      findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update,
-      updateIfStatus: guardStatusUpdate(update)
-    } as unknown as ComputeJobRepository
-    const hostRepo = {
-      get: vi.fn(() => Promise.resolve(sampleHost()))
-    } as unknown as ComputeHostRepository
+  it.each(['ssh_config', 'password'] as const)(
+    'marks a submitted %s job without pid as interrupted on restart',
+    async () => {
+      // A submitted job with no remote_handle AND no in-flight dispatch = dispatch was interrupted by
+      // an app restart (the tracker is empty after a restart). Mark it error/dispatch_failed.
+      const job = makeJob({ status: 'submitted', remote_handle: undefined })
+      const update = vi.fn((_id: string, u: unknown) =>
+        Promise.resolve({ ...job, ...(u as object) })
+      )
+      const jobRepo = {
+        findNonTerminal: vi.fn(() => Promise.resolve([job])),
+        update,
+        updateIfStatus: guardStatusUpdate(update)
+      } as unknown as ComputeJobRepository
+      const hostRepo = {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository
 
-    const runner = makeSshRunner({
-      exitCode: 0,
-      stdout: '',
-      stderr: '',
-      truncated: false,
-      timedOut: false
-    })
-    // Fresh tracker with nothing in flight simulates the post-restart state.
-    const poller = new JobPoller({
-      runner,
-      hostRepository: hostRepo,
-      jobRepository: jobRepo,
-      dispatchTracker: new DispatchTracker()
-    })
-
-    await poller.tick()
-
-    expect(update).toHaveBeenCalledWith(
-      'job-1',
-      expect.objectContaining({
-        status: 'error',
-        errorCode: 'dispatch_failed',
-        stderrTail: 'dispatch interrupted by restart'
+      const runner = makeSshRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
       })
-    )
-  })
+      // Fresh tracker with nothing in flight simulates the post-restart state.
+      const poller = new JobPoller({
+        connectionBroker: brokerFromRunner(runner),
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        dispatchTracker: new DispatchTracker()
+      })
+
+      await poller.tick()
+
+      expect(update).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({
+          status: 'error',
+          errorCode: 'dispatch_failed',
+          stderrTail: 'dispatch interrupted by restart'
+        })
+      )
+    }
+  )
 
   it('does NOT flag a submitted+no-handle job whose dispatch is still in flight', async () => {
     // A job staging large inputs sits in submitted+no-handle across many ticks. Because its dispatch
@@ -918,7 +957,7 @@ describe('JobPoller', () => {
     const tracker = new DispatchTracker()
     tracker.begin('job-1') // dispatch actively running for this job
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       dispatchTracker: tracker
@@ -943,7 +982,11 @@ describe('JobPoller', () => {
       timedOut: false
     })
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo
+    })
     await poller.tick()
 
     // runner.run should not be called when there are no jobs.
@@ -967,7 +1010,7 @@ describe('JobPoller', () => {
     const clearIntervalMock = vi.fn()
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       setInterval: setIntervalMock,
@@ -1038,7 +1081,7 @@ describe('JobPoller — harvest wiring', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE,
@@ -1081,7 +1124,7 @@ describe('JobPoller — harvest wiring', () => {
       })
 
       const poller = new JobPoller({
-        runner,
+        connectionBroker: brokerFromRunner(runner),
         hostRepository: hostRepo,
         jobRepository: jobRepo,
         makeNonce: () => NONCE,
@@ -1117,7 +1160,7 @@ describe('JobPoller — harvest wiring', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE,
@@ -1162,7 +1205,7 @@ describe('JobPoller — harvest wiring', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE,
@@ -1228,7 +1271,7 @@ describe('JobPoller — harvest wiring', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE,
@@ -1274,7 +1317,7 @@ describe('JobPoller — harvest wiring', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE,
@@ -1313,7 +1356,7 @@ describe('JobPoller — harvest wiring', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE,
@@ -1350,7 +1393,7 @@ describe('JobPoller — harvest wiring', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE,
@@ -1409,7 +1452,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const broadcast = vi.fn()
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       dispatchTracker: new DispatchTracker(), // empty = post-restart, triggers dispatch_failed
@@ -1459,7 +1502,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const broadcast = vi.fn()
 
     await new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: { get: vi.fn() } as unknown as ComputeHostRepository,
       jobRepository: jobRepo,
       dispatchTracker: new DispatchTracker(),
@@ -1492,7 +1535,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     })
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       dispatchTracker: new DispatchTracker()
@@ -1542,7 +1585,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const broadcast = vi.fn()
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       broadcast,
@@ -1604,7 +1647,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const broadcast = vi.fn()
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       broadcast,
@@ -1625,6 +1668,62 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
 })
 
 describe('JobPoller sub-batching (per-job output budget)', () => {
+  it('stops submitting a background password after the first batch rejects authentication', async () => {
+    const jobs = Array.from({ length: 10 }, (_, i) =>
+      makeJob({
+        job_id: `job-${i}`,
+        remote_handle: JSON.stringify({
+          pid: 1000 + i,
+          exit_code_path: `~/.openscience/jobs/job-${i}/exit_code`,
+          stdout_path: `~/.openscience/jobs/job-${i}/stdout`,
+          stderr_path: `~/.openscience/jobs/job-${i}/stderr`,
+          workdir: `~/.openscience/jobs/job-${i}`
+        })
+      })
+    )
+    const update = vi.fn((id: string, updates: unknown) =>
+      Promise.resolve({ ...makeJob({ job_id: id }), ...(updates as object) })
+    )
+    const jobRepository = {
+      findNonTerminal: vi.fn(async () => jobs),
+      findTerminalUnharvested: vi.fn(async () => []),
+      update,
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const passwordRun = vi.fn(async () => {
+      throw new ComputeConnectionError('authentication_failed')
+    })
+    const connectionBroker = new SshConfigComputeConnectionBroker({
+      getHost: vi.fn(async () => ({
+        ...sampleHost(),
+        authentication: {
+          mode: 'password' as const,
+          credentialStatus: 'configured' as const,
+          revision: 1,
+          lastVerifiedAt: undefined
+        }
+      })),
+      runner: { run: vi.fn() },
+      passwordAdapter: {
+        acquire: vi.fn(async () => ({
+          run: passwordRun,
+          upload: vi.fn(),
+          download: vi.fn()
+        }))
+      }
+    })
+
+    await new JobPoller({
+      connectionBroker,
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository,
+      makeNonce: () => NONCE
+    }).tick()
+
+    expect(passwordRun).toHaveBeenCalledOnce()
+    expect(update).toHaveBeenCalledTimes(10)
+  })
+
   it('polls >8 jobs for one provider in size-bounded sub-batches, updating every job', async () => {
     // 10 running jobs on one provider. Previously all 10 batched into ONE ssh call sized for a
     // single job, so the trailing jobs' sections overflowed the cap and were silently dropped.
@@ -1686,7 +1785,7 @@ describe('JobPoller sub-batching (per-job output budget)', () => {
     }
 
     const poller = new JobPoller({
-      runner,
+      connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       makeNonce: () => NONCE

@@ -500,6 +500,9 @@ model ComputeHost {
   shape            String    @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
   sshAlias         String
   sshOverrides     String? // JSON: { user?, port?, identityFile? } — never credentials
+  authenticationMode String @default("ssh_config")
+  authenticationRevision Int @default(1)
+  lastVerifiedAt   DateTime?
   scratchRoot      String?
   scratchPinned    Boolean   @default(false)
   concurrencyLimit Int? // stored but not enforced in Phase 1
@@ -509,6 +512,28 @@ model ComputeHost {
   detailsUpdatedBy String? // user | agent
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+  credential       ComputeCredential?
+}
+
+// Main-process-only password ciphertext. The renderer has no query path to this record.
+model ComputeCredential {
+  computeHostId String      @id
+  ciphertext    Bytes
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  computeHost   ComputeHost @relation(fields: [computeHostId], references: [id], onDelete: Cascade)
+}
+
+// Makes a retried local create command return the already-created Host instead of duplicating it.
+model ComputeAuthOperation {
+  id             String   @id
+  providerId     String
+  operationKind  String
+  requestFingerprint String
+  resultRevision Int
+  createdAt      DateTime @default(now())
+
+  @@index([providerId])
 }
 
 // A local folder the user explicitly granted the app access to ("Grant folder access"). Pure-additive

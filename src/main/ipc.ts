@@ -1376,6 +1376,7 @@ const createApplicationModules = async (
   surfaceAdapters = beforeAcpAdapters
   const {
     computeService,
+    connectionBroker,
     jobDeletionOwner,
     jobRepository,
     hostRepository,
@@ -1401,6 +1402,7 @@ const createApplicationModules = async (
   await modules.add(
     {
       computeService,
+      connectionBroker,
       jobDeletionOwner,
       hostRepository,
       jobRepository,

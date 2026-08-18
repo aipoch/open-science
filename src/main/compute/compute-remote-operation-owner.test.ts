@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,10 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeHost } from '../../shared/compute'
 import type { DownloadDest } from '../../shared/remote-fs'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
+import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
 import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
-import type { ScpRunner } from './scp-runner'
+import { runScpTransfer, runScpUpload, type ScpRunner } from './scp-runner'
 
 const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -81,14 +82,50 @@ const makeOwner = (
   overrideDownloadsDir?: string
 ): ComputeRemoteOperationOwner =>
   new ComputeRemoteOperationOwner(
-    runner,
+    {
+      acquire: vi.fn(async () => ({
+        run: (command, options) => runner.run(fakeTarget, command, options),
+        upload: (localPath, remotePath) =>
+          runScpUpload(scpRunner, fakeTarget, localPath, remotePath),
+        download: async (remotePath, localPath, maxBytes) => {
+          await runScpTransfer(scpRunner, fakeTarget, remotePath, localPath)
+          const size = (await stat(localPath)).size
+          return {
+            exitCode: 0,
+            stderr: '',
+            timedOut: false,
+            bytesWritten: size,
+            exceeded: size > maxBytes
+          }
+        }
+      }))
+    } as ComputeConnectionBrokerAcquirer,
     repository,
     approvalBroker,
-    scpRunner,
     overrideDownloadsDir
   )
 
 describe('ComputeRemoteOperationOwner.callCommand', () => {
+  it('preserves a stable sanitized password-authentication error code', async () => {
+    const runner: SshRunner = {
+      run: vi.fn(async () => {
+        throw new ComputeConnectionError('authentication_failed')
+      })
+    }
+    const { repo } = makeRepo()
+    const service = makeOwner(runner, repo, makeApprovalBroker('once'))
+
+    const failure = await service
+      .callCommand('ssh:biowulf', 'echo hi', 'intent')
+      .catch((error) => error)
+
+    expect(failure.computeCallError).toEqual({
+      error_code: 'authentication_failed',
+      message: 'Authentication failed. Verify the username and password.',
+      retry_after_user_action: true
+    })
+  })
+
   it('returns ExecResult on success with correct fields', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
@@ -321,6 +358,24 @@ const buildListDirStdout = (resolvedPath: string, home: string, findOutput: stri
   `${resolvedPath}\n${home}\n${findOutput}`
 
 describe('ComputeRemoteOperationOwner.listDir', () => {
+  it('preserves a stable sanitized password-authentication error code', async () => {
+    const runner: SshRunner = {
+      run: vi.fn(async () => {
+        throw new ComputeConnectionError('credential_unavailable')
+      })
+    }
+    const { repo } = makeRepo()
+    const service = makeOwner(runner, repo)
+
+    const failure = await service.listDir('ssh:biowulf', '/work').catch((error) => error)
+
+    expect(failure.remoteFsError).toMatchObject({
+      authenticationCode: 'credential_unavailable',
+      detail: 'The saved credential is unavailable on this device.',
+      remoteKind: 'connection'
+    })
+  })
+
   it('resolves path, home, scratch from stdout and returns sorted entries', async () => {
     const findOut = [
       findRecord('f', 2048, 1704067200.0, 'zebra.txt'),
@@ -656,6 +711,10 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     expect(result.size).toBe(1024)
     expect(result.path).toContain('data.csv')
     expect(result.mimeType).toBe('text/csv')
+    const transferPath = vi.mocked(scpRunner.copy).mock.calls[0]?.[1].at(-1)
+    expect(transferPath).toMatch(/data\.csv\..+\.partial$/)
+    expect(result.path).not.toBe(transferPath)
+    expect(await readdir(tmpDir)).toEqual(['data.csv'])
   })
 
   it('renames colliding file with (1) suffix', async () => {
@@ -682,6 +741,33 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     })
 
     expect(result.name).toBe('data (1).csv')
+  })
+
+  it('keeps the final Downloads names untouched and cleans staging when transfer fails', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: 'f 100',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    await writeFile(join(tmpDir, 'data.csv'), 'existing')
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'truncated')
+        return { exitCode: 255, stderr: 'Connection refused', timedOut: false }
+      })
+    }
+    const service = makeOwner(runner, repo, undefined, scpRunner, tmpDir)
+
+    await expect(
+      service.download('ssh:biowulf', '/remote/data.csv', { kind: 'os-downloads' })
+    ).rejects.toMatchObject({ remoteFsError: { remoteKind: 'connection' } })
+
+    await expect(readFile(join(tmpDir, 'data.csv'), 'utf8')).resolves.toBe('existing')
+    expect(await readdir(tmpDir)).toEqual(['data.csv'])
   })
 
   it('throws too_large when stat says >2GiB', async () => {

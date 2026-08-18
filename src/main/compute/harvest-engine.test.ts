@@ -20,6 +20,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ComputeJob } from '../../shared/compute'
 import type { SshRunner } from './ssh-runner'
 import type { BoundedScpResult, ScpRunner, ScpResult } from './scp-runner'
+import {
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from './connection-broker'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { HARVEST_FREE_DISK_RESERVE_BYTES, getJobHarvestDir, harvestJob } from './harvest-engine'
@@ -112,7 +117,7 @@ const makeScpRunner = (failOnCall?: number): ScpRunner & { calls: string[][] } =
         if (failOnCall !== undefined && callCount === failOnCall) {
           return {
             exitCode: 1,
-            stderr: 'scp: connection refused',
+            stderr: 'scp: remote copy failed',
             timedOut: false,
             bytesWritten: 0,
             exceeded: false
@@ -148,6 +153,20 @@ const makeWritingScpRunner = (): ScpRunner => ({
       exceeded: false
     }
   })
+})
+
+const brokerFromRunners = (
+  sshRunner: SshRunner,
+  scpRunner: ScpRunner
+): ComputeConnectionBrokerAcquirer => ({
+  acquire: vi.fn(async () => ({
+    run: (command, options) => sshRunner.run({} as never, command, options),
+    upload: vi.fn(async () => undefined),
+    download: async (remotePath, localPath, maxBytes) => {
+      if (!scpRunner.copyFromRemoteBounded) throw new Error('bounded remote copy is unavailable')
+      return scpRunner.copyFromRemoteBounded({} as never, remotePath, localPath, maxBytes)
+    }
+  }))
 })
 
 const makeHostRepo = (host: ReturnType<typeof sampleHost> | null): ComputeHostRepository =>
@@ -208,15 +227,17 @@ describe('harvestJob — clean harvest', () => {
     const broadcasts: import('../../shared/compute').JobSummary[] = []
 
     await harvestJob(job, {
-      sshRunner: makeSshRunner(
-        findOutput([
-          { path: 'stdout', size_bytes: 10 },
-          { path: 'stderr', size_bytes: 10 },
-          { path: 'run.result', size_bytes: 10 },
-          { path: 'debug.log', size_bytes: 10 }
-        ])
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(
+          findOutput([
+            { path: 'stdout', size_bytes: 10 },
+            { path: 'stderr', size_bytes: 10 },
+            { path: 'run.result', size_bytes: 10 },
+            { path: 'debug.log', size_bytes: 10 }
+          ])
+        ),
+        makeWritingScpRunner()
       ),
-      scpRunner: makeWritingScpRunner(),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: makeJobRepo(job).repo,
       storageRoot: dataRoot,
@@ -255,15 +276,18 @@ describe('harvestJob — clean harvest', () => {
     )
     const scp = makeScpRunner()
     const { repo: jobRepo, updates } = makeJobRepo(job)
+    const connectionBroker = brokerFromRunners(ssh, scp)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker,
       hostRepository: makeHostRepo(host),
       jobRepository: jobRepo,
       storageRoot
     })
 
+    expect(connectionBroker.acquire).toHaveBeenCalledWith(job.provider_id, {
+      intent: 'job_harvest'
+    })
     expect(vi.mocked(ssh.run).mock.calls[0]?.[1]).toContain(
       "find ~/'.openscience/jobs/job-1' -type f"
     )
@@ -287,8 +311,7 @@ describe('harvestJob — clean harvest', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot
@@ -310,8 +333,7 @@ describe('harvestJob — data-root migration gate', () => {
     try {
       await expect(
         harvestJob(job, {
-          sshRunner: makeSshRunner(''),
-          scpRunner: makeScpRunner(),
+          connectionBroker: brokerFromRunners(makeSshRunner(''), makeScpRunner()),
           hostRepository: makeHostRepo(sampleHost()),
           jobRepository,
           storageRoot: dataRoot
@@ -331,6 +353,48 @@ describe('harvestJob — data-root migration gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — harvest_failed', () => {
+  it.each(['ssh_config', 'password'] as const)(
+    'leaves %s connection failures unharvested so restart recovery can retry safely',
+    async () => {
+      const storageRoot = await mkTmp()
+      const job = makeJob()
+      const { repo: jobRepo, updates } = makeJobRepo(job)
+      const recoveredLease: ComputeConnectionLease = {
+        run: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })),
+        upload: vi.fn(async () => undefined),
+        download: vi.fn()
+      }
+      const connectionBroker: ComputeConnectionBrokerAcquirer = {
+        acquire: vi
+          .fn()
+          .mockRejectedValueOnce(new ComputeConnectionError('authentication_failed'))
+          .mockResolvedValueOnce(recoveredLease)
+      }
+      const deps = {
+        connectionBroker,
+        hostRepository: makeHostRepo(sampleHost()),
+        jobRepository: jobRepo,
+        storageRoot
+      }
+
+      await harvestJob(job, deps)
+
+      expect(updates).toEqual([])
+
+      // Simulate the restart scan selecting the still-unharvested row after credentials are repaired.
+      await harvestJob(job, deps)
+      expect(updates[0]?.data).toEqual(
+        expect.objectContaining({ harvestedAt: expect.any(Date), harvestError: null })
+      )
+    }
+  )
+
   it('sets harvestError on scp failure, still sets harvestedAt, keeps partial files', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({
@@ -348,8 +412,7 @@ describe('harvestJob — harvest_failed', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot
@@ -378,8 +441,7 @@ describe('harvestJob — single-file threshold', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot
@@ -423,8 +485,7 @@ describe('harvestJob — cumulative threshold', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot
@@ -460,8 +521,7 @@ describe('harvestJob — idempotency', () => {
     // Should not throw
     await expect(
       harvestJob(job, {
-        sshRunner: ssh,
-        scpRunner: scp,
+        connectionBroker: brokerFromRunners(ssh, scp),
         hostRepository: makeHostRepo(sampleHost()),
         jobRepository: jobRepo,
         storageRoot
@@ -481,13 +541,12 @@ describe('harvestJob — SSH enumeration failure', () => {
   it('records harvestError when SSH find command fails', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob()
-    const ssh = makeSshRunner('', 'ssh: connection refused')
+    const ssh = makeSshRunner('', 'find command failed')
     const scp = makeScpRunner()
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot
@@ -515,8 +574,7 @@ describe('harvestJob — missing host', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(null), // host not found
       jobRepository: jobRepo,
       storageRoot
@@ -558,8 +616,7 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
     const broadcast = vi.fn()
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot,
@@ -602,16 +659,10 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
     const broadcast = vi.fn()
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot,
-      resolveSshTargetFn: vi.fn().mockResolvedValue({
-        sshBinary: '/usr/bin/ssh',
-        host: 'biowulf.nih.gov',
-        extraArgs: []
-      }),
       broadcast
     })
 
@@ -632,8 +683,7 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
     const { repo: jobRepo } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: ssh,
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(ssh, scp),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot
@@ -654,8 +704,10 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: makeSshRunner(findOutput([{ path: 'small.result', size_bytes: 1 }])),
-      scpRunner: { copy },
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(findOutput([{ path: 'small.result', size_bytes: 1 }])),
+        { copy }
+      ),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot,
@@ -677,13 +729,15 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: makeSshRunner(
-        findOutput([
-          { path: 'stdout', size_bytes: 2 * 1024 * 1024 },
-          { path: 'stderr', size_bytes: 2 * 1024 * 1024 }
-        ])
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(
+          findOutput([
+            { path: 'stdout', size_bytes: 2 * 1024 * 1024 },
+            { path: 'stderr', size_bytes: 2 * 1024 * 1024 }
+          ])
+        ),
+        scp
       ),
-      scpRunner: scp,
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot,
@@ -718,13 +772,15 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: makeSshRunner(
-        findOutput([
-          { path: 'stdout', size_bytes: 60 * 1024 * 1024 },
-          { path: 'run.result', size_bytes: 60 * 1024 * 1024 }
-        ])
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(
+          findOutput([
+            { path: 'stdout', size_bytes: 60 * 1024 * 1024 },
+            { path: 'run.result', size_bytes: 60 * 1024 * 1024 }
+          ])
+        ),
+        scp
       ),
-      scpRunner: scp,
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot,
@@ -765,8 +821,10 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: makeSshRunner(findOutput([{ path: 'growing.result', size_bytes: 1 }])),
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(findOutput([{ path: 'growing.result', size_bytes: 1 }])),
+        scp
+      ),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot,
@@ -816,8 +874,10 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
-      sshRunner: makeSshRunner(findOutput([{ path: 'retry.result', size_bytes: 13 }])),
-      scpRunner: scp,
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(findOutput([{ path: 'retry.result', size_bytes: 13 }])),
+        scp
+      ),
       hostRepository: makeHostRepo(sampleHost()),
       jobRepository: jobRepo,
       storageRoot,

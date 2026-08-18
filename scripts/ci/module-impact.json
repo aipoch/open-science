@@ -225,9 +225,13 @@
         "src/main/compute/enabled-hosts-registry.ts",
         "src/main/compute/session-enabled-hosts-owner.ts",
         "src/main/compute/permission-grant-adapter.ts",
+        "src/main/compute/compute-auth-owner.ts",
+        "src/main/compute/connection-adapters.ts",
+        "src/main/compute/credential-vault.ts",
         "src/main/compute/compute-service.ts"
       ],
       "interfacePaths": [
+        "src/main/compute/connection-broker.ts",
         "src/main/compute/compute-service.ts",
         "src/main/compute/ipc.ts",
         "src/main/compute/electron-ipc-adapter.ts"
@@ -244,6 +248,10 @@
           "src/main/compute/session-enabled-hosts-owner.test.ts",
           "src/main/compute/permission-grant-adapter.test.ts",
           "src/main/compute/compute-service.test.ts",
+          "src/main/compute/compute-auth-owner.test.ts",
+          "src/main/compute/connection-broker.test.ts",
+          "src/main/compute/credential-vault.test.ts",
+          "src/main/compute/compute-password-auth.architecture.test.ts",
           "src/main/compute/compute-jobs.integration.test.ts",
           "src/main/compute/concurrency-integration.test.ts"
         ],

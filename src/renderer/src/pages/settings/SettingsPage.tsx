@@ -279,6 +279,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const consumePendingSpecialist = useSettingsStore((state) => state.consumePendingSpecialist)
   const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
   const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
+  const pendingComputeAuthentication = useSettingsStore(
+    (state) => state.pendingComputeAuthentication
+  )
+  const consumePendingComputeAuthentication = useSettingsStore(
+    (state) => state.consumePendingComputeAuthentication
+  )
   const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
   const clearSettingsWriteError = useSettingsStore((state) => state.clearSettingsWriteError)
   const canImportInstalledSkills =
@@ -348,6 +354,36 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setSeededSettingsPanel(undefined)
   }
 
+  const [seededComputeAuthentication, setSeededComputeAuthentication] = useState<
+    string | undefined
+  >()
+  const pendingComputeAuthenticationKey = pendingComputeAuthentication
+    ? String(pendingComputeAuthentication.requestId)
+    : undefined
+  if (
+    open &&
+    pendingComputeAuthentication &&
+    pendingComputeAuthenticationKey !== seededComputeAuthentication
+  ) {
+    setSeededComputeAuthentication(pendingComputeAuthenticationKey)
+    setHistory([
+      {
+        ...INITIAL_LOCATION,
+        panel: 'compute',
+        compute: {
+          kind: 'detail',
+          providerId: pendingComputeAuthentication.providerId,
+          authenticationFocus: pendingComputeAuthentication.errorCode,
+          authenticationRequestId: pendingComputeAuthentication.requestId
+        }
+      }
+    ])
+    setHistoryIndex(0)
+  }
+  if (!open && seededComputeAuthentication !== undefined) {
+    setSeededComputeAuthentication(undefined)
+  }
+
   // When opened from the specialist switch approval card, seed the history straight onto that
   // specialist's editor. Same derive-during-render pattern as the skill seed above; the
   // Specialists panel resolves the profile from the catalog once it mounts.
@@ -378,6 +414,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useEffect(() => {
     if (pendingSpecialistId !== undefined) consumePendingSpecialist()
   }, [pendingSpecialistId, consumePendingSpecialist])
+  useEffect(() => {
+    if (pendingComputeAuthentication !== undefined) consumePendingComputeAuthentication()
+  }, [pendingComputeAuthentication, consumePendingComputeAuthentication])
 
   // Auto-detect opencode the first time its detection card is shown without a known path, so the card
   // reflects reality without a manual re-detect. Guarded on path + in-flight to run at most once.
@@ -1127,7 +1166,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   ) : computeView.kind === 'detail' ? (
                     <ComputeHostDetail
                       providerId={computeView.providerId}
-                      onRemoved={() => navigateCompute({ kind: 'list' })}
+                      authenticationFocus={computeView.authenticationFocus}
+                      authenticationRequestId={computeView.authenticationRequestId}
                     />
                   ) : (
                     <ComputePanel onNavigate={navigateCompute} />

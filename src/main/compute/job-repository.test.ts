@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { ComputeJobRepository } from './job-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
+import { dispatchJob } from './job-dispatcher'
+import { ComputeHostRepository } from './repository'
 
 // Exercises ComputeJobRepository against the current application schema in a real SQLite database.
 // Schema migration behavior is owned by src/main/database/migration-service.test.ts.
@@ -23,6 +26,45 @@ afterEach(async () => {
 })
 
 describe('ComputeJob repository (SQLite integration)', () => {
+  it('persists credential conflicts reported while dispatching a migrated job', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-credential-conflict-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+
+    const hostRepository = new ComputeHostRepository(() => Promise.resolve(client))
+    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const host = await hostRepository.create({ sshAlias: 'credential-conflict-host' })
+    await jobRepository.create({
+      id: 'credential-conflict-job',
+      providerId: host.providerId,
+      shape: 'direct_ssh',
+      sessionId: 'credential-conflict-session',
+      projectId: 'credential-conflict-project',
+      intent: 'verify credentials',
+      command: 'true',
+      commandHash: 'credential-conflict-hash',
+      initialStatus: 'submitted'
+    })
+    const connectionBroker: ComputeConnectionBrokerAcquirer = {
+      acquire: async () => {
+        throw new ComputeConnectionError('credential_conflict')
+      }
+    }
+
+    await dispatchJob('credential-conflict-job', {
+      connectionBroker,
+      hostRepository,
+      jobRepository
+    })
+
+    expect(await jobRepository.get('credential-conflict-job')).toMatchObject({
+      status: 'error',
+      error_code: 'credential_conflict'
+    })
+  })
+
   it('round-trips CRUD', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-'))
 
@@ -132,6 +174,80 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const forHostB = await repo.findNonTerminalByProvider('ssh:host-b')
     expect(forHostB).toHaveLength(1)
     expect(forHostB[0]!.job_id).toBe('job-b')
+  })
+
+  it('applies Phase 3b columns to a Phase 3a DB: old rows readable, new columns null', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-3a-to-3b-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    // Simulate a Phase 3a DB: ComputeJob table WITHOUT the 4 new 3b columns.
+    await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ComputeJob" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "providerId" TEXT NOT NULL,
+      "shape" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "projectId" TEXT NOT NULL,
+      "status" TEXT NOT NULL DEFAULT 'submitted',
+      "intent" TEXT NOT NULL,
+      "command" TEXT NOT NULL,
+      "commandHash" TEXT NOT NULL,
+      "environment" TEXT,
+      "resourceRequest" TEXT,
+      "inputManifest" TEXT,
+      "outputManifest" TEXT,
+      "harvestConfig" TEXT,
+      "timeoutSeconds" INTEGER,
+      "remoteWorkdir" TEXT,
+      "remoteHandle" TEXT,
+      "exitCode" INTEGER,
+      "stdoutTail" TEXT,
+      "stderrTail" TEXT,
+      "errorCode" TEXT,
+      "lastPollError" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "submittedAt" DATETIME,
+      "startedAt" DATETIME,
+      "finishedAt" DATETIME,
+      "harvestedAt" DATETIME
+    )`)
+    // Insert a row with only 3a columns populated.
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ComputeJob" ("id","providerId","shape","sessionId","projectId","intent","command","commandHash","status","createdAt")
+       VALUES ('old-job-1','ssh:test','direct_ssh','s1','p1','legacy intent','echo ok','hash123','submitted',CURRENT_TIMESTAMP)`
+    )
+
+    // Apply migrateApplicationDatabase — must add the 4 new columns without error.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: [
+        '0001_runtime_schema_baseline',
+        '0002_project_agent_context',
+        '0003_granted_local_roots',
+        '0004_review_assessment_snapshots',
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints',
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
+      ]
+    })
+    // Idempotent second run.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+
+    // Old row is readable via the repository; new columns default to null/undefined.
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const jobs = await repo.findNonTerminal()
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]!.job_id).toBe('old-job-1')
+    expect(jobs[0]!.intent).toBe('legacy intent')
+    // New 3b columns must be undefined (null → undefined at repository boundary).
+    expect(jobs[0]!.harvest_error).toBeUndefined()
+    expect(jobs[0]!.left_on_remote).toBeUndefined()
+    expect(jobs[0]!.notified_at).toBeUndefined()
+    expect(jobs[0]!.notification_consumed_at).toBeUndefined()
   })
 
   it('round-trips the 4 new Phase 3b columns (harvestError, leftOnRemote, notifiedAt, notificationConsumedAt)', async () => {
@@ -276,6 +392,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const unharvested = await repo.findTerminalUnharvested()
     expect(unharvested).toHaveLength(1)
     expect(unharvested[0]!.job_id).toBe('job-success-unharvested')
+    await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:test')).resolves.toBe(true)
+    await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:other')).resolves.toBe(false)
   })
 
   it('findPendingNotifications returns jobs with notifiedAt set and notificationConsumedAt null', async () => {

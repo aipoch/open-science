@@ -523,6 +523,22 @@ describe('SystemSshRunner', () => {
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
 
+  it('kills the child and preserves AbortSignal cancellation', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+
+    const promise = runner.run(target(), 'long-running', {
+      timeoutMs: 5000,
+      signal: controller.signal
+    })
+    controller.abort()
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
   it('wraps the command in bash -lc when loginShell=true', async () => {
     const child = new FakeChild()
     execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)

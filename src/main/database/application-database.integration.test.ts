@@ -110,7 +110,8 @@ describe('application database (integration)', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
 
@@ -580,6 +581,10 @@ describe('application database (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
+    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -657,6 +662,10 @@ describe('application database (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
+    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -1022,7 +1031,8 @@ describe('application database (integration)', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
 

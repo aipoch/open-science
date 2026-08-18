@@ -1,4 +1,4 @@
-import { Folder, Info, Plus, Server, X } from 'lucide-react'
+import { Folder, Info, Plus, Server } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -9,12 +9,20 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { probedLabel } from './compute-probed-label'
+import { ComputeHostRemovalDialog } from './ComputeHostRemovalDialog'
 import { FileBrowserModal } from './FileBrowserModal'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
 // are separate components owned by SettingsPage; this panel renders the list + header banner only.
 export type ComputeView =
-  { kind: 'list' } | { kind: 'add' } | { kind: 'detail'; providerId: string }
+  | { kind: 'list' }
+  | { kind: 'add' }
+  | {
+      kind: 'detail'
+      providerId: string
+      authenticationFocus?: import('../../../../shared/compute').ComputeAuthenticationErrorCode
+      authenticationRequestId?: number
+    }
 
 type ComputePanelProps = {
   onNavigate: (view: ComputeView) => void
@@ -25,12 +33,12 @@ type ComputePanelProps = {
 const HostCard = ({
   host,
   onOpen,
-  onDelete,
+  onRemoved,
   onBrowse
 }: {
   host: ComputeHost
   onOpen: () => void
-  onDelete: () => void
+  onRemoved: () => void
   onBrowse: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -110,21 +118,7 @@ const HostCard = ({
               : t('Probe the host first to enable browsing')}
           </TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={onDelete}
-              aria-label={t('Remove {{name}}', { name: host.displayName })}
-              className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            >
-              <X className="size-4" aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('Remove host')}</TooltipContent>
-        </Tooltip>
+        <ComputeHostRemovalDialog host={host} onRemoved={onRemoved} />
       </TooltipProvider>
 
       {status === 'connected' ? (
@@ -150,7 +144,6 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
   const isLoaded = useComputeStore((state) => state.isLoaded)
   const loadError = useComputeStore((state) => state.loadError)
   const loadHosts = useComputeStore((state) => state.loadHosts)
-  const deleteHost = useComputeStore((state) => state.deleteHost)
 
   // A short-lived confirmation message shown after a delete (the prototype's "confirmation toast").
   // Stores the removed host's name rather than a rendered sentence, so a language switch inside the
@@ -169,11 +162,6 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
     const timer = window.setTimeout(() => setRemovedName(undefined), 4000)
     return () => window.clearTimeout(timer)
   }, [removedName])
-
-  const handleDelete = async (host: ComputeHost): Promise<void> => {
-    await deleteHost(host.providerId)
-    setRemovedName(host.displayName)
-  }
 
   return (
     <div className="p-5">
@@ -227,7 +215,7 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
               key={host.providerId}
               host={host}
               onOpen={() => onNavigate({ kind: 'detail', providerId: host.providerId })}
-              onDelete={() => void handleDelete(host)}
+              onRemoved={() => setRemovedName(host.displayName)}
               onBrowse={() => setBrowserProviderId(host.providerId)}
             />
           ))

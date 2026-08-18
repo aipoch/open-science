@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, stat as fsStat, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, stat as fsStat, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -8,16 +8,17 @@ import type { ComputeCallError, ComputeHost, ExecResult } from '../../shared/com
 import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
 import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
+import {
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from './connection-broker'
 import type { ComputeHostRepository } from './repository'
-import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
-import { resolveSshTarget } from './ssh-runner'
-import type { ScpRunner } from './scp-runner'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
   inferMimeType,
   resolveDestFilename,
-  runScpTransfer,
   shellSingleQuote,
   validateImportPath
 } from './scp-runner'
@@ -41,12 +42,42 @@ const errorTail = (stderr: string, stdout: string, maxLines = 10): string => {
 const hostNotFound = (providerId: string): Error =>
   new Error(`No compute host found with provider id "${providerId}".`)
 
+const remoteConnectionError = (
+  error: unknown
+): Error & { remoteFsError: RemoteFsError & { retry_after_user_action: boolean } } => {
+  if (error instanceof Error && error.name === 'AbortError') throw error
+  const message = error instanceof Error ? error.message : String(error)
+  const failure = new Error(message) as Error & {
+    remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
+  }
+  failure.remoteFsError = {
+    detail: message,
+    remoteKind: 'connection',
+    retry_after_user_action: true,
+    ...(error instanceof ComputeConnectionError ? { authenticationCode: error.code } : {})
+  }
+  return failure
+}
+
+const computeCallConnectionError = (
+  error: unknown
+): Error & { computeCallError: ComputeCallError } => {
+  if (error instanceof Error && error.name === 'AbortError') throw error
+  const message = error instanceof Error ? error.message : String(error)
+  const failure = new Error(message) as Error & { computeCallError: ComputeCallError }
+  failure.computeCallError = {
+    error_code: error instanceof ComputeConnectionError ? error.code : 'host_unreachable',
+    message,
+    retry_after_user_action: true
+  }
+  return failure
+}
+
 export class ComputeRemoteOperationOwner {
   constructor(
-    private readonly runner: SshRunner,
+    private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
     private readonly repository: ComputeHostRepository,
     private readonly approvalBroker: ComputeApprovalBroker | undefined,
-    private readonly scpRunner: ScpRunner,
     private readonly overrideDownloadsDir?: string
   ) {}
 
@@ -54,20 +85,11 @@ export class ComputeRemoteOperationOwner {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
 
-    let target
+    let connection
     try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
+      connection = await this.connectionBroker.acquire(providerId, { intent: 'direct_browse' })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const fsError = new Error(message) as Error & {
-        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
-      }
-      fsError.remoteFsError = {
-        detail: message,
-        remoteKind: 'connection',
-        retry_after_user_action: true
-      }
-      throw fsError
+      throw remoteConnectionError(error)
     }
 
     const expandedPath =
@@ -82,11 +104,16 @@ export class ComputeRemoteOperationOwner {
       `find . -maxdepth 1 -mindepth 1 -printf '%Y\\t%s\\t%T@\\t%f\\0' 2>/dev/null`
     ].join('\n')
 
-    const runResult = await this.runner.run(target, remoteCommand, {
-      timeoutMs: LIST_DIR_TIMEOUT_MS,
-      loginShell: false,
-      maxOutputBytes: LIST_DIR_MAX_OUTPUT_BYTES
-    })
+    let runResult
+    try {
+      runResult = await connection.run(remoteCommand, {
+        timeoutMs: LIST_DIR_TIMEOUT_MS,
+        loginShell: false,
+        maxOutputBytes: LIST_DIR_MAX_OUTPUT_BYTES
+      })
+    } catch (error) {
+      throw remoteConnectionError(error)
+    }
 
     if (runResult.timedOut || runResult.exitCode === 255) {
       const tail = errorTail(runResult.stderr, runResult.stdout)
@@ -184,18 +211,11 @@ export class ComputeRemoteOperationOwner {
       throw error
     }
 
-    let target
+    let connection
     try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
+      connection = await this.connectionBroker.acquire(providerId, { intent: 'direct_command' })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const callError = new Error(message) as Error & { computeCallError: ComputeCallError }
-      callError.computeCallError = {
-        error_code: 'host_unreachable',
-        message,
-        retry_after_user_action: true
-      }
-      throw callError
+      throw computeCallConnectionError(error)
     }
 
     const cwdExpression = host.scratchRoot
@@ -206,11 +226,16 @@ export class ComputeRemoteOperationOwner {
       typeof timeoutSeconds === 'number' && timeoutSeconds > 0
         ? timeoutSeconds * 1000
         : CALL_COMMAND_DEFAULT_TIMEOUT_MS
-    const runResult = await this.runner.run(target, wrappedCommand, {
-      timeoutMs,
-      loginShell,
-      maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES
-    })
+    let runResult
+    try {
+      runResult = await connection.run(wrappedCommand, {
+        timeoutMs,
+        loginShell,
+        maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES
+      })
+    } catch (error) {
+      throw computeCallConnectionError(error)
+    }
 
     if (runResult.timedOut) {
       const callError = new Error(
@@ -254,22 +279,6 @@ export class ComputeRemoteOperationOwner {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
 
-    let target
-    try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const fsError = new Error(message) as Error & {
-        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
-      }
-      fsError.remoteFsError = {
-        detail: message,
-        remoteKind: 'connection',
-        retry_after_user_action: true
-      }
-      throw fsError
-    }
-
     const pathError = validateImportPath(remotePath)
     if (pathError) {
       const fsError = new Error(`Invalid remote path: ${remotePath}`) as Error & {
@@ -282,12 +291,19 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
+    let connection
+    try {
+      connection = await this.connectionBroker.acquire(providerId, { intent: 'direct_download' })
+    } catch (error) {
+      throw remoteConnectionError(error)
+    }
+
     const filename = basename(remotePath)
     if (dest.kind === 'os-downloads') {
-      return this.downloadToOsDownloads(host, target, remotePath, filename)
+      return this.downloadToOsDownloads(host, connection, remotePath, filename)
     }
     if (dest.kind === 'artifact') {
-      return this.downloadToArtifact(host, target, remotePath, filename)
+      return this.downloadToArtifact(host, connection, remotePath, filename)
     }
 
     if (!this.approvalBroker) {
@@ -317,16 +333,16 @@ export class ComputeRemoteOperationOwner {
       throw error
     }
 
-    return this.downloadToSessionCache(target, remotePath, filename)
+    return this.downloadToSessionCache(connection, remotePath, filename)
   }
 
   private async downloadToOsDownloads(
     host: ComputeHost,
-    target: ResolvedSshTarget,
+    connection: ComputeConnectionLease,
     remotePath: string,
     filename: string
   ): Promise<LocalFile> {
-    const remoteSize = await this.statRemoteSize(host, target, remotePath)
+    const remoteSize = await this.statRemoteSize(host, connection, remotePath)
     if (remoteSize > MAX_DOWNLOAD_BYTES) {
       const fsError = new Error(
         `File exceeds 2 GiB download limit (${remoteSize} bytes)`
@@ -342,7 +358,14 @@ export class ComputeRemoteOperationOwner {
     await mkdir(downloadsDir, { recursive: true })
     const destName = await resolveDestFilename(downloadsDir, filename)
     const destPath = join(downloadsDir, destName)
-    await runScpTransfer(this.scpRunner, target, remotePath, destPath)
+    const stagingPath = `${destPath}.${randomUUID()}.partial`
+    try {
+      await this.transferDownload(connection, remotePath, stagingPath, MAX_DOWNLOAD_BYTES)
+      await rename(stagingPath, destPath)
+    } catch (error) {
+      await rm(stagingPath, { force: true }).catch(() => undefined)
+      throw error
+    }
 
     const fileStat = await fsStat(destPath)
     return {
@@ -355,7 +378,7 @@ export class ComputeRemoteOperationOwner {
 
   private async downloadToArtifact(
     host: ComputeHost,
-    target: ResolvedSshTarget,
+    connection: ComputeConnectionLease,
     remotePath: string,
     filename: string
   ): Promise<LocalFile> {
@@ -371,7 +394,7 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
-    const { fileType, size: remoteSize } = await this.statRemote(host, target, remotePath)
+    const { fileType, size: remoteSize } = await this.statRemote(host, connection, remotePath)
     if (fileType !== 'f') {
       const fsError = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError
@@ -406,7 +429,7 @@ export class ComputeRemoteOperationOwner {
     const tempDir = await mkdtemp(join(tempBase, 'cs-import-'))
     const tempPath = join(tempDir, filename)
     try {
-      await runScpTransfer(this.scpRunner, target, remotePath, tempPath)
+      await this.transferDownload(connection, remotePath, tempPath, MAX_IMPORT_BYTES)
       const localStat = await fsStat(tempPath)
       if (localStat.size > remoteSize) {
         const fsError = new Error(`File grew during transfer: ${remotePath}`) as Error & {
@@ -434,13 +457,13 @@ export class ComputeRemoteOperationOwner {
   }
 
   private async downloadToSessionCache(
-    target: ResolvedSshTarget,
+    connection: ComputeConnectionLease,
     remotePath: string,
     filename: string
   ): Promise<LocalFile> {
     const tempDir = await mkdtemp(join(tmpdir(), 'cs-session-'))
     const destPath = join(tempDir, filename)
-    await runScpTransfer(this.scpRunner, target, remotePath, destPath)
+    await this.transferDownload(connection, remotePath, destPath, MAX_DOWNLOAD_BYTES)
 
     const fileStat = await fsStat(destPath)
     return {
@@ -461,7 +484,7 @@ export class ComputeRemoteOperationOwner {
 
   private async statRemote(
     _host: ComputeHost,
-    target: ResolvedSshTarget,
+    connection: ComputeConnectionLease,
     remotePath: string
   ): Promise<{ fileType: string; size: number }> {
     const quoted = shellSingleQuote(remotePath)
@@ -474,7 +497,7 @@ export class ComputeRemoteOperationOwner {
       `  echo '? 0'`,
       `fi`
     ].join('\n')
-    const result = await this.runner.run(target, command, {
+    const result = await connection.run(command, {
       timeoutMs: 10_000,
       loginShell: false,
       maxOutputBytes: 64
@@ -500,9 +523,56 @@ export class ComputeRemoteOperationOwner {
 
   private async statRemoteSize(
     host: ComputeHost,
-    target: ResolvedSshTarget,
+    connection: ComputeConnectionLease,
     remotePath: string
   ): Promise<number> {
-    return (await this.statRemote(host, target, remotePath)).size
+    return (await this.statRemote(host, connection, remotePath)).size
+  }
+
+  private async transferDownload(
+    connection: ComputeConnectionLease,
+    remotePath: string,
+    localPath: string,
+    maxBytes: number
+  ): Promise<void> {
+    let result
+    try {
+      result = await connection.download(remotePath, localPath, maxBytes)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
+      throw remoteConnectionError(error)
+    }
+    if (result.exceeded) {
+      const fsError = new Error('Remote file exceeds the download size limit.') as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsError.remoteFsError = {
+        detail: `Remote file exceeds the ${maxBytes} byte download limit.`,
+        remoteKind: 'too_large'
+      }
+      throw fsError
+    }
+    if (result.timedOut || result.exitCode === 255) {
+      const fsError = new Error('Compute Host connection failed during download.') as Error & {
+        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
+      }
+      fsError.remoteFsError = {
+        detail: result.timedOut ? 'Download timed out.' : 'Compute Host connection failed.',
+        remoteKind: 'connection',
+        retry_after_user_action: true
+      }
+      throw fsError
+    }
+    if (result.exitCode !== 0) {
+      const classified = classifyRemoteError({ stderr: result.stderr })
+      const fsError = new Error(result.stderr || 'Remote file transfer failed.') as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsError.remoteFsError = {
+        detail: result.stderr || 'Remote file transfer failed.',
+        remoteKind: classified.remoteKind
+      }
+      throw fsError
+    }
   }
 }

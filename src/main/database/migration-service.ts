@@ -23,6 +23,7 @@ import { databaseDomainConstraintsMigration } from './migrations/0006-database-d
 import { notificationAttentionMetadataMigration } from './migrations/0007-notification-attention-metadata'
 import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 import { visionEvidenceMigration } from './migrations/0009-vision-evidence'
+import { computePasswordAuthMigration } from './migrations/0010-compute-password-auth'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -195,6 +196,12 @@ const VISION_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   visionEvidenceMigration.verifiers,
   visionEvidenceMigration.operations
 )
+const COMPUTE_PASSWORD_AUTH_CHECKSUM = checksumMigrationPayload(
+  computePasswordAuthMigration.id,
+  computePasswordAuthMigration.statements,
+  computePasswordAuthMigration.verifiers,
+  computePasswordAuthMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -229,6 +236,16 @@ const VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Obj
       Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
     ])
 )
+const COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
+  Object.fromEntries(
+    computePasswordAuthMigration.verifiers
+      .filter((verifier) => verifier.kind === 'check-constraints-exist')
+      .flatMap((verifier) => verifier.tables)
+      .map(({ table, constraints }) => [
+        table,
+        Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+      ])
+  )
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -292,6 +309,12 @@ const MIGRATION_MANIFEST = [
   {
     ...visionEvidenceMigration,
     checksum: VISION_EVIDENCE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computePasswordAuthMigration,
+    checksum: COMPUTE_PASSWORD_AUTH_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1104,13 +1127,19 @@ const migrateApplicationDatabaseWithManifest = async (
     (candidate) =>
       candidate.id === visionEvidenceMigration.id && candidate.checksum === VISION_EVIDENCE_CHECKSUM
   )
+  const adoptsComputePasswordAuth = manifest.some(
+    (candidate) =>
+      candidate.id === computePasswordAuthMigration.id &&
+      candidate.checksum === COMPUTE_PASSWORD_AUTH_CHECKSUM
+  )
   const applied: string[] = []
   const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
     adoptsNotificationAttentionMetadata ? NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS : {},
     adoptsDatabaseJsonConstraints ? DATABASE_JSON_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount
@@ -1151,6 +1180,7 @@ export {
   NOTIFICATION_ATTENTION_METADATA_CHECKSUM,
   DATABASE_JSON_CONSTRAINTS_CHECKSUM,
   VISION_EVIDENCE_CHECKSUM,
+  COMPUTE_PASSWORD_AUTH_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

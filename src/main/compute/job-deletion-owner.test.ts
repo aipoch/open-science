@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, ComputeJob } from '../../shared/compute'
 import { cleanupCommand, ComputeJobDeletionOwner } from './job-deletion-owner'
-import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
+import { ComputeConnectionError } from './connection-broker'
+import type { SshRunner } from './ssh-runner'
 
-const target: ResolvedSshTarget = { sshBinary: 'ssh', host: 'cluster', extraArgs: [] }
 const host = {
   id: 'host-1',
   providerId: 'ssh:cluster',
@@ -104,15 +104,27 @@ const createHarness = (jobs: ComputeJob[]) => {
       order.push('queue-resumed')
     })
   }
-  const resolveTarget = vi.fn(async () => target)
+  const connectionBroker = {
+    acquire: vi.fn(async () => ({
+      run: (command: string, options: Parameters<SshRunner['run']>[2]) =>
+        runner.run({} as never, command, options),
+      upload: vi.fn(async () => undefined),
+      download: vi.fn(async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        bytesWritten: 0,
+        exceeded: false
+      }))
+    }))
+  }
   const owner = new ComputeJobDeletionOwner({
     jobRepository,
     lifecycle,
     queueManager,
     hostRepository,
-    runner,
-    dispatchTracker,
-    resolveTarget
+    connectionBroker,
+    dispatchTracker
   })
   owner.bindRuntime(runtime)
   return {
@@ -125,7 +137,7 @@ const createHarness = (jobs: ComputeJob[]) => {
     dispatchTracker,
     runtime,
     queueManager,
-    resolveTarget
+    connectionBroker
   }
 }
 
@@ -151,33 +163,42 @@ describe('ComputeJobDeletionOwner', () => {
     expect(command).not.toContain("rm -rf -- ~/'.openscience/jobs/job-1'")
   })
 
-  it('retains an active Session row until owner authority commits', async () => {
-    const harness = createHarness([job()])
-    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
-    expect(harness.dispatchTracker.waitFor).toHaveBeenCalledWith(['job-1'])
-    expect(harness.runner.run).not.toHaveBeenCalled()
-    expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
-    expect(harness.runtime.resume).not.toHaveBeenCalled()
+  it.each(['ssh_config', 'password'] as const)(
+    'cancels and cleans up an active %s job only after owner authority commits',
+    async () => {
+      const harness = createHarness([job()])
+      await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+      expect(harness.dispatchTracker.waitFor).toHaveBeenCalledWith(['job-1'])
+      expect(harness.runner.run).not.toHaveBeenCalled()
+      expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
+      expect(harness.runtime.resume).not.toHaveBeenCalled()
 
-    harness.order.push('owner-authority')
-    await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+      harness.order.push('owner-authority')
+      await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
 
-    expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      sessionId: 'session-1'
-    })
-    expect(harness.order).toEqual([
-      'begin',
-      'queue-paused',
-      'poller-paused',
-      'dispatch-drained',
-      'owner-authority',
-      'remote-cleanup',
-      'delete-rows',
-      'queue-resumed',
-      'poller-resumed'
-    ])
-  })
+      expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+      expect(harness.order).toEqual([
+        'begin',
+        'queue-paused',
+        'poller-paused',
+        'dispatch-drained',
+        'owner-authority',
+        'remote-cleanup',
+        'delete-rows',
+        'queue-resumed',
+        'poller-resumed'
+      ])
+      expect(harness.connectionBroker.acquire).toHaveBeenCalledWith('ssh:cluster', {
+        intent: 'job_cleanup'
+      })
+      const cleanup = String(harness.runner.run.mock.calls[0]?.[1])
+      expect(cleanup).toContain('kill_job_pid 123')
+      expect(cleanup).toContain('rm -rf -- "$workdir"')
+    }
+  )
 
   it('deletes queued jobs without contacting the remote host', async () => {
     const harness = createHarness([job({ status: 'queued', remote_handle: undefined })])
@@ -207,9 +228,11 @@ describe('ComputeJobDeletionOwner', () => {
 
     await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
 
-    expect(harness.resolveTarget).toHaveBeenCalledWith('cluster', undefined)
     expect(harness.runner.run).not.toHaveBeenCalled()
     await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+    expect(harness.connectionBroker.acquire).toHaveBeenCalledWith('ssh:cluster', {
+      intent: 'job_cleanup'
+    })
     expect(harness.runner.run).toHaveBeenCalledOnce()
   })
 
@@ -243,9 +266,13 @@ describe('ComputeJobDeletionOwner', () => {
     await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
     expect(harness.runner.run).not.toHaveBeenCalled()
 
-    await expect(harness.owner.commitSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
-      /remote Compute Job cleanup failed/i
-    )
+    const cleanup = harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+    await expect(cleanup).rejects.toBeInstanceOf(ComputeConnectionError)
+    await expect(cleanup).rejects.toMatchObject({
+      code: 'host_unreachable',
+      message: 'The Compute Host could not be reached.'
+    })
+    expect(JSON.stringify(await cleanup.catch((error) => error))).not.toContain('offline')
     expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
     expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
     expect(harness.queueManager.resumeOwner).not.toHaveBeenCalled()
@@ -263,7 +290,7 @@ describe('ComputeJobDeletionOwner', () => {
     })
     await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
     await expect(harness.owner.commitSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
-      /remote Compute Job cleanup failed/i
+      'The Compute Host could not be reached.'
     )
 
     await expect(harness.owner.abortProjectJobDeletion('project-1')).resolves.toBeUndefined()
@@ -315,9 +342,9 @@ describe('ComputeJobDeletionOwner', () => {
 
     const projectPreparation = expect(
       harness.owner.prepareProjectJobDeletion('project-1')
-    ).rejects.toThrow(/remote Compute Job cleanup failed/i)
+    ).rejects.toThrow('The Compute Host could not be reached.')
     await expect(harness.owner.commitSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
-      /remote Compute Job cleanup failed/i
+      'The Compute Host could not be reached.'
     )
     await projectPreparation
 
@@ -375,7 +402,7 @@ describe('ComputeJobDeletionOwner', () => {
 
     await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
     await expect(harness.owner.commitSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
-      /remote Compute Job cleanup failed for job-2/i
+      'The Compute Host could not be reached.'
     )
 
     expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
@@ -485,7 +512,7 @@ describe('ComputeJobDeletionOwner', () => {
     await harness.owner.prepareProjectJobDeletion('project-1')
     expect(harness.runner.run).not.toHaveBeenCalled()
     await expect(harness.owner.commitProjectJobDeletion('project-1')).rejects.toThrow(
-      /remote Compute Job cleanup failed/i
+      'The Compute Host could not be reached.'
     )
 
     expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()

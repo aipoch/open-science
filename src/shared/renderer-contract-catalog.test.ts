@@ -163,12 +163,19 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(26)
+    expect(compute).toHaveLength(31)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
         .map(({ publicPath }) => publicPath)
-    ).toEqual(['compute.download', 'compute.revealInFolder'])
+    ).toEqual([
+      'compute.changeAuthentication',
+      'compute.createPassword',
+      'compute.download',
+      'compute.passwordCapability',
+      'compute.resetPassword',
+      'compute.revealInFolder'
+    ])
   })
 
   it('records the paired window lifecycle channels and teardown ordering', () => {

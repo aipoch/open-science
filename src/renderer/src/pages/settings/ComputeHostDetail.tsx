@@ -12,17 +12,29 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
+import {
+  DETAILS_DOC_MAX_LENGTH,
+  type ComputeAuthenticationErrorCode,
+  type ComputePasswordCapability
+} from '../../../../shared/compute'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { ComputePasswordResetSection } from './ComputePasswordResetSection'
 import { probedLabel } from './compute-probed-label'
+import {
+  computeRuntimeRecoveryAction,
+  computeRuntimeRecoveryCopy
+} from './compute-runtime-recovery'
+import { SettingsSection } from './SettingsLayout'
+import { ComputeHostAuthenticationDetail } from './ComputeHostAuthenticationDetail'
 
 type ComputeHostDetailProps = {
   providerId: string
-  // Called after the host is removed (SettingsPage returns to the list).
-  onRemoved: () => void
+  authenticationFocus?: ComputeAuthenticationErrorCode
+  authenticationRequestId?: number
 }
 
 // The four error slots on this page survive the action that produced them — they sit in state until the
@@ -49,7 +61,8 @@ const failure = (err: unknown, key: DetailErrorKey): DetailError =>
 // details editor, scratch root editor, and concurrent job limit editor.
 export function ComputeHostDetail({
   providerId,
-  onRemoved
+  authenticationFocus,
+  authenticationRequestId
 }: ComputeHostDetailProps): React.JSX.Element {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
@@ -63,14 +76,95 @@ export function ComputeHostDetail({
   const hosts = useComputeStore((state) => state.hosts)
   const isLoaded = useComputeStore((state) => state.isLoaded)
   const loadHosts = useComputeStore((state) => state.loadHosts)
-  const deleteHost = useComputeStore((state) => state.deleteHost)
   const probeHost = useComputeStore((state) => state.probeHost)
   const probingIds = useComputeStore((state) => state.probingIds)
   const saveDetails = useComputeStore((state) => state.saveDetails)
   const setScratch = useComputeStore((state) => state.setScratch)
   const setConcurrency = useComputeStore((state) => state.setConcurrency)
+  const openSettingsToComputeAuthentication = useSettingsStore(
+    (state) => state.openSettingsToComputeAuthentication
+  )
+  const host = hosts.find((entry) => entry.providerId === providerId)
+  const isProbing = probingIds.has(providerId)
+  const changeAuthentication = useComputeStore((state) => state.changeAuthentication)
 
   const [probeError, setProbeError] = useState<DetailError | undefined>(undefined)
+  const authenticationAlertRef = useRef<HTMLDivElement>(null)
+  const authenticationTestRef = useRef<HTMLButtonElement>(null)
+  const [resolvedAuthenticationRequest, setResolvedAuthenticationRequest] = useState<
+    string | number | undefined
+  >()
+  const authenticationRequest = authenticationRequestId ?? authenticationFocus
+  const showAuthenticationRecovery =
+    authenticationFocus !== undefined && resolvedAuthenticationRequest !== authenticationRequest
+  const authenticationRetriesPaused =
+    host?.probeResult?.authenticationCode === 'authentication_failed' &&
+    host.probeResult.authenticationRevision === (host.authentication?.revision ?? 0)
+
+  const [passwordCapability, setPasswordCapability] = useState<
+    ComputePasswordCapability | undefined
+  >(undefined)
+  const [authenticationEditor, setAuthenticationEditor] = useState<
+    'configuration' | 'password' | undefined
+  >()
+  const secureStorageBlocksRecovery =
+    authenticationFocus === 'secure_storage_unavailable' || passwordCapability?.available === false
+  const recoveryRequestsPasswordEntry =
+    authenticationFocus === 'credential_required' ||
+    authenticationFocus === 'credential_unavailable' ||
+    authenticationFocus === 'authentication_failed' ||
+    authenticationFocus === 'credential_conflict' ||
+    authenticationFocus === 'reset_failed'
+  const authenticationRecoveryEditor = secureStorageBlocksRecovery
+    ? undefined
+    : host?.authentication?.mode === 'password' && recoveryRequestsPasswordEntry
+      ? 'password'
+      : 'configuration'
+  const recoveryCanPrepare =
+    showAuthenticationRecovery &&
+    host !== undefined &&
+    (host.authentication?.mode !== 'password' || passwordCapability !== undefined)
+  const recoveryPreparationKey = recoveryCanPrepare
+    ? `${host.providerId}:${String(authenticationRequest)}:${String(passwordCapability?.available)}`
+    : undefined
+  const [preparedAuthenticationRecovery, setPreparedAuthenticationRecovery] = useState<
+    string | undefined
+  >()
+
+  // Prepare each deep-link request before commit so the focus effect sees the actionable editor in
+  // the same committed tree. A repeated error code receives a new request id and reopens it.
+  if (
+    recoveryPreparationKey !== undefined &&
+    preparedAuthenticationRecovery !== recoveryPreparationKey
+  ) {
+    setPreparedAuthenticationRecovery(recoveryPreparationKey)
+    setAuthenticationEditor(authenticationRecoveryEditor)
+  }
+
+  useEffect(() => {
+    if (!showAuthenticationRecovery || !host) return
+    if (host.authentication?.mode === 'password' && passwordCapability === undefined) return
+    if (authenticationEditor !== authenticationRecoveryEditor) return
+
+    const target = secureStorageBlocksRecovery
+      ? authenticationTestRef.current
+      : document.getElementById(
+          authenticationRecoveryEditor === 'password'
+            ? 'compute-reset-password'
+            : 'compute-detail-username'
+        )
+    const destination = target ?? authenticationAlertRef.current
+    destination?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    destination?.focus({ preventScroll: true })
+  }, [
+    authenticationEditor,
+    authenticationRecoveryEditor,
+    authenticationRequest,
+    host,
+    passwordCapability,
+    secureStorageBlocksRecovery,
+    showAuthenticationRecovery
+  ])
 
   // Details editor state
   const [detailsDoc, setDetailsDoc] = useState<string>('')
@@ -102,9 +196,6 @@ export function ComputeHostDetail({
     if (!isLoaded) void loadHosts()
   }, [isLoaded, loadHosts])
 
-  const host = hosts.find((entry) => entry.providerId === providerId)
-  const isProbing = probingIds.has(providerId)
-
   // Check if details content needs expand button
   useEffect(() => {
     if (!detailsRef.current || isEditingDetails) return
@@ -131,6 +222,16 @@ export function ComputeHostDetail({
       })
   }, [host, providerId])
 
+  useEffect(() => {
+    if (host?.authentication?.mode !== 'password') return
+    void window.api.compute
+      .passwordCapability()
+      .then(setPasswordCapability)
+      .catch(() =>
+        setPasswordCapability({ available: false, reason: 'secure_storage_unavailable' })
+      )
+  }, [host?.authentication?.mode])
+
   if (!host) {
     return (
       <div className="p-5">
@@ -142,23 +243,26 @@ export function ComputeHostDetail({
   }
 
   const probed = host.probeResult
-  const status: 'connected' | 'failed' | 'none' = probed
-    ? probed.ok
-      ? 'connected'
-      : 'failed'
-    : 'none'
+  const credentialReady =
+    host.authentication?.mode !== 'password' ||
+    host.authentication.credentialStatus === 'configured'
+  const status: 'connected' | 'failed' | 'none' = !credentialReady
+    ? 'none'
+    : probed
+      ? probed.ok
+        ? 'connected'
+        : 'failed'
+      : 'none'
 
   const probedAgo = probedLabel(host)
-
-  const handleRemove = async (): Promise<void> => {
-    await deleteHost(host.providerId)
-    onRemoved()
-  }
 
   const handleProbe = async (): Promise<void> => {
     setProbeError(undefined)
     try {
-      await probeHost(host.providerId)
+      const result = await probeHost(host.providerId)
+      if (result.ok && authenticationRequest !== undefined) {
+        setResolvedAuthenticationRequest(authenticationRequest)
+      }
       // After a probe, reset the details-loaded flag so skeleton is re-fetched.
       detailsLoadedRef.current = false
     } catch (err) {
@@ -240,7 +344,7 @@ export function ComputeHostDetail({
 
   return (
     <div className="p-5">
-      {/* Header row: icon + name + badge + probe button + remove */}
+      {/* Header row: icon + name + badge + probe button */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <div
@@ -292,14 +396,6 @@ export function ComputeHostDetail({
             <RefreshCw className={cn('size-3.5', isProbing && 'animate-spin')} aria-hidden="true" />
             {isProbing ? t('Probing…') : t('Probe')}
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => void handleRemove()}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            {t('Remove')}
-          </Button>
         </div>
       </div>
 
@@ -332,10 +428,25 @@ export function ComputeHostDetail({
               />
             </Button>
           </div>
-          {probed.errorTail ? (
-            <pre className="mt-2 overflow-x-auto rounded bg-status-failure-surface/50 px-2 py-1.5 font-mono text-xs text-status-failure-strong dark:bg-status-failure-dark-code/30 dark:text-status-failure-dark-emphasis">
-              {probed.errorTail}
-            </pre>
+          <p className="mt-2 text-xs text-status-failure-strong dark:text-status-failure-dark-emphasis">
+            {probed.authenticationCode
+              ? computeRuntimeRecoveryCopy(probed.authenticationCode, t)
+              : t(
+                  'The Compute Host connection failed. Check the Host and network, then try again.'
+                )}
+          </p>
+          {probed.authenticationCode ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() =>
+                openSettingsToComputeAuthentication(providerId, probed.authenticationCode!)
+              }
+            >
+              {computeRuntimeRecoveryAction(probed.authenticationCode, t)}
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -349,8 +460,10 @@ export function ComputeHostDetail({
 
       {/* Resource summary — shown only when a successful probe has populated resource fields */}
       {status === 'connected' && probed ? (
-        <div className="mt-6 flex flex-col gap-2">
-          <h4 className="text-sm font-medium text-foreground">{t('Resources')}</h4>
+        <SettingsSection
+          className="mt-6 rounded-xl border border-border bg-card p-4"
+          title={t('Resources')}
+        >
           <div className="flex flex-wrap gap-3">
             {probed.cpus != null ? (
               <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 py-1.5 text-sm">
@@ -397,21 +510,149 @@ export function ComputeHostDetail({
               </div>
             ) : null}
           </div>
-        </div>
+        </SettingsSection>
       ) : null}
 
-      {/* Details document block */}
-      <div className="mt-8">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h4 className="text-sm font-medium text-foreground">{t('Details')}</h4>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {t(
-                'Free-form notes about this provider. Open Science reads and adds to them as it learns.'
-              )}
-            </p>
+      <SettingsSection
+        className="mt-6"
+        title={t('Configuration')}
+        titleId="compute-configuration-heading"
+        aria-labelledby="compute-configuration-heading"
+        description={
+          <>
+            {host.authentication?.mode === 'password'
+              ? t('Username and password')
+              : t('SSH configuration')}
+            {' · '}
+            {/* Only password hosts carry a stored credential; ssh_config always reads "missing"
+                from the repository placeholder, which would read as a fault rather than a fact. */}
+            {host.authentication?.mode === 'password' ? (
+              <>
+                {host.authentication.credentialStatus === 'unavailable'
+                  ? t('Credential unavailable')
+                  : host.authentication.credentialStatus === 'missing'
+                    ? t('Credential missing')
+                    : t('Credential configured')}
+                {' · '}
+              </>
+            ) : null}
+            {authenticationRetriesPaused
+              ? t('Background retries paused')
+              : t('Background retries active')}
+          </>
+        }
+        action={
+          authenticationEditor !== 'configuration' ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setAuthenticationEditor('configuration')}
+            >
+              {t('Edit')}
+            </Button>
+          ) : null
+        }
+      >
+        {showAuthenticationRecovery ? (
+          <div
+            ref={authenticationAlertRef}
+            data-compute-authentication-alert
+            role="alert"
+            tabIndex={-1}
+            className="mt-3 rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-sm text-status-failure-strong outline-none"
+          >
+            <p>{computeRuntimeRecoveryCopy(authenticationFocus, t)}</p>
+            {authenticationFocus === 'secure_storage_unavailable' ||
+            passwordCapability?.available === false ? (
+              <Button
+                ref={authenticationTestRef}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={isProbing}
+                onClick={() => void handleProbe()}
+              >
+                {t('Test connection')}
+              </Button>
+            ) : null}
           </div>
-          {!isEditingDetails ? (
+        ) : null}
+        {host.authentication?.mode === 'password' &&
+        host.authentication.credentialStatus === 'missing' ? (
+          <p role="alert" className="mt-3 text-sm text-destructive">
+            {t(
+              'The saved credential is missing. Password authentication is blocked and does not fall back to SSH configuration.'
+            )}
+          </p>
+        ) : null}
+        {host.authentication?.mode === 'password' &&
+        host.authentication.credentialStatus === 'unavailable' ? (
+          <p role="alert" className="mt-3 text-sm text-destructive">
+            {t(
+              'The encrypted credential cannot be used on this device. Password authentication is blocked and does not fall back to SSH configuration.'
+            )}
+          </p>
+        ) : null}
+        {host.authentication?.mode === 'password' &&
+        passwordCapability?.available === false &&
+        passwordCapability.reason === 'unsupported_platform' ? (
+          <p role="alert" className="mt-3 text-sm text-destructive">
+            {t(
+              'Password authentication is disabled because this platform cannot provide secure credential storage and constrained password delivery.'
+            )}
+          </p>
+        ) : null}
+        {host.authentication?.mode === 'password' &&
+        passwordCapability?.available === false &&
+        passwordCapability.reason !== 'unsupported_platform' ? (
+          <p role="alert" className="mt-3 text-sm text-destructive">
+            {t(
+              'Secure credential storage is locked or unavailable. Unlock the system credential store and retry.'
+            )}
+          </p>
+        ) : null}
+        {host.authentication?.mode !== 'password' ||
+        host.authentication.credentialStatus !== 'unavailable' ||
+        passwordCapability !== undefined ? (
+          <div className="mt-4">
+            <ComputeHostAuthenticationDetail
+              host={host}
+              isEditing={authenticationEditor === 'configuration'}
+              onEditingChange={(isEditing) =>
+                setAuthenticationEditor((current) =>
+                  isEditing ? 'configuration' : current === 'configuration' ? undefined : current
+                )
+              }
+              onUpdatePassword={() => setAuthenticationEditor('password')}
+              changeAuthentication={changeAuthentication}
+            />
+            <ComputePasswordResetSection
+              key={`${host.providerId}:${host.authentication?.mode ?? 'ssh_config'}`}
+              host={host}
+              isEditing={authenticationEditor === 'password'}
+              onEditingChange={(isEditing) =>
+                setAuthenticationEditor((current) =>
+                  isEditing ? 'password' : current === 'password' ? undefined : current
+                )
+              }
+            />
+          </div>
+        ) : null}
+      </SettingsSection>
+
+      {/* Details document block */}
+      <SettingsSection
+        className="mt-5"
+        separated
+        title={t('Details')}
+        description={t(
+          'Free-form notes about this provider. Open Science reads and adds to them as it learns.'
+        )}
+        action={
+          !isEditingDetails ? (
             <Button
               type="button"
               variant="outline"
@@ -421,11 +662,11 @@ export function ComputeHostDetail({
             >
               {t('Edit')}
             </Button>
-          ) : null}
-        </div>
-
+          ) : null
+        }
+      >
         {isEditingDetails ? (
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="flex flex-col gap-2">
             <textarea
               className="min-h-[160px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={detailsDoc}
@@ -478,7 +719,7 @@ export function ComputeHostDetail({
             ) : null}
           </div>
         ) : detailsDoc ? (
-          <div className="mt-3">
+          <div>
             <div className="relative overflow-hidden rounded-lg border border-border bg-muted/20">
               <pre
                 ref={detailsRef}
@@ -520,11 +761,11 @@ export function ComputeHostDetail({
             ) : null}
           </div>
         ) : (
-          <p className="mt-3 text-xs italic text-muted-foreground">
+          <p className="text-xs italic text-muted-foreground">
             {t('No notes yet. Click Edit to add details about this provider.')}
           </p>
         )}
-      </div>
+      </SettingsSection>
 
       {/* Scratch root block */}
       <div className="mt-7">

@@ -20,7 +20,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0010_test_suffix'
+  const id = '0011_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -58,6 +58,32 @@ const createDatabaseAtMigration0005 = async (client: PrismaClient): Promise<void
       migration.checksum
     )
   }
+}
+
+const removeComputePasswordAuthSchema = async (client: PrismaClient): Promise<void> => {
+  await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
+  await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
+  await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
+  await client.$executeRawUnsafe(`CREATE TABLE "ComputeHost" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "providerId" TEXT NOT NULL,
+    "displayName" TEXT NOT NULL,
+    "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
+    "sshAlias" TEXT NOT NULL,
+    "sshOverrides" TEXT,
+    "scratchRoot" TEXT,
+    "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
+    "concurrencyLimit" INTEGER,
+    "probeResult" TEXT,
+    "detailsDoc" TEXT NOT NULL DEFAULT '',
+    "detailsUpdatedAt" DATETIME,
+    "detailsUpdatedBy" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+  )`)
+  await client.$executeRawUnsafe(
+    'CREATE UNIQUE INDEX "ComputeHost_providerId_key" ON "ComputeHost"("providerId")'
+  )
 }
 
 const LEGACY_PERMISSION_GRANT_TABLE_DDL = `CREATE TABLE "PermissionGrant" (
@@ -220,10 +246,11 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ],
       from: null,
-      to: '0009_vision_evidence'
+      to: '0010_compute_password_auth'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -236,8 +263,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0009_vision_evidence',
-      to: '0009_vision_evidence'
+      from: '0010_compute_password_auth',
+      to: '0010_compute_password_auth'
     })
   })
 
@@ -250,23 +277,57 @@ describe('application database migrations', () => {
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
 
+  it('preserves existing jobs while adding authentication failures idempotently', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-compute-auth-job-errors-'))
+    client = createProjectDbClient(storageRoot)
+    await createDatabaseAtMigration0005(client)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('project-1', 'Project', CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
+      "id", "providerId", "shape", "sessionId", "projectId", "status", "intent",
+      "command", "commandHash", "errorCode"
+    ) VALUES (
+      'job-preserved', 'ssh:host', 'direct_ssh', 'session-1', 'project-1', 'failed',
+      'intent', 'command', 'hash', 'job_failed'
+    )`)
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      applied: expect.arrayContaining(['0010_compute_password_auth']),
+      to: '0010_compute_password_auth'
+    })
+    await expect(
+      client.$executeRawUnsafe(
+        `UPDATE "ComputeJob" SET "errorCode" = 'authentication_failed' WHERE "id" = 'job-preserved'`
+      )
+    ).resolves.toBe(1)
+    await expect(
+      client.$queryRaw<Array<{ id: string; errorCode: string }>>`
+        SELECT "id", "errorCode" FROM "ComputeJob" WHERE "id" = 'job-preserved'
+      `
+    ).resolves.toEqual([{ id: 'job-preserved', errorCode: 'authentication_failed' }])
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+  })
+
   it('replays 0006 when its constraint indexes are incomplete', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-0006-index-replay-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
+    await removeComputePasswordAuthSchema(client)
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0009_vision_evidence'
+      to: '0010_compute_password_auth'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
@@ -326,10 +387,11 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0009_vision_evidence'
+      to: '0010_compute_password_auth'
     })
     await expect(
       client.$queryRaw<
@@ -363,6 +425,26 @@ describe('application database migrations', () => {
         jobCount: 1n,
         hostCount: 1n,
         rootCount: 1n
+      }
+    ])
+    await expect(
+      client.$queryRaw<
+        Array<{
+          authenticationMode: string
+          authenticationRevision: number
+          sshAlias: string
+          credentialCount: bigint
+        }>
+      >`SELECT
+        "authenticationMode", "authenticationRevision", "sshAlias",
+        (SELECT COUNT(*) FROM "ComputeCredential") AS "credentialCount"
+      FROM "ComputeHost" WHERE "id" = 'host-1'`
+    ).resolves.toEqual([
+      {
+        authenticationMode: 'ssh_config',
+        authenticationRevision: 1,
+        sshAlias: 'host',
+        credentialCount: 0n
       }
     ])
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -428,7 +510,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0009_vision_evidence'
+      migrationId: '0010_compute_password_auth'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -444,9 +526,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0010_test_suffix'],
-      from: '0009_vision_evidence',
-      to: '0010_test_suffix'
+      applied: ['0011_test_suffix'],
+      from: '0010_compute_password_auth',
+      to: '0011_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -462,7 +544,8 @@ describe('application database migrations', () => {
       { id: '0007_notification_attention_metadata' },
       { id: '0008_database_json_constraints' },
       { id: '0009_vision_evidence' },
-      { id: '0010_test_suffix' }
+      { id: '0010_compute_password_auth' },
+      { id: '0011_test_suffix' }
     ])
   })
 
@@ -523,10 +606,11 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0009_vision_evidence'
+      to: '0010_compute_password_auth'
     })
     expect(backupEvents).toEqual([
       {
@@ -568,6 +652,11 @@ describe('application database migrations', () => {
         migrationId: '0009_vision_evidence',
         path: `${databasePath}.before-0009_vision_evidence.backup`,
         reused: false
+      },
+      {
+        migrationId: '0010_compute_password_auth',
+        path: `${databasePath}.before-0010_compute_password_auth.backup`,
+        reused: false
       }
     ])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -600,7 +689,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0010_test_suffix'
+      migrationId: '0011_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -621,7 +710,8 @@ describe('application database migrations', () => {
       { id: '0006_database_domain_constraints' },
       { id: '0007_notification_attention_metadata' },
       { id: '0008_database_json_constraints' },
-      { id: '0009_vision_evidence' }
+      { id: '0009_vision_evidence' },
+      { id: '0010_compute_password_auth' }
     ])
   })
 
@@ -643,7 +733,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0010_test_suffix'
+      migrationId: '0011_test_suffix'
     })
   })
 
@@ -678,9 +768,10 @@ describe('application database migrations', () => {
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
         '0009_vision_evidence',
-        '0010_test_suffix'
+        '0010_compute_password_auth',
+        '0011_test_suffix'
       ],
-      to: '0010_test_suffix'
+      to: '0011_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -794,10 +885,12 @@ describe('application database migrations', () => {
       )
     `
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await removeComputePasswordAuthSchema(client)
+    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
 
     await expect(
-      migrateApplicationDatabaseWithManifest(client, MIGRATION_MANIFEST.slice(0, -2))
+      migrateApplicationDatabaseWithManifest(client, MIGRATION_MANIFEST.slice(0, -3))
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
       migrationId: '0001_runtime_schema_baseline'
@@ -825,7 +918,7 @@ describe('application database migrations', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Preserved' } })
     await client.$executeRaw`
       INSERT INTO "_open_science_migrations" ("id", "checksum")
-      VALUES (${'0010_future_schema'}, ${'f'.repeat(64)})
+      VALUES (${'9999_future_schema'}, ${'f'.repeat(64)})
     `
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
@@ -902,7 +995,8 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
     await expect(
@@ -972,7 +1066,7 @@ describe('application database migrations', () => {
   it('keeps explicitly retired Review and Finding columns after final verification', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-columns-'))
     client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtMigration0005(client)
     await client.project.create({ data: { id: 'legacy-project', name: 'Preserved' } })
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "summary" TEXT')
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "checks" TEXT')
@@ -1006,7 +1100,8 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1064,7 +1159,8 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
     await expect(
@@ -1125,7 +1221,8 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -1220,7 +1317,8 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
     await expect(
@@ -1268,7 +1366,8 @@ describe('application database migrations', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
     expect(backupEvents).toEqual([
@@ -1315,6 +1414,11 @@ describe('application database migrations', () => {
       {
         migrationId: '0009_vision_evidence',
         path: `${databasePath}.before-0009_vision_evidence.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0010_compute_password_auth',
+        path: `${databasePath}.before-0010_compute_password_auth.backup`,
         reused: false
       }
     ])
@@ -1728,6 +1832,11 @@ describe('application database migrations', () => {
         migrationId: '0009_vision_evidence',
         path: `${databasePath}.before-0009_vision_evidence.backup`,
         reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0010_compute_password_auth',
+        path: `${databasePath}.before-0010_compute_password_auth.backup`,
+        reused: false
       })
     ])
     expect(retired).toEqual([
@@ -1760,6 +1869,10 @@ describe('application database migrations', () => {
       {
         migrationId: '0009_vision_evidence',
         path: `${databasePath}.before-0009_vision_evidence.backup`
+      },
+      {
+        migrationId: '0010_compute_password_auth',
+        path: `${databasePath}.before-0010_compute_password_auth.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })

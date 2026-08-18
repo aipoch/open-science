@@ -177,6 +177,7 @@ export const emitJobNotification = async (
     finished_at: updatedJob.finished_at,
     exit_code: updatedJob.exit_code,
     error_code: updatedJob.error_code,
+    last_poll_error: updatedJob.last_poll_error,
     remote_workdir: updatedJob.remote_workdir,
     stdout_tail: updatedJob.stdout_tail,
     stderr_tail: updatedJob.stderr_tail,
@@ -186,7 +187,8 @@ export const emitJobNotification = async (
     featured_files: payload.featured_files,
     featured_file_count: payload.featured_file_count,
     left_on_remote_count: payload.left_on_remote_count,
-    left_on_remote: payload.left_on_remote
+    left_on_remote: payload.left_on_remote,
+    harvest_error: updatedJob.harvest_error
   }
 
   broadcast(summary)

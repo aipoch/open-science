@@ -20,6 +20,7 @@ import { ComputeJobRepository } from './job-repository'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService } from './compute-service'
 import { SystemSshRunner } from './ssh-runner'
+import { SshConfigComputeConnectionBroker } from './connection-broker'
 import { JobPoller } from './job-poller'
 import type { ComputeJobStatus } from '../../shared/compute'
 
@@ -30,6 +31,15 @@ const describeIf = RUN && ALIAS ? describe : describe.skip
 // Maximum time to wait for a job to reach a terminal state in a poll loop.
 const MAX_POLL_WAIT_MS = 120_000
 const POLL_PAUSE_MS = 2_000
+
+const brokerFor = (
+  hostRepository: ComputeHostRepository,
+  runner: SystemSshRunner
+): SshConfigComputeConnectionBroker =>
+  new SshConfigComputeConnectionBroker({
+    getHost: (providerId) => hostRepository.get(providerId),
+    runner
+  })
 
 // Polls a job until it reaches one of the expected terminal states (or times out).
 // Returns the final JobStatusResult.
@@ -119,14 +129,12 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const providerId = computeProviderId(ALIAS)
 
     const runner = new SystemSshRunner()
-    const service = new ComputeService(
+    const service = new ComputeService({
       runner,
-      hostRepo,
-      makeAutoBroker('appr-success'),
-      undefined,
-      undefined,
-      jobRepo
-    )
+      repository: hostRepo,
+      approvalBroker: makeAutoBroker('appr-success'),
+      jobRepository: jobRepo
+    })
 
     const result = await service.submitJob(
       providerId,
@@ -140,7 +148,11 @@ describeIf('compute-jobs integration (real SSH)', () => {
     expect(result.job_id).toBeDefined()
     remoteWorkdirs.push(result.remote_workdir)
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      connectionBroker: brokerFor(hostRepo, runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo
+    })
     const jobStatus = await pollUntilTerminal(poller, service, result.job_id)
 
     expect(jobStatus.status).toBe('success')
@@ -155,14 +167,12 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const providerId = computeProviderId(ALIAS)
 
     const runner = new SystemSshRunner()
-    const service = new ComputeService(
+    const service = new ComputeService({
       runner,
-      hostRepo,
-      makeAutoBroker('appr-failed'),
-      undefined,
-      undefined,
-      jobRepo
-    )
+      repository: hostRepo,
+      approvalBroker: makeAutoBroker('appr-failed'),
+      jobRepository: jobRepo
+    })
 
     const result = await service.submitJob(
       providerId,
@@ -175,7 +185,11 @@ describeIf('compute-jobs integration (real SSH)', () => {
     expect(result.status).toBe('submitted')
     remoteWorkdirs.push(result.remote_workdir)
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      connectionBroker: brokerFor(hostRepo, runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo
+    })
     const jobStatus = await pollUntilTerminal(poller, service, result.job_id)
 
     expect(jobStatus.status).toBe('failed')
@@ -189,14 +203,12 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const providerId = computeProviderId(ALIAS)
 
     const runner = new SystemSshRunner()
-    const service = new ComputeService(
+    const service = new ComputeService({
       runner,
-      hostRepo,
-      makeAutoBroker('appr-timeout'),
-      undefined,
-      undefined,
-      jobRepo
-    )
+      repository: hostRepo,
+      approvalBroker: makeAutoBroker('appr-timeout'),
+      jobRepository: jobRepo
+    })
 
     const result = await service.submitJob(
       providerId,
@@ -210,7 +222,11 @@ describeIf('compute-jobs integration (real SSH)', () => {
     remoteWorkdirs.push(result.remote_workdir)
 
     // Poll for up to 3 minutes: timeout command fires at 5s+30s, poller should see exit 124 quickly.
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      connectionBroker: brokerFor(hostRepo, runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo
+    })
     const jobStatus = await pollUntilTerminal(poller, service, result.job_id)
 
     expect(jobStatus.status).toBe('timeout')
@@ -225,14 +241,12 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const providerId = computeProviderId(ALIAS)
 
     const runner = new SystemSshRunner()
-    const service = new ComputeService(
+    const service = new ComputeService({
       runner,
-      hostRepo,
-      makeAutoBroker('appr-vanished'),
-      undefined,
-      undefined,
-      jobRepo
-    )
+      repository: hostRepo,
+      approvalBroker: makeAutoBroker('appr-vanished'),
+      jobRepository: jobRepo
+    })
 
     // The process kills itself immediately with SIGKILL, so no exit_code file is ever written.
     // After 2 consecutive poll ticks seeing pid gone + no exit_code → process_vanished.
@@ -250,7 +264,11 @@ describeIf('compute-jobs integration (real SSH)', () => {
     // Wait a few seconds for the process to die, then poll twice.
     await new Promise((r) => setTimeout(r, 3_000))
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      connectionBroker: brokerFor(hostRepo, runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo
+    })
 
     // Tick 1: vanish counter increments to 1 — status stays running.
     await poller.tick()
@@ -293,7 +311,12 @@ describeIf('compute-jobs integration (real SSH)', () => {
       }
 
       const runner = new SystemSshRunner()
-      const service = new ComputeService(runner, hostRepo, broker, undefined, undefined, jobRepo)
+      const service = new ComputeService({
+        runner,
+        repository: hostRepo,
+        approvalBroker: broker,
+        jobRepository: jobRepo
+      })
 
       const result = await service.submitJob(
         providerId,
@@ -312,7 +335,11 @@ describeIf('compute-jobs integration (real SSH)', () => {
       stagedWorkdir = result.remote_workdir
 
       // Poll until terminal state.
-      const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+      const poller = new JobPoller({
+        connectionBroker: brokerFor(hostRepo, runner),
+        hostRepository: hostRepo,
+        jobRepository: jobRepo
+      })
       let jobStatus = await service.getJobStatus(result.job_id)
       const maxWaitMs = 120_000
       const startMs = Date.now()

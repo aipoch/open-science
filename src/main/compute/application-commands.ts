@@ -20,7 +20,12 @@ type ComputeCommandOwner = Pick<
   | 'list'
   | 'get'
   | 'create'
+  | 'createPassword'
+  | 'resetPassword'
+  | 'changeAuthentication'
+  | 'passwordCapability'
   | 'delete'
+  | 'deletionStatus'
   | 'sshConfigAliases'
   | 'probe'
   | 'detailsGet'
@@ -76,11 +81,36 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'create'>,
     OwnerResult<ComputeCommandOwner, 'create'>
   >('compute:create'),
+  createPassword: defineApplicationCommand<
+    'compute:create-password',
+    OwnerArgs<ComputeCommandOwner, 'createPassword'>,
+    OwnerResult<ComputeCommandOwner, 'createPassword'>
+  >('compute:create-password'),
+  resetPassword: defineApplicationCommand<
+    'compute:reset-password',
+    OwnerArgs<ComputeCommandOwner, 'resetPassword'>,
+    OwnerResult<ComputeCommandOwner, 'resetPassword'>
+  >('compute:reset-password'),
+  changeAuthentication: defineApplicationCommand<
+    'compute:change-authentication',
+    OwnerArgs<ComputeCommandOwner, 'changeAuthentication'>,
+    OwnerResult<ComputeCommandOwner, 'changeAuthentication'>
+  >('compute:change-authentication'),
+  passwordCapability: defineApplicationCommand<
+    'compute:password-capability',
+    OwnerArgs<ComputeCommandOwner, 'passwordCapability'>,
+    OwnerResult<ComputeCommandOwner, 'passwordCapability'>
+  >('compute:password-capability'),
   delete: defineApplicationCommand<
     'compute:delete',
     readonly [DeleteComputeHostRequest],
     OwnerResult<ComputeCommandOwner, 'delete'>
   >('compute:delete'),
+  deletionStatus: defineApplicationCommand<
+    'compute:deletion-status',
+    readonly [DeleteComputeHostRequest],
+    OwnerResult<ComputeCommandOwner, 'deletionStatus'>
+  >('compute:deletion-status'),
   sshConfigAliases: defineApplicationCommand<
     'compute:ssh-config-aliases',
     OwnerArgs<ComputeCommandOwner, 'sshConfigAliases'>,
@@ -181,9 +211,12 @@ const computeApplicationCommands = Object.freeze({
 const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', [
   computeApplicationCommands.bookmarksGet,
   computeApplicationCommands.bookmarksSet,
+  computeApplicationCommands.changeAuthentication,
   computeApplicationCommands.concurrencySet,
   computeApplicationCommands.create,
+  computeApplicationCommands.createPassword,
   computeApplicationCommands.delete,
+  computeApplicationCommands.deletionStatus,
   computeApplicationCommands.detailsGet,
   computeApplicationCommands.detailsSave,
   computeApplicationCommands.download,
@@ -195,9 +228,11 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.jobsPendingNotification,
   computeApplicationCommands.list,
   computeApplicationCommands.listDir,
+  computeApplicationCommands.passwordCapability,
   computeApplicationCommands.probe,
   computeApplicationCommands.approvalReplay,
   computeApplicationCommands.approvalReplayPending,
+  computeApplicationCommands.resetPassword,
   computeApplicationCommands.approvalRespond,
   computeApplicationCommands.revealInFolder,
   computeApplicationCommands.scratchSet,
@@ -241,7 +276,28 @@ const registerComputeApplicationCommands = (
       'compute:list': () => dependencies.compute.list(),
       'compute:get': ({ args }) => dependencies.compute.get(args[0]),
       'compute:create': ({ args }) => dependencies.compute.create(args[0]),
-      'compute:delete': ({ args }) => dependencies.compute.delete(args[0].providerId),
+      'compute:create-password': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-password')
+        return dependencies.compute.createPassword(args[0])
+      },
+      'compute:reset-password': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:reset-password')
+        return dependencies.compute.resetPassword(args[0])
+      },
+      'compute:change-authentication': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:change-authentication')
+        return dependencies.compute.changeAuthentication(args[0])
+      },
+      'compute:password-capability': ({ callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:password-capability')
+        return dependencies.compute.passwordCapability()
+      },
+      'compute:delete': ({ args, callerContext }) =>
+        dependencies.compute.delete(args[0].providerId, {
+          allowPasswordCredentialDeletion: callerContext.location === 'local'
+        }),
+      'compute:deletion-status': ({ args }) =>
+        dependencies.compute.deletionStatus(args[0].providerId),
       'compute:ssh-config-aliases': () => dependencies.compute.sshConfigAliases(),
       'compute:probe': ({ args }) => dependencies.compute.probe(args[0]),
       'compute:details:get': ({ args }) => dependencies.compute.detailsGet(args[0]),

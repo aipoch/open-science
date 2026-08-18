@@ -529,6 +529,14 @@ const api: OpenScienceAPI = {
     list: () => electronRendererContracts.invoke('compute.list'),
     get: (providerId) => electronRendererContracts.invoke('compute.get', providerId),
     create: (request) => electronRendererContracts.invoke('compute.create', request),
+    createPassword: (request) =>
+      electronRendererContracts.invoke('compute.createPassword', request),
+    resetPassword: (request) => electronRendererContracts.invoke('compute.resetPassword', request),
+    changeAuthentication: (request) =>
+      electronRendererContracts.invoke('compute.changeAuthentication', request),
+    passwordCapability: () => electronRendererContracts.invoke('compute.passwordCapability'),
+    deletionStatus: (request) =>
+      electronRendererContracts.invoke('compute.deletionStatus', request),
     delete: (request) => electronRendererContracts.invoke('compute.delete', request),
     sshConfigAliases: () => electronRendererContracts.invoke('compute.sshConfigAliases'),
     probe: (providerId) => electronRendererContracts.invoke('compute.probe', providerId),
