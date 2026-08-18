@@ -222,7 +222,7 @@ describe('PR Gate workflow', () => {
       with: {
         'fetch-depth': 1,
         'persist-credentials': false,
-        ref: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}'
+        ref: "${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}"
       }
     })
     expect(gate.steps?.at(-1)).toMatchObject({
