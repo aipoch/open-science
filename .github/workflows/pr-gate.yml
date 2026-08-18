@@ -16,6 +16,7 @@ on:
         options:
           - classified
           - unit-coverage
+          - i18n
 
 permissions:
   contents: read
@@ -136,6 +137,23 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "i18n" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:i18n"],"lanes":["policy","i18n"],"bundles":["policy","static"],"reasonChains":["workflow_dispatch i18n -> focused dry-run"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","i18n"]' >> "$GITHUB_OUTPUT"
+            printf '%s\n' \
+              '## PR Gate preflight' \
+              '' \
+              '- Mode: **selective (focused dry-run)**' \
+              '- Selected lanes: policy, i18n' \
+              '- Execution bundles: policy, static' \
+              '' \
+              '### Reason chains' \
+              '' \
+              '- `workflow_dispatch i18n -> focused dry-run`' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [[ "$TRUSTED_CLASSIFIER_SOURCE" == "base" ]]; then
             node "$TRUSTED_CLASSIFIER_DIR/classify-pr-changes.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"
             exit 0
@@ -155,6 +173,7 @@ jobs:
             'typecheck_web',
             'interface_contracts',
             'cli_sdk',
+            'i18n',
             'unit_macos',
             'windows_runtime',
             'windows_path',
@@ -380,6 +399,11 @@ jobs:
         run: |
           npx vitest run cli packages/open-science
           npm run check:cli-package
+      - name: Check i18n catalog
+        id: i18n
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'i18n') }}
+        continue-on-error: true
+        run: npx vitest run src/renderer/src/i18n/resources.test.ts
       - name: Enforce selected static checks
         if: ${{ always() }}
         shell: bash
@@ -387,6 +411,7 @@ jobs:
           CLI_SDK_OUTCOME: ${{ steps.cli_sdk.outcome }}
           DOCS_OUTCOME: ${{ steps.docs.outcome }}
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
+          I18N_OUTCOME: ${{ steps.i18n.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           TYPECHECK_NODE_OUTCOME: ${{ steps.typechecks.outputs.node }}
@@ -409,6 +434,7 @@ jobs:
           check typechecks "$TYPECHECKS_OUTCOME"
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
           check cli_sdk "$CLI_SDK_OUTCOME"
+          check i18n "$I18N_OUTCOME"
           exit "$failed"
 
   unit_shard:
@@ -908,7 +934,9 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}
+          # Pull requests keep the base evaluator so a PR cannot rewrite its own gate.
+          # Manual dry-runs evaluate HEAD so a newly introduced lane can be dogfooded.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}
       - name: Setup Node
         if: ${{ needs.preflight.result == 'success' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

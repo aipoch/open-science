@@ -1,8 +1,8 @@
 // Catalog guards. These run on every `npm run test`, so a PR that drops a placeholder, mixes scripts,
 // or leaves a translation stranded fails before review.
 //
-// Keys are the English source text and English has no catalog, so there is no en/zh key-set parity to
-// check — English cannot go missing. What replaces it is the orphan guard at the bottom: editing an
+// Keys are the English source text and English has no catalog, so there is no source/catalog key-set
+// parity to check — English cannot go missing. What replaces it is the orphan guard at the bottom: editing an
 // English string silently changes its key, and the old translation would keep sitting in the catalog
 // resolving to nothing. That is the one failure mode natural-language keys add, and it is the reason
 // this file grew a source scan.
@@ -17,6 +17,7 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import ja from '../locales/ja.json'
 import zhHans from '../locales/zh-Hans.json'
 import zhHant from '../locales/zh-Hant.json'
 import {
@@ -28,6 +29,7 @@ import {
 type Catalog = Record<string, string>
 
 const sourceCatalogs = {
+  ja,
   'zh-Hans': zhHans,
   'zh-Hant': zhHant
 } as const
@@ -198,10 +200,10 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     expect(malformed).toEqual([])
   })
 
-  // Chinese has a single plural category, so a `_one` entry is copy that can never render. English
-  // needs no catalog entry at all: the key carries the plural form and the call site passes the
-  // singular as `defaultValue_one`.
-  it('uses only the plural categories Chinese grammar has', () => {
+  // Chinese and Japanese have a single plural category, so a `_one` entry is copy that can never
+  // render. English needs no catalog entry at all: the key carries the plural form and the call site
+  // passes the singular as `defaultValue_one`.
+  it('uses only the plural categories the translated grammar has', () => {
     const wrong = Object.keys(catalog(locale))
       .map((key) => ({ key, suffix: key.split('_').at(-1) ?? '' }))
       .filter(({ suffix }) => PLURAL_CATEGORIES.has(suffix) && suffix !== 'other')
@@ -210,7 +212,7 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     expect(wrong).toEqual([])
   })
 
-  it('stores every counted translation under the Chinese _other category', () => {
+  it('stores every counted translation under the locale _other category', () => {
     const bareCountedKeys = Object.keys(catalog(locale)).filter(
       (key) => englishOf(key).includes('{{count}}') && !key.endsWith('_other')
     )
@@ -237,6 +239,10 @@ describe('dynamic counted lookup translations', () => {
     {
       locale: 'zh-Hant' as const,
       expected: ['剛剛探測', '3 小時前探測', '3 天前', '3 天前']
+    },
+    {
+      locale: 'ja' as const,
+      expected: ['たった今確認', '3時間前に確認', '3日前', '3日前']
     }
   ])('resolves $locale lookup-table keys through _other', async ({ locale, expected }) => {
     const instance = i18next.createInstance()
@@ -276,6 +282,51 @@ describe('mandatory product glossary', () => {
     })
 
     expect(offenders).toEqual([])
+  })
+
+  it('keeps Japanese product and technical terms in English', () => {
+    const japaneseOnlyGlossary = [
+      { term: 'Open Science', source: /\bOpen Science\b/ },
+      { term: 'Claude', source: /\bClaude\b/ },
+      { term: 'Codex', source: /\bCodex\b/ },
+      { term: 'opencode', source: /\bOpenCode\b/ },
+      { term: 'MCP', source: /\bMCP\b/ },
+      { term: 'ACP', source: /\bACP\b/ },
+      { term: 'API', source: /\bAPI\b/ },
+      { term: 'CLI', source: /\bCLI\b/ },
+      { term: 'SSH', source: /\bSSH\b/ },
+      { term: 'GitHub', source: /\bGitHub\b/ },
+      { term: 'Star', source: /\bstars?\b/i },
+      { term: 'Discord', source: /\bDiscord\b/ },
+      { term: 'Python', source: /\bPython\b/ },
+      { term: 'Jupyter', source: /\bJupyter\b/ },
+      { term: 'token', source: /\btokens?\b/i }
+    ]
+    const offenders = Object.entries(catalog('ja')).flatMap(([key, value]) => {
+      const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
+      return japaneseOnlyGlossary
+        .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
+        .map(({ term }) => `${key}: ${term}`)
+    })
+
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('Japanese safety copy', () => {
+  it.each([
+    ['Allow globally', 'すべてのプロジェクトで許可'],
+    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
+    ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
+    ['Approval applies to this call only.', '承認はこのツール呼び出しにのみ適用されます。'],
+    ['This call only', 'このツール呼び出しのみ'],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      '個別の許可は引き続き取り消せます。すべての許可が判明するまで「すべて取り消す」は無効です。'
+    ],
+    ['{{count}} allowed this session_other', 'このセッションで {{count}} 件を許可済み']
+  ])('preserves the scope of %s', (key, expected) => {
+    expect(catalog('ja')[key]).toBe(expected)
   })
 })
 

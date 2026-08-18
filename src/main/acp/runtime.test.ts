@@ -4672,7 +4672,7 @@ describe('ACP runtime session management', () => {
       expect(onStateChanged).not.toHaveBeenCalled()
 
       runtime.shutdown()
-      vi.advanceTimersByTime(16)
+      vi.advanceTimersByTime(33)
 
       expect(onStateChanged).not.toHaveBeenCalled()
     } finally {

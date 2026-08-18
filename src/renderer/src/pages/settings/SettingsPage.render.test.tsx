@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
+import { i18next } from '@/i18n'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -224,6 +225,21 @@ const settingsSection = (title: string): HTMLElement | undefined =>
   )
 
 describe('SettingsPage layout', () => {
+  it('renders the model-dependent reasoning effort explanation naturally in Japanese', async () => {
+    await i18next.changeLanguage('ja')
+    try {
+      act(() => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+
+      expect(document.body.textContent).toContain(
+        '選択肢は選択したモデルによって異なり、モデルを変更しても相対的な強度は維持されます。'
+      )
+    } finally {
+      await i18next.changeLanguage('en')
+    }
+  })
+
   it('uses the header breadcrumb for archived project details', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),

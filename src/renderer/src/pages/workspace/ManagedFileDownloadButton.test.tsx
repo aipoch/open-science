@@ -274,7 +274,8 @@ describe('ManagedFileDownloadButton', () => {
     const button = container.querySelector<HTMLButtonElement>('button')!
     expect(button.dataset.variant).toBe('default')
     expect(button.dataset.size).toBe('sm')
-    expect(button.className.split(/\s+/)).toContain('w-24')
+    expect(button.className.split(/\s+/)).toContain('min-w-24')
+    expect(button.className.split(/\s+/)).not.toContain('w-24')
     expect(button.querySelector('svg')).not.toBeNull()
     expect(button.textContent).toBe('Download')
 

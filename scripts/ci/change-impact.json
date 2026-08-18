@@ -10,6 +10,7 @@
     "typecheck_web",
     "interface_contracts",
     "cli_sdk",
+    "i18n",
     "unit_macos",
     "windows_runtime",
     "windows_path",
@@ -31,6 +32,7 @@
     "typecheck_web": "static",
     "interface_contracts": "static",
     "cli_sdk": "static",
+    "i18n": "static",
     "unit_macos": "unit",
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
@@ -220,7 +222,7 @@
       "lanes": ["docs"]
     },
     "shared_contract": {
-      "consumers": ["preload_adapter"],
+      "consumers": ["preload_adapter", "i18n_catalog"],
       "lanes": [
         "format",
         "lint",
@@ -243,7 +245,7 @@
       ]
     },
     "main_runtime": {
-      "consumers": ["renderer_runtime"],
+      "consumers": ["renderer_runtime", "i18n_catalog"],
       "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
     },
     "renderer_runtime": {
@@ -260,8 +262,12 @@
       ]
     },
     "renderer_view": {
-      "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual"],
+      "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual", "i18n_catalog"],
       "lanes": ["format", "lint", "typecheck_web", "unit_macos", "build"]
+    },
+    "i18n_catalog": {
+      "consumers": [],
+      "lanes": ["i18n"]
     },
     "renderer_state": {
       "consumers": ["e2e_workspace"],

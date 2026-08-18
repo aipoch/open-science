@@ -2,13 +2,14 @@
 
 ## i18n — translating new user-visible strings
 
-The renderer ships two translated locales: **zh-Hans** (Simplified Chinese) and **zh-Hant**
-(Traditional Chinese). Every user-visible string added to the renderer must have a corresponding
-entry in both catalog files:
+The renderer ships three translated locales: **zh-Hans** (Simplified Chinese), **zh-Hant**
+(Traditional Chinese), and **ja** (Japanese). Every user-visible string added to the renderer must
+have a corresponding entry in all catalog files:
 
 ```
 src/renderer/src/locales/zh-Hans.json
 src/renderer/src/locales/zh-Hant.json
+src/renderer/src/locales/ja.json
 ```
 
 The guard suite in `src/renderer/src/i18n/resources.test.ts` runs on every `npm test` and **will
@@ -51,16 +52,19 @@ an i18next suffix appended). Entries are plain JSON strings at the top level —
 
 // zh-Hant.json
 "Data folder not found": "找不到資料夾"
+
+// ja.json
+"Data folder not found": "データフォルダーが見つかりません"
 ```
 
-Both catalogs must be updated independently. **zh-Hant falls back to English, not to zh-Hans**,
-so a key missing from zh-Hant silently renders in English, not Traditional Chinese.
+Each catalog must be updated independently. **Every translated locale falls back directly to
+English**, so a missing key renders in English instead of borrowing another translated locale.
 
 ### Plurals
 
-Chinese has a single plural category. Use the `_other` suffix only — never `_one`, `_few`, etc.
-The English singular is passed as `defaultValue_one` at the call site; it never needs a catalog
-entry.
+Chinese and Japanese have a single plural category. Use the `_other` suffix only — never `_one`,
+`_few`, etc. The English singular is passed as `defaultValue_one` at the call site; it never needs a
+catalog entry.
 
 ```tsx
 // Call site — English needs no catalog entry
@@ -69,14 +73,14 @@ t('{{count}} files', { count: n, defaultValue_one: '{{count}} file' })
 // Catalog entries — _other suffix only
 "{{count}} files_other": "{{count}} 个文件"   // zh-Hans
 "{{count}} files_other": "{{count}} 個檔案"   // zh-Hant
+"{{count}} files_other": "{{count}}個のファイル" // ja
 ```
 
 ### Context suffixes
 
-Use `_verb` when the same English word is used as both a noun and a verb and the Chinese
-translations differ (example: "Archive" → 压缩包 as noun, 归档 as verb). Add the context at the
-call site: `t('Archive', { context: 'verb' })`. Both the bare key and the `_verb` key need catalog
-entries.
+Use `_verb` when the same English word is used as both a noun and a verb and a translated locale
+needs different copy (example: "Archive" → 压缩包 as noun, 归档 as verb). Add the context at the call
+site: `t('Archive', { context: 'verb' })`. Both the bare key and the `_verb` key need catalog entries.
 
 ### Interpolation placeholders
 
@@ -91,11 +95,11 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term           | zh-Hans               | zh-Hant               | Note                                                 |
-| -------------- | --------------------- | --------------------- | ---------------------------------------------------- |
-| Skill / Skills | **Skill** / **Skill** | **Skill** / **Skill** | Never translate to 技能/技巧 — keep the English word |
-| Agent          | **Agent**             | **Agent**             | Keep as-is                                           |
-| Notebook       | **Notebook**          | **Notebook**          | Keep as-is                                           |
+| Term           | zh-Hans               | zh-Hant               | ja                    | Note                                                 |
+| -------------- | --------------------- | --------------------- | --------------------- | ---------------------------------------------------- |
+| Skill / Skills | **Skill** / **Skill** | **Skill** / **Skill** | **Skill** / **Skill** | Never translate to 技能/技巧 — keep the English word |
+| Agent          | **Agent**             | **Agent**             | **Agent**             | Keep as-is                                           |
+| Notebook       | **Notebook**          | **Notebook**          | **Notebook**          | Keep as-is                                           |
 
 ### Verifying your translations
 

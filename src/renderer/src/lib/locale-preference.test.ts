@@ -78,11 +78,11 @@ describe('stored preference', () => {
 describe('resolveInitialLocale', () => {
   it('detects from the device when no choice is stored', () => {
     stubLanguages(['ja', 'zh-TW', 'en'])
-    expect(resolveInitialLocale()).toBe('zh-Hant')
+    expect(resolveInitialLocale()).toBe('ja')
   })
 
   it('falls back to English when the device language is unsupported', () => {
-    stubLanguages(['ja-JP', 'ko-KR'])
+    stubLanguages(['fr-FR', 'ko-KR'])
     expect(resolveInitialLocale()).toBe('en')
   })
 

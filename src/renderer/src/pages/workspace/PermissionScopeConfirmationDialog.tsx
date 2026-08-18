@@ -90,7 +90,6 @@ const PermissionScopeConfirmationDialog = ({
               <strong className="font-semibold text-foreground">
                 {t('Settings → Permissions')}
               </strong>
-              .
             </AlertDialog.Description>
           </div>
           <div className={dialogFooterClassName}>

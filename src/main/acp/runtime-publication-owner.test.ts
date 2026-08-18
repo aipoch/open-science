@@ -16,6 +16,49 @@ const createProjection = (): RuntimeSnapshotProjection => ({
 })
 
 describe('AcpRuntimePublicationOwner', () => {
+  it('publishes coalesced state on the renderer 33 ms presentation cadence', () => {
+    vi.useFakeTimers()
+    try {
+      const onStateChanged = vi.fn()
+      const owner = new AcpRuntimePublicationOwner({
+        snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+        interactions: new AcpSessionInteractionOwner(),
+        snapshotProjection: createProjection,
+        callbacks: { onStateChanged }
+      })
+
+      owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'chunk' })
+      vi.advanceTimersByTime(32)
+      expect(onStateChanged).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(1)
+      expect(onStateChanged).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels a pending state publication without a late callback', () => {
+    vi.useFakeTimers()
+    try {
+      const onStateChanged = vi.fn()
+      const owner = new AcpRuntimePublicationOwner({
+        snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+        interactions: new AcpSessionInteractionOwner(),
+        snapshotProjection: createProjection,
+        callbacks: { onStateChanged }
+      })
+
+      owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'chunk' })
+      owner.cancelPendingStatePublication()
+      vi.advanceTimersByTime(33)
+
+      expect(onStateChanged).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('coalesces assistant text state while publishing every event immediately', () => {
     const order: string[] = []
     let releaseScheduledState: (() => void) | undefined
@@ -39,6 +82,28 @@ describe('AcpRuntimePublicationOwner', () => {
     expect(order).toEqual(['event:one', 'event:two'])
     releaseScheduledState?.()
     expect(order).toEqual(['event:one', 'event:two', 'state:2'])
+  })
+
+  it('coalesces streamed assistant thought state', () => {
+    let releaseScheduledState: (() => void) | undefined
+    const onStateChanged = vi.fn()
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: { onStateChanged },
+      scheduleStatePublication: (publish) => {
+        releaseScheduledState = publish
+        return () => (releaseScheduledState = undefined)
+      }
+    })
+
+    owner.pushEvent({ kind: 'thought', level: 'info', role: 'assistant', text: 'one' })
+    owner.pushEvent({ kind: 'thought', level: 'info', role: 'assistant', text: 'two' })
+
+    expect(onStateChanged).not.toHaveBeenCalled()
+    releaseScheduledState?.()
+    expect(onStateChanged).toHaveBeenCalledOnce()
   })
 
   it('publishes a burst before retained events can evict unseen prefix chunks', () => {
@@ -91,6 +156,102 @@ describe('AcpRuntimePublicationOwner', () => {
     owner.pushEvent({ kind: 'tool', level: 'info', toolCallId: 'tool-1', status: 'in_progress' })
 
     expect(order).toEqual(['event:message', 'event:tool', 'state:2'])
+  })
+
+  it('coalesces progressive tool output but publishes completion immediately', () => {
+    const snapshots: string[][] = []
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onStateChanged: (snapshot) =>
+          snapshots.push(snapshot.events.map((event) => event.status ?? 'updating'))
+      },
+      scheduleStatePublication: () => () => undefined
+    })
+
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      toolCallId: 'tool-1',
+      status: 'in_progress',
+      terminalOutput: 'one'
+    })
+    expect(snapshots).toEqual([['in_progress']])
+
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      toolCallId: 'tool-1',
+      status: 'in_progress',
+      rawInput: { command: 'echo repeated provider input' },
+      terminalOutput: 'two'
+    })
+    expect(snapshots).toEqual([['in_progress']])
+
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      toolCallId: 'tool-1',
+      status: 'completed',
+      terminalOutput: 'done'
+    })
+    expect(snapshots).toEqual([['in_progress'], ['in_progress', 'in_progress', 'completed']])
+  })
+
+  it('isolates tool lifecycles by session and resets abandoned calls at lifecycle boundaries', () => {
+    const snapshots: number[] = []
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot.events.length) },
+      scheduleStatePublication: () => () => undefined
+    })
+
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-1',
+      toolCallId: 'reused-call',
+      terminalOutput: 'first session start'
+    })
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-2',
+      toolCallId: 'reused-call',
+      terminalOutput: 'second session start'
+    })
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-1',
+      toolCallId: 'reused-call',
+      terminalOutput: 'progressive output'
+    })
+    expect(snapshots).toEqual([1, 2])
+
+    owner.pushEvent({ kind: 'stop', level: 'info', sessionId: 'session-1' })
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-1',
+      toolCallId: 'reused-call',
+      terminalOutput: 'next run start'
+    })
+    expect(snapshots).toEqual([1, 2, 4, 5])
+
+    owner.cancelPendingStatePublication()
+    owner.pushEvent({
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-2',
+      toolCallId: 'reused-call',
+      terminalOutput: 'next connection start'
+    })
+    expect(snapshots).toEqual([1, 2, 4, 5, 6])
   })
 
   it('keeps a mixed 121-event burst within the frame and boundary publication budget', () => {

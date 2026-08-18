@@ -80,7 +80,7 @@ const createHarness = (
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
   startContinuation: ReturnType<typeof vi.fn>
-  startContinuationWhen: ReturnType<typeof vi.fn>
+  startContinuationWhenDispatchAdmitted: ReturnType<typeof vi.fn>
   hasLiveSession: ReturnType<typeof vi.fn>
   captureSessionBackend: ReturnType<typeof vi.fn>
   session: PersistedChatSession
@@ -112,10 +112,12 @@ const createHarness = (
       }) as never
   )
   const snapshot = { status: 'connected' } as never
-  const startContinuationWhen = vi.fn(async (request: unknown, validate: () => Promise<void>) => {
-    await validate()
-    return startContinuation(request)
-  })
+  const startContinuationWhenDispatchAdmitted = vi.fn(
+    async (request: unknown, validate: () => Promise<void>) => {
+      await validate()
+      return startContinuation(request)
+    }
+  )
   const workflows = createAcpHandlerWorkflows(
     {
       getSnapshot: () => snapshot,
@@ -125,7 +127,7 @@ const createHarness = (
       sendPrompt: vi.fn(),
       getLatestUserPrompt: vi.fn(),
       startContinuation,
-      startContinuationWhen
+      startContinuationWhenDispatchAdmitted
     },
     { create: vi.fn() } as never,
     taskNotifications,
@@ -138,7 +140,7 @@ const createHarness = (
   return {
     workflows,
     startContinuation,
-    startContinuationWhen,
+    startContinuationWhenDispatchAdmitted,
     hasLiveSession,
     captureSessionBackend,
     session,
@@ -153,6 +155,14 @@ const createHarness = (
 }
 
 describe('ACP Save as skill workflow', () => {
+  it('dispatches through the Session admission already held by the workflow', async () => {
+    const harness = createHarness()
+
+    await harness.workflows.saveAsSkill(harness.request)
+
+    expect(harness.startContinuationWhenDispatchAdmitted).toHaveBeenCalledOnce()
+  })
+
   it('holds archive admission until the hidden turn is accepted', async () => {
     let admissionActive = false
     const admitted = vi.fn()
@@ -381,7 +391,7 @@ describe('ACP Save as skill workflow', () => {
 
   it('rejects when the prepared control changes before runtime admission', async () => {
     const harness = createHarness()
-    harness.startContinuationWhen.mockImplementationOnce(
+    harness.startContinuationWhenDispatchAdmitted.mockImplementationOnce(
       async (_request: unknown, validate: () => Promise<void>) => {
         harness.session.activeRun = { promptMessageId: 'newer-prompt', startedAt: 4 }
         await validate()

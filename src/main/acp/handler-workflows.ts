@@ -46,7 +46,10 @@ type AcpHandlerWorkflowRuntime = {
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
   startContinuation(request: AcpPromptRequest): Promise<void>
-  startContinuationWhen(request: AcpPromptRequest, validate: () => Promise<void>): Promise<unknown>
+  startContinuationWhenDispatchAdmitted(
+    request: AcpPromptRequest,
+    validate: () => Promise<void>
+  ): Promise<unknown>
 }
 
 type PromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -348,7 +351,7 @@ const createAcpHandlerWorkflows = (
         text: 'Save as skill'
       })
       try {
-        await runtime.startContinuationWhen(prepared.continuation, async () => {
+        await runtime.startContinuationWhenDispatchAdmitted(prepared.continuation, async () => {
           await saveAsSkillAdmission?.(request.sessionId)
           const admitted = prepareSaveAsSkillContinuation(
             runtime,

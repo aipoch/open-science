@@ -96,7 +96,7 @@ const ManagedFileDownloadButtonState = ({
           : disabled
             ? t('File unavailable')
             : t('Download')
-  // The labeled fallback action mirrors save state without changing its fixed button geometry.
+  // The labeled fallback action keeps a stable minimum size while allowing longer localized copy.
   const visibleLabel =
     status === 'saving'
       ? t('Saving...')
@@ -122,7 +122,7 @@ const ManagedFileDownloadButtonState = ({
               variant={isPrimary ? 'default' : 'ghost'}
               size={isPrimary ? 'sm' : iconSize}
               className={cn(
-                isPrimary ? 'w-24' : 'bg-bg-000/90 shadow-sm',
+                isPrimary ? 'min-w-24' : 'bg-bg-000/90 shadow-sm',
                 !isPrimary &&
                   (status === 'saved'
                     ? 'text-emerald-600 hover:bg-muted hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400'

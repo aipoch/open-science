@@ -16,10 +16,11 @@ import { initReactI18next } from 'react-i18next'
 import { DEFAULT_LOCALE, LOCALES, type Locale } from '../../../shared/locale'
 import { DEFAULT_NAMESPACE, englishSourceFallbackPostProcessor, resources } from './resources'
 
-// zh-Hant falls back to English, not to zh-Hans. Falling back across scripts would mix Simplified and
-// Traditional in one screen whenever a key is missing, which reads worse than a clean English string
-// and hides the gap from reviewers.
+// Every translated locale falls back directly to English. Cross-locale fallback would mix languages
+// on one screen whenever a key is missing, which reads worse than a clean English string and hides the
+// gap from reviewers.
 const fallbackLng: Record<string, string[]> = {
+  ja: [DEFAULT_LOCALE],
   'zh-Hant': [DEFAULT_LOCALE],
   'zh-Hans': [DEFAULT_LOCALE],
   default: [DEFAULT_LOCALE]
