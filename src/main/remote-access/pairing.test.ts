@@ -226,8 +226,25 @@ describe('RemoteSessionPairingManager', () => {
     const sessionCookie = cookiePair((statusResponse.headers.get('set-cookie') as string[])[0])
     const [trustedBrowser] = manager.trustedViews()
 
-    vi.spyOn(repository, 'save').mockRejectedValueOnce(new Error('disk full'))
-    await expect(manager.revoke(trustedBrowser.id)).rejects.toThrow('disk full')
+    let rejectSave: ((error: Error) => void) | undefined
+    const saveFailure = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject
+    })
+    const save = vi.spyOn(repository, 'save').mockReturnValueOnce(saveFailure)
+    const revocation = manager.revoke(trustedBrowser.id)
+    void revocation.catch(() => undefined)
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+
+    await expect(
+      manager.webAccess.authorizeHttp(
+        request('/', { cookie: sessionCookie }),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+    ).resolves.toBe('handled')
+
+    rejectSave?.(new Error('disk full'))
+    await expect(revocation).rejects.toThrow('disk full')
 
     expect(manager.trustedViews()).toHaveLength(1)
     await expect(

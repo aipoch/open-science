@@ -155,6 +155,7 @@ export class RemoteSessionPairingManager {
   private stored: StoredRemoteAccess
   private readonly pending = new Map<string, PendingPairing>()
   private readonly oneTimeSessions = new Map<string, OneTimeSession>()
+  private readonly pendingRevocations = new Set<string>()
   private readonly now: () => number
   private storedMutationQueue: Promise<void> = Promise.resolve()
 
@@ -296,14 +297,25 @@ export class RemoteSessionPairingManager {
   }
 
   async revoke(browserId: string): Promise<void> {
-    await this.commitStoredMutation((stored) => {
-      const trustedBrowsers = stored.trustedBrowsers.filter((browser) => browser.id !== browserId)
-      if (trustedBrowsers.length === stored.trustedBrowsers.length) {
-        throw new Error('Trusted browser not found.')
-      }
-      return { ...stored, trustedBrowsers }
-    })
-    this.options.onChanged()
+    if (
+      this.pendingRevocations.has(browserId) ||
+      !this.stored.trustedBrowsers.some((browser) => browser.id === browserId)
+    ) {
+      throw new Error('Trusted browser not found.')
+    }
+    this.pendingRevocations.add(browserId)
+    try {
+      await this.commitStoredMutation((stored) => {
+        const trustedBrowsers = stored.trustedBrowsers.filter((browser) => browser.id !== browserId)
+        if (trustedBrowsers.length === stored.trustedBrowsers.length) {
+          throw new Error('Trusted browser not found.')
+        }
+        return { ...stored, trustedBrowsers }
+      })
+      this.options.onChanged()
+    } finally {
+      this.pendingRevocations.delete(browserId)
+    }
   }
 
   clearTransientAccess(): void {
@@ -493,6 +505,7 @@ export class RemoteSessionPairingManager {
     if (once && once.expiresAt > this.now() && safeHashEqual(once.tokenHash, tokenHash)) {
       return { kind: 'once', sessionId: id }
     }
+    if (this.pendingRevocations.has(id)) return undefined
 
     const trusted = this.stored.trustedBrowsers.find((browser) => browser.id === id)
     if (!trusted || !safeHashEqual(trusted.tokenHash, tokenHash)) return undefined
