@@ -107,7 +107,7 @@ const ComposerSpecialistPicker = ({
           type="button"
           disabled={readOnly}
           className={cn(
-            "relative flex h-8 min-w-0 max-w-[min(46cqw,15rem)] shrink items-center gap-1.5 rounded-lg border bg-bg-200 px-1.5 text-left text-[12px] font-medium text-text-100 transition-colors before:absolute before:content-[''] hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:inset-x-0",
+            "relative flex h-8 min-w-0 max-w-40 shrink items-center gap-1.5 rounded-lg border bg-bg-200 px-1.5 text-left text-[12px] font-medium text-text-100 transition-colors before:absolute before:content-[''] hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:inset-x-0 @max-[32rem]/composer:w-8 @max-[32rem]/composer:shrink-0 @max-[32rem]/composer:justify-center @max-[32rem]/composer:px-0",
             unavailable ? 'border-warning-100 text-warning-900' : 'border-border-200'
           )}
           aria-label={t('Choose Specialist: {{name}}', { name: selectedName })}
@@ -123,9 +123,9 @@ const ComposerSpecialistPicker = ({
               —
             </span>
           )}
-          <span className="min-w-0 truncate">{selectedName}</span>
+          <span className="min-w-0 truncate @max-[32rem]/composer:hidden">{selectedName}</span>
           <ChevronDown
-            className="size-3.5 shrink-0 opacity-60"
+            className="size-3.5 shrink-0 opacity-60 @max-[32rem]/composer:hidden"
             strokeWidth={2}
             aria-hidden="true"
           />
@@ -136,7 +136,7 @@ const ComposerSpecialistPicker = ({
         align="start"
         sideOffset={8}
         collisionPadding={8}
-        className="w-[min(22rem,calc(100vw-1rem))] rounded-xl border border-border-200 bg-bg-000 p-1.5 text-text-000 shadow-menu"
+        className="w-[min(16rem,calc(100vw-1rem))] rounded-xl border border-border-200 bg-bg-000 p-1.5 text-text-000 shadow-menu"
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           inputRef.current?.focus()

@@ -570,13 +570,16 @@ colors communicate a successful or failed probe/migration result.
 - Icon buttons: `Button variant="ghost" size="icon"`, `size-8`.
 - Workspace composer shell: `px-4 pb-2`; center content in `mx-auto w-full max-w-4xl`, then use `px-1 md:px-3` so the composer text track aligns with the message content after the form's own `px-3`.
 - Workspace composer form: `relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque`.
-- When a runnable Specialist is bound, keep the composer at its normal height and add a persistent
-  two-pixel multicolor edge. Mount one finite exterior bloom when the selected Specialist changes;
-  suppress that bloom under `prefers-reduced-motion` while retaining the static edge.
+- When a runnable Specialist is bound, keep the composer at its normal height and use a two-pixel
+  edge in the exact color of that Specialist's avatar tile. When the selection changes, fade only
+  that edge from transparent to opaque; do not add a multicolor gradient, glow, or geometry motion.
+  Under `prefers-reduced-motion`, show the final edge immediately.
 - Show the active Specialist as a compact, truncating toolbar control rather than a new composer row.
   Its popover searches display name, stable name, and description; supports Arrow Up/Down, Home/End,
   Enter, and ordinary pointer selection; fits within the viewport on narrow screens; and exposes the
-  full untruncated name through the control's accessible label.
+  full untruncated name through the control's accessible label. Cap the expanded control at `10rem`
+  and collapse it to the avatar alone when the composer container is `32rem` wide or narrower. Keep
+  the popover at or below `16rem` so it does not dominate compressed three-column layouts.
 - During a normal running root turn, the primary composer submit action captures the current doc,
   attachments, permission profile, Specialist, Session, Agent Frame, and Message Branch into a
   renderer-memory queue instead of overlapping the active runtime prompt. The queue drains one item

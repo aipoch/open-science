@@ -3841,6 +3841,7 @@ describe('ConversationPanel fix loop lock', () => {
           id: 'available-specialist',
           name: 'AVAILABLE_SPECIALIST',
           displayName: 'Available Specialist',
+          colorKey: 'purple',
           description: 'Available for this session.',
           systemPrompt: 'Help the user.',
           enabled: true,
@@ -3859,9 +3860,9 @@ describe('ConversationPanel fix loop lock', () => {
       }
     })
 
-    const composer = container.querySelector<HTMLFormElement>('[data-specialist-enhanced="true"]')
-    expect(composer?.classList.contains('composer-specialist-enhanced')).toBe(true)
-    expect(composer?.querySelector('.composer-specialist-activation')).not.toBeNull()
+    const composer = container.querySelector<HTMLFormElement>('[data-specialist-color="#ede9fe"]')
+    const specialistEdge = composer?.querySelector<HTMLElement>('.composer-specialist-color-in')
+    expect(specialistEdge?.style.borderColor).toBe('rgb(237, 233, 254)')
     expect(
       container
         .querySelector('[data-testid="composer-specialist-picker-trigger"]')

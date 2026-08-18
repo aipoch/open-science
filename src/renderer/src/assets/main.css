@@ -295,66 +295,25 @@
 }
 
 @layer components {
-  @keyframes composer-specialist-activation {
-    0% {
+  @keyframes composer-specialist-color-in {
+    from {
       opacity: 0;
-      transform: scale(0.985);
     }
-    24% {
-      opacity: 0.82;
-    }
-    62% {
-      opacity: 0.32;
-      transform: scale(1.012);
-    }
-    100% {
-      opacity: 0;
-      transform: scale(1.025);
+    to {
+      opacity: 1;
     }
   }
 
-  /* Active Specialist: a persistent two-pixel edge plus one finite activation bloom. */
-  .composer-specialist-enhanced {
-    isolation: isolate;
-  }
-
-  .composer-specialist-enhanced::after {
+  /* Match the composer edge to the selected Specialist avatar with one quiet color fade. */
+  .composer-specialist-color-in {
     position: absolute;
     z-index: 2;
-    inset: -1px;
-    border-radius: inherit;
-    padding: 2px;
-    background: linear-gradient(
-      112deg,
-      var(--chart-2),
-      var(--chart-1) 32%,
-      var(--chart-4) 68%,
-      var(--chart-3)
-    );
-    content: '';
-    pointer-events: none;
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-  }
-
-  .composer-specialist-activation {
-    position: absolute;
-    z-index: 0;
     inset: 0;
+    border-width: 2px;
+    border-style: solid;
     border-radius: inherit;
-    box-shadow:
-      -0.6rem 0 1.5rem color-mix(in srgb, var(--chart-1) 52%, transparent),
-      0.6rem 0 1.5rem color-mix(in srgb, var(--chart-4) 48%, transparent),
-      0 0 0.9rem color-mix(in srgb, var(--chart-2) 42%, transparent);
-    content: '';
     pointer-events: none;
-    animation: composer-specialist-activation 1.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation: composer-specialist-color-in 480ms ease-out both;
   }
 
   /* Theme-independent edge treatment for compact horizontal navigation and chip rails. */
@@ -729,9 +688,9 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .composer-specialist-activation {
-      display: none;
+    .composer-specialist-color-in {
       animation: none;
+      opacity: 1;
     }
 
     .home-session-title-running::after {

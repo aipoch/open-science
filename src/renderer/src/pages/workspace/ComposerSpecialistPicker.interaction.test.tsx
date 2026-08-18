@@ -91,8 +91,9 @@ describe('ComposerSpecialistPicker', () => {
     expect(trigger.getAttribute('aria-label')).toContain(
       'A deliberately long Specialist display name that must never widen the composer'
     )
-    expect(trigger.className).toContain('max-w-[min(46cqw,15rem)]')
+    expect(trigger.className).toContain('max-w-40')
     expect(trigger.querySelector('.truncate')?.textContent).toContain('deliberately long')
+    expect(trigger.querySelector('.truncate')?.className).toContain('@max-[32rem]/composer:hidden')
   })
 
   it('filters by Specialist metadata and selects the result with Enter', () => {
@@ -134,6 +135,7 @@ describe('ComposerSpecialistPicker', () => {
       '[data-testid="composer-specialist-picker-trigger"]'
     )!
     expect(trigger.className).toContain('h-8')
+    expect(trigger.className).toContain('@max-[32rem]/composer:w-8')
     expect(trigger.className).toContain('[@media(pointer:coarse)]:before:-inset-y-1.5')
   })
 

@@ -107,6 +107,7 @@ import { hasMainConversation, type SideChatController } from './use-side-chat-co
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
+import { getAvatarColor } from '../settings/specialist-icons'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -559,7 +560,10 @@ const ConversationPanel = ({
   const selectedSpecialist = specialistId
     ? specialistItems.find((item) => item.kind !== 'reviewer' && item.id === specialistId)
     : undefined
-  const specialistComposerEnhanced = Boolean(selectedSpecialist && !specialistUnavailable)
+  const specialistComposerColor =
+    selectedSpecialist && selectedSpecialist.kind !== 'reviewer' && !specialistUnavailable
+      ? getAvatarColor(selectedSpecialist.colorKey)
+      : undefined
   const effectiveSpecialistSkills = resolveEffectiveSpecialistSkills(
     activeSpecialist?.kind === 'custom' ? activeSpecialist : undefined,
     catalogSkills.map((skill) => ({
@@ -1204,17 +1208,17 @@ const ConversationPanel = ({
                     hidden={ordinaryComposerBlocked}
                     className={cn(
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      specialistComposerEnhanced && 'composer-specialist-enhanced',
                       ordinaryComposerBlocked && 'hidden'
                     )}
-                    data-specialist-enhanced={specialistComposerEnhanced || undefined}
+                    data-specialist-color={specialistComposerColor}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
                   >
-                    {specialistComposerEnhanced && selectedSpecialist ? (
+                    {specialistComposerColor && selectedSpecialist ? (
                       <span
                         key={selectedSpecialist.id}
-                        className="composer-specialist-activation"
+                        className="composer-specialist-color-in"
+                        style={{ borderColor: specialistComposerColor }}
                         aria-hidden="true"
                       />
                     ) : null}
