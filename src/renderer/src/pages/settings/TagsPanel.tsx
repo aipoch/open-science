@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+/* Hallmark · component: grouped resource index · genre: modern-minimal · tone: technical/utilitarian · theme: project tokens · slop: pass */
 import { AlertDialog, Dialog } from 'radix-ui'
 import {
   ChevronDown,
@@ -55,7 +57,7 @@ import { TagBadge } from './tag-visuals'
 
 type TagResourceRow = TagResourceRef & {
   title: string
-  subtitle: string
+  subtitle?: string
 }
 
 type TagDraft = { name: string; iconKey: TagIconKey; colorKey: TagColorKey }
@@ -152,19 +154,19 @@ const TagsPanel = ({
         resourceType: 'catalog.skill' as const,
         resourceId: skill.id,
         title: skill.displayName,
-        subtitle: t('Skill')
+        subtitle: skill.description.trim() || undefined
       })),
       ...connectors.map((connector) => ({
         resourceType: 'catalog.connector' as const,
         resourceId: connector.id,
         title: connector.displayName,
-        subtitle: t('Connector')
+        subtitle: connector.description.trim() || undefined
       })),
       ...customServers.map((connector) => ({
         resourceType: 'catalog.connector' as const,
         resourceId: connector.id,
         title: connector.displayName,
-        subtitle: `${t('Connector')} · ${connector.name}`
+        subtitle: connector.description?.trim() || undefined
       })),
       ...specialistItems
         .filter((item) => item.kind !== 'reviewer')
@@ -172,10 +174,10 @@ const TagsPanel = ({
           resourceType: 'catalog.specialist' as const,
           resourceId: specialist.id,
           title: specialist.displayName ?? specialist.name,
-          subtitle: t('Specialist')
+          subtitle: specialist.description.trim() || undefined
         }))
     ],
-    [connectors, customServers, skills, specialistItems, t]
+    [connectors, customServers, skills, specialistItems]
   )
   const resourcesByKey = new Map(
     resources.map((resource) => [`${resource.resourceType}:${resource.resourceId}`, resource])
@@ -410,7 +412,7 @@ const TagsPanel = ({
                 </p>
               ) : null}
               {filteredResources.length > 0 ? (
-                <div className="space-y-4">
+                <div data-slot="tag-resource-groups" className="divide-y divide-border">
                   {resourceGroups.map(({ resourceType, resources: groupedResources }) => {
                     const expanded = !collapsed[resourceType]
                     const Icon =
@@ -420,7 +422,7 @@ const TagsPanel = ({
                           ? ConnectorsNavIcon
                           : Users
                     return (
-                      <section key={resourceType}>
+                      <section key={resourceType} className="py-3 first:pt-0 last:pb-0">
                         <button
                           type="button"
                           data-slot="tag-resource-group"
@@ -446,13 +448,17 @@ const TagsPanel = ({
                           />
                         </button>
                         {expanded ? (
-                          <ul className="mt-1 divide-y divide-border">
+                          <ul className="mt-1">
                             {groupedResources.map((resource) => {
                               const key = `${resource.resourceType}:${resource.resourceId}`
                               return (
-                                <li key={key} className="group flex items-center gap-1">
+                                <li
+                                  key={key}
+                                  className="group -mx-2 flex items-center gap-1 rounded-lg px-2 hover:bg-muted/50 focus-within:bg-muted/50"
+                                >
                                   <button
                                     type="button"
+                                    data-slot="tag-resource-row"
                                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary"
                                     onClick={() => onOpenResource(resource)}
                                   >
@@ -460,9 +466,14 @@ const TagsPanel = ({
                                       <span className="block truncate text-sm">
                                         {resource.title}
                                       </span>
-                                      <span className="block truncate text-xs text-muted-foreground">
-                                        {resource.subtitle}
-                                      </span>
+                                      {resource.subtitle ? (
+                                        <span
+                                          data-slot="tag-resource-subtitle"
+                                          className="block truncate text-xs text-muted-foreground"
+                                        >
+                                          {resource.subtitle}
+                                        </span>
+                                      ) : null}
                                     </span>
                                   </button>
                                   <SettingsIconAction
