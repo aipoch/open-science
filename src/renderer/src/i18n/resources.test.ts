@@ -374,6 +374,29 @@ describe('mandatory product glossary', () => {
     }
   )
 
+  it('keeps reviewed French product and technical names in English', () => {
+    const retainedTerms = [
+      { term: 'Anthropic', source: /\bAnthropic\b/ },
+      { term: 'Claude Code', source: /\bClaude Code\b/ },
+      { term: 'Chromium', source: /\bChromium\b/ },
+      { term: 'Electron', source: /\bElectron\b/ },
+      { term: 'Markdown', source: /\bMarkdown\b/ },
+      { term: 'Remote.It', source: /\bRemote\.It\b/ }
+    ]
+    const offenders = Object.entries(catalog('fr')).flatMap(([key, value]) => {
+      const source = englishOf(key)
+      return retainedTerms
+        .filter(({ term, source: pattern }) => {
+          const sourceOccurrences = source.split(term).length - 1
+          const translationOccurrences = value.split(term).length - 1
+          return pattern.test(source) && translationOccurrences < sourceOccurrences
+        })
+        .map(({ term }) => `${key}: ${term}`)
+    })
+
+    expect(offenders).toEqual([])
+  })
+
   const chosenGenericTerms = {
     fr: {
       Agent: 'Agent',
@@ -395,7 +418,7 @@ describe('mandatory product glossary', () => {
       Shell: 'Terminal',
       'Token usage': 'Utilisation des jetons',
       'Claude setup token': 'Jeton de configuration Claude',
-      'Token: {{masked}}': 'Jeton : {{masked}}'
+      'Token: {{masked}}': 'Jeton\u00a0: {{masked}}'
     },
     'zh-Hans': {
       Agent: '智能体',
@@ -471,6 +494,218 @@ describe('mandatory product glossary', () => {
 
     expect(actual).toEqual(expected)
   })
+
+  it('uses the chosen French agent framework term in every sentence', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bagent frameworks?\b/i.test(englishOf(key)))
+      .filter(([key, value]) => {
+        const expected = /\bagent frameworks\b/i.test(englishOf(key))
+          ? /frameworks d'agents/i
+          : /framework d'agents/i
+        return !expected.test(value)
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses theme meanings for French light and dark copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key, value]) => {
+        const source = englishOf(key)
+        return (
+          (/\blight\b/i.test(source) && !/\bclair\b/i.test(value)) ||
+          (/\bdark\b/i.test(source) && !/\bsombre\b/i.test(value))
+        )
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses unambiguous French safety and operation copy', () => {
+    const expected = {
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.":
+        "Les conversations toujours liées à <name>{{name}}</name> deviendront <em>indisponibles</em> et <em>ne seront pas</em> automatiquement basculées vers l'agent principal. Pour chaque conversation concernée, vous devrez choisir explicitement un nouveau spécialiste ou l'agent principal avant de pouvoir envoyer à nouveau des messages.",
+      'The candidate authentication configuration is verified before commit. Session enablement and Permission Grants will be cleared.':
+        "La configuration d'authentification proposée est vérifiée avant validation. L'activation des sessions et les autorisations accordées seront supprimées.",
+      'Ask before file edits, commands, network, and MCP tools.':
+        "Demander une autorisation avant de modifier des fichiers, d'exécuter des commandes, d'accéder au réseau ou d'utiliser des outils MCP.",
+      'Allow for this conversation': 'Autoriser pour cette conversation',
+      'Allow for this project': 'Autoriser pour ce projet',
+      'Allowed this session': 'Autorisé pour cette session',
+      'Anthropic approx.': 'Estimation Anthropic',
+      'Clear all session grants': 'Révoquer toutes les autorisations de la session',
+      'Grant folder…': "Autoriser l'accès à un dossier…",
+      'Grant this folder': "Autoriser l'accès à ce dossier",
+      'Close Provenance': 'Fermer le panneau de provenance',
+      'Go to home': 'Accéder au dossier personnel',
+      'Go-to locations': 'Accès rapides',
+      Cartoon: 'Ruban',
+      'Cartoon requires a protein or nucleic-acid backbone':
+        'La représentation en rubans nécessite un squelette protéique ou nucléique',
+      'Reset runtime': "Réinitialiser l'environnement d'exécution",
+      'Install Specialist': 'Installer le spécialiste',
+      'Update Specialist': 'Mettre à jour le spécialiste',
+      '<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder.':
+        '<em>Vos données existantes (~{{size}}) seront déplacées</em> vers le nouvel emplacement — vos fichiers les accompagneront et rien ne restera dans le dossier actuel.',
+      "Opening your browser to sign in… Didn't open? Cancel and use a setup token.":
+        "Ouverture du navigateur pour vous connecter… Rien ne s'est ouvert\u00a0? Annulez et utilisez un jeton de configuration.",
+      "Opening your browser to sign in… finish there and this closes automatically. Didn't open, or prefer a token? Paste one below.":
+        "Ouverture du navigateur pour vous connecter… Terminez la connexion dans le navigateur\u00a0; cette fenêtre se fermera automatiquement. Rien ne s'est ouvert, ou vous préférez utiliser un jeton\u00a0? Collez-le ci-dessous.",
+      'Its contents fill the editor; switch back to Write to tweak.':
+        "Son contenu est chargé dans l'éditeur\u00a0; revenez à Écrire pour le modifier.",
+      Image: 'Image',
+      'Copy command': 'Copier la commande',
+      'Data location': 'Emplacement des données',
+      'Edit specialist': 'Modifier le spécialiste',
+      'Recent artifacts': 'Artefacts récents',
+      'Search sessions and artifacts…': 'Rechercher des sessions et des artefacts…',
+      'Search skills': 'Rechercher des compétences',
+      'Search skills to add': 'Rechercher des compétences à ajouter',
+      'Search skills…': 'Rechercher des compétences…',
+      'Search specialists': 'Rechercher des spécialistes',
+      'Search specialists…': 'Rechercher des spécialistes…',
+      'Specialist delete': 'Suppression du spécialiste',
+      'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.':
+        "Remote.It est un service tiers. Open Science utilise uniquement son interface en ligne de commande (CLI) de bureau installée par l'utilisateur ; il n'inclut pas ce logiciel, ne le redistribue pas, ne l'enregistre pas et ne crée aucun compte pour ce service.",
+      'No folders granted yet.': "Aucun accès à un dossier n'a encore été autorisé.",
+      "Your home folder itself can't be granted — pick a subfolder.":
+        "L'accès ne peut pas être accordé directement au dossier personnel ; choisissez un sous-dossier.",
+      'Refreshing…': 'Actualisation…',
+      Upload: 'Téléverser',
+      'Upload failed': 'Échec du téléversement',
+      Runtime: "Environnement d'exécution",
+      Runtime_duration: "Durée d'exécution"
+    }
+    const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
+
+    expect(actual).toEqual(expected)
+  })
+
+  it('uses the chosen French runtime term for environment surfaces', () => {
+    // These keys refer to an executable environment, not elapsed time or an individual run.
+    const runtimeEnvironmentKeys = [
+      'Agent runtime',
+      'Agent runtime repair issues',
+      "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first.",
+      'Could not change that runtime.',
+      'Could not check whether that runtime is in use, so it was not disabled.',
+      'Could not load runtimes.',
+      'Could not re-check runtimes.',
+      'Could not refresh runtime readiness.',
+      'Could not reset the runtime.',
+      'Detecting runtimes…',
+      'Downloading managed runtime…',
+      'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.',
+      'Manage your agent runtime and model providers.',
+      'Managed runtime is not set up yet',
+      'Notebook runtime',
+      'Notebook runtime (optional)',
+      'Notebook runtimes',
+      'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.',
+      'Set up the agent runtime',
+      'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.',
+      'Setting up {{language}} runtime',
+      'This removes the {{name}} runtime this app downloaded and manages. A separate {{name}} you installed yourself is not affected. You can reinstall it here at any time.',
+      '{{label}} runtime',
+      'View notebook runtimes?',
+      'Change notebook runtime?',
+      'Changes the runtime used by the current notebook session.'
+    ]
+    const offenders = runtimeEnvironmentKeys.filter(
+      (key) => !/environnements? d['’]exécution/i.test(catalog('fr')[key])
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the chosen French Marketplace term throughout the surface', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bMarketplace\b/.test(englishOf(key)))
+      .filter(([key]) => !key.includes('Specialist Marketplace protocol'))
+      .filter(([, value]) => !/place de marché/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the French specialist noun throughout role copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bSpecialists?\b/.test(englishOf(key)))
+      .filter(([key]) => !key.includes('Specialist Marketplace protocol'))
+      .filter(([, value]) => !/\bspécialistes?\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses natural French progress ratios without agreement ambiguity', () => {
+    const expected = {
+      '{{current}} of {{total}}': '{{current}} sur {{total}}',
+      '{{visible}} of {{total}}': '{{visible}} sur {{total}}',
+      '{{selected}} of {{total}} selected': 'Sélection : {{selected}}/{{total}}',
+      '{{selected}} of {{total}} included': 'Éléments inclus : {{selected}}/{{total}}'
+    }
+    const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
+
+    expect(actual).toEqual(expected)
+  })
+
+  it('uses an agreement-safe French token coverage ratio for every plural category', () => {
+    const expectedValue =
+      'Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.'
+    const keys = [
+      'Token totals are available for {{reported}} of {{count}} runs in this period._one',
+      'Token totals are available for {{reported}} of {{count}} runs in this period._other',
+      'Token totals are available for {{reported}} of {{count}} runs in this period._many'
+    ]
+
+    expect(keys.map((key) => catalog('fr')[key])).toEqual(keys.map(() => expectedValue))
+  })
+
+  it('does not use financial terms for French permission grants', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\b(?:grants?|granted)\b/i.test(englishOf(key)))
+      .filter(([, value]) => /\b(?:subventions?|octrois?)\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps French high punctuation attached to the preceding text', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([, value]) => / [;:?!]/.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not use exclamation points in French UI copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([, value]) => value.includes('!'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses téléverser consistently for French upload copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bupload(?:ed|ing|s)?\b/i.test(englishOf(key)))
+      .filter(([, value]) => !/télévers/i.test(value) || /télécharg/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each(['/path/to/new/location', '/scratch/username', '/path/to/corp-ca-bundle.pem'])(
+    'preserves the exact technical path %s in every translated catalog',
+    (path) => {
+      const offenders = TRANSLATED.filter((locale) => catalog(locale)[path] !== path)
+
+      expect(offenders).toEqual([])
+    }
+  )
 
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
     const expected = {
@@ -1238,7 +1473,7 @@ describe('French safety copy', () => {
     ['This call only', 'Pour cet appel uniquement'],
     [
       'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
-      "Les autorisations individuelles restent révocables ; « Tout révoquer » est désactivé tant que l'ensemble complet n'est pas connu."
+      "Les autorisations individuelles restent révocables\u00a0; « Tout révoquer » est désactivé tant que l'ensemble complet n'est pas connu."
     ],
     ['{{count}} allowed this session_one', '{{count}} autorisation accordée pendant cette session'],
     [

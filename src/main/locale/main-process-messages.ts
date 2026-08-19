@@ -303,10 +303,10 @@ const frMessages: NativeMessages = {
   'Return to the running tasks and stop their subagents before quitting Open Science.':
     'Revenez aux tâches en cours et arrêtez leurs sous-agents avant de quitter Open Science.',
   Cancel: 'Annuler',
-  'Quit Open Science?': 'Quitter Open Science ?',
+  'Quit Open Science?': 'Quitter Open Science ?',
   'Work is still running and will be interrupted if you quit.':
     "Des tâches sont encore en cours et seront interrompues si vous quittez l'application.",
-  'Minimize to tray or quit?': 'Réduire dans la zone de notification ou quitter ?',
+  'Minimize to tray or quit?': 'Réduire dans la zone de notification ou quitter ?',
   'Background work may still be running.': "Des tâches peuvent encore s'exécuter en arrière-plan.",
   "Don't ask again": 'Ne plus demander',
   'Keep waiting': "Continuer d'attendre",
@@ -320,7 +320,7 @@ const frMessages: NativeMessages = {
   'The app window stopped responding repeatedly.':
     "La fenêtre de l'application a cessé de répondre à plusieurs reprises.",
   'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.':
-    "La récupération automatique a été suspendue. Le rechargement ramène cette fenêtre à l'écran d'accueil ; des tâches peuvent encore s'exécuter en arrière-plan.",
+    "La récupération automatique a été suspendue. Le rechargement ramène cette fenêtre à l'écran d'accueil ; des tâches peuvent encore s'exécuter en arrière-plan.",
   'Save file': 'Enregistrer le fichier',
   'Save artifact': "Enregistrer l'artefact",
   'Choose where to save artifacts': 'Choisir où enregistrer les artefacts',
@@ -331,7 +331,7 @@ const frMessages: NativeMessages = {
   'Export notebook': 'Exporter le Notebook',
   'Jupyter Notebook': 'Jupyter Notebook',
   'Export notebooks by kernel': 'Exporter les Notebooks par noyau',
-  'Overwrite existing notebooks?': 'Écraser les Notebooks existants ?',
+  'Overwrite existing notebooks?': 'Écraser les Notebooks existants ?',
   '{{count}} notebook already exists in the chosen directory.':
     'Le dossier choisi contient déjà {{count}} Notebook.',
   '{{count}} notebooks already exist in the chosen directory.':

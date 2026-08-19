@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsRepository } from '../settings/repository'
 import { LocalePreferenceOwner } from './owner'
-import { translateNativeMessage } from './main-process-messages'
+import { englishMessages, translateNativeMessage } from './main-process-messages'
 
 const roots: string[] = []
 
@@ -73,5 +73,12 @@ describe('LocalePreferenceOwner', () => {
         }
       )
     ).toContain('3')
+  })
+
+  it('keeps French high punctuation attached to the preceding text', () => {
+    const keys = Object.keys(englishMessages) as Array<keyof typeof englishMessages>
+    const offenders = keys.filter((key) => / [;:?!]/.test(translateNativeMessage('fr', key)))
+
+    expect(offenders).toEqual([])
   })
 })
