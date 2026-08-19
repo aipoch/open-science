@@ -627,6 +627,12 @@ describe('OpenScienceClient', () => {
     })
     const events = client.events({ WebSocket: FakeWebSocket as never })[Symbol.asyncIterator]()
     FakeWebSocket.instance.emit('open')
+    FakeWebSocket.instance.emit('message', {
+      data: JSON.stringify({
+        type: 'connection.heartbeat',
+        data: { timestamp: 100 }
+      })
+    })
     const first = events.next()
     FakeWebSocket.instance.emit('message', {
       data: JSON.stringify(PUBLIC_TERMINAL_FIXTURE)
@@ -683,6 +689,7 @@ describe('OpenScienceClient', () => {
     expect(FakeWebSocket.instance.url.pathname).toBe('/api/v1/events')
     expect(FakeWebSocket.instance.url.searchParams.get('token')).toBe('token-1')
     expect(FakeWebSocket.instance.url.searchParams.get('client')).toMatch(/^sdk-/)
+    expect(FakeWebSocket.instance.url.searchParams.get('liveness')).toBe('1')
     await events.return?.()
     expect(FakeWebSocket.instance.closed).toBe(true)
   })
@@ -701,6 +708,43 @@ describe('OpenScienceClient', () => {
       code: 'event_stream_failed',
       message: 'Open Science event stream failed.'
     })
+  })
+
+  it('fails a ready event iterator when the connection stops receiving liveness frames', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'token-1',
+        fetch: vi.fn()
+      })
+      const events = client.events({
+        idleTimeoutMs: 25,
+        WebSocket: ControllableWebSocket as never
+      })
+      const iterator = events[Symbol.asyncIterator]()
+      ControllableWebSocket.instance.emit('open')
+      await events.ready
+      let outcome: unknown = 'still-pending'
+      void iterator.next().then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(outcome).toMatchObject({
+        code: 'timeout',
+        message: 'Open Science event stream timed out after 25 milliseconds.'
+      })
+      expect(ControllableWebSocket.instance.closed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects event readiness when the socket closes before opening', async () => {

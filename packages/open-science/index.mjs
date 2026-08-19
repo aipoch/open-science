@@ -6,6 +6,7 @@ const defaultSleep = (milliseconds) =>
   new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds))
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 30_000
 const MAX_BUFFERED_EVENTS = 1_024
 
 export class OpenScienceApiError extends Error {
@@ -300,13 +301,19 @@ export class OpenScienceClient {
     }
   }
 
-  events({ signal, WebSocket: WebSocketImpl = globalThis.WebSocket } = {}) {
+  events({
+    idleTimeoutMs = DEFAULT_EVENT_IDLE_TIMEOUT_MS,
+    signal,
+    WebSocket: WebSocketImpl = globalThis.WebSocket
+  } = {}) {
     if (!WebSocketImpl) throw new Error('A WebSocket implementation is required.')
     signal?.throwIfAborted()
+    resolveRequestTimeout(DEFAULT_EVENT_IDLE_TIMEOUT_MS, idleTimeoutMs)
     const endpoint = new URL('/api/v1/events', this.baseUrl)
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
     endpoint.searchParams.set('token', this.token)
     endpoint.searchParams.set('client', `sdk-${globalThis.crypto.randomUUID()}`)
+    endpoint.searchParams.set('liveness', '1')
     const socket = new WebSocketImpl(endpoint)
     const queue = []
     const waiters = []
@@ -316,6 +323,7 @@ export class OpenScienceClient {
     let rejectReady
     let readySettled = false
     let opened = false
+    let idleTimer
     const ready = new Promise((resolve, reject) => {
       resolveReady = resolve
       rejectReady = reject
@@ -342,6 +350,7 @@ export class OpenScienceClient {
       if (finished) return
       finished = true
       failure = error
+      clearTimeout(idleTimer)
       if (discardQueue) queue.splice(0)
       if (!opened) {
         settleReady(
@@ -362,8 +371,21 @@ export class OpenScienceClient {
         discardQueue: true
       })
     }
+    const armIdleTimeout = () => {
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(
+        () =>
+          fail(
+            `Open Science event stream timed out after ${idleTimeoutMs} milliseconds.`,
+            'timeout'
+          ),
+        idleTimeoutMs
+      )
+    }
+    armIdleTimeout()
     socket.addEventListener('message', (event) => {
       if (finished) return
+      armIdleTimeout()
       let parsed
       try {
         parsed = JSON.parse(String(event.data))
@@ -374,6 +396,7 @@ export class OpenScienceClient {
         )
         return
       }
+      if (parsed?.type === 'connection.heartbeat') return
       if (queue.length >= MAX_BUFFERED_EVENTS) {
         fail(
           'Open Science event stream exceeded its buffered event limit.',
@@ -387,6 +410,7 @@ export class OpenScienceClient {
     socket.addEventListener('open', () => {
       if (finished) return
       opened = true
+      armIdleTimeout()
       settleReady()
     })
     socket.addEventListener('error', () => {

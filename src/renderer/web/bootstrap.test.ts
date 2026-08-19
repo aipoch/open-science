@@ -31,6 +31,7 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = []
 
   readonly listeners = new Map<SocketEventName, Set<SocketListener>>()
+  closed = false
 
   constructor(readonly url: string) {
     FakeWebSocket.instances.push(this)
@@ -43,6 +44,8 @@ class FakeWebSocket {
   }
 
   close(): void {
+    if (this.closed) return
+    this.closed = true
     this.emit('close')
   }
   emit(name: SocketEventName, event: SocketEvent = {}): void {
@@ -51,6 +54,9 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  notebook: {
+    execute: (request: unknown) => Promise<unknown>
+  }
   projects: {
     create: (request: unknown) => Promise<unknown>
     onCreated: (listener: (payload: unknown) => void) => () => void
@@ -87,6 +93,14 @@ const eventFrame = (sequence: number, channel: string, payload: unknown): string
 const readyFrame = (latestSequence: number): string =>
   JSON.stringify({
     kind: 'ready',
+    protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+    streamId: 'stream-1',
+    latestSequence
+  })
+
+const heartbeatFrame = (latestSequence: number): string =>
+  JSON.stringify({
+    kind: 'heartbeat',
     protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
     streamId: 'stream-1',
     latestSequence
@@ -277,6 +291,134 @@ describe('Web bootstrap event connection', () => {
     expect(rpcSignal?.aborted).toBe(true)
   })
 
+  it('lets a long Notebook execution finish under its own deadline', async () => {
+    let rpcSignal: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/notebook%3Aexecute') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((resolve, reject) => {
+            const timeout = window.setTimeout(
+              () =>
+                resolve(
+                  new Response(
+                    JSON.stringify({
+                      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                      ok: true,
+                      result: { runId: 'run-1', status: 'completed' }
+                    }),
+                    { status: 200, headers: { 'content-type': 'application/json' } }
+                  )
+                ),
+              60_000
+            )
+            rpcSignal?.addEventListener(
+              'abort',
+              () => {
+                window.clearTimeout(timeout)
+                reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError'))
+              },
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = api.notebook.execute({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'long_running_analysis()'
+    })
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(10_001)
+
+    expect(settled).toBe(false)
+    expect(rpcSignal?.aborted ?? false).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(9_999)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    await expect(request).resolves.toEqual({ runId: 'run-1', status: 'completed' })
+  })
+
+  it('aborts a long Notebook request when its event connection disconnects', async () => {
+    let rpcSignal: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/notebook%3Aexecute') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((_resolve, reject) => {
+            rpcSignal?.addEventListener(
+              'abort',
+              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = api.notebook.execute({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'long_running_analysis()'
+    })
+    let outcome: unknown = 'still-pending'
+    void request.then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: unknown) => {
+        outcome = error
+      }
+    )
+
+    socket.emit('close')
+    expect(rpcSignal?.aborted).toBe(true)
+    await vi.waitFor(() => expect(outcome).toBeInstanceOf(DOMException))
+  })
+
   it('settles a stalled managed download and releases its acquired resource', async () => {
     let downloadSignal: AbortSignal | undefined
     let released = false
@@ -380,7 +522,8 @@ describe('Web bootstrap event connection', () => {
       client: 'web-client-1',
       eventProtocol: String(WEB_EVENT_STREAM_PROTOCOL_VERSION),
       stream: 'stream-1',
-      after: '0'
+      after: '0',
+      liveness: '1'
     })
   })
 
@@ -398,6 +541,33 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(FakeWebSocket.instances).toHaveLength(3)
+  })
+
+  it('closes a ready event socket that stops receiving liveness frames', async () => {
+    await loadBootstrap()
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+
+    await vi.advanceTimersByTimeAsync(30_001)
+
+    expect(socket.closed).toBe(true)
+  })
+
+  it('keeps a ready event socket alive while heartbeat frames continue', async () => {
+    await loadBootstrap()
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    await vi.advanceTimersByTimeAsync(20_000)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(socket.closed).toBe(false)
+    await vi.advanceTimersByTimeAsync(10_001)
+    expect(socket.closed).toBe(true)
   })
 
   it('resets reconnect backoff after a socket becomes ready', async () => {

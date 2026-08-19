@@ -498,6 +498,65 @@ describe('native Responses compatibility', () => {
     }
   })
 
+  it('aborts a blocking native Responses body after the configured idle period', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    let failUpstream: ((reason?: unknown) => void) | undefined
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamSignal = init?.signal ?? undefined
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              failUpstream = (reason) => controller.error(reason)
+              upstreamSignal?.addEventListener(
+                'abort',
+                () => failUpstream?.(upstreamSignal?.reason),
+                { once: true }
+              )
+            }
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
+      fetchImpl,
+      { streamIdleTimeoutMs: 25 }
+    )
+    const connection = await proxy.start()
+
+    try {
+      const outcome = await Promise.race([
+        fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ model: 'deepseek-v4-pro', input: 'analyze', stream: false })
+        }),
+        new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 500))
+      ])
+
+      expect(outcome).toBeInstanceOf(Response)
+      const response = outcome as Response
+      expect(response.status).toBe(400)
+      expect(upstreamSignal?.aborted).toBe(true)
+      expect(logSpies.warn.mock.calls).toContainEqual([
+        'native Responses compatibility request failed',
+        expect.objectContaining({
+          phase: 'forward-response',
+          outcome: 'error',
+          errorCategory: 'timeout'
+        })
+      ])
+    } finally {
+      failUpstream?.()
+      await proxy.close()
+    }
+  })
+
   it('aborts a native Responses request when upstream headers do not arrive in time', async () => {
     let upstreamSignal: AbortSignal | undefined
     const fetchImpl = vi.fn(

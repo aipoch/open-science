@@ -621,6 +621,76 @@ describe('startWebHttpServer', () => {
     publicSocket.close()
   })
 
+  it('sends opt-in liveness frames on internal and public event sockets', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      eventHeartbeatIntervalMs: 10,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrap = (await (
+      await fetch(`${base}/api/bootstrap`, {
+        headers: { authorization: 'Bearer test-token' }
+      })
+    ).json()) as {
+      eventStream: { streamId: string; latestSequence: number }
+    }
+    const internalUrl = new URL(`${base.replace('http:', 'ws:')}/events`)
+    internalUrl.searchParams.set('token', 'test-token')
+    internalUrl.searchParams.set('client', 'heartbeat-web')
+    internalUrl.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+    internalUrl.searchParams.set('stream', bootstrap.eventStream.streamId)
+    internalUrl.searchParams.set('after', String(bootstrap.eventStream.latestSequence))
+    internalUrl.searchParams.set('liveness', '1')
+    const publicUrl = new URL(`${base.replace('http:', 'ws:')}/api/v1/events`)
+    publicUrl.searchParams.set('token', 'test-token')
+    publicUrl.searchParams.set('client', 'heartbeat-sdk')
+    publicUrl.searchParams.set('liveness', '1')
+    const internalSocket = new WebSocket(internalUrl)
+    const publicSocket = new WebSocket(publicUrl)
+    const messages = (socket: WebSocket): Promise<unknown> =>
+      new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for heartbeat.')), 250)
+        socket.on('message', (data) => {
+          const parsed = JSON.parse(data.toString())
+          if (parsed.kind === 'ready') return
+          clearTimeout(timeout)
+          resolve(parsed)
+        })
+      })
+
+    await expect(Promise.all([messages(internalSocket), messages(publicSocket)])).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'heartbeat',
+        protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+        streamId: bootstrap.eventStream.streamId,
+        latestSequence: bootstrap.eventStream.latestSequence
+      }),
+      expect.objectContaining({
+        type: 'connection.heartbeat',
+        data: { timestamp: expect.any(Number) }
+      })
+    ])
+    internalSocket.close()
+    publicSocket.close()
+  })
+
   it('exposes only versioned, schema-valid RPC contract channels', async () => {
     const rpc = {
       channels: () => ['projects:list', 'test:unsafe'],

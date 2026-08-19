@@ -38,9 +38,11 @@ use a managed workspace. External working directories remain caller-owned and ar
 Open Science.
 
 For live automation feedback, subscribe before starting the Run. `run.progress` reports ordered
-provider-neutral phases and emits a heartbeat every ten seconds until the first visible provider
-output. The timer starts after Task has prepared the Session and registered its Run; Session
-creation or resume time before registration is outside this event stream:
+provider-neutral phases and emits a progress heartbeat every ten seconds until the first visible
+provider output. This progress heartbeat describes Run activity; it is separate from the filtered
+connection heartbeat that keeps an otherwise-idle WebSocket alive. The timer starts after Task has
+prepared the Session and registered its Run; Session creation or resume time before registration is
+outside this event stream:
 
 ```js
 const abortController = new AbortController()
@@ -66,9 +68,13 @@ await progress
 console.log(observedResult.output)
 ```
 
-`events.ready` rejects if the socket fails or closes before opening. Malformed frames and a consumer
-backlog above 1024 events terminate the iterator with `event_stream_invalid_message` or
-`event_stream_overflow` instead of throwing outside the iterator or growing memory without a bound.
+`events.ready` rejects if the socket fails, closes, or receives no liveness frame before opening.
+After opening, the iterator fails with `timeout` when no event or connection heartbeat arrives for
+30 seconds. Pass `idleTimeoutMs` to change that connection-liveness window; it does not limit model,
+Notebook, permission-approval, or other Run duration. Connection heartbeats are control frames and
+are not yielded to consumers. Malformed frames and a consumer backlog above 1024 events terminate
+the iterator with `event_stream_invalid_message` or `event_stream_overflow` instead of throwing
+outside the iterator or growing memory without a bound.
 
 Plan First runs can opt into actionable waiting with returnOnAttention. When the returned Run has
 attention.kind equal to plan-approval, use getSessionPlan and respondSessionPlan. Calling waitForRun

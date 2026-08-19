@@ -713,9 +713,9 @@ class AcpRuntimeCoordinator {
   }
 
   // Interactive prompt dispatch is an admission RPC, while the authoritative turn lifecycle is
-  // streamed through runtime state/events. Settle the RPC as soon as the provider accepts the
-  // prompt so a long-running turn (or its terminal maintenance) does not retain an Electron reply
-  // channel until completion.
+  // streamed through runtime state/events. Settle once the application runtime owns the prompt;
+  // blocking providers and human approval waits may produce no provider update before their own
+  // domain lifecycle completes and must not retain a Web request until then.
   startPrompt(request: AcpPromptRequest): Promise<void> {
     let settled = false
     let resolve!: () => void
@@ -724,7 +724,7 @@ class AcpRuntimeCoordinator {
       resolve = promiseResolve
       reject = promiseReject
     })
-    const settleAccepted = (): void => {
+    const settleAdmitted = (): void => {
       if (settled) return
       settled = true
       resolve()
@@ -735,8 +735,8 @@ class AcpRuntimeCoordinator {
       reject(error)
     }
 
-    void this.sendPromptObserved(request, settleAccepted).then(
-      () => settleRejected(new Error('ACP prompt ended before provider acceptance.')),
+    void this.sendObservedPrompt(request, undefined, settleAdmitted).then(
+      settleAdmitted,
       settleRejected
     )
     return accepted
@@ -767,14 +767,21 @@ class AcpRuntimeCoordinator {
 
   private sendObservedPrompt(
     request: AcpPromptRequest,
-    acceptance?: PromptAcceptance
+    acceptance?: PromptAcceptance,
+    onApplicationPromptAdmitted?: () => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
       this.linearizeRootAdmission(request.sessionId, () =>
-        this.dispatchPrompt(request, acceptance, 'sendPrompt').finally(() =>
-          this.delegatedWork?.wakeMessages?.(request.sessionId)
-        )
+        this.dispatchPrompt(
+          request,
+          acceptance,
+          'sendPrompt',
+          undefined,
+          true,
+          undefined,
+          onApplicationPromptAdmitted
+        ).finally(() => this.delegatedWork?.wakeMessages?.(request.sessionId))
       )
     const admission = this.promptAdmissionGuard?.(request.sessionId)
     return admission ? admission.then(dispatch) : dispatch()
@@ -909,7 +916,8 @@ class AcpRuntimeCoordinator {
     operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
-    attribution?: MessageAttribution
+    attribution?: MessageAttribution,
+    onApplicationPromptAdmitted?: () => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
       this.dispatchAdmittedPrompt(
@@ -918,7 +926,8 @@ class AcpRuntimeCoordinator {
         operation,
         pinnedRuntime,
         retainAsLatestUserPrompt,
-        attribution
+        attribution,
+        onApplicationPromptAdmitted
       )
     return this.promptDispatchAdmissionGuard
       ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
@@ -931,7 +940,8 @@ class AcpRuntimeCoordinator {
     operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
-    attribution?: MessageAttribution
+    attribution?: MessageAttribution,
+    onApplicationPromptAdmitted?: () => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -971,6 +981,7 @@ class AcpRuntimeCoordinator {
       operation === 'sendApplicationPrompt'
         ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
         : runtime[operation](taskRequest, attempt.id)
+    onApplicationPromptAdmitted?.()
     return prompt
       .catch((error: unknown) => {
         if (

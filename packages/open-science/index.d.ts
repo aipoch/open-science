@@ -163,11 +163,14 @@ export class OpenScienceClient {
   })
   health(options?: RequestOptions): Promise<unknown>
   listProjects(options?: RequestOptions): Promise<Project[]>
-  createProject(request: {
-    name: string
-    description?: string
-    agentContext?: string
-  }, options?: RequestOptions): Promise<Project>
+  createProject(
+    request: {
+      name: string
+      description?: string
+      agentContext?: string
+    },
+    options?: RequestOptions
+  ): Promise<Project>
   updateProject(
     projectId: string,
     request: {
@@ -221,6 +224,7 @@ export class OpenScienceClient {
   listArtifacts(sessionId: string, options?: RequestOptions): Promise<Artifact[]>
   downloadArtifact(artifactId: string, options?: RequestOptions): Promise<Response>
   events(options?: {
+    idleTimeoutMs?: number
     signal?: AbortSignal
     WebSocket?: typeof globalThis.WebSocket
   }): AsyncIterable<
