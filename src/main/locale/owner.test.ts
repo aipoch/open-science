@@ -60,9 +60,10 @@ describe('LocalePreferenceOwner', () => {
   it('rejects invalid renderer input and translates native messages with interpolation', async () => {
     const owner = new LocalePreferenceOwner(['en-US'], await createRepository())
 
-    expect(() => owner.setPreference('fr')).toThrow('Invalid language preference')
+    expect(() => owner.setPreference('de')).toThrow('Invalid language preference')
     expect(translateNativeMessage('ja', 'Quit')).toBe('終了')
     expect(translateNativeMessage('ko', 'Quit')).toBe('종료')
+    expect(translateNativeMessage('fr', 'Quit')).toBe('Quitter')
     expect(
       translateNativeMessage(
         'zh-Hans',
