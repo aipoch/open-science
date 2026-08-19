@@ -96,6 +96,46 @@ describe('TagService', () => {
     expect(repository.setAssignment).not.toHaveBeenCalled()
   })
 
+  it('serializes resource validation behind pending deletion cleanup', async () => {
+    let finishCleanup: (() => void) | undefined
+    let deleted = false
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    const repository = {
+      removeResourceAssignments: vi.fn(async () => {
+        await cleanup
+        deleted = true
+        return 0
+      }),
+      setAssignment: vi.fn(),
+      snapshot: vi.fn((revision) => Promise.resolve(snapshot(revision)))
+    }
+    const resources = { exists: vi.fn(() => Promise.resolve(!deleted)) }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      resources as unknown as TagResourceCatalog,
+      { publish: vi.fn() }
+    )
+    const reference = { resourceType: 'catalog.skill' as const, resourceId: 'deleted-skill' }
+
+    const deletion = service.removeResources([reference])
+    await vi.waitFor(() => expect(repository.removeResourceAssignments).toHaveBeenCalledOnce())
+    const assignment = service.setAssignment({
+      ...reference,
+      tagId: 'tag-favorite',
+      assigned: true
+    })
+    await Promise.resolve()
+    expect(resources.exists).not.toHaveBeenCalled()
+
+    finishCleanup?.()
+    await deletion
+    await expect(assignment).rejects.toThrow('Tag resource no longer exists.')
+    expect(resources.exists).toHaveBeenCalledOnce()
+    expect(repository.setAssignment).not.toHaveBeenCalled()
+  })
+
   it('prunes stale references during snapshot reconciliation', async () => {
     const repository = {
       pruneStaleAssignments: vi.fn().mockResolvedValue(2),

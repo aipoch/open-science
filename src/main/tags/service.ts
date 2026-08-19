@@ -72,11 +72,13 @@ class TagService {
     return this.mutate(() => this.repository.delete(request.id))
   }
 
-  async setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot> {
-    if (request.assigned && !(await this.resources.exists(request))) {
-      throw new Error('Tag resource no longer exists.')
-    }
-    return this.mutate(() => this.repository.setAssignment(request))
+  setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot> {
+    return this.mutate(async () => {
+      if (request.assigned && !(await this.resources.exists(request))) {
+        throw new Error('Tag resource no longer exists.')
+      }
+      await this.repository.setAssignment(request)
+    })
   }
 
   async removeResources(resources: readonly TagResourceRef[]): Promise<void> {
