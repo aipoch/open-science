@@ -27,6 +27,7 @@ import {
 } from './session-store-message-graph-helpers'
 import {
   hydrateToolActivity,
+  retainExternallyHydratedSessionAuthority,
   type ActiveRun,
   type ChatMessage,
   type ChatMessageRole,
@@ -669,12 +670,14 @@ export const createSessionMessageGraphOwner = <
                 : usage
             const now = Math.max(Date.now(), session.updatedAt + 1)
             messages[index] = { ...message, sessionNamingUsage: mergedUsage, updatedAt: now }
-            return {
+            // The annotation mirrors usage the Agent title transaction already persisted, so the
+            // mutated object must remain an externally hydrated projection of that durable state.
+            return retainExternallyHydratedSessionAuthority(session, {
               ...session,
               messages,
               conversationGraph: synchronizeSessionGraph(session, messages, now),
               updatedAt: now
-            }
+            })
           })
         }) as Partial<State>
     )

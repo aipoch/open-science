@@ -299,6 +299,9 @@ const createAcpRuntime = ({
                 onCleanupTimeout: ({ activeAttempts }) =>
                   log.warn('session auto-title cleanup timed out', { activeAttempts }),
                 generate: async ({ prompt, signal }) => {
+                  log.info('session auto-title fallback inference started', {
+                    promptPreview: prompt.slice(0, 80)
+                  })
                   const result = await acquireTitleInference().run({
                     target: await backendAdmission!.target(),
                     signal,
@@ -308,6 +311,10 @@ const createAcpRuntime = ({
                       'Create a concise title for a conversation from its first user message. Return only the title, with no quotes, markdown, explanation, or trailing punctuation. Use the user message language. Keep it under 60 characters. Never use tools.',
                     prompt: `First user message:\n${prompt}`,
                     outputLimitBytes: 512
+                  })
+                  log.info('session auto-title fallback inference completed', {
+                    title: result.text,
+                    ...(result.usage ? { usage: result.usage } : {})
                   })
                   return { title: result.text, ...(result.usage ? { usage: result.usage } : {}) }
                 }

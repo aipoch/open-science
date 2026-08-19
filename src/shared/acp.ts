@@ -354,6 +354,7 @@ export type AcpContextWindowSample = AcpTerminalContextWindow & {
 // separate from ACP's latest-request usage snapshot.
 export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
 export const ACP_MODEL_TURN_COUNT_META_KEY = 'open-science/model-turn-count'
+export const ACP_SESSION_TITLE_SOURCE_META_KEY = 'open-science/session-title-source'
 
 // Normalizes ACP's experimental PromptResponse usage into the stable, provider-neutral projection the
 // renderer persists. Missing cache categories mean zero; malformed totals suppress the entire footer.

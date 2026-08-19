@@ -293,7 +293,11 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       permissionContext.setProviderPermissionProfile(sessionId, profile),
     emitState: () => publication.emitState(),
     pushEvent: (event) => publication.pushEvent(event),
-    onFrameworkTitle: (sessionId) => sessionAutoTitle?.observeFrameworkTitle(sessionId),
+    onFrameworkTitle: (sessionId, title) => {
+      const promptMessageId = sessionAutoTitle?.observeFrameworkTitle(sessionId)
+      log.info('session auto-title reused framework title', { sessionId, title })
+      return promptMessageId
+    },
     reportToolFailure: (effect) =>
       log.warn('tool call failed', {
         tool: effect.tool,

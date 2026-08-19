@@ -516,6 +516,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (mode === 'title-authority') {
         const projected: ChatSession = {
           ...current,
+          revision: Math.max(sessionRevision(current), sessionRevision(session)),
           title: session.title,
           titleSource: session.titleSource,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
@@ -720,6 +721,19 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
 
 export const isExternallyHydratedSession = (session: ChatSession): boolean =>
   externallyHydratedSessionAuthorities.has(session)
+
+// A store mutation that only mirrors main-owned durable facts (such as a naming usage annotation
+// already persisted by the Agent title transaction) stays externally hydrated: the next object must
+// keep the authority so the saver acknowledges the durable revision instead of re-saving a stale
+// projection over it.
+export const retainExternallyHydratedSessionAuthority = <Session extends ChatSession>(
+  previous: ChatSession,
+  next: Session
+): Session => {
+  const authority = externallyHydratedSessionAuthorities.get(previous)
+  if (authority && previous !== next) externallyHydratedSessionAuthorities.set(next, authority)
+  return next
+}
 
 export const getExternallyHydratedSessionAuthority = (
   session: ChatSession

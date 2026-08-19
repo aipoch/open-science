@@ -22,7 +22,11 @@ import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
-import { ACP_MODEL_TURN_COUNT_META_KEY, ACP_TURN_TOKEN_USAGE_META_KEY } from '../../shared/acp'
+import {
+  ACP_MODEL_TURN_COUNT_META_KEY,
+  ACP_SESSION_TITLE_SOURCE_META_KEY,
+  ACP_TURN_TOKEN_USAGE_META_KEY
+} from '../../shared/acp'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -132,6 +136,25 @@ const CODEX_ACP_CONTEXT_USAGE_INPUT_ONLY_REPLACEMENT = [
   '        ? void 0',
   '        : contextTokenUsage.inputTokens;'
 ].join('\n')
+
+const CODEX_ACP_SESSION_TITLE_SOURCE = [
+  '  async publishFallbackSessionTitle(sessionState, title) {',
+  '    if (sessionState.sessionTitleSource !== "unset" || !title) return;',
+  '    sessionState.sessionTitle = title;',
+  '    sessionState.sessionTitleSource = "fallback";',
+  '    const session = new ACPSessionConnection(this.connection, sessionState.sessionId);',
+  '    await session.update({',
+  '      sessionUpdate: "session_info_update",',
+  '      title',
+  '    });',
+  '  }'
+].join('\n')
+const CODEX_ACP_SESSION_TITLE_REPLACEMENT = CODEX_ACP_SESSION_TITLE_SOURCE.replace(
+  '      title\n',
+  ['      title,', `      _meta: { "${ACP_SESSION_TITLE_SOURCE_META_KEY}": "fallback" }`, ''].join(
+    '\n'
+  )
+)
 
 const CODEX_ACP_TURN_USAGE_UPDATE_SOURCE = [
   '  createUsageUpdate(params) {',
@@ -485,6 +508,20 @@ const renameWithTransientLockRetry = async (source: string, destination: string)
   }
 }
 
+// codex-acp publishes the first prompt as a display fallback when Codex has not named the thread.
+// Preserve that useful adapter behavior for other clients, but mark its provenance so Open Science
+// can keep waiting for app inference while still accepting a later native thread/name/updated title.
+export const patchCodexAcpSessionTitleSource = (source: string): string => {
+  if (source.includes(CODEX_ACP_SESSION_TITLE_REPLACEMENT)) return source
+
+  const matches = source.split(CODEX_ACP_SESSION_TITLE_SOURCE).length - 1
+  if (matches === 1) {
+    return source.replace(CODEX_ACP_SESSION_TITLE_SOURCE, CODEX_ACP_SESSION_TITLE_REPLACEMENT)
+  }
+
+  throw new Error('Pinned Codex ACP session-title patch no longer matches the adapter bundle')
+}
+
 // codex-acp receives a per-request tokenUsage.last snapshot but publishes totalTokens as ACP context
 // usage. Its internal TokenCount has already separated cached input from uncached input, so recombine
 // those two input categories while excluding output and reasoning. The registry integrity pin fixes
@@ -658,7 +695,9 @@ export const ensureManagedCodexContextUsage = async (adapterPath: string): Promi
   const source = await readFile(adapterPath, 'utf8')
   const patched = patchCodexAcpModelCatalogStartupSource(
     patchCodexAcpSkillInputSource(
-      patchCodexAcpTurnUsageSource(patchCodexAcpContextUsageSource(source))
+      patchCodexAcpTurnUsageSource(
+        patchCodexAcpContextUsageSource(patchCodexAcpSessionTitleSource(source))
+      )
     )
   )
 

@@ -50,13 +50,26 @@ const PINNED_MODEL_CATALOG_STARTUP_FIXTURE = [
   '}'
 ].join('\n')
 
+const PINNED_SESSION_TITLE_FIXTURE = [
+  '  async publishFallbackSessionTitle(sessionState, title) {',
+  '    if (sessionState.sessionTitleSource !== "unset" || !title) return;',
+  '    sessionState.sessionTitle = title;',
+  '    sessionState.sessionTitleSource = "fallback";',
+  '    const session = new ACPSessionConnection(this.connection, sessionState.sessionId);',
+  '    await session.update({',
+  '      sessionUpdate: "session_info_update",',
+  '      title',
+  '    });',
+  '  }'
+].join('\n')
+
 const adapterFixture = (marker: string): Buffer =>
   Buffer.from(
-    `${marker}\n${PINNED_SKILL_MAPPER_FIXTURE}\n${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}\n`
+    `${marker}\n${PINNED_SKILL_MAPPER_FIXTURE}\n${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}\n${PINNED_SESSION_TITLE_FIXTURE}\n`
   )
 
 const withPinnedSkillMapper = (source: string): string =>
-  `${source}\n${PINNED_SKILL_MAPPER_FIXTURE}\n${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}`
+  `${source}\n${PINNED_SKILL_MAPPER_FIXTURE}\n${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}\n${PINNED_SESSION_TITLE_FIXTURE}`
 
 // Injectable fault flags for the fs/promises mock — each targets one specific rename call:
 //   onStagedMove: throw EPERM when src is the .codex-install- scratch dir (staged→destination)
@@ -183,6 +196,7 @@ import {
   installManagedCodex,
   patchCodexAcpContextUsageSource,
   patchCodexAcpModelCatalogStartupSource,
+  patchCodexAcpSessionTitleSource,
   patchCodexAcpSkillInputSource,
   patchCodexAcpTurnUsageSource,
   resolveManagedCodexPlatform,
@@ -1197,6 +1211,39 @@ describe('installManagedCodex', () => {
 
     await expect(readFile(managedCodexAdapterEntry(root))).rejects.toThrow()
     expect(await readFile(join(root, 'unrelated-runtime'), 'utf8')).toBe('keep-me')
+  })
+})
+
+describe('patchCodexAcpSessionTitleSource', () => {
+  it('marks the adapter-authored prompt title as a fallback without changing native titles', () => {
+    const source = [
+      '  async publishFallbackSessionTitle(sessionState, title) {',
+      '    if (sessionState.sessionTitleSource !== "unset" || !title) return;',
+      '    sessionState.sessionTitle = title;',
+      '    sessionState.sessionTitleSource = "fallback";',
+      '    const session = new ACPSessionConnection(this.connection, sessionState.sessionId);',
+      '    await session.update({',
+      '      sessionUpdate: "session_info_update",',
+      '      title',
+      '    });',
+      '  }',
+      '  createPromptFallbackTitle(prompt) {',
+      '    return prompt;',
+      '  }'
+    ].join('\n')
+
+    const patched = patchCodexAcpSessionTitleSource(source)
+
+    expect(patched).toContain('_meta: { "open-science/session-title-source": "fallback" }')
+    expect(patchCodexAcpSessionTitleSource(patched)).toBe(patched)
+  })
+
+  it('fails closed when the pinned fallback publisher changes shape', () => {
+    expect(() =>
+      patchCodexAcpSessionTitleSource(
+        '  async publishFallbackSessionTitle(sessionState, title) { return title; }'
+      )
+    ).toThrow(/session-title patch no longer matches/)
   })
 })
 

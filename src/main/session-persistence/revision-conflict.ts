@@ -10,6 +10,19 @@ import {
 
 type RebaseFields = NonNullable<SaveSessionOptions['conflictRebaseFields']>
 
+// Title ownership precedence shared by the Agent title transaction and whole-Session saves: a user
+// rename outranks framework/agent titles, which outrank app-generated and fallback ones.
+export const sessionTitlePriority = (
+  titleSource: PersistedChatSession['titleSource'] | undefined
+): number =>
+  titleSource === 'fallback'
+    ? 0
+    : titleSource === 'app-generated'
+      ? 1
+      : titleSource === 'framework' || titleSource === 'agent'
+        ? 2
+        : 3
+
 export const rebaseSafeSessionFields = (
   authoritative: PersistedChatSession,
   submitted: PersistedChatSession,

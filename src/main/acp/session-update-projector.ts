@@ -1,6 +1,10 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk'
 
-import type { AcpContextUsage, AcpRuntimeEvent } from '../../shared/acp'
+import {
+  ACP_SESSION_TITLE_SOURCE_META_KEY,
+  type AcpContextUsage,
+  type AcpRuntimeEvent
+} from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { sanitizeSessionTitle } from '../../shared/session-persistence'
@@ -261,6 +265,14 @@ class AcpSessionUpdateProjector {
     )
     if (routed.update.sessionUpdate === 'session_info_update') {
       if (routing.reconnectPending || !routing.visible) {
+        return Object.freeze([])
+      }
+      const updateMeta = (routed.update as typeof routed.update & { _meta?: unknown })._meta
+      if (
+        routing.framework === 'codex' &&
+        isRecord(updateMeta) &&
+        updateMeta[ACP_SESSION_TITLE_SOURCE_META_KEY] === 'fallback'
+      ) {
         return Object.freeze([])
       }
       const title = sanitizeSessionTitle(routed.update.title)

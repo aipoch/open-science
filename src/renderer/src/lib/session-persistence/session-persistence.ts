@@ -11,6 +11,7 @@ import {
   type DeleteSessionRequest,
   type LoadAllSessionsResult,
   type LoadSessionRequest,
+  type PersistedChatMessage,
   type PersistedChatSession,
   type SaveSessionOptions,
   type SessionConflictRebaseField,
@@ -135,6 +136,102 @@ const sessionFieldValuesEqual = (
       )
     : jsonValuesEqual(left, right)
 
+type NamingUsageMessage = {
+  id: string
+  sessionNamingUsage?: PersistedChatMessage['sessionNamingUsage']
+  updatedAt?: number
+}
+
+// The Agent title transaction is the only main-side writer that touches renderer-owned Messages: it
+// annotates the response Message it named with `sessionNamingUsage` and bumps that Message's
+// timestamp. A remote delta limited to that annotation is main-owned, so a stale local submission
+// adopts it instead of failing the rebase and forcing a Session reload.
+const normalizeNamingUsagePair = <Message extends NamingUsageMessage>(
+  base: Message,
+  latest: Message
+): readonly [Message, Message] => {
+  if (base.sessionNamingUsage === undefined && latest.sessionNamingUsage === undefined) {
+    return [base, latest]
+  }
+  return [
+    { ...base, sessionNamingUsage: undefined, updatedAt: 0 },
+    { ...latest, sessionNamingUsage: undefined, updatedAt: 0 }
+  ]
+}
+
+const namingUsageOnlyMessagesDelta = (
+  base: readonly NamingUsageMessage[],
+  latest: readonly NamingUsageMessage[]
+): boolean => {
+  if (base.length !== latest.length) return false
+  return base.every((message, index) => {
+    const latestMessage = latest[index]
+    if (!latestMessage || latestMessage.id !== message.id) return false
+    const [comparableBase, comparableLatest] = normalizeNamingUsagePair(message, latestMessage)
+    return jsonValuesEqual(comparableBase, comparableLatest)
+  })
+}
+
+const namingUsageOnlyGraphDelta = (
+  base: PersistedChatSession['conversationGraph'],
+  latest: PersistedChatSession['conversationGraph']
+): boolean => {
+  if (!base || !latest) return false
+  if (!namingUsageOnlyMessagesDelta(base.messages, latest.messages)) return false
+  return conversationGraphsEqualIgnoringBranchTimestamps(
+    { ...base, messages: [] },
+    { ...latest, messages: [] }
+  )
+}
+
+const adoptNamingUsage = <Message extends NamingUsageMessage>(
+  message: Message,
+  remote: Message | undefined
+): Message => {
+  if (!remote?.sessionNamingUsage) return message
+  if (jsonValuesEqual(message.sessionNamingUsage, remote.sessionNamingUsage)) return message
+  return {
+    ...message,
+    sessionNamingUsage: remote.sessionNamingUsage,
+    updatedAt: Math.max(message.updatedAt ?? 0, remote.updatedAt ?? 0)
+  }
+}
+
+// Merges the main-owned naming usage annotation into locally changed Messages (or their graph
+// projection) when the authoritative delta carries nothing else; returns undefined when the remote
+// delta changed renderer-owned content and the conflict still needs a reload.
+const mergeMainOwnedNamingUsage = (
+  key: 'messages' | 'conversationGraph',
+  baseValue: unknown,
+  submittedValue: unknown,
+  latestValue: unknown
+): PersistedChatSession['messages'] | PersistedChatSession['conversationGraph'] | undefined => {
+  if (key === 'messages') {
+    const base = baseValue as readonly NamingUsageMessage[] | undefined
+    const submitted = submittedValue as readonly NamingUsageMessage[] | undefined
+    const latest = latestValue as readonly NamingUsageMessage[] | undefined
+    if (!base || !submitted || !latest) return undefined
+    if (!namingUsageOnlyMessagesDelta(base, latest)) return undefined
+    return submitted.map((message, index) =>
+      adoptNamingUsage(message, latest[index])
+    ) as PersistedChatSession['messages']
+  }
+  const base = baseValue as PersistedChatSession['conversationGraph']
+  const submitted = submittedValue as PersistedChatSession['conversationGraph']
+  const latest = latestValue as PersistedChatSession['conversationGraph']
+  if (!base || !submitted || !latest) return undefined
+  if (!namingUsageOnlyGraphDelta(base, latest)) return undefined
+  return {
+    ...submitted,
+    messages: submitted.messages.map((message) =>
+      adoptNamingUsage(
+        message,
+        latest.messages.find((candidate) => candidate.id === message.id)
+      )
+    )
+  } as PersistedChatSession['conversationGraph']
+}
+
 const rebaseSessionAfterRevisionConflict = (
   base: PersistedChatSession,
   submitted: PersistedChatSession,
@@ -164,8 +261,18 @@ const rebaseSessionAfterRevisionConflict = (
     const localChanged = !sessionFieldValuesEqual(key, submittedValue, baseValue)
     if (!localChanged) continue
     const remoteChanged = !sessionFieldValuesEqual(key, latestValue, baseValue)
-    if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue))
+    if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue)) {
+      // The Agent title transaction's naming usage annotation is main-owned, so the local delta
+      // merges over it instead of failing the rebase.
+      if (key === 'messages' || key === 'conversationGraph') {
+        const merged = mergeMainOwnedNamingUsage(key, baseValue, submittedValue, latestValue)
+        if (merged !== undefined) {
+          Object.assign(rebased, { [key]: structuredClone(merged) })
+          continue
+        }
+      }
       return undefined
+    }
 
     if (Object.hasOwn(submitted, key)) {
       Object.assign(rebased, { [key]: structuredClone(submittedValue) })
@@ -270,7 +377,17 @@ const createOrderedSessionPersistence = (
         )
         return durable
       }),
-    applyAgentTitle: (request) => enqueue(() => api.applyAgentTitle(request)),
+    // The Agent title transaction advances the durable revision on main, so the queue must
+    // acknowledge the returned revision or a later explicit save submits the stale one.
+    applyAgentTitle: (request) =>
+      enqueue(async () => {
+        const durable = await api.applyAgentTitle(request)
+        acknowledgedRevisions.set(
+          durable.id,
+          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
+        )
+        return durable
+      }),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
     flush: () => queue.then(() => undefined)
   }
@@ -707,8 +824,10 @@ const createStoreSaver = (
                 const persisted = observePersistencePhase('session-serialize', () =>
                   toPersistedSession(session)
                 )
-                persisted.revision =
-                  acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
+                persisted.revision = Math.max(
+                  acknowledgedRevisions.get(session.id) ?? 0,
+                  sessionRevision(persisted)
+                )
                 let durableSession: PersistedChatSession
                 let recoveredRevisionConflict = false
                 try {
@@ -742,8 +861,10 @@ const createStoreSaver = (
                     const persisted = observePersistencePhase('session-serialize', () =>
                       toPersistedSession(session)
                     )
-                    persisted.revision =
-                      acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
+                    persisted.revision = Math.max(
+                      acknowledgedRevisions.get(session.id) ?? 0,
+                      sessionRevision(persisted)
+                    )
                     let durableSession: PersistedChatSession
                     let recoveredRevisionConflict = false
                     try {

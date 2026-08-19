@@ -471,6 +471,13 @@ class AcpPromptTurnWorkflow {
         signal: interaction.signal,
         isCurrent: () => this.isCurrent(turn)
       })
+      log.info('session auto-title settled', {
+        sessionId,
+        outcome: naming.kind,
+        ...(naming.kind === 'generated' ? { title: naming.title } : {}),
+        ...('attempted' in naming ? { fallbackAttempted: naming.attempted } : {}),
+        ...(naming.usage ? { usage: naming.usage } : {})
+      })
       if (naming.kind === 'framework') {
         sessionNamingUsage = naming.usage
           ? {

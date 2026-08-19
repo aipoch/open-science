@@ -199,6 +199,57 @@ describe('AcpSessionUpdateProjector', () => {
     expect(projector.route(notification, { ...routing, reconnectPending: true })).toEqual([])
   })
 
+  it('ignores Codex prompt fallbacks while retaining later native titles', () => {
+    const onFrameworkTitle = vi.fn(() => 'first-prompt')
+    const projector = createProjector(undefined, true, undefined, onFrameworkTitle)
+    const routing = {
+      framework: 'codex' as const,
+      appSessionId: 'app-session',
+      eventId: 'event-fallback-title',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+
+    expect(
+      projector.route(
+        {
+          sessionId: 'provider-session',
+          update: {
+            sessionUpdate: 'session_info_update',
+            title: 'just reply hi',
+            _meta: { 'open-science/session-title-source': 'fallback' }
+          }
+        },
+        routing
+      )
+    ).toEqual([])
+    expect(onFrameworkTitle).not.toHaveBeenCalled()
+
+    expect(
+      projector.route(
+        {
+          sessionId: 'provider-session',
+          update: {
+            sessionUpdate: 'session_info_update',
+            title: 'Concise greeting response'
+          }
+        },
+        { ...routing, eventId: 'event-native-title' }
+      )
+    ).toEqual([
+      {
+        kind: 'visible-event',
+        event: expect.objectContaining({
+          sessionId: 'app-session',
+          promptMessageId: 'first-prompt',
+          sessionTitleUpdate: { title: 'Concise greeting response', source: 'framework' }
+        })
+      }
+    ])
+    expect(onFrameworkTitle).toHaveBeenCalledOnce()
+  })
+
   it('projects the retained first-turn identity onto a late framework title', () => {
     const onFrameworkTitle = vi.fn(() => 'first-prompt')
     const projector = createProjector(undefined, true, undefined, onFrameworkTitle)

@@ -249,6 +249,7 @@ const startFakeAgent = (
       origin?: string
     }>
     sessionTitleBeforePromptStop?: string
+    sessionTitleBeforePromptStopMeta?: Record<string, unknown>
     sessionTitleAfterPrompt?: string
     sessionTitleAfterPromptDelayMs?: number
   } = {}
@@ -494,7 +495,10 @@ const startFakeAgent = (
           sessionId: ctx.params.sessionId,
           update: {
             sessionUpdate: 'session_info_update',
-            title: options.sessionTitleBeforePromptStop
+            title: options.sessionTitleBeforePromptStop,
+            ...(options.sessionTitleBeforePromptStopMeta
+              ? { _meta: options.sessionTitleBeforePromptStopMeta }
+              : {})
           }
         })
       }
@@ -5366,6 +5370,56 @@ describe('ACP runtime session management', () => {
       source: 'framework',
       unavailable: true
     })
+  })
+
+  it('ignores a Codex prompt fallback, generates an app title, then accepts a native title', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['codex-titled-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      sessionTitleBeforePromptStop: 'just reply hi',
+      sessionTitleBeforePromptStopMeta: {
+        'open-science/session-title-source': 'fallback'
+      },
+      sessionTitleAfterPrompt: 'Concise greeting response',
+      sessionTitleAfterPromptDelayMs: 25
+    })
+    const events: AcpRuntimeEvent[] = []
+    const generate = vi.fn(async () => ({ title: 'Short greeting' }))
+    const framework = { ...codexFramework, spawn: () => asAgentProcess(process) }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      framework,
+      resolveBackend: () => ({
+        framework,
+        executablePath: '/bin/codex-acp',
+        env: {}
+      }),
+      sessionAutoTitle: { graceMs: 0, generate },
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'just reply hi',
+      autoTitle: true
+    })
+    await vi.waitFor(() =>
+      expect(
+        events.some((event) => event.sessionTitleUpdate?.title === 'Concise greeting response')
+      ).toBe(true)
+    )
+
+    expect(generate).toHaveBeenCalledOnce()
+    expect(events.filter((event) => event.sessionTitleUpdate)).toEqual([
+      expect.objectContaining({
+        sessionTitleUpdate: { title: 'Short greeting', source: 'app-generated' }
+      }),
+      expect.objectContaining({
+        sessionTitleUpdate: { title: 'Concise greeting response', source: 'framework' }
+      })
+    ])
   })
 
   it('projects OpenCode native title metadata as a framework title after the first turn', async () => {

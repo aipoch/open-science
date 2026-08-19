@@ -939,6 +939,82 @@ describe('renderer session persistence bridge', () => {
     ])
   })
 
+  it('retries a local graph save over the Agent title naming usage revision', async () => {
+    const namingUsage = { source: 'framework' as const, unavailable: true as const }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 1,
+        title: 'Prompt fallback',
+        titleSource: 'fallback',
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run the command',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'answer-1',
+            role: 'agent',
+            content: 'Framework answer',
+            status: 'complete',
+            eventIds: [],
+            responseToMessageId: 'prompt-1',
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ]
+      })
+    )
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 2,
+      title: 'Framework title',
+      titleSource: 'framework',
+      messages: base.messages.map((message) =>
+        message.id === 'answer-1'
+          ? { ...message, sessionNamingUsage: namingUsage, updatedAt: message.updatedAt + 1 }
+          : message
+      ),
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 3 }))
+    const api = createApi({ loadOne: vi.fn().mockResolvedValue(authoritative), saveSession })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: base.id,
+      content: 'Keep this local graph update',
+      cwd: base.cwd,
+      projectId: base.projectId
+    })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(api.loadOne).toHaveBeenCalledWith({ projectId: base.projectId, sessionId: base.id })
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 2,
+      title: 'Framework title',
+      titleSource: 'framework'
+    })
+    const retriedMessages = saveSession.mock.calls[1][0].messages
+    expect(retriedMessages.map(({ content }) => content)).toEqual([
+      'Run the command',
+      'Framework answer',
+      'Keep this local graph update'
+    ])
+    expect(retriedMessages[1]).toMatchObject({ sessionNamingUsage: namingUsage })
+  })
+
   it('does not retry when both the local and authoritative conversation graphs changed', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({ projectId: 'project-a', revision: 1 })
@@ -1158,6 +1234,95 @@ describe('renderer session persistence bridge', () => {
     expect(api.applyAgentTitle).toHaveBeenCalledWith(
       expect.objectContaining({ promptMessageId: 'first-prompt' })
     )
+  })
+
+  it('acknowledges the Agent title revision for a later explicit save', async () => {
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const api = createApi({
+      saveSession,
+      applyAgentTitle: vi.fn(async () => createPersistedSession({ revision: 11 }))
+    })
+    const persistence = createOrderedSessionPersistence(api)
+
+    await persistence.applyAgentTitle({
+      projectId: 'default',
+      sessionId: 'session-1',
+      title: 'Framework title',
+      source: 'framework'
+    })
+    await persistence.saveSession(createPersistedSession({ revision: 10 }))
+
+    expect(saveSession.mock.calls[0][0].revision).toBeGreaterThanOrEqual(11)
+  })
+
+  it('does not resave a stale revision after the Agent title durable update mirrors into the store', async () => {
+    const saveSession = vi.fn(async (submitted: PersistedChatSession) => submitted)
+    const api = createApi({ saveSession })
+    const persisted = createPersistedSession({
+      title: 'Prompt fallback',
+      titleSource: 'fallback',
+      revision: 6,
+      messages: [
+        {
+          id: 'message-prompt',
+          role: 'user',
+          content: 'Name this conversation',
+          status: 'complete',
+          eventIds: [],
+          responseToMessageId: undefined,
+          createdAt: 1710000000000,
+          updatedAt: 1710000000000
+        },
+        {
+          id: 'message-response',
+          role: 'agent',
+          content: 'First answer',
+          status: 'complete',
+          eventIds: [],
+          responseToMessageId: 'message-prompt',
+          createdAt: 1710000000001,
+          updatedAt: 1710000000001
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    // Production title flow: the Agent title transaction persists the title at durable revision 7,
+    // then the runtime event mirrors the durable session and its naming usage annotation.
+    const source = useSessionStore.getState().sessions[0]
+    const durable: PersistedChatSession = {
+      ...toPersistedSession(source),
+      title: 'Framework title',
+      titleSource: 'framework',
+      revision: 7,
+      updatedAt: source.updatedAt + 1
+    }
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: durable,
+      mode: 'title-authority'
+    })
+    useSessionStore
+      .getState()
+      .applySessionNamingUsage(
+        'session-1',
+        { source: 'framework', unavailable: true },
+        'message-prompt'
+      )
+    await save(useSessionStore.getState())
+
+    // The mirror only restates main-owned durable facts, so it must stay externally hydrated
+    // instead of being resaved at the pre-title revision.
+    expect(saveSession).not.toHaveBeenCalled()
+    expect(isExternallyHydratedSession(useSessionStore.getState().sessions[0])).toBe(true)
+
+    // The next genuine local edit saves from the acknowledged durable revision, never revision 6.
+    useSessionStore.getState().renameSession('session-1', 'Renamed by user')
+    await save(useSessionStore.getState())
+
+    expect(saveSession).toHaveBeenCalledTimes(1)
+    expect(saveSession.mock.calls[0][0].revision).toBeGreaterThanOrEqual(7)
   })
 
   it('flushes only after explicit and coalesced queued writes settle', async () => {

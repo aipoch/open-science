@@ -316,6 +316,41 @@ describe('SessionPersistenceCoordinator contracts', () => {
     expect(saved.pinned).toBeUndefined()
   })
 
+  it('keeps a higher-ownership durable title over a stale pre-title projection', async () => {
+    const started = createSession({
+      title: 'Run-start title',
+      titleSource: 'fallback',
+      updatedAt: 2
+    })
+    const { sessions, repository } = createRepository([started])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    sessions.set(started.id, {
+      ...started,
+      title: 'Framework title',
+      titleSource: 'framework',
+      updatedAt: 3
+    })
+
+    const saved = await coordinator.saveSession({ ...started, status: 'idle', updatedAt: 4 })
+
+    expect(saved).toMatchObject({ title: 'Framework title', titleSource: 'framework' })
+
+    sessions.set(started.id, {
+      ...started,
+      title: 'Framework title',
+      titleSource: 'framework',
+      updatedAt: 5
+    })
+    const renamed = await coordinator.saveSession({
+      ...started,
+      title: 'Manual rename',
+      titleSource: 'user',
+      updatedAt: 6
+    })
+
+    expect(renamed).toMatchObject({ title: 'Manual rename', titleSource: 'user' })
+  })
+
   it('keeps scoped lanes failure-tolerant and snapshots behind a global barrier', async () => {
     const gate = createDeferred()
     const order: string[] = []

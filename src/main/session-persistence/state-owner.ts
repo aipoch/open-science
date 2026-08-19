@@ -19,7 +19,11 @@ import {
 } from '../../shared/session-persistence'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { diagnosticErrorFields, type Logger } from '../logger'
-import { rebaseSafeSessionFields, resolveRevisionedSessionSave } from './revision-conflict'
+import {
+  rebaseSafeSessionFields,
+  resolveRevisionedSessionSave,
+  sessionTitlePriority
+} from './revision-conflict'
 import { saveSessionWithRevision } from './save-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
@@ -329,15 +333,8 @@ class SessionPersistenceStateOwner {
       throw new Error(`Cannot apply an Agent title to a ${loaded.status} Session.`)
     }
     const current = loaded.session
-    const currentPriority =
-      current.titleSource === 'fallback'
-        ? 0
-        : current.titleSource === 'app-generated'
-          ? 1
-          : current.titleSource === 'framework' || current.titleSource === 'agent'
-            ? 2
-            : 3
-    const requestedPriority = source === 'framework' ? 2 : 1
+    const currentPriority = sessionTitlePriority(current.titleSource)
+    const requestedPriority = sessionTitlePriority(source)
     const appliesTitle = requestedPriority >= currentPriority
     let usageMessageIndex = -1
     if (promptMessageId && sessionNamingUsage) {
@@ -668,9 +665,15 @@ class SessionPersistenceStateOwner {
           rendererOwnedSession.status === 'waiting-plan-approval'
         ? (authority?.status ?? 'idle')
         : undefined
+    // A stale renderer snapshot can carry the pre-title title; the durable title keeps ownership
+    // precedence so an in-revision save cannot revert the Agent title transaction's result.
+    const authorityOutranksSubmittedTitle =
+      authority !== undefined &&
+      sessionTitlePriority(rendererOwnedSession.titleSource) <
+        sessionTitlePriority(authority.titleSource)
     const mergedSession: PersistedChatSession = {
       ...rendererOwnedSession,
-      ...(options.preserveTitle && authority
+      ...(authority && (options.preserveTitle || authorityOutranksSubmittedTitle)
         ? { title: authority.title, titleSource: authority.titleSource }
         : {}),
       messages: mergeMainOwnedRelayMessages(rendererOwnedSession.messages, authority?.messages),
