@@ -54,6 +54,7 @@ const SpecialistAppearancePicker = ({
   const { t } = useTranslation()
   const colorHeadingId = useId()
   const iconHeadingId = useId()
+  const iconScrollRef = useRef<HTMLDivElement>(null)
   const selectedIconRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [pendingPatch, setPendingPatch] = useState<SpecialistAppearancePatch>()
@@ -103,6 +104,20 @@ const SpecialistAppearancePicker = ({
     return () => window.cancelAnimationFrame(frame)
   }, [open])
 
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    const scroller = iconScrollRef.current
+    if (!scroller || event.ctrlKey || event.deltaY === 0) return
+    const multiplier =
+      event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? scroller.clientHeight
+          : 1
+    scroller.scrollTop += event.deltaY * multiplier
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -149,6 +164,7 @@ const SpecialistAppearancePicker = ({
         align="start"
         sideOffset={6}
         collisionPadding={16}
+        onWheel={handleWheel}
         className="w-64 max-w-[var(--radix-popover-content-available-width)] rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
       >
         <p className="text-xs font-semibold text-foreground">{t('Appearance')}</p>
@@ -193,10 +209,11 @@ const SpecialistAppearancePicker = ({
             {t('Icon')}
           </p>
           <div
+            ref={iconScrollRef}
             data-slot="specialist-icon-picker-scroll"
             tabIndex={0}
             aria-labelledby={iconHeadingId}
-            className="mt-1 h-44 overflow-y-auto overscroll-contain rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className="mt-1 h-44 overflow-y-auto overscroll-contain rounded-sm outline-none [scrollbar-width:none] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-scrollbar]:hidden"
           >
             <div className="pe-2.5">
               {APP_ICON_GROUPS.map((group, groupIndex) => (

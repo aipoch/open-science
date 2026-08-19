@@ -1150,6 +1150,32 @@ describe('SpecialistsPanel', () => {
     expect(document.body.querySelector('[aria-label="Purple"]')).not.toBeNull()
   })
 
+  it('routes wheel input from the popover to the hidden icon scroller', async () => {
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+    openRadixMenu(
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Change appearance for RNA Reviewer"]'
+      )
+    )
+
+    const scroller = document.body.querySelector<HTMLElement>(
+      '[data-slot="specialist-icon-picker-scroll"]'
+    )
+    const content = Array.from(document.body.querySelectorAll('p')).find(
+      (element) => element.textContent === 'Appearance'
+    )?.parentElement
+    expect(scroller).not.toBeNull()
+    expect(content).not.toBeNull()
+
+    await act(async () => {
+      content!.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 96 }))
+    })
+    expect(scroller!.scrollTop).toBe(96)
+    expect(scroller!.className).toContain('[scrollbar-width:none]')
+  })
+
   it('rolls back a failed appearance update and retries it inline', async () => {
     const current = specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>
     const updated = { ...current, iconKey: 'atom', revision: 2 }
