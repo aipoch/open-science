@@ -306,7 +306,8 @@ describe('mandatory product glossary', () => {
       { term: 'Star', source: /\bstars?\b/i },
       { term: 'Discord', source: /\bDiscord\b/ },
       { term: 'Python', source: /\bPython\b/ },
-      { term: 'Jupyter', source: /\bJupyter\b/ }
+      { term: 'Jupyter', source: /\bJupyter\b/ },
+      { term: 'Office', source: /\bOffice\b/ }
     ]
     const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
       const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
