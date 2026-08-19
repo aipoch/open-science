@@ -3,19 +3,16 @@
  * contrast: uses the project semantic foreground, muted, ring, destructive, and success tokens
  * pre-emit critique: P5 H4 E5 S5 R5 V5
  */
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { AlertCircle, Check, CheckCircle2, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { APP_ICON_GROUPS } from '@/components/app-icons/registry'
 import { cn } from '@/lib/utils'
 import { SpecialistAvatar } from './specialist-avatar'
-import {
-  AVATAR_COLORS,
-  AVATAR_ICONS,
-  SPECIALIST_COLOR_OPTIONS,
-  SPECIALIST_ICON_OPTIONS
-} from './specialist-icons'
+import { AVATAR_COLORS, SPECIALIST_COLOR_OPTIONS } from './specialist-icons'
 
 type SpecialistAppearancePatch = {
   iconKey?: string
@@ -58,6 +55,8 @@ const SpecialistAppearancePicker = ({
   const { t } = useTranslation()
   const colorHeadingId = useId()
   const iconHeadingId = useId()
+  const selectedIconRef = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
   const [pendingPatch, setPendingPatch] = useState<SpecialistAppearancePatch>()
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [showSaving, setShowSaving] = useState(false)
@@ -97,8 +96,16 @@ const SpecialistAppearancePicker = ({
   const visibleAppearance =
     saveState === 'saving' ? { iconKey, colorKey, ...pendingPatch } : { iconKey, colorKey }
 
+  useEffect(() => {
+    if (!open) return
+    const frame = window.requestAnimationFrame(() => {
+      selectedIconRef.current?.scrollIntoView?.({ block: 'nearest' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [open])
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -151,7 +158,7 @@ const SpecialistAppearancePicker = ({
           <p id={colorHeadingId} className="text-xs font-medium text-muted-foreground">
             {t('Color')}
           </p>
-          <div className="mt-1 grid grid-cols-3 gap-1 sm:grid-cols-6 [@media(pointer:coarse)]:grid-cols-3">
+          <div className="mt-1 grid grid-cols-3 gap-1 pe-2.5 sm:grid-cols-6 [@media(pointer:coarse)]:grid-cols-3">
             {SPECIALIST_COLOR_OPTIONS.map((option) => {
               const selected = visibleAppearance.colorKey === option.key
               return (
@@ -164,7 +171,7 @@ const SpecialistAppearancePicker = ({
                   onClick={() => {
                     if (!selected) void save({ colorKey: option.key })
                   }}
-                  className="flex size-9 cursor-pointer items-center justify-center rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:size-11"
+                  className="flex h-9 w-full max-w-9 cursor-pointer items-center justify-center justify-self-center rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:max-w-11"
                 >
                   <span
                     className={cn(
@@ -186,30 +193,46 @@ const SpecialistAppearancePicker = ({
           <p id={iconHeadingId} className="text-xs font-medium text-muted-foreground">
             {t('Icon')}
           </p>
-          <div className="mt-1 grid grid-cols-3 gap-1 sm:grid-cols-6 [@media(pointer:coarse)]:grid-cols-3">
-            {SPECIALIST_ICON_OPTIONS.map((option) => {
-              const Icon = AVATAR_ICONS[option.key] ?? AVATAR_ICONS.brain
-              const selected = visibleAppearance.iconKey === option.key
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  disabled={interactionDisabled}
-                  aria-label={t(option.label)}
-                  aria-pressed={selected}
-                  onClick={() => {
-                    if (!selected) void save({ iconKey: option.key })
-                  }}
-                  className={cn(
-                    'flex size-9 cursor-pointer items-center justify-center rounded-md border border-transparent text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:size-11',
-                    selected && 'border-primary/30 bg-primary/10 text-primary'
-                  )}
+          <ScrollArea className="mt-1 h-44">
+            <div className="pe-2.5">
+              {APP_ICON_GROUPS.map((group, groupIndex) => (
+                <div
+                  key={group.key}
+                  role="group"
+                  aria-label={t(group.label)}
+                  className={cn(groupIndex > 0 && 'mt-2')}
                 >
-                  <Icon className="size-4" aria-hidden="true" />
-                </button>
-              )
-            })}
-          </div>
+                  <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                    {t(group.label)}
+                  </p>
+                  <div className="grid grid-cols-3 gap-1 sm:grid-cols-6 [@media(pointer:coarse)]:grid-cols-3">
+                    {group.icons.map((option) => {
+                      const selected = visibleAppearance.iconKey === option.key
+                      return (
+                        <button
+                          key={option.key}
+                          ref={selected ? selectedIconRef : undefined}
+                          type="button"
+                          disabled={interactionDisabled}
+                          aria-label={t(option.label)}
+                          aria-pressed={selected}
+                          onClick={() => {
+                            if (!selected) void save({ iconKey: option.key })
+                          }}
+                          className={cn(
+                            'flex h-9 w-full max-w-9 cursor-pointer items-center justify-center justify-self-center rounded-md border border-transparent text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:max-w-11',
+                            selected && 'border-primary/30 bg-primary/10 text-primary'
+                          )}
+                        >
+                          <option.Icon className="size-4" aria-hidden="true" />
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
         </div>
 
         {saveState !== 'idle' ? (

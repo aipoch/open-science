@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { APP_ICON_GROUPS, APP_ICONS } from '@/components/app-icons/registry'
+import { APP_ICONS } from '@/components/app-icons/registry'
 
 // The color palette used for specialist avatar backgrounds. Shared between the
 // list and the editor so the preview matches the rendered row exactly.
@@ -19,24 +19,6 @@ export const getAvatarColor = (colorKey?: string): string =>
 // Avatar glyphs come from the shared app icon registry; the alias keeps existing
 // consumers on a stable name.
 export const AVATAR_ICONS = APP_ICONS
-
-// Keep the quick picker intentionally compact while resolving its keys and labels from the shared
-// registry. The full editor exposes the complete grouped catalog.
-const QUICK_SPECIALIST_ICON_KEYS = [
-  'brain',
-  'beaker',
-  'book-open',
-  'flask-conical',
-  'microscope',
-  'search'
-] as const
-const appIconEntries = APP_ICON_GROUPS.flatMap((group) => group.icons)
-
-export const SPECIALIST_ICON_OPTIONS = QUICK_SPECIALIST_ICON_KEYS.map((key) => {
-  const entry = appIconEntries.find((option) => option.key === key)
-  if (!entry) throw new Error(`Missing shared app icon: ${key}`)
-  return { key, label: entry.label }
-})
 
 // Colors remain shared by the compact picker and the full editor.
 export const SPECIALIST_COLOR_OPTIONS = [

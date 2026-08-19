@@ -1152,7 +1152,7 @@ describe('SpecialistsPanel', () => {
 
   it('rolls back a failed appearance update and retries it inline', async () => {
     const current = specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>
-    const updated = { ...current, iconKey: 'beaker', revision: 2 }
+    const updated = { ...current, iconKey: 'atom', revision: 2 }
     window.api.specialist.update = vi
       .fn()
       .mockRejectedValueOnce(new Error('revision conflict'))
@@ -1174,8 +1174,9 @@ describe('SpecialistsPanel', () => {
       )
     )
 
+    expect(document.body.querySelector('[aria-label="Statistician"]')).not.toBeNull()
     await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Beaker"]')?.click()
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Atom"]')?.click()
     )
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Appearance wasn’t saved. Try again.')
@@ -1195,7 +1196,7 @@ describe('SpecialistsPanel', () => {
     expect(window.api.specialist.update).toHaveBeenLastCalledWith({
       id: 'rna-reviewer',
       revision: 1,
-      iconKey: 'beaker'
+      iconKey: 'atom'
     })
     expect(document.body.textContent).toContain('Saved')
   })
