@@ -227,6 +227,48 @@ describe('OpenAiProviderBridge', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
+  it('labels a bounded fallback error as JSON on the first response and replay', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response('oversized', {
+          status: 401,
+          headers: {
+            'content-encoding': 'gzip',
+            'content-length': String(256 * 1024 + 1),
+            'content-type': 'text/event-stream'
+          }
+        })
+    )
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'wrong-key',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    for (const response of [await send(), await send()]) {
+      expect(response.headers.get('content-type')).toBe('application/json')
+      expect(response.headers.get('content-encoding')).toBeNull()
+      await expect(response.json()).resolves.toMatchObject({
+        error: { message: 'Provider request failed with status 401' }
+      })
+    }
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
   it('does not replay an error after an upstream-visible request header changes', async () => {
     const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const headers = new Headers(init?.headers)

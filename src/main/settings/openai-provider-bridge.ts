@@ -202,6 +202,7 @@ export class OpenAiProviderBridge {
         signal: request.signal
       })
       delete headers['content-encoding']
+      if (!upstreamBody.complete) headers['content-type'] = 'application/json'
       const bodyToReplay = upstreamBody.complete
         ? upstreamBody.body
         : Buffer.from(
