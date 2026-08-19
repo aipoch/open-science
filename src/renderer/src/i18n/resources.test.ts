@@ -646,6 +646,8 @@ describe('Korean safety copy', () => {
       'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
       '개별 권한은 계속 취소할 수 있습니다. 전체 집합이 확인될 때까지 모두 취소가 비활성화됩니다.'
     ],
+    ['Declined by you: {{name}}', '사용자가 거부함: {{name}}'],
+    ['declined by you', '사용자가 거부함'],
     ['{{count}} allowed this session_other', '이번 세션에서 {{count}}개 허용됨']
   ])('preserves the scope of %s', (key, expected) => {
     expect(catalog('ko')[key]).toBe(expected)
