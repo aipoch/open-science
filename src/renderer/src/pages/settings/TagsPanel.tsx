@@ -1,9 +1,13 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-/* Hallmark · component: grouped resource index · genre: modern-minimal · tone: technical/utilitarian · theme: project tokens · slop: pass */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · component: Tag master-detail + reorder · genre: modern-minimal · tone: technical/utilitarian
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * theme: project tokens · contrast: pass · slop: pass
+ */
 import { AlertDialog, Dialog } from 'radix-ui'
 import {
   ChevronDown,
-  MoreHorizontal,
+  GripVertical,
+  LockKeyhole,
   Pencil,
   Plus,
   ScrollText,
@@ -12,7 +16,14 @@ import {
   Users,
   X
 } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -38,12 +49,6 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
@@ -62,6 +67,17 @@ type TagResourceRow = TagResourceRef & {
 }
 
 type TagDraft = { name: string; iconKey: TagIconKey; colorKey: TagColorKey }
+type CustomTagView = Extract<TagView, { name: string }>
+type TagDropTarget = { tagId: string; edge: 'before' | 'after' }
+type TagDropZone = { tagId: string; top: number; bottom: number }
+type TagPointerDrag = {
+  pointerId: number
+  tagId: string
+  startY: number
+  active: boolean
+  dropZones: TagDropZone[]
+  target?: TagDropTarget
+}
 const EMPTY_DRAFT: TagDraft = { name: '', iconKey: 'tag', colorKey: 'blue' }
 
 const resourceTypeLabel = (
@@ -111,6 +127,7 @@ const TagsPanel = ({
   const createTag = useTagStore((state) => state.create)
   const updateTag = useTagStore((state) => state.update)
   const deleteTag = useTagStore((state) => state.delete)
+  const reorderTags = useTagStore((state) => state.reorder)
   const setAssignment = useTagStore((state) => state.setAssignment)
   const loadTags = useTagStore((state) => state.load)
   const skills = useSettingsStore((state) => state.skills)
@@ -139,6 +156,12 @@ const TagsPanel = ({
   const [assignmentError, setAssignmentError] = useState<string>()
   const [removingResourceKey, setRemovingResourceKey] = useState<string>()
   const [collapsed, setCollapsed] = useState<Partial<Record<TagResourceType, boolean>>>({})
+  const [reorderBusy, setReorderBusy] = useState(false)
+  const [reorderError, setReorderError] = useState<string>()
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('')
+  const [draggedTagId, setDraggedTagId] = useState<string>()
+  const [tagDropTarget, setTagDropTarget] = useState<TagDropTarget>()
+  const tagPointerDragRef = useRef<TagPointerDrag | undefined>(undefined)
 
   useEffect(() => {
     if (status === 'idle') void loadTags()
@@ -285,6 +308,93 @@ const TagsPanel = ({
     }
   }
 
+  const customTags = tags.filter((tag): tag is CustomTagView => !('systemKey' in tag))
+  const finishTagDrag = (): void => {
+    tagPointerDragRef.current = undefined
+    setDraggedTagId(undefined)
+    setTagDropTarget(undefined)
+  }
+  const showTagDropTarget = (next?: TagDropTarget): void => {
+    const drag = tagPointerDragRef.current
+    if (!drag) return
+    if (drag.target?.tagId === next?.tagId && drag.target?.edge === next?.edge) return
+    drag.target = next
+    setTagDropTarget(next)
+  }
+  const moveTag = async (
+    tagId: string,
+    targetTagId: string,
+    edge: TagDropTarget['edge']
+  ): Promise<void> => {
+    if (reorderBusy) return
+    const fromIndex = customTags.findIndex((tag) => tag.id === tagId)
+    const targetIndex = customTags.findIndex((tag) => tag.id === targetTagId)
+    if (fromIndex < 0 || targetIndex < 0) return
+    let insertionIndex = targetIndex + (edge === 'after' ? 1 : 0)
+    if (fromIndex < insertionIndex) insertionIndex -= 1
+    if (insertionIndex === fromIndex) return
+    const ordered = [...customTags]
+    const [moved] = ordered.splice(fromIndex, 1)
+    if (!moved) return
+    ordered.splice(insertionIndex, 0, moved)
+    setReorderBusy(true)
+    setReorderError(undefined)
+    try {
+      await reorderTags({ tagIds: ordered.map((tag) => tag.id) })
+      setReorderAnnouncement(
+        t('Moved {{tag}} to position {{position}}.', {
+          tag: moved.name,
+          position: insertionIndex + 2
+        })
+      )
+    } catch {
+      setReorderError(t('Could not reorder Tags. Try again.'))
+    } finally {
+      setReorderBusy(false)
+    }
+  }
+  const moveTagPointer = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const drag = tagPointerDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (!drag.active) {
+      if (Math.abs(event.clientY - drag.startY) < 6) return
+      drag.active = true
+      setDraggedTagId(drag.tagId)
+    }
+    event.preventDefault()
+    const target = drag.dropZones.reduce<{ zone: TagDropZone; distance: number } | undefined>(
+      (closest, zone) => {
+        const distance =
+          event.clientY < zone.top
+            ? zone.top - event.clientY
+            : event.clientY > zone.bottom
+              ? event.clientY - zone.bottom
+              : 0
+        return !closest || distance < closest.distance ? { zone, distance } : closest
+      },
+      undefined
+    )?.zone
+    if (!target) {
+      showTagDropTarget()
+      return
+    }
+    showTagDropTarget({
+      tagId: target.tagId,
+      edge: event.clientY >= target.top + (target.bottom - target.top) / 2 ? 'after' : 'before'
+    })
+  }
+  const endTagPointer = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const drag = tagPointerDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    if (drag.active && drag.target) {
+      void moveTag(drag.tagId, drag.target.tagId, drag.target.edge)
+    }
+    finishTagDrag()
+  }
+
   return (
     <div className="flex min-h-full flex-col p-5">
       <div className="mb-4 flex items-start justify-between gap-4">
@@ -305,60 +415,130 @@ const TagsPanel = ({
           {t('Tags could not be loaded.')}
         </p>
       ) : null}
-      <div className="grid min-h-[420px] flex-1 grid-cols-[15rem_minmax(0,1fr)] overflow-hidden rounded-lg border border-border">
-        <aside className="border-r border-border bg-background p-2">
-          {tags.map((tag) => (
-            <div key={tag.id} className="group flex items-center gap-1">
-              <button
-                type="button"
-                aria-current={tag.id === currentSelectedId ? 'page' : undefined}
-                onClick={() => {
-                  setSelectedId(tag.id)
-                  onSelectedTagChange?.(tag.id)
-                }}
-                className={cn(
-                  'flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
-                  tag.id === currentSelectedId && 'bg-muted font-medium'
-                )}
-              >
-                <TagBadge tag={tag} className="min-w-0" />
-                <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                  {counts.get(tag.id) ?? 0}
-                </span>
-              </button>
-              {'systemKey' in tag ? null : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t('Tag actions')}
-                      className="shrink-0 opacity-100 transition-[opacity,color,background-color] duration-200 ease-out hover:!opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100"
+      <div
+        data-slot="tag-master-detail"
+        className="grid min-h-[420px] flex-1 grid-cols-1 overflow-hidden rounded-lg border border-border md:grid-cols-[15rem_minmax(0,1fr)]"
+      >
+        <aside
+          className="border-b border-border bg-background p-2 md:border-r md:border-b-0"
+          aria-busy={reorderBusy || undefined}
+        >
+          {reorderError ? (
+            <p role="alert" className="mb-2 px-2 text-xs text-destructive">
+              {reorderError}
+            </p>
+          ) : null}
+          <p className="sr-only" aria-live="polite" aria-atomic="true">
+            {reorderAnnouncement}
+          </p>
+          <ol>
+            {tags.map((tag) => {
+              const customIndex = customTags.findIndex((candidate) => candidate.id === tag.id)
+              const dropBefore = tagDropTarget?.tagId === tag.id && tagDropTarget.edge === 'before'
+              const dropAfter = tagDropTarget?.tagId === tag.id && tagDropTarget.edge === 'after'
+              return (
+                <li
+                  key={tag.id}
+                  data-reorderable-tag-id={'systemKey' in tag ? undefined : tag.id}
+                  className={cn(
+                    'relative flex min-w-0 items-center',
+                    draggedTagId === tag.id &&
+                      'rounded-md bg-muted/60 ring-1 ring-primary/30 ring-inset'
+                  )}
+                >
+                  {dropBefore || dropAfter ? (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'pointer-events-none absolute right-1 left-1 z-10 h-0.5 rounded-full bg-primary',
+                        dropBefore ? '-top-px' : '-bottom-px'
+                      )}
+                    />
+                  ) : null}
+                  {'systemKey' in tag ? (
+                    <span
+                      className="flex size-9 shrink-0 items-center justify-center text-muted-foreground/60 [@media(pointer:coarse)]:size-11"
+                      role="img"
+                      aria-label={t('System Tags stay first')}
+                      title={t('System Tags stay first')}
                     >
-                      <MoreHorizontal className="size-4" aria-hidden="true" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem className="gap-2" onSelect={() => openEditor(tag)}>
-                      <Pencil className="size-4" aria-hidden="true" />
-                      {t('Edit Tag')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="gap-2 text-destructive"
-                      onSelect={() => {
-                        setDeleteError(undefined)
-                        setDeleting(tag)
+                      <LockKeyhole className="size-3.5" aria-hidden="true" />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={reorderBusy}
+                      className="flex size-9 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-muted-foreground select-none hover:bg-muted hover:text-foreground active:cursor-grabbing focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:size-11"
+                      aria-label={t('Reorder {{tag}}', { tag: tag.name })}
+                      title={t('Drag or use arrow keys to reorder')}
+                      onPointerCancel={finishTagDrag}
+                      onPointerDown={(event) => {
+                        if (event.isPrimary === false || event.button !== 0 || reorderBusy) return
+                        event.currentTarget.setPointerCapture?.(event.pointerId)
+                        tagPointerDragRef.current = {
+                          pointerId: event.pointerId,
+                          tagId: tag.id,
+                          startY: event.clientY,
+                          active: false,
+                          dropZones: Array.from(
+                            event.currentTarget
+                              .closest('ol')
+                              ?.querySelectorAll<HTMLElement>('[data-reorderable-tag-id]') ?? []
+                          )
+                            .filter((row) => row.dataset.reorderableTagId !== tag.id)
+                            .flatMap((row) => {
+                              const tagId = row.dataset.reorderableTagId
+                              if (!tagId) return []
+                              const bounds = row.getBoundingClientRect()
+                              return [{ tagId, top: bounds.top, bottom: bounds.bottom }]
+                            })
+                        }
+                      }}
+                      onPointerMove={moveTagPointer}
+                      onPointerUp={endTagPointer}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                        event.preventDefault()
+                        const target = customTags[customIndex + (event.key === 'ArrowUp' ? -1 : 1)]
+                        if (target) {
+                          void moveTag(
+                            tag.id,
+                            target.id,
+                            event.key === 'ArrowUp' ? 'before' : 'after'
+                          )
+                        }
                       }}
                     >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                      {t('Delete Tag')}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-          ))}
+                      <GripVertical className="size-4" aria-hidden="true" />
+                    </button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="lg"
+                    data-slot="tag-list-row"
+                    aria-current={tag.id === currentSelectedId ? 'page' : undefined}
+                    onClick={() => {
+                      setSelectedId(tag.id)
+                      onSelectedTagChange?.(tag.id)
+                    }}
+                    className={cn(
+                      'min-w-0 flex-1 cursor-pointer justify-start gap-2 px-2 text-left font-normal hover:bg-muted',
+                      tag.id === currentSelectedId && 'bg-muted font-medium'
+                    )}
+                  >
+                    <TagBadge tag={tag} className="min-w-0" />
+                    <span
+                      data-slot="tag-list-count"
+                      className="ml-auto min-w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
+                    >
+                      {counts.get(tag.id) ?? 0}
+                    </span>
+                  </Button>
+                </li>
+              )
+            })}
+          </ol>
         </aside>
 
         <section
@@ -368,14 +548,37 @@ const TagsPanel = ({
         >
           {selectedTag ? (
             <>
-              <div className="mb-4 flex items-center gap-2">
-                <TagBadge tag={selectedTag} />
-                <span className="text-xs text-muted-foreground">
-                  {t('{{count}} resources', {
-                    count: filteredResources.length,
-                    defaultValue_one: '{{count}} resource'
-                  })}
-                </span>
+              <div
+                data-slot="tag-detail-header"
+                className="mb-4 flex min-h-7 flex-wrap items-center justify-between gap-3"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <TagBadge tag={selectedTag} />
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {t('{{count}} resources', {
+                      count: filteredResources.length,
+                      defaultValue_one: '{{count}} resource'
+                    })}
+                  </span>
+                </div>
+                {'systemKey' in selectedTag ? null : (
+                  <div data-slot="tag-detail-actions" className="flex shrink-0 items-center gap-1">
+                    <SettingsIconAction
+                      label={t('Edit Tag')}
+                      icon={Pencil}
+                      onClick={() => openEditor(selectedTag)}
+                    />
+                    <SettingsIconAction
+                      label={t('Delete Tag')}
+                      icon={Trash2}
+                      danger
+                      onClick={() => {
+                        setDeleteError(undefined)
+                        setDeleting(selectedTag)
+                      }}
+                    />
+                  </div>
+                )}
               </div>
               <div className="mb-3 flex items-center gap-2">
                 <Select

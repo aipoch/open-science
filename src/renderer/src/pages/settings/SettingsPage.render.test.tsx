@@ -243,6 +243,19 @@ const navButton = (label: string): HTMLButtonElement | undefined =>
     document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
   ).find((candidate) => candidate.textContent?.trim() === label)
 
+const openCustomServerEditor = async (displayName: string): Promise<void> => {
+  openRadixMenu(
+    document.body.querySelector<HTMLButtonElement>(`[aria-label="Actions for ${displayName}"]`)
+  )
+  const edit = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+    (item) => item.textContent?.trim() === 'Edit'
+  )
+  await act(async () => {
+    clickRadixMenuItem(edit)
+    await Promise.resolve()
+  })
+}
+
 const settingsSection = (title: string): HTMLElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')).find(
     (section) => section.querySelector('h3')?.textContent?.trim() === title
@@ -2318,9 +2331,7 @@ describe('SettingsPage layout', () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
     await act(async () => navButton('Connectors')?.click())
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')?.click()
-    })
+    await openCustomServerEditor('My MCP')
 
     act(() => useSettingsStore.setState({ customServers: [] }))
 
@@ -2364,9 +2375,7 @@ describe('SettingsPage layout', () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
     await act(async () => navButton('Connectors')?.click())
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')?.click()
-    })
+    await openCustomServerEditor('My MCP')
 
     const displayName = document.body.querySelector<HTMLInputElement>(
       '[aria-label="Display name"]'
@@ -2648,6 +2657,110 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
   })
 
+  it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-usage',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSkillId: 'alpha' })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      fireEvent.focus(
+        document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>(
+          '[aria-label="Open Researcher in Specialist Settings"]'
+        )!
+      )
+    })
+
+    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.textContent).toContain('Test Author')
+  })
+
+  it('navigates from a Connector usage popover to Specialist Settings and back', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-connector-usage',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSettingsPanel: 'connectors' })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      fireEvent.focus(document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!)
+    })
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>(
+          '[aria-label="Open Researcher in Specialist Settings"]'
+        )!
+      )
+    })
+
+    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.textContent).toContain('Chemistry')
+  })
+
   it('routes connector capability rows to detail or edit by server kind', async () => {
     const researcher: SpecialistProfileView = {
       id: 'spc-2',
@@ -2741,6 +2854,12 @@ describe('SettingsPage layout', () => {
     })
     expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
     expect(crumb()).toContain('Connectors›Chemistry')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Specialists')
+    expect(document.body.textContent).toContain('Researcher')
+    expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
 
     // Back to the editor (capability tabs reset to Skills on remount), then a
     // custom server lands on its edit page.

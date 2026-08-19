@@ -1,6 +1,7 @@
 import type {
   CreateTagRequest,
   DeleteTagRequest,
+  ReorderTagsRequest,
   SetTagAssignmentRequest,
   TagSnapshot,
   TagResourceRef,
@@ -70,6 +71,10 @@ class TagService {
 
   delete(request: DeleteTagRequest): Promise<TagSnapshot> {
     return this.mutate(() => this.repository.delete(request.id))
+  }
+
+  reorder(request: ReorderTagsRequest): Promise<TagSnapshot> {
+    return this.mutate(() => this.repository.reorder(request))
   }
 
   setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot> {

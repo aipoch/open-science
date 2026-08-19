@@ -320,6 +320,78 @@ describe('AcpRuntimeCoordinator', () => {
     expect(coordinator.getSnapshot().revision).toBe(2)
   })
 
+  it('keeps snapshot publication available when no incremental event adapter is configured', () => {
+    let incrementalPublicationConfigured = true
+    new AcpRuntimeCoordinator(
+      (callbacks) => {
+        incrementalPublicationConfigured = callbacks.onEvent !== undefined
+        return createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+      },
+      { onStateChanged: vi.fn() }
+    )
+
+    expect(incrementalPublicationConfigured).toBe(false)
+  })
+
+  it('retains snapshot-only events after a new runtime generation adopts the session', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const snapshots: AcpStateSnapshot[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onStateChanged: (snapshot) => snapshots.push(snapshot) }
+    )
+
+    const session = await coordinator.createSession()
+    created[0].emitEvent({
+      id: 'old-owner-message',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      sessionId: session.sessionId,
+      role: 'assistant',
+      text: 'published before adoption'
+    })
+    expect(snapshots.at(-1)?.events.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'old-owner-message'))
+    ])
+
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const switchRequest = coordinator.requestAgentFrameworkSwitch()
+    await coordinator.connect()
+    const resumeRequest = coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'codex'
+    })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    await resumeRequest
+
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toContainEqual(
+      expect.stringMatching(runtimeEventId(1, 'old-owner-message'))
+    )
+
+    retirement.resolve()
+    await switchRequest
+  })
+
   it('does not capture the process Active backend for a Session without an owning runtime', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

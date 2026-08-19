@@ -438,6 +438,43 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(readReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
   })
 
+  it('repairs an extracted package with an empty index after micromamba reports invalid JSON', async () => {
+    const root = makeRoot()
+    const cache = pkgsCache(root)
+    const corruptPackage = join(cache, 'python-3.12.0-h123_0')
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    const bin = pythonBin(prefix)
+    mkdirSync(join(corruptPackage, 'info'), { recursive: true })
+    writeFileSync(join(corruptPackage, 'info', 'repodata_record.json'), '{}')
+    writeFileSync(join(corruptPackage, 'info', 'index.json'), '')
+
+    let creates = 0
+    const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
+      lockPath: join(root, 'python-3.12.lock')
+    }))
+    const runArgv = vi.fn(async () => {
+      creates += 1
+      if (creates === 1) {
+        throw new Error(
+          'libmamba Error when extracting package: [json.exception.parse_error.101] ' +
+            'parse error at line 1, column 1: attempting to parse an empty input; ' +
+            'critical libmamba Found incorrect downloads. Aborting'
+        )
+      }
+      expect(existsSync(corruptPackage)).toBe(false)
+      mkdirSync(join(bin, '..'), { recursive: true })
+      writeFileSync(bin, 'ok')
+    })
+
+    await new DefaultRuntimeProvisioner(makeDeps(root, { fetchBundle, runArgv })).provisionPython(
+      () => {}
+    )
+
+    expect(creates).toBe(2)
+    expect(fetchBundle).toHaveBeenCalledTimes(2)
+    expect(existsSync(bin)).toBe(true)
+  })
+
   it('repairs and retries after a Windows native access violation leaves an incomplete cache', async () => {
     const root = makeRoot()
     const cache = pkgsCache(root)
@@ -578,6 +615,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     // A COMPLETE extracted package has micromamba's repodata marker — another env depends on it; must survive.
     mkdirSync(join(cache, 'good-pkg', 'info'), { recursive: true })
     writeFileSync(join(cache, 'good-pkg', 'info', 'repodata_record.json'), '{}')
+    writeFileSync(join(cache, 'good-pkg', 'info', 'index.json'), '{}')
     // A downloaded TARBALL — offline-rebuild material for other envs; must survive.
     writeFileSync(join(cache, 'numpy-1.26.conda'), 'tarball')
     // An INCOMPLETE extraction (no repodata_record.json) — the corrupt one; must be removed.
@@ -700,6 +738,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
       join(legacyLeaf, 'info', 'repodata_record.json'),
       JSON.stringify({ url: 'https://host/channel/win-64/legacy-deep-package-1.0-0.conda' })
     )
+    writeFileSync(join(legacyLeaf, 'info', 'index.json'), '{}')
     const runArgv = vi.fn(async () => {
       expect(existsSync(legacyLeaf)).toBe(false)
       const bin = pythonBin(envPrefix(root, DEFAULT_PY_ENV))

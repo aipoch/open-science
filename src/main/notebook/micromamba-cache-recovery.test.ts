@@ -13,6 +13,7 @@ import {
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-cache-recovery-'))
 const markComplete = (packageDir: string): void => {
   mkdirSync(join(packageDir, 'info'), { recursive: true })
+  writeFileSync(join(packageDir, 'info', 'index.json'), '{}')
   writeFileSync(
     join(packageDir, 'info', 'repodata_record.json'),
     JSON.stringify({ url: `https://host/channel/noarch/${basename(packageDir)}.conda` })
@@ -53,8 +54,10 @@ describe('removeIncompleteExtractedPackages', () => {
     }
     rmSync(join(urlEmpty, 'info'), { recursive: true })
     writeFileSync(join(flatComplete, 'info', 'repodata_record.json'), '{}')
+    writeFileSync(join(flatComplete, 'info', 'index.json'), '{}')
     writeFileSync(join(flatIncomplete, 'info', 'index.json'), '{}')
     writeFileSync(join(urlComplete, 'info', 'repodata_record.json'), '{}')
+    writeFileSync(join(urlComplete, 'info', 'index.json'), '{}')
     writeFileSync(join(urlIncomplete, 'partial'), 'x')
     mkdirSync(join(cache, 'cache', 'repodata'), { recursive: true })
     writeFileSync(join(cache, 'cache', 'repodata', 'state.json'), '{}')

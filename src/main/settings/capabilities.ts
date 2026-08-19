@@ -26,11 +26,15 @@ export type SettingsPreferencesSnapshot = {
   defaultPermissionProfile: PermissionProfileId
 }
 
+export type SetDataRootOptions = Readonly<{
+  completeOnboarding?: boolean
+}>
+
 export interface SettingsPreferences {
   getSnapshot(): Promise<SettingsPreferencesSnapshot>
   markOnboardingComplete(): Promise<SettingsPreferencesSnapshot>
   markPathsNormalized(): Promise<SettingsPreferencesSnapshot>
-  setDataRoot(path: string): Promise<SettingsPreferencesSnapshot>
+  setDataRoot(path: string, options?: SetDataRootOptions): Promise<SettingsPreferencesSnapshot>
   dismissLegacyDataMovePrompt(): Promise<SettingsPreferencesSnapshot>
   setReasoningEffort(effort: ReasoningEffort): Promise<SettingsPreferencesSnapshot>
   setNotificationsEnabled(enabled: boolean): Promise<SettingsPreferencesSnapshot>

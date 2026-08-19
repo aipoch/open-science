@@ -8,10 +8,11 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ResourceAvailability } from './ResourceAvailability'
 import { SettingsLoadNotice } from './SettingsLayout'
-import { specialistsUsingSkill } from './specialist-resource-scope'
+import { specialistsUsingSkill, type SpecialistUsage } from './specialist-resource-scope'
 
 type SkillDetailViewProps = {
   skillId: string
+  onOpenSpecialist?: (usage: SpecialistUsage) => void
 }
 
 // Elapsed whole days since an ISO date, or null when it can't be parsed. Stays pure and locale-free
@@ -45,7 +46,10 @@ const DEDICATED_METADATA_KEYS = new Set([
 // Read-only detail view for one bundled skill: header (name + badge + updated + description), the
 // rendered SKILL.md under "Files", and frontmatter metadata under "Details". The breadcrumb and back
 // control live in the settings header, not here.
-const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element => {
+const SkillDetailView = ({
+  skillId,
+  onOpenSpecialist
+}: SkillDetailViewProps): React.JSX.Element => {
   const { t } = useTranslation()
   const skill = useSettingsStore((state) => state.skills.find((item) => item.id === skillId))
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
@@ -173,6 +177,8 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
         mainToggleLabel={t('Toggle {{name}}', { name })}
         usages={usages}
         onToggleMain={() => void toggleSkill()}
+        showAgentPopover
+        onOpenSpecialist={onOpenSpecialist}
       />
 
       {/* Files: the rendered SKILL.md body. */}

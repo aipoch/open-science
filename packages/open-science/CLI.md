@@ -55,6 +55,12 @@ human-readable, JSON, and JSONL output never includes the local token.
 Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
 Open Science executable. Development builds also support `--config-root <path>`.
 
+`open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
+the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
+command fails without signalling the PID recorded in `web-service.json`; a stale PID may have been
+reused by an unrelated process. The state file is retained for diagnosis and can be replaced by a
+later `open-science start`.
+
 ## Codex subscription sign-in
 
 Sign the Open Science Codex profile in from a server terminal without starting the daemon or opening

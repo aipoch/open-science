@@ -12,7 +12,11 @@ import {
   getDefaultPermissionProfile,
   type PermissionProfileId
 } from '../../shared/permission-profiles'
-import type { SettingsPreferences, SettingsPreferencesSnapshot } from './capabilities'
+import type {
+  SetDataRootOptions,
+  SettingsPreferences,
+  SettingsPreferencesSnapshot
+} from './capabilities'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 
@@ -60,8 +64,16 @@ class SettingsPreferencesModule implements SettingsPreferences {
     return toSettingsPreferencesSnapshot(await this.repository.markPathsNormalized(this.now()))
   }
 
-  async setDataRoot(path: string): Promise<SettingsPreferencesSnapshot> {
-    return toSettingsPreferencesSnapshot(await this.repository.setDataRoot(path))
+  async setDataRoot(
+    path: string,
+    options: SetDataRootOptions = {}
+  ): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(
+      await this.repository.setDataRoot({
+        dataRoot: path,
+        ...(options.completeOnboarding ? { onboardingCompletedAt: this.now() } : {})
+      })
+    )
   }
 
   async dismissLegacyDataMovePrompt(): Promise<SettingsPreferencesSnapshot> {
@@ -108,3 +120,4 @@ class SettingsPreferencesModule implements SettingsPreferences {
 }
 
 export { SettingsPreferencesModule, toSettingsPreferencesSnapshot }
+export type { SetDataRootOptions } from './capabilities'

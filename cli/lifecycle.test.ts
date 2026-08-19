@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import {
   buildAppLaunchArgs,
   formatStartupFailure,
+  isProcessAlive,
   openLaunchLog,
   statusCommand,
   stopCommand,
@@ -16,6 +17,7 @@ import {
   urlCommand,
   waitForStartup
 } from './index.mjs'
+import { findServiceState, STATE_FILE } from './config-root.mjs'
 
 // A running daemon's on-disk state, as findServiceState would return it.
 const RUNNING_STATE = { pid: 4242, port: 44100, configRoot: '/tmp/os-config' }
@@ -41,6 +43,8 @@ const makeDeps = (overrides: Partial<CommandDeps> = {}): CommandDeps => {
     findServiceState: vi.fn().mockResolvedValue(RUNNING_STATE),
     readWebToken: vi.fn().mockResolvedValue('token-abc'),
     isAlive: vi.fn().mockReturnValue(true),
+    // Legacy destructive seam: retained in the harness so regression tests prove stopCommand never
+    // delegates a persisted PID to the old external process-tree kill path.
     forceKill: vi.fn(),
     removeState: vi.fn().mockResolvedValue(undefined),
     fetch: vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }),
@@ -66,45 +70,23 @@ describe('terminateDaemon', () => {
       let t = 0
       return () => (t += 1000)
     })(),
-    gracefulTimeoutMs: 5_000,
-    killTimeoutMs: 2_000
+    gracefulTimeoutMs: 5_000
   }
 
-  it('returns true without force-killing when the process exits gracefully', async () => {
-    const forceKill = vi.fn()
+  it('returns true when the process exits gracefully', async () => {
     const stopped = await terminateDaemon(1, {
       ...base,
-      isAlive: () => false,
-      forceKill
+      isAlive: () => false
     })
     expect(stopped).toBe(true)
-    expect(forceKill).not.toHaveBeenCalled()
   })
 
-  it('force-kills the tree and returns true when the process dies after the kill', async () => {
-    // Stays alive through the graceful window (so the wait times out), then is reaped by force-kill.
-    let killed = false
-    const forceKill = vi.fn(() => {
-      killed = true
-    })
-    const onForceKill = vi.fn()
+  it('returns false when the process remains alive through the graceful timeout', async () => {
     const stopped = await terminateDaemon(99, {
       ...base,
-      isAlive: () => !killed,
-      forceKill,
-      onForceKill
+      isAlive: () => true
     })
-    expect(stopped).toBe(true)
-    expect(forceKill).toHaveBeenCalledWith(99)
-    expect(onForceKill).toHaveBeenCalledTimes(1)
-  })
-
-  it('returns false when the process is still alive after the force-kill window', async () => {
-    // force-kill runs but the process refuses to die (isAlive stays true throughout).
-    const forceKill = vi.fn()
-    const stopped = await terminateDaemon(7, { ...base, isAlive: () => true, forceKill })
     expect(stopped).toBe(false)
-    expect(forceKill).toHaveBeenCalledWith(7)
   })
 })
 
@@ -205,24 +187,63 @@ describe('stopCommand', () => {
     expect(deps.log).toHaveBeenCalledWith('Open Science stopped.')
   })
 
-  it('does NOT remove state or print stopped when the process survives the force-kill', async () => {
-    // Always alive: findCurrentState passes, graceful times out, force-kill fails to reap it.
+  it('does not signal or remove state when the process survives the graceful timeout', async () => {
+    // Always alive: findCurrentState passes and the authenticated graceful shutdown times out.
     const deps = makeDeps({ isAlive: vi.fn().mockReturnValue(true) })
     await expect(stopCommand({}, deps)).rejects.toThrow(/still running/)
 
-    expect(deps.forceKill).toHaveBeenCalledWith(RUNNING_STATE.pid)
+    expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
     expect(deps.log).not.toHaveBeenCalledWith('Open Science stopped.')
   })
 
-  it('still force-kills when the graceful shutdown request fails', async () => {
+  it('fails closed without signalling when the authenticated shutdown request fails', async () => {
     const deps = makeDeps({
       isAlive: vi.fn().mockReturnValue(true),
       fetch: vi.fn().mockRejectedValue(new Error('connection refused'))
     })
-    await expect(stopCommand({}, deps)).rejects.toThrow(/still running/)
+    await expect(stopCommand({}, deps)).rejects.toThrow(
+      /authenticated shutdown request was not accepted/
+    )
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining('Graceful shutdown failed'))
-    expect(deps.forceKill).toHaveBeenCalledWith(RUNNING_STATE.pid)
+    expect(deps.forceKill).not.toHaveBeenCalled()
+    expect(deps.removeState).not.toHaveBeenCalled()
+  })
+
+  it('does not force-kill an unrelated live process when stale state contains its reused PID', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-cli-stale-pid-'))
+    const forceKill = vi.fn()
+    try {
+      // Reproduce PID reuse deterministically: this state belongs to a long-gone daemon, while its PID
+      // now names the unrelated Vitest process. The real liveness probe therefore reports the PID alive.
+      await writeFile(
+        join(configRoot, STATE_FILE),
+        JSON.stringify({
+          pid: process.pid,
+          port: 44100,
+          startedAt: '2000-01-01T00:00:00.000Z',
+          appVersion: '0.0.0',
+          configRoot,
+          attached: false
+        })
+      )
+      const deps = makeDeps({
+        findServiceState: vi.fn((options) => findServiceState(options)),
+        isAlive: vi.fn(isProcessAlive),
+        forceKill,
+        fetch: vi.fn().mockRejectedValue(new Error('connection refused'))
+      })
+
+      await expect(stopCommand({ configRoot }, deps)).rejects.toThrow(
+        /authenticated shutdown request was not accepted/
+      )
+
+      expect(isProcessAlive(process.pid)).toBe(true)
+      expect(forceKill).not.toHaveBeenCalled()
+      expect(deps.removeState).not.toHaveBeenCalled()
+    } finally {
+      await rm(configRoot, { recursive: true })
+    }
   })
 
   it('stops only the web service and never kills the pid when the state is attached', async () => {
@@ -250,6 +271,19 @@ describe('stopCommand', () => {
     expect(deps.log).toHaveBeenCalledWith(
       'Open Science web service stopped; the app is still running.'
     )
+  })
+
+  it('retains attached state when the authenticated shutdown request is not accepted', async () => {
+    const deps = makeDeps({
+      findServiceState: vi.fn().mockResolvedValue({ ...RUNNING_STATE, attached: true }),
+      fetch: vi.fn().mockRejectedValue(new Error('connection refused'))
+    })
+
+    await expect(stopCommand({}, deps)).rejects.toThrow(
+      /authenticated shutdown request was not accepted/
+    )
+    expect(deps.forceKill).not.toHaveBeenCalled()
+    expect(deps.removeState).not.toHaveBeenCalled()
   })
 
   it('fails loudly without killing the pid when an attached web service refuses to stop', async () => {

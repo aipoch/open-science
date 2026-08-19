@@ -1,3 +1,9 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V3
+ * component: Connector catalog · genre: modern-minimal · theme: project tokens
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: semantic foreground / surface tokens · slop: pass (component/static)
+ * responsive: wrapping toolbar and rows · visual gates: pending user review
+ */
 import {
   AlertTriangle,
   ChevronDown,
@@ -35,6 +41,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -43,20 +50,11 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ConnectorGlyph } from './connector-icons'
-import {
-  SettingsIconAction,
-  SettingsLoadNotice,
-  SettingsSection,
-  SettingsToggle
-} from './SettingsLayout'
+import { SettingsLoadNotice, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
-import {
-  resourceScope,
-  specialistsUsingConnector,
-  type ResourceScope,
-  type SpecialistUsage
-} from './specialist-resource-scope'
+import { specialistsUsingConnector, type SpecialistUsage } from './specialist-resource-scope'
 import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
+import { SkillUsageAgents } from './SkillUsageAgents'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -73,12 +71,11 @@ export type ConnectorsView =
   | { kind: 'export'; id: string }
 
 type GroupFilter = 'all' | 'featured' | 'directory' | 'custom'
-type ScopeFilter = 'all' | 'main' | 'specialist-only' | 'shared'
+const MAIN_AGENT_FILTER = '__main-agent__'
 
 type ConnectorResourceRow<T extends { id: string; name: string; enabled: boolean }> = {
   resource: T
   usages: SpecialistUsage[]
-  scope: ResourceScope
 }
 
 // Keys rather than finished strings: the trigger and the option list both read from this map, so the
@@ -92,30 +89,12 @@ const FILTER_LABEL_KEYS = {
 
 const FILTER_ORDER: GroupFilter[] = ['all', 'featured', 'directory', 'custom']
 
-const SCOPE_FILTER_LABEL_KEYS = {
-  all: 'All scopes',
-  main: 'Main',
-  'specialist-only': 'Specialist only',
-  shared: 'Shared with Main'
-} as const satisfies Record<ScopeFilter, string>
-
-const SCOPE_LABEL_KEYS = {
-  'main-only': 'Main only',
-  'specialist-only': 'Specialist only',
-  shared: 'Shared with Main',
-  'not-in-use': 'Not in use'
-} as const satisfies Record<ResourceScope, string>
-
-const includesScope = (
-  scopeFilter: ScopeFilter,
+const includesAgent = (
   specialistFilter: string,
   enabled: boolean,
-  usages: readonly SpecialistUsage[],
-  scope: ResourceScope
+  usages: readonly SpecialistUsage[]
 ): boolean => {
-  if (scopeFilter === 'main' && !enabled) return false
-  if (scopeFilter === 'specialist-only' && scope !== 'specialist-only') return false
-  if (scopeFilter === 'shared' && scope !== 'shared') return false
+  if (specialistFilter === MAIN_AGENT_FILTER) return enabled
   return specialistFilter === 'all' || usages.some((usage) => usage.id === specialistFilter)
 }
 
@@ -129,11 +108,13 @@ const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
   onOpenTag?: (tagId: string) => void
+  onOpenSpecialist?: (usage: SpecialistUsage) => void
 }
 
 export function ConnectorsPanel({
   onNavigate,
-  onOpenTag
+  onOpenTag,
+  onOpenSpecialist
 }: ConnectorsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
@@ -151,7 +132,6 @@ export function ConnectorsPanel({
   const loadSpecialists = useSpecialistStore((state) => state.load)
 
   const [filter, setFilter] = useState<GroupFilter>('all')
-  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
   const [specialistFilter, setSpecialistFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
   const tagAssignments = useTagStore((state) => state.assignments)
@@ -228,8 +208,7 @@ export function ConnectorsPanel({
     const term = query.trim().toLowerCase()
     return connectors.flatMap((connector) => {
       const usages = specialistsUsingConnector(specialistItems, connector)
-      const scope = resourceScope(connector.enabled, usages)
-      if (!includesScope(scopeFilter, specialistFilter, connector.enabled, usages, scope)) return []
+      if (!includesAgent(specialistFilter, connector.enabled, usages)) return []
       if (
         tagFilter !== 'all' &&
         !tagAssignments.some(
@@ -247,16 +226,15 @@ export function ConnectorsPanel({
       ) {
         return []
       }
-      return [{ resource: connector, usages, scope }]
+      return [{ resource: connector, usages }]
     })
-  }, [connectors, query, scopeFilter, specialistFilter, specialistItems, tagAssignments, tagFilter])
+  }, [connectors, query, specialistFilter, specialistItems, tagAssignments, tagFilter])
 
   const visibleCustomServers = useMemo<ConnectorResourceRow<CustomServerView>[]>(() => {
     const term = query.trim().toLowerCase()
     return customServers.flatMap((server) => {
       const usages = specialistsUsingConnector(specialistItems, server)
-      const scope = resourceScope(server.enabled, usages)
-      if (!includesScope(scopeFilter, specialistFilter, server.enabled, usages, scope)) return []
+      if (!includesAgent(specialistFilter, server.enabled, usages)) return []
       if (
         tagFilter !== 'all' &&
         !tagAssignments.some(
@@ -275,17 +253,9 @@ export function ConnectorsPanel({
       ) {
         return []
       }
-      return [{ resource: server, usages, scope }]
+      return [{ resource: server, usages }]
     })
-  }, [
-    customServers,
-    query,
-    scopeFilter,
-    specialistFilter,
-    specialistItems,
-    tagAssignments,
-    tagFilter
-  ])
+  }, [customServers, query, specialistFilter, specialistItems, tagAssignments, tagFilter])
 
   const startEditing = (): void => {
     setEmailField(ncbi.contactEmail ?? '')
@@ -440,20 +410,12 @@ export function ConnectorsPanel({
         {expanded ? (
           rows.length > 0 ? (
             <ul className="mt-2 flex flex-col divide-y divide-border">
-              {rows.map(({ resource: connector, usages, scope }) => {
-                const usageLabel =
-                  usages.length === 1
-                    ? usages[0].name
-                    : usages.length === 2
-                      ? t('{{name}} + 1 Specialist', { name: usages[0].name })
-                      : usages.length > 2
-                        ? t('Used by {{count}} Specialists', { count: usages.length })
-                        : undefined
+              {rows.map(({ resource: connector, usages }) => {
                 return (
                   <li
                     key={connector.id}
                     data-slot="settings-list-row"
-                    className="flex min-h-14 items-center gap-3 py-2.5"
+                    className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
                   >
                     <ConnectorGlyph size={24} />
                     <div className="min-w-0 flex-1">
@@ -473,14 +435,22 @@ export function ConnectorsPanel({
                         className="mt-0.5 flex min-w-0 items-center gap-2"
                         data-connector-metadata={connector.id}
                       >
-                        <button
-                          type="button"
-                          onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                          className="min-w-0 truncate text-left text-xs text-muted-foreground"
-                        >
-                          {usageLabel ? `${usageLabel} · ` : ''}
-                          {t(SCOPE_LABEL_KEYS[scope])}
-                        </button>
+                        {connector.enabled || usages.length > 0 ? (
+                          <span className="inline-flex shrink-0 items-center gap-1">
+                            <span
+                              data-slot="skill-usage-agents-label"
+                              className="text-xs text-muted-foreground"
+                            >
+                              {t('Used by')}
+                            </span>
+                            <SkillUsageAgents
+                              resourceKind="Connector"
+                              mainEnabled={connector.enabled}
+                              usages={usages}
+                              onOpenSpecialist={onOpenSpecialist}
+                            />
+                          </span>
+                        ) : null}
                         <ResourceTagBadges
                           reference={{
                             resourceType: 'catalog.connector',
@@ -494,10 +464,14 @@ export function ConnectorsPanel({
                       <ResourceTagMenu
                         reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
                       />
-                      <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
                       <SettingsToggle
                         enabled={connector.enabled}
-                        aria-label={connector.displayName}
+                        aria-label={t('Toggle {{name}}', { name: connector.displayName })}
+                        title={
+                          connector.enabled
+                            ? t('Available to Main Agent')
+                            : t('Unavailable to Main Agent')
+                        }
                         onToggle={() =>
                           void saveToggle(async () => {
                             await setConnectorEnabled(connector.id, !connector.enabled)
@@ -548,7 +522,7 @@ export function ConnectorsPanel({
         description={t(
           'When allowed, shared with research data services that ask for a contact email (such as those run by NCBI, EBI, and OurResearch) on requests made on your behalf.'
         )}
-        className="mb-5"
+        className="mb-4 border-b border-border pb-4"
       >
         {editing ? (
           <div className="mt-3 flex flex-col gap-3">
@@ -605,7 +579,11 @@ export function ConnectorsPanel({
         )}
       </SettingsSection>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="connectors-toolbar">
+      <div
+        data-slot="connectors-filter-bar"
+        className="mb-4 flex flex-wrap items-center gap-2"
+        data-testid="connectors-toolbar"
+      >
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
           <SelectTrigger aria-label={t('Filter connectors by group')} className="w-36">
             <span>{t(FILTER_LABEL_KEYS[filter])}</span>
@@ -618,37 +596,28 @@ export function ConnectorsPanel({
             ))}
           </SelectContent>
         </Select>
-        <Select value={scopeFilter} onValueChange={(value) => setScopeFilter(value as ScopeFilter)}>
-          <SelectTrigger aria-label={t('Filter Connectors by scope')} className="w-40">
-            <span>{t(SCOPE_FILTER_LABEL_KEYS[scopeFilter])}</span>
+        <Select value={specialistFilter} onValueChange={setSpecialistFilter}>
+          <SelectTrigger aria-label={t('Filter Connectors by agent')} className="w-48">
+            <span>
+              {specialistFilter === 'all'
+                ? t('All Agents/Specialists')
+                : specialistFilter === MAIN_AGENT_FILTER
+                  ? t('Main', { defaultValue: 'Main Agent' })
+                  : specialistOptions.find((item) => item.id === specialistFilter)?.name}
+            </span>
           </SelectTrigger>
           <SelectContent>
-            {(Object.keys(SCOPE_FILTER_LABEL_KEYS) as ScopeFilter[]).map((value) => (
-              <SelectItem key={value} value={value}>
-                {t(SCOPE_FILTER_LABEL_KEYS[value])}
+            <SelectItem value="all">{t('All Agents/Specialists')}</SelectItem>
+            <SelectItem value={MAIN_AGENT_FILTER}>
+              {t('Main', { defaultValue: 'Main Agent' })}
+            </SelectItem>
+            {specialistOptions.map((item) => (
+              <SelectItem key={item.id} value={item.id}>
+                {item.name}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        {specialistOptions.length > 0 ? (
-          <Select value={specialistFilter} onValueChange={setSpecialistFilter}>
-            <SelectTrigger aria-label={t('Filter Connectors by Specialist')} className="w-48">
-              <span>
-                {specialistFilter === 'all'
-                  ? t('All Specialists')
-                  : specialistOptions.find((item) => item.id === specialistFilter)?.name}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('All Specialists')}</SelectItem>
-              {specialistOptions.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : null}
         <TagFilter resourceType="catalog.connector" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search connectors')}
@@ -659,7 +628,7 @@ export function ConnectorsPanel({
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="shrink-0">
+            <Button variant="outline" className="ml-auto shrink-0">
               <Plus data-icon="inline-start" aria-hidden="true" />
               {t('Add connector')}
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
@@ -754,30 +723,28 @@ export function ConnectorsPanel({
             {customExpanded ? (
               visibleCustomServers.length > 0 ? (
                 <ul className="mt-2 flex flex-col divide-y divide-border">
-                  {visibleCustomServers.map(({ resource: server, usages, scope }) => {
-                    const usageLabel =
-                      usages.length === 1
-                        ? usages[0].name
-                        : usages.length === 2
-                          ? t('{{name}} + 1 Specialist', { name: usages[0].name })
-                          : usages.length > 2
-                            ? t('Used by {{count}} Specialists', { count: usages.length })
-                            : undefined
+                  {visibleCustomServers.map(({ resource: server, usages }) => {
                     return (
                       <li
                         key={server.id}
                         data-slot="settings-list-row"
-                        className="flex min-h-14 items-center gap-3 py-2.5"
+                        className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
                       >
                         <ConnectorGlyph size={24} />
                         <div className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-foreground">
-                            {server.displayName}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {server.name}
-                            {server.description ? ` · ${server.description}` : ''}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                            className="block w-full min-w-0 text-left"
+                          >
+                            <span className="block truncate text-sm text-foreground">
+                              {server.displayName}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {server.name}
+                              {server.description ? ` · ${server.description}` : ''}
+                            </span>
+                          </button>
                           <div
                             className="mt-0.5 flex min-w-0 items-center gap-2"
                             data-connector-metadata={server.id}
@@ -803,10 +770,22 @@ export function ConnectorsPanel({
                                         ? t('Connected')
                                         : t('Disabled')}
                             </span>
-                            <span className="min-w-0 truncate text-xs text-muted-foreground">
-                              {usageLabel ? `${usageLabel} · ` : ''}
-                              {t(SCOPE_LABEL_KEYS[scope])}
-                            </span>
+                            {server.enabled || usages.length > 0 ? (
+                              <span className="inline-flex shrink-0 items-center gap-1">
+                                <span
+                                  data-slot="skill-usage-agents-label"
+                                  className="text-xs text-muted-foreground"
+                                >
+                                  {t('Used by')}
+                                </span>
+                                <SkillUsageAgents
+                                  resourceKind="Connector"
+                                  mainEnabled={server.enabled}
+                                  usages={usages}
+                                  onOpenSpecialist={onOpenSpecialist}
+                                />
+                              </span>
+                            ) : null}
                             <ResourceTagBadges
                               reference={{
                                 resourceType: 'catalog.connector',
@@ -816,25 +795,6 @@ export function ConnectorsPanel({
                             />
                           </div>
                         </div>
-                        <SettingsIconAction
-                          label={t('Export {{name}}', { name: server.displayName })}
-                          icon={Download}
-                          onClick={() => onNavigate({ kind: 'export', id: server.id })}
-                        />
-                        <ResourceTagMenu
-                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
-                        />
-                        <SettingsIconAction
-                          label={t('Edit {{name}}', { name: server.displayName })}
-                          icon={Pencil}
-                          onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                        />
-                        <SettingsIconAction
-                          label={t('Remove {{name}}', { name: server.displayName })}
-                          icon={Trash2}
-                          onClick={() => void requestRemoval(server)}
-                          danger
-                        />
                         {server.availability === 'unavailable' && server.enabled ? (
                           <Button
                             type="button"
@@ -881,11 +841,49 @@ export function ConnectorsPanel({
                                   : t('Sign in')}
                           </Button>
                         ) : null}
+                        <ResourceTagMenu
+                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
+                        />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t('Actions for {{name}}', { name: server.displayName })}
+                            >
+                              <ChevronDown aria-hidden="true" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="gap-2 text-xs"
+                              onSelect={() => onNavigate({ kind: 'export', id: server.id })}
+                            >
+                              <Download className="size-3.5" aria-hidden="true" />
+                              {t('Export')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="gap-2 text-xs"
+                              onSelect={() => onNavigate({ kind: 'edit', id: server.id })}
+                            >
+                              <Pencil className="size-3.5" aria-hidden="true" />
+                              {t('Edit')}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="gap-2 text-xs text-destructive"
+                              onSelect={() => void requestRemoval(server)}
+                            >
+                              <Trash2 className="size-3.5" aria-hidden="true" />
+                              {t('Remove')}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         <div className="flex shrink-0 items-center gap-2">
-                          <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
                           <SettingsToggle
                             enabled={server.enabled}
-                            aria-label={server.displayName}
+                            aria-label={t('Toggle {{name}}', { name: server.displayName })}
                             aria-disabled={requiresSignInBeforeEnable(server) || undefined}
                             className={
                               requiresSignInBeforeEnable(server)
@@ -895,7 +893,9 @@ export function ConnectorsPanel({
                             title={
                               requiresSignInBeforeEnable(server)
                                 ? t('Sign in before enabling this Connector')
-                                : undefined
+                                : server.enabled
+                                  ? t('Available to Main Agent')
+                                  : t('Unavailable to Main Agent')
                             }
                             onToggle={() => {
                               if (requiresSignInBeforeEnable(server)) return

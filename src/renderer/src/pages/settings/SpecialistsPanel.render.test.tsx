@@ -1061,6 +1061,36 @@ describe('SpecialistsPanel', () => {
     expect(labels).toEqual(['All(4)', 'Custom(2)', 'Built-in(2)'])
   })
 
+  it('aligns the add action right and matches the Skill row action order', async () => {
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const toolbar = document.body.querySelector('[data-slot="specialists-toolbar"]')
+    const addButton = Array.from(toolbar?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.includes('Add specialist')
+    )
+    expect(addButton?.className).toContain('ml-auto')
+    expect(toolbar?.lastElementChild).toBe(addButton)
+
+    const toggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle RNA Reviewer"]'
+    )
+    const row = toggle?.closest('[data-slot="settings-list-row"]')
+    const trailingControlLabels = Array.from(
+      row?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    )
+      .map((button) => button.getAttribute('aria-label'))
+      .filter((label) =>
+        ['Manage Tags', 'Actions for RNA Reviewer', 'Toggle RNA Reviewer'].includes(label ?? '')
+      )
+    expect(trailingControlLabels).toEqual([
+      'Manage Tags',
+      'Actions for RNA Reviewer',
+      'Toggle RNA Reviewer'
+    ])
+  })
+
   it('shows a runnable builtin as a read-only row and opens its approved detail view', async () => {
     const onNavigate = vi.fn()
     await act(async () => {

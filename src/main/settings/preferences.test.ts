@@ -45,8 +45,7 @@ describe('SettingsPreferencesModule', () => {
     await preferences.setClosePreference('quit')
     await preferences.setAppIconVariant('dark')
     await preferences.setDefaultPermissionProfile('auto')
-    await preferences.setDataRoot(dataRoot)
-    await preferences.markOnboardingComplete()
+    await preferences.setDataRoot(dataRoot, { completeOnboarding: true })
     await preferences.markPathsNormalized()
     await preferences.dismissLegacyDataMovePrompt()
 

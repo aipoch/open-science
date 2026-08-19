@@ -1,13 +1,26 @@
-import { AlertTriangle, LoaderCircle, SearchX } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { AlertTriangle, LoaderCircle, SearchX, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AlertDialog } from 'radix-ui'
 
 import type { SkillSource } from '../../../../shared/settings'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { SettingsSearchInput } from './SettingsSearchInput'
+import { specialistsOwningSkill, specialistsUsingSkill } from './specialist-resource-scope'
 
 type ManageableSkillSource = Exclude<SkillSource, 'featured'>
 type SourceFilter = 'all' | ManageableSkillSource
@@ -34,13 +47,23 @@ const SkillBulkManageView = (): React.JSX.Element => {
   const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
   const setSkillsEnabled = useSettingsStore((state) => state.setSkillsEnabled)
+  const deleteSkill = useSettingsStore((state) => state.deleteSkill)
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [query, setQuery] = useState('')
   const [showSelectedOnly, setShowSelectedOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [pendingEnabled, setPendingEnabled] = useState<boolean | undefined>()
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [bulkError, setBulkError] = useState<string | undefined>()
+  const [bulkResult, setBulkResult] = useState<string | undefined>()
+
+  useEffect(() => {
+    void loadSpecialists()
+  }, [loadSpecialists])
 
   const manageableSkills = useMemo(
     () => skills.filter((skill) => skill.source === 'imported' || skill.source === 'personal'),
@@ -76,7 +99,15 @@ const SkillBulkManageView = (): React.JSX.Element => {
   const resultIds = filteredSkills.map((skill) => skill.id)
   const allResultsSelected =
     resultIds.length > 0 && resultIds.every((id) => validSelectedIds.has(id))
-  const busy = pendingEnabled !== undefined
+  const selectedSkills = manageableSkills.filter((skill) => validSelectedIds.has(skill.id))
+  const deletionPreview = selectedSkills.map((skill) => {
+    const owners = specialistsOwningSkill(specialistItems, skill.id)
+    const usages = specialistsUsingSkill(specialistItems, skill.id)
+    return { skill, owners, usages, protected: owners.length > 0 || usages.length > 0 }
+  })
+  const deletableSkills = deletionPreview.filter((item) => !item.protected)
+  const protectedSkills = deletionPreview.filter((item) => item.protected)
+  const busy = pendingEnabled !== undefined || deleteBusy
 
   const toggleSelected = (id: string): void => {
     setSelectedIds((current) => {
@@ -102,6 +133,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
     setSelectedIds(new Set())
     setShowSelectedOnly(false)
     setBulkError(undefined)
+    setBulkResult(undefined)
   }
 
   const resetFilters = (): void => {
@@ -109,12 +141,14 @@ const SkillBulkManageView = (): React.JSX.Element => {
     setStatusFilter('all')
     setQuery('')
     setShowSelectedOnly(false)
+    setBulkResult(undefined)
   }
 
   const updateSelected = async (enabled: boolean): Promise<void> => {
     if (validSelectedIds.size === 0 || busy) return
     setPendingEnabled(enabled)
     setBulkError(undefined)
+    setBulkResult(undefined)
     try {
       await setSkillsEnabled([...validSelectedIds], enabled)
       setShowSelectedOnly(true)
@@ -129,6 +163,40 @@ const SkillBulkManageView = (): React.JSX.Element => {
       )
     } finally {
       setPendingEnabled(undefined)
+    }
+  }
+
+  const deleteSelected = async (): Promise<void> => {
+    if (deletableSkills.length === 0 || deleteBusy) return
+    setDeleteBusy(true)
+    setBulkError(undefined)
+    setBulkResult(undefined)
+    const deletedIds = new Set<string>()
+    const failures: string[] = []
+    for (const { skill } of deletableSkills) {
+      try {
+        await deleteSkill(skill.id)
+        deletedIds.add(skill.id)
+      } catch (error) {
+        failures.push(errorMessage(error) || skill.displayName)
+      }
+    }
+
+    setSelectedIds((current) => new Set([...current].filter((id) => !deletedIds.has(id))))
+    setShowSelectedOnly(protectedSkills.length > 0 || failures.length > 0)
+    setDeleteOpen(false)
+    setDeleteBusy(false)
+
+    if (deletedIds.size > 0) {
+      setBulkResult(
+        t('Deleted {{count}} Skills.', {
+          count: deletedIds.size,
+          defaultValue_one: 'Deleted {{count}} Skill.'
+        })
+      )
+    }
+    if (failures.length > 0) {
+      setBulkError(t('Some selected Skills could not be deleted. They remain selected.'))
     }
   }
 
@@ -261,9 +329,34 @@ const SkillBulkManageView = (): React.JSX.Element => {
                 })
               )}
             </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                setBulkError(undefined)
+                setBulkResult(undefined)
+                setDeleteOpen(true)
+              }}
+              disabled={busy || validSelectedIds.size === 0}
+            >
+              <Trash2 aria-hidden="true" />
+              {t('Delete selected ({{selectedCount}})', {
+                selectedCount: validSelectedIds.size
+              })}
+            </Button>
           </div>
         </div>
       </div>
+
+      {bulkResult ? (
+        <p
+          role="status"
+          className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-foreground"
+        >
+          {bulkResult}
+        </p>
+      ) : null}
 
       {bulkError ? (
         <p
@@ -328,6 +421,138 @@ const SkillBulkManageView = (): React.JSX.Element => {
           ) : null}
         </div>
       )}
+
+      <AlertDialog.Root
+        open={deleteOpen}
+        onOpenChange={(nextOpen) => {
+          if (!deleteBusy) setDeleteOpen(nextOpen)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] max-h-[85vh] p-0')}
+          >
+            <div data-slot="skill-bulk-delete-header" className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('Delete selected Skills?')}
+              </AlertDialog.Title>
+            </div>
+
+            <div className={`${dialogBodyClassName} max-h-[55vh] overflow-y-auto`}>
+              <AlertDialog.Description
+                data-slot="skill-bulk-delete-description"
+                className={dialogDescriptionClassName}
+              >
+                {t('Deleted Skills are removed from this device and cannot be recovered.')}
+              </AlertDialog.Description>
+
+              <div className="mt-5 space-y-5">
+                <section>
+                  <h3
+                    data-slot="skill-bulk-delete-primary-summary"
+                    className="text-base font-semibold leading-6 text-foreground"
+                  >
+                    {t('{{count}} selected Skills can be deleted.', {
+                      count: deletableSkills.length,
+                      defaultValue_one: '{{count}} selected Skill can be deleted.'
+                    })}
+                  </h3>
+                  {deletableSkills.length > 0 ? (
+                    <ul
+                      data-slot="skill-bulk-delete-deletable-list"
+                      className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground"
+                    >
+                      {deletableSkills.map(({ skill }) => (
+                        <li key={skill.id} className="truncate">
+                          {skill.displayName}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+
+                {protectedSkills.length > 0 ? (
+                  <section
+                    data-slot="skill-bulk-delete-protected-section"
+                    className="border-t border-border pt-5"
+                  >
+                    <h3
+                      data-slot="skill-bulk-delete-protected-summary"
+                      className="text-base font-semibold leading-6 text-foreground"
+                    >
+                      {t('{{count}} protected Skills will be kept.', {
+                        count: protectedSkills.length,
+                        defaultValue_one: '{{count}} protected Skill will be kept.'
+                      })}
+                    </h3>
+                    <ul
+                      data-slot="skill-bulk-delete-protected-list"
+                      className="mt-2 space-y-2 text-xs leading-5"
+                    >
+                      {protectedSkills.map(({ skill, owners, usages }) => (
+                        <li key={skill.id}>
+                          <p className="truncate text-foreground">{skill.displayName}</p>
+                          <p className="text-muted-foreground">
+                            {owners.length > 0
+                              ? t('Owned by a Specialist.')
+                              : t('Used by a Specialist.')}
+                            {owners.length + usages.length > 0
+                              ? ` ${[...owners, ...usages]
+                                  .map((item) => item.name)
+                                  .filter((name, index, names) => names.indexOf(name) === index)
+                                  .join(', ')}`
+                              : ''}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+              </div>
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={dialogCancelButtonClassName}
+                  disabled={deleteBusy}
+                >
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={deleteBusy || deletableSkills.length === 0}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    void deleteSelected()
+                  }}
+                >
+                  {deleteBusy ? (
+                    <>
+                      <LoaderCircle
+                        className="animate-spin motion-reduce:animate-none"
+                        aria-hidden
+                      />
+                      {t('Deleting…')}
+                    </>
+                  ) : (
+                    t('Delete {{count}} Skills', {
+                      count: deletableSkills.length,
+                      defaultValue_one: 'Delete {{count}} Skill'
+                    })
+                  )}
+                </Button>
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   )
 }

@@ -79,6 +79,7 @@ export const MAX_ACP_MESSAGE_IMAGE_BYTES = 4 * 1024 * 1024
 export const MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE = 4
 export const MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE = 8 * 1024 * 1024
 export const MAX_ACP_SESSION_IMAGE_BYTES = 24 * 1024 * 1024
+export const MAX_ACP_RUNTIME_EVENTS = 500
 // Existing runtime projection keeps only text-bearing message events. This sentinel carries a valid
 // image through that projection and is removed before transcript storage or rendering.
 export const ACP_MESSAGE_IMAGE_EVENT_TEXT = '[open-science:acp-message-image]'

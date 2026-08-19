@@ -1,4 +1,5 @@
 import { appendFile, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { extname, join } from 'node:path'
 
@@ -813,6 +814,26 @@ const getLogFilePath = (): string | undefined =>
 // Resolves once all queued writes have flushed. Useful for tests and orderly shutdown.
 const flushLogs = (): Promise<void> => writeChain
 
+// Fatal process failures cannot await the ordinary Promise-backed write queue: Node terminates as soon
+// as the uncaughtExceptionMonitor listeners return. Append the final bounded, redacted record
+// synchronously so the diagnostic survives that exit. Rotation and currentBytes bookkeeping are
+// intentionally skipped because the process must not resume after this call; at worst one small fatal
+// record temporarily exceeds the configured cap before the next startup rotates normally.
+const writeFatalLogSync = (scope: string, message: string, data?: unknown): void => {
+  if (!config || LEVEL_ORDER.error < LEVEL_ORDER[config.minLevel]) return
+
+  try {
+    mkdirSync(config.logDir, { recursive: true })
+    appendFileSync(
+      join(config.logDir, config.fileName),
+      `${formatLine('error', scope, message, data, config.runId)}\n`,
+      'utf8'
+    )
+  } catch {
+    // Fatal logging is best-effort and must never mask the original uncaught failure.
+  }
+}
+
 const emit = (level: LogLevel, scope: string, message: string, data?: unknown): void => {
   const mirror = config?.mirrorToConsole ?? true
   const line = formatLine(level, scope, message, data, config?.runId)
@@ -853,5 +874,6 @@ export {
   flushLogs,
   formatLine,
   getLogFilePath,
-  initLogger
+  initLogger,
+  writeFatalLogSync
 }

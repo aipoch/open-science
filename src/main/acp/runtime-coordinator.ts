@@ -1,6 +1,7 @@
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
+import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type {
   AcpCancelPromptRequest,
   AcpCompactSessionRequest,
@@ -35,7 +36,6 @@ import {
 } from '../delegation/execution-port'
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
 
-const MAX_EVENTS = 500
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 
 const isOwnershipScopedControlEvent = (event: AcpRuntimeEvent): boolean =>
@@ -213,7 +213,7 @@ class AcpRuntimeCoordinator {
       ...this.applicationEvents
     ]
       .sort((left, right) => left.timestamp - right.timestamp)
-      .slice(-MAX_EVENTS)
+      .slice(-MAX_ACP_RUNTIME_EVENTS)
     const sessionIds = Array.from(
       new Set(
         snapshots.flatMap(({ runtime, snapshot }) => this.visibleSessionIds(runtime, snapshot))
@@ -676,8 +676,8 @@ class AcpRuntimeCoordinator {
       }
     }
     this.applicationEvents.push(event)
-    if (this.applicationEvents.length > MAX_EVENTS) {
-      this.applicationEvents.splice(0, this.applicationEvents.length - MAX_EVENTS)
+    if (this.applicationEvents.length > MAX_ACP_RUNTIME_EVENTS) {
+      this.applicationEvents.splice(0, this.applicationEvents.length - MAX_ACP_RUNTIME_EVENTS)
     }
     this.callbacks.onEvent?.(event)
     this.callbacks.onStateChanged?.(this.getSnapshot())
@@ -1433,10 +1433,14 @@ class AcpRuntimeCoordinator {
     const runtime = this.createRuntime(
       {
         onStateChanged: (snapshot) => this.handleRuntimeState(runtime, snapshot),
-        onEvent: (event) => {
-          if (!this.shouldPublishEvent(runtime, event)) return
-          this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) })
-        },
+        ...(this.callbacks.onEvent
+          ? {
+              onEvent: (event: AcpRuntimeEvent) => {
+                if (!this.shouldPublishEvent(runtime, event)) return
+                this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) })
+              }
+            }
+          : {}),
         onPermissionRequest: (request) => {
           this.permissionRuntimes.set(request.requestId, runtime)
           this.callbacks.onPermissionRequest?.(request)

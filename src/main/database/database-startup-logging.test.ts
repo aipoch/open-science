@@ -108,7 +108,8 @@ describe('database startup logging', () => {
               '0008_database_json_constraints',
               '0009_vision_evidence',
               '0010_compute_password_auth',
-              '0011_cross_resource_tags'
+              '0011_cross_resource_tags',
+              '0012_tag_ordering'
             ],
             adoptedLegacy: true
           })

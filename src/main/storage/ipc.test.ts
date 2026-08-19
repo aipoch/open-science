@@ -90,7 +90,6 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
   getActiveDelegatedSessions: vi.fn().mockReturnValue([]),
   settingsService: {
     setDataRoot: vi.fn().mockResolvedValue(undefined),
-    markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
     dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
     getStoredSettings: vi.fn().mockResolvedValue({})
   },
@@ -441,7 +440,6 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn().mockResolvedValue(undefined),
-        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({ dataRoot })
       }
@@ -458,7 +456,6 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn().mockResolvedValue(undefined),
-        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
       }
@@ -732,7 +729,6 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn().mockRejectedValue(new Error('disk full')),
-        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({})
       },
@@ -764,7 +760,6 @@ describe('storage IPC handlers', () => {
         this.repository.save(path)
         return Promise.resolve()
       }
-      markOnboardingComplete = vi.fn().mockResolvedValue(undefined)
       dismissLegacyDataMovePrompt = vi.fn().mockResolvedValue(undefined)
       getStoredSettings = vi.fn().mockResolvedValue({})
     }
@@ -824,7 +819,6 @@ describe('storage IPC handlers', () => {
               signalSetDataRootStarted()
             })
         ),
-        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({})
       }
@@ -961,7 +955,6 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn().mockRejectedValue(new Error('disk full')),
-        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({})
       }
@@ -1159,8 +1152,9 @@ describe('storage IPC handlers', () => {
     await expect(
       invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
     ).resolves.toEqual({ ok: true })
-    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
-    expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      completeOnboarding: false
+    })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
   })
 
@@ -1179,7 +1173,9 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
 
     expect(existsSync(target)).toBe(true)
-    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      completeOnboarding: true
+    })
   })
 
   it('set-data-root-and-relaunch creates the target before persisting the pointer', async () => {
@@ -1193,7 +1189,6 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({
       settingsService: {
         setDataRoot,
-        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({})
       }
@@ -1214,7 +1209,9 @@ describe('storage IPC handlers', () => {
     await expect(
       invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
     ).resolves.toEqual({ ok: true })
-    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      completeOnboarding: false
+    })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
   })
 
@@ -1238,7 +1235,7 @@ describe('storage IPC handlers', () => {
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain(target)
   })
 
-  it('set-data-root-and-relaunch marks onboarding complete only when markOnboarding is true', async () => {
+  it('set-data-root-and-relaunch commits onboarding with the data root when requested', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps()
     registerStorageIpcHandlers(deps)
@@ -1248,10 +1245,12 @@ describe('storage IPC handlers', () => {
       markOnboarding: true
     })
 
-    expect(deps.settingsService.markOnboardingComplete).toHaveBeenCalledTimes(1)
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      completeOnboarding: true
+    })
   })
 
-  it('set-data-root-and-relaunch does not mark onboarding when markOnboarding is false or omitted', async () => {
+  it('set-data-root-and-relaunch omits onboarding completion when markOnboarding is false', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps()
     registerStorageIpcHandlers(deps)
@@ -1261,19 +1260,18 @@ describe('storage IPC handlers', () => {
       markOnboarding: false
     })
 
-    expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      completeOnboarding: false
+    })
   })
 
-  it('set-data-root-and-relaunch calls setDataRoot, then markOnboardingComplete, then relaunch, in order', async () => {
+  it('set-data-root-and-relaunch persists both settings before relaunching', async () => {
     initDataRoot(dataRoot)
     const callOrder: string[] = []
     const deps = fakeDeps({
       settingsService: {
-        setDataRoot: vi.fn().mockImplementation(async () => {
-          callOrder.push('setDataRoot')
-        }),
-        markOnboardingComplete: vi.fn().mockImplementation(async () => {
-          callOrder.push('markOnboardingComplete')
+        setDataRoot: vi.fn().mockImplementation(async (_path, options) => {
+          callOrder.push(options?.completeOnboarding ? 'persistBoth' : 'persistDataRoot')
         }),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({})
@@ -1289,7 +1287,7 @@ describe('storage IPC handlers', () => {
       markOnboarding: true
     })
 
-    expect(callOrder).toEqual(['setDataRoot', 'markOnboardingComplete', 'relaunch'])
+    expect(callOrder).toEqual(['persistBoth', 'relaunch'])
   })
 
   it('set-data-root-and-relaunch rejects an invalid parent without setting, marking, or relaunching', async () => {
@@ -1304,7 +1302,6 @@ describe('storage IPC handlers', () => {
       error: 'The new location is the same as the current one.'
     })
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
-    expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
