@@ -45,6 +45,8 @@ type Listener = (payload: unknown) => void
 
 const BOOTSTRAP_ATTEMPTS = 8
 const BOOTSTRAP_TIMEOUT_MS = 8_000
+const WEB_RPC_TIMEOUT_MS = 30_000
+const WEB_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
 const EVENT_CONNECTION_ATTEMPTS = 8
 
 const clientId = sessionStorage.getItem('open-science-web-client') ?? crypto.randomUUID()
@@ -72,6 +74,25 @@ if (connectionLogo) {
 
 const wait = (delayMs: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, delayMs))
+
+const withRequestTimeout = async <T>(
+  timeoutMs: number,
+  operation: (signal: AbortSignal) => Promise<T>
+): Promise<T> => {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(
+    () =>
+      controller.abort(
+        new DOMException(`Request timed out after ${timeoutMs} milliseconds.`, 'TimeoutError')
+      ),
+    timeoutMs
+  )
+  try {
+    return await operation(controller.signal)
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
 
 const responseError = (response: Response, body: string, fallback: string): Error => {
   if (response.status === 401) return new RemoteAccessOffError(REMOTE_ACCESS_OFF_MESSAGE)
@@ -103,26 +124,24 @@ const fetchBootstrap = async (): Promise<unknown> => {
       )
       await wait(Math.min(500 * 2 ** (attempt - 2), 5_000))
     }
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), BOOTSTRAP_TIMEOUT_MS)
     try {
-      const response = await fetch('/api/bootstrap', {
-        cache: 'no-store',
-        signal: controller.signal
+      return await withRequestTimeout(BOOTSTRAP_TIMEOUT_MS, async (signal) => {
+        const response = await fetch('/api/bootstrap', {
+          cache: 'no-store',
+          signal
+        })
+        if (!response.ok) {
+          throw responseError(
+            response,
+            await response.text(),
+            `Open Science returned HTTP ${response.status}.`
+          )
+        }
+        return await response.json()
       })
-      if (!response.ok) {
-        throw responseError(
-          response,
-          await response.text(),
-          `Open Science returned HTTP ${response.status}.`
-        )
-      }
-      return response.json()
     } catch (error) {
       if (error instanceof RemoteAccessOffError) throw error
       lastError = error
-    } finally {
-      window.clearTimeout(timeout)
     }
   }
   throw lastError instanceof Error
@@ -179,15 +198,18 @@ const encodeBinary = (_key: string, value: unknown): unknown => {
 }
 
 const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
-  const response = await fetch(`/rpc/${encodeURIComponent(channel)}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-open-science-client': clientId
-    },
-    body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args }, encodeBinary)
+  const { response, body } = await withRequestTimeout(WEB_RPC_TIMEOUT_MS, async (signal) => {
+    const response = await fetch(`/rpc/${encodeURIComponent(channel)}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-open-science-client': clientId
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args }, encodeBinary),
+      signal
+    })
+    return { response, body: await response.text() }
   })
-  const body = await response.text()
   let payload
   try {
     payload = webRpcResponseSchema.parse(JSON.parse(body, reviveBinary))
@@ -367,9 +389,12 @@ const installWebApi = async (): Promise<EventCursor> => {
           { source: request.source, path: request.path }
         ])) as { id: string; url: string }
         try {
-          const response = await fetch(resource.url)
-          if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`)
-          downloadBlob(await response.blob(), request.suggestedName)
+          const blob = await withRequestTimeout(WEB_DOWNLOAD_TIMEOUT_MS, async (signal) => {
+            const response = await fetch(resource.url, { signal })
+            if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`)
+            return await response.blob()
+          })
+          downloadBlob(blob, request.suggestedName)
           return { saved: true }
         } finally {
           await invoke('preview-resources:release', [{ resourceId: resource.id }])

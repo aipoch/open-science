@@ -55,6 +55,11 @@ type WebApi = {
     create: (request: unknown) => Promise<unknown>
     onCreated: (listener: (payload: unknown) => void) => () => void
   }
+  saveManagedFile: (request: {
+    source: 'artifact' | 'upload'
+    path: string
+    suggestedName: string
+  }) => Promise<{ saved: boolean }>
 }
 
 const bootstrapPayload = {
@@ -225,6 +230,135 @@ describe('Web bootstrap event connection', () => {
       code: 'invalid-command-arguments',
       message: 'Invalid project request.'
     })
+  })
+
+  it('settles a Web RPC when the remote response stops making progress', async () => {
+    let rpcSignal: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/projects%3Acreate') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((_resolve, reject) => {
+            rpcSignal?.addEventListener(
+              'abort',
+              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const request = api.projects.create({ name: 'Never finishes' })
+    const outcome = Promise.race([
+      request.then(
+        () => 'resolved' as const,
+        () => 'rejected' as const
+      ),
+      new Promise<'still-pending'>((resolve) =>
+        window.setTimeout(() => resolve('still-pending'), 30_001)
+      )
+    ])
+
+    await vi.advanceTimersByTimeAsync(30_001)
+
+    await expect(outcome).resolves.toBe('rejected')
+    expect(rpcSignal?.aborted).toBe(true)
+  })
+
+  it('settles a stalled managed download and releases its acquired resource', async () => {
+    let downloadSignal: AbortSignal | undefined
+    let released = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(JSON.stringify(bootstrapPayload), {
+              status: 200,
+              headers: { 'content-type': 'application/json' }
+            })
+          )
+        }
+        if (url === '/rpc/preview-resources%3Aacquire') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                ok: true,
+                result: { id: 'resource-1', url: '/preview/resource-1' }
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (url === '/preview/resource-1') {
+          downloadSignal = init?.signal ?? undefined
+          return Promise.resolve({
+            ok: true,
+            blob: () =>
+              new Promise<Blob>((_resolve, reject) => {
+                downloadSignal?.addEventListener(
+                  'abort',
+                  () =>
+                    reject(
+                      downloadSignal?.reason ?? new DOMException('Download aborted', 'AbortError')
+                    ),
+                  { once: true }
+                )
+              })
+          } as Response)
+        }
+        if (url === '/rpc/preview-resources%3Arelease') {
+          released = true
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                ok: true,
+                result: null
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        throw new Error(`Unexpected fetch: ${url}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const request = api.saveManagedFile({
+      source: 'artifact',
+      path: 'artifact-1/report.pdf',
+      suggestedName: 'report.pdf'
+    })
+    const outcome = Promise.race([
+      request.then(
+        () => 'resolved' as const,
+        () => 'rejected' as const
+      ),
+      new Promise<'still-pending'>((resolve) =>
+        window.setTimeout(() => resolve('still-pending'), 300_001)
+      )
+    ])
+
+    await vi.advanceTimersByTimeAsync(300_001)
+
+    await expect(outcome).resolves.toBe('rejected')
+    expect(downloadSignal?.aborted).toBe(true)
+    expect(released).toBe(true)
   })
 
   it('waits for renderer consumers before opening the event stream', async () => {

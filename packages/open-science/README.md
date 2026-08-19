@@ -22,6 +22,12 @@ const result = await client.waitForRun(run.id)
 console.log(result.output)
 ```
 
+SDK requests have a 30-second default deadline that remains active while the response body is being
+consumed. Override the client default with `requestTimeoutMs`, or pass `{ signal, timeoutMs }` as the
+final options argument to an individual request method. `downloadArtifact` keeps the deadline active
+while its returned `Response` body is streaming. `waitForRun` applies its overall `timeoutMs` and
+caller signal to every in-flight polling request as well as the delay between polls.
+
 The `project` request field and the `listSessions(projectId)` argument both require a Project ID.
 Project display names are not accepted as routing identifiers.
 
@@ -59,6 +65,10 @@ abortController.abort()
 await progress
 console.log(observedResult.output)
 ```
+
+`events.ready` rejects if the socket fails or closes before opening. Malformed frames and a consumer
+backlog above 1024 events terminate the iterator with `event_stream_invalid_message` or
+`event_stream_overflow` instead of throwing outside the iterator or growing memory without a bound.
 
 Plan First runs can opt into actionable waiting with returnOnAttention. When the returned Run has
 attention.kind equal to plan-approval, use getSessionPlan and respondSessionPlan. Calling waitForRun
