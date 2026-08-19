@@ -39,6 +39,10 @@ export class SkillMutationOwner {
       release()
     }
   }
+
+  runWithHeldLockContext<T>(operation: () => Promise<T>): Promise<T> {
+    return this.context.run(this, operation)
+  }
 }
 
 const owners = new Map<string, SkillMutationOwner>()

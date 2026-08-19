@@ -1812,7 +1812,7 @@ const InstalledSpecialistsPanel = ({
                           </span>
                           <span className="block truncate text-xs text-muted-foreground">
                             {t(
-                              'Only Skills used exclusively by this Specialist can be deleted. Other linked Skills will be kept automatically.'
+                              'Select all selects only deletable Skills. Skills used by the Main Agent or another Specialist will be kept.'
                             )}
                           </span>
                         </span>
@@ -1845,8 +1845,8 @@ const InstalledSpecialistsPanel = ({
                         const reasonText =
                           skill.reasons
                             .map((reason) =>
-                              reason.code === 'standalone'
-                                ? t('Already exists independently and will be kept.')
+                              reason.code === 'main-enabled'
+                                ? t('Used by the Main Agent and will be kept.')
                                 : reason.code === 'shared-owner'
                                   ? t('Also owned by another Specialist and will be kept.')
                                   : reason.code === 'referenced'

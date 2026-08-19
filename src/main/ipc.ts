@@ -1070,6 +1070,13 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    onSkillsDeleted: async (skillIds) => {
+      if (skillIds.length > 0) {
+        // User Skills are default-on. Remove disabled-ID tombstones so reinstalling the same
+        // package does not inherit the deleted Skill's old Main Agent state.
+        await settingsRepository.setSkillsEnabled([...skillIds], true)
+      }
+    },
     onResourcesDeleted: (specialistId, skillIds) =>
       removeResourceTags([
         { resourceType: 'catalog.specialist', resourceId: specialistId },

@@ -238,9 +238,9 @@ export type SpecialistPackageInstallResult =
     }
 
 export type SpecialistDeleteProtectionCode =
-  'builtin' | 'standalone' | 'shared-owner' | 'referenced'
+  'builtin' | 'main-enabled' | 'shared-owner' | 'referenced'
 
-export type SpecialistDeleteSkillKind = 'owned-exclusive' | SpecialistDeleteProtectionCode
+export type SpecialistDeleteSkillKind = 'exclusive' | SpecialistDeleteProtectionCode
 
 export type SpecialistDeleteSkillPreview = {
   id: string

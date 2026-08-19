@@ -32,11 +32,14 @@ export interface SpecialistPackageSkillPort {
     specialistId: string,
     skills: readonly SpecialistPackageSkillPlan[]
   ): Promise<void>
+  runInMutationContext?<T>(transactionId: string, operation: () => Promise<T>): Promise<T>
   endMutation?(transactionId: string): Promise<void>
   prepareDeletion?(
     transactionId: string,
     specialistId: string,
+    /** Specialist-owned Skills whose ownership must be released when they are retained. */
     ownedSkillIds: readonly string[],
+    /** Preview-approved Skill packages to remove; these may have independent provenance. */
     deleteSkillIds: readonly string[]
   ): Promise<void>
   commit(transactionId: string): Promise<void>
@@ -51,6 +54,7 @@ export const NOOP_SPECIALIST_PACKAGE_SKILL_PORT: SpecialistPackageSkillPort = {
   snapshot: async () => [],
   prepare: async () => undefined,
   beginMutation: async () => undefined,
+  runInMutationContext: async (_transactionId, operation) => operation(),
   endMutation: async () => undefined,
   prepareDeletion: async () => undefined,
   commit: async () => undefined,

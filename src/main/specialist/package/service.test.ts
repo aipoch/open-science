@@ -13,10 +13,11 @@ import type {
 import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
 import { UserSkillRepository } from '../../skills/user-skill-repository'
 import type { FetchLike } from '../../skills/github-import'
+import { SettingsRepository } from '../../settings/repository'
 import { SpecialistRepository } from '../repository'
 import { ProfileService } from '../service'
 import { SpecialistPackageService, specialistExportFileName } from './service'
-import type { SpecialistPackageSkillPort } from './skill-port'
+import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
 import { validateSpecialistZip } from './zip-adapter'
 
 const encoder = new TextEncoder()
@@ -239,7 +240,7 @@ describe('SpecialistPackageService', () => {
     await expect(userSkills.body('personal-analysis-tools')).resolves.toContain('Use the tools.')
   })
 
-  it('atomically replaces an installed Skill when the package version is selected', async () => {
+  it('atomically replaces an installed Skill while the live catalog shares the mutation owner', async () => {
     const repository = new SpecialistRepository(storageDir)
     const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
     const userSkills = new UserSkillRepository(storageDir)
@@ -251,14 +252,15 @@ describe('SpecialistPackageService', () => {
       storageDir,
       repository,
       skillPort,
-      catalog: async () => ({
-        ...catalog,
-        skills: (await skillPort.snapshot()).map((skill) => ({
-          ...skill,
-          name: skill.id.replace(/^personal-/, ''),
-          builtin: false
+      catalog: () =>
+        skillPort.runMutationExclusive(async () => ({
+          ...catalog,
+          skills: (await skillPort.snapshot()).map((skill) => ({
+            ...skill,
+            name: skill.id.replace(/^personal-/, ''),
+            builtin: false
+          }))
         }))
-      })
     })
     const preview = await service.preview(
       bundledZip({ skillVersion: '2.0.0', skillBody: 'Use the replacement.' })
@@ -284,7 +286,7 @@ describe('SpecialistPackageService', () => {
         ownerIds: ['former-owner', 'research-synth']
       })
     ])
-  })
+  }, 2_000)
 
   it('coexists with a same-ID GitHub import that lands while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
@@ -1744,7 +1746,7 @@ describe('SpecialistPackageService', () => {
     await expect(recoveredProfiles.getById('research-synth')).resolves.toBeDefined()
   })
 
-  it('previews exclusive owned Skills separately from every protected relationship', async () => {
+  it('previews every exclusively used Skill separately from retained relationships', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({
       id: 'research-synth',
@@ -1759,6 +1761,7 @@ describe('SpecialistPackageService', () => {
           'exclusive',
           'builtin-tool',
           'standalone-tool',
+          'main-enabled-tool',
           'shared-tool',
           'referenced-tool'
         ],
@@ -1768,7 +1771,7 @@ describe('SpecialistPackageService', () => {
       revision: 7,
       packageVersion: '1.0.0',
       origin: 'imported',
-      ownedSkillIds: ['exclusive', 'standalone-tool', 'shared-tool', 'referenced-tool']
+      ownedSkillIds: ['exclusive', 'main-enabled-tool', 'shared-tool', 'referenced-tool']
     })
     await repository.insert({
       id: 'other-specialist',
@@ -1795,6 +1798,7 @@ describe('SpecialistPackageService', () => {
             displayName: 'Exclusive Skill',
             source: 'personal',
             builtin: false,
+            mainEnabled: false,
             standalone: false,
             ownerIds: ['research-synth']
           },
@@ -1804,7 +1808,17 @@ describe('SpecialistPackageService', () => {
             displayName: 'Standalone Tool',
             source: 'personal',
             builtin: false,
+            mainEnabled: false,
             standalone: true,
+            ownerIds: []
+          },
+          {
+            id: 'main-enabled-tool',
+            displayName: 'Main Enabled Tool',
+            source: 'personal',
+            builtin: false,
+            mainEnabled: true,
+            standalone: false,
             ownerIds: ['research-synth']
           },
           {
@@ -1812,6 +1826,7 @@ describe('SpecialistPackageService', () => {
             displayName: 'Shared Tool',
             source: 'personal',
             builtin: false,
+            mainEnabled: false,
             standalone: false,
             ownerIds: ['research-synth', 'other-specialist']
           },
@@ -1820,6 +1835,7 @@ describe('SpecialistPackageService', () => {
             displayName: 'Referenced Tool',
             source: 'imported',
             builtin: false,
+            mainEnabled: false,
             standalone: false,
             ownerIds: ['research-synth']
           }
@@ -1836,9 +1852,17 @@ describe('SpecialistPackageService', () => {
           id: 'exclusive',
           displayName: 'Exclusive Skill',
           source: 'personal',
-          kind: 'owned-exclusive',
+          kind: 'exclusive',
           deletable: true,
           reasons: []
+        },
+        {
+          id: 'main-enabled-tool',
+          displayName: 'Main Enabled Tool',
+          source: 'personal',
+          kind: 'main-enabled',
+          deletable: false,
+          reasons: [{ code: 'main-enabled', specialistIds: [] }]
         },
         {
           id: 'referenced-tool',
@@ -1860,9 +1884,9 @@ describe('SpecialistPackageService', () => {
           id: 'standalone-tool',
           displayName: 'Standalone Tool',
           source: 'personal',
-          kind: 'standalone',
-          deletable: false,
-          reasons: [{ code: 'standalone', specialistIds: [] }]
+          kind: 'exclusive',
+          deletable: true,
+          reasons: []
         }
       ]
     })
@@ -1921,6 +1945,66 @@ describe('SpecialistPackageService', () => {
     await expect(skillPort.snapshot()).resolves.toEqual([
       expect.objectContaining({ id: 'retained', standalone: true, ownerIds: [] })
     ])
+  })
+
+  it('atomically deletes a standalone Skill used only by the deleted Specialist', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const userSkills = new UserSkillRepository(storageDir)
+    const skillId = await userSkills.createPersonal({
+      name: 'standalone-exclusive',
+      description: 'Used only by one Specialist.',
+      body: 'Exclusive instructions.'
+    })
+    const settings = new SettingsRepository(storageDir)
+    await settings.setSkillEnabled(skillId, false)
+    await repository.insert({
+      id: 'research-synth',
+      name: 'Research Synthesizer',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [skillId], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'imported',
+      ownedSkillIds: []
+    })
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      catalog: async () => ({
+        ...catalog,
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          builtin: false,
+          mainEnabled: false
+        }))
+      }),
+      onSkillsDeleted: async (skillIds) => {
+        await settings.setSkillsEnabled([...skillIds], true)
+      }
+    })
+    const preview = await service.previewSpecialistDelete({ id: 'research-synth' })
+    expect(preview.skills).toEqual([
+      expect.objectContaining({ id: skillId, kind: 'exclusive', deletable: true, reasons: [] })
+    ])
+
+    await expect(
+      service.deleteSpecialist({
+        id: 'research-synth',
+        expectedRevision: preview.expectedRevision,
+        deleteSkillIds: [skillId]
+      })
+    ).resolves.toEqual({ status: 'deleted' })
+    await expect(new ProfileService(repository).getById('research-synth')).rejects.toThrow(
+      /not found/i
+    )
+    await expect(userSkills.list()).resolves.toEqual([])
+    await expect(settings.getSettings()).resolves.not.toHaveProperty('disabledSkillIds')
   })
 
   it('guards direct Skill deletion from live selected and full-access Specialist references', async () => {
@@ -2038,6 +2122,156 @@ describe('SpecialistPackageService', () => {
     await expect(new ProfileService(repository).getById('owner')).resolves.toBeDefined()
   })
 
+  it('rejects a selected deletion when the Main Agent starts using the Skill', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'owner',
+      name: 'Owner',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: ['linked-skill'], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'imported',
+      ownedSkillIds: ['linked-skill']
+    })
+    let mainEnabled = false
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => ({
+        ...catalog,
+        skills: [
+          {
+            id: 'linked-skill',
+            builtin: false,
+            mainEnabled,
+            standalone: false,
+            ownerIds: ['owner']
+          }
+        ]
+      })
+    })
+    const preview = await service.previewSpecialistDelete({ id: 'owner' })
+    mainEnabled = true
+
+    await expect(
+      service.deleteSpecialist({
+        id: 'owner',
+        expectedRevision: preview.expectedRevision,
+        deleteSkillIds: ['linked-skill']
+      })
+    ).resolves.toEqual({ status: 'failed', code: 'stale-preview' })
+    await expect(new ProfileService(repository).getById('owner')).resolves.toBeDefined()
+  })
+
+  it('rechecks Main Agent usage after acquiring the Skill mutation lock', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'owner',
+      name: 'Owner',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: ['linked-skill'], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'imported',
+      ownedSkillIds: ['linked-skill']
+    })
+    let mainEnabled = false
+    const prepareDeletion = vi.fn(async () => undefined)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort: {
+        ...NOOP_SPECIALIST_PACKAGE_SKILL_PORT,
+        beginMutation: async () => {
+          mainEnabled = true
+        },
+        prepareDeletion
+      },
+      catalog: async () => ({
+        ...catalog,
+        skills: [
+          {
+            id: 'linked-skill',
+            builtin: false,
+            mainEnabled,
+            standalone: false,
+            ownerIds: ['owner']
+          }
+        ]
+      })
+    })
+    const preview = await service.previewSpecialistDelete({ id: 'owner' })
+
+    await expect(
+      service.deleteSpecialist({
+        id: 'owner',
+        expectedRevision: preview.expectedRevision,
+        deleteSkillIds: ['linked-skill']
+      })
+    ).resolves.toEqual({ status: 'failed', code: 'stale-preview' })
+    expect(prepareDeletion).not.toHaveBeenCalled()
+    await expect(new ProfileService(repository).getById('owner')).resolves.toBeDefined()
+  })
+
+  it('completes deletion when the live catalog shares the Skill mutation owner', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const userSkills = new UserSkillRepository(storageDir)
+    const skillId = await userSkills.createPersonal({
+      name: 'locked-delete',
+      description: 'Exercises the production Skill catalog lock path.',
+      body: 'Locked deletion instructions.'
+    })
+    await repository.insert({
+      id: 'owner',
+      name: 'Owner',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [skillId], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'imported',
+      ownedSkillIds: []
+    })
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      catalog: () =>
+        skillPort.runMutationExclusive(async () => ({
+          ...catalog,
+          skills: (await skillPort.snapshot()).map((skill) => ({
+            ...skill,
+            builtin: false,
+            mainEnabled: false
+          }))
+        }))
+    })
+    const preview = await service.previewSpecialistDelete({ id: 'owner' })
+
+    await expect(
+      service.deleteSpecialist({
+        id: 'owner',
+        expectedRevision: preview.expectedRevision,
+        deleteSkillIds: [skillId]
+      })
+    ).resolves.toEqual({ status: 'deleted' })
+    await expect(new ProfileService(repository).getById('owner')).rejects.toThrow(/not found/i)
+    await expect(userSkills.list()).resolves.toEqual([])
+  }, 2_000)
+
   it('keeps system prompts and paths out of the transaction journal', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({
@@ -2086,6 +2320,44 @@ describe('SpecialistPackageService', () => {
     expect(journal).not.toContain(storageDir)
     expect(journal).not.toContain('systemPrompt')
     expect(onResourcesDeleted).toHaveBeenCalledWith('safe-owner', [])
+  })
+
+  it('attempts Tag cleanup when deleted Skill settings cleanup fails', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'cleanup-owner',
+      name: 'Cleanup Owner',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '0.1.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    const onSkillsDeleted = vi.fn().mockRejectedValue(new Error('settings unavailable'))
+    const onResourcesDeleted = vi.fn().mockResolvedValue(undefined)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog,
+      onSkillsDeleted,
+      onResourcesDeleted
+    })
+    const preview = await service.previewSpecialistDelete({ id: 'cleanup-owner' })
+
+    await expect(
+      service.deleteSpecialist({
+        id: 'cleanup-owner',
+        expectedRevision: preview.expectedRevision,
+        deleteSkillIds: []
+      })
+    ).resolves.toEqual({ status: 'deleted' })
+    expect(onSkillsDeleted).toHaveBeenCalledWith([])
+    expect(onResourcesDeleted).toHaveBeenCalledWith('cleanup-owner', [])
   })
 
   it('rolls back prepared Skill deletion when the Specialist document swap fails', async () => {
