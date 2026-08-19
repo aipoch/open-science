@@ -1760,6 +1760,7 @@ const createApplicationModules = async (
       settingsService.publishHostSkill(name, sourcePath, overwrite),
     deletePublished: async (id) => {
       await settingsService.deleteSkill({ id })
+      await removeResourceTags([{ resourceType: 'catalog.skill', resourceId: id }])
     }
   }
   const hostSkillsService = new HostSkillsService({
