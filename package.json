@@ -18,7 +18,7 @@
     "test:module": "node scripts/ci/module-test-impact.mjs module",
     "test:affected": "node scripts/ci/module-test-impact.mjs affected",
     "test:affected:explain": "node scripts/ci/module-test-impact.mjs affected --explain",
-    "build:e2e": "electron-vite build",
+    "build:e2e": "node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build",
     "test:e2e": "playwright test",
     "test:e2e:journey": "playwright test e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/windows-window-system.spec.ts",
     "test:e2e:workspace": "playwright test e2e/launch-environment.spec.ts e2e/workspace-conversation.spec.ts e2e/workspace-files.spec.ts",
