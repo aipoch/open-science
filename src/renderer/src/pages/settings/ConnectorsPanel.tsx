@@ -463,15 +463,23 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       <span className="block truncate text-xs text-muted-foreground">
                         {connector.description}
                       </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {usageLabel ? `${usageLabel} · ` : ''}
-                        {t(SCOPE_LABEL_KEYS[scope])}
-                      </span>
+                      <div
+                        className="mt-0.5 flex min-w-0 items-center gap-2"
+                        data-connector-metadata={connector.id}
+                      >
+                        <span className="min-w-0 truncate text-xs text-muted-foreground">
+                          {usageLabel ? `${usageLabel} · ` : ''}
+                          {t(SCOPE_LABEL_KEYS[scope])}
+                        </span>
+                        <ResourceTagBadges
+                          reference={{
+                            resourceType: 'catalog.connector',
+                            resourceId: connector.id
+                          }}
+                        />
+                      </div>
                     </button>
                     <div className="flex shrink-0 items-center gap-2">
-                      <ResourceTagBadges
-                        reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
-                      />
                       <ResourceTagMenu
                         reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
                       />
@@ -759,29 +767,42 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                             {server.name}
                             {server.description ? ` · ${server.description}` : ''}
                           </span>
-                          <span
-                            className={`block truncate text-xs ${
-                              server.availability && !server.checking && !retryingIds.has(server.id)
-                                ? 'text-destructive'
-                                : 'text-muted-foreground'
-                            }`}
+                          <div
+                            className="mt-0.5 flex min-w-0 items-center gap-2"
+                            data-connector-metadata={server.id}
                           >
-                            {retryingIds.has(server.id)
-                              ? t('Checking…')
-                              : server.checking
+                            <span
+                              className={`shrink-0 text-xs ${
+                                server.availability &&
+                                !server.checking &&
+                                !retryingIds.has(server.id)
+                                  ? 'text-destructive'
+                                  : 'text-muted-foreground'
+                              }`}
+                            >
+                              {retryingIds.has(server.id)
                                 ? t('Checking…')
-                                : server.availability === 'unavailable'
-                                  ? t('Unavailable')
-                                  : server.availability === 'unauthenticated'
-                                    ? t('Sign-in required')
-                                    : server.enabled
-                                      ? t('Connected')
-                                      : t('Disabled')}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {usageLabel ? `${usageLabel} · ` : ''}
-                            {t(SCOPE_LABEL_KEYS[scope])}
-                          </span>
+                                : server.checking
+                                  ? t('Checking…')
+                                  : server.availability === 'unavailable'
+                                    ? t('Unavailable')
+                                    : server.availability === 'unauthenticated'
+                                      ? t('Sign-in required')
+                                      : server.enabled
+                                        ? t('Connected')
+                                        : t('Disabled')}
+                            </span>
+                            <span className="min-w-0 truncate text-xs text-muted-foreground">
+                              {usageLabel ? `${usageLabel} · ` : ''}
+                              {t(SCOPE_LABEL_KEYS[scope])}
+                            </span>
+                            <ResourceTagBadges
+                              reference={{
+                                resourceType: 'catalog.connector',
+                                resourceId: server.id
+                              }}
+                            />
+                          </div>
                         </div>
                         <SettingsIconAction
                           label={t('Export {{name}}', { name: server.displayName })}
@@ -789,9 +810,6 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           onClick={() => onNavigate({ kind: 'export', id: server.id })}
                         />
                         <ResourceTagMenu
-                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
-                        />
-                        <ResourceTagBadges
                           reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
                         />
                         <SettingsIconAction

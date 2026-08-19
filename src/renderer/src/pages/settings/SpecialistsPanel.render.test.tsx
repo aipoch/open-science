@@ -10,6 +10,7 @@ import { i18next } from '@/i18n'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import type { SpecialistExportPreview } from '../../../../shared/specialist-package'
 
@@ -110,6 +111,27 @@ beforeEach(() => {
     ...initialStore,
     isLoaded: true,
     items: specialistItems
+  })
+  useTagStore.setState({
+    ...createInitialTagState(),
+    status: 'ready',
+    revision: 1,
+    tags: [
+      {
+        id: 'tag-research',
+        name: 'Research',
+        iconKey: 'flask-conical',
+        colorKey: 'purple',
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    assignments: ['rna-reviewer', 'builtin-curator'].map((resourceId) => ({
+      tagId: 'tag-research',
+      resourceType: 'catalog.specialist' as const,
+      resourceId,
+      createdAt: 1
+    }))
   })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -932,6 +954,21 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain('Package provenance')
     expect(document.body.textContent).toContain('Original version')
     expect(document.body.textContent).toContain('Modified after import')
+  })
+
+  it('keeps Specialist Tags in the third metadata row', async () => {
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    for (const resourceId of ['rna-reviewer', 'builtin-curator']) {
+      const metadata = document.body.querySelector(
+        `[data-specialist-metadata-group="${resourceId}"]`
+      )
+      const tagName = metadata?.querySelector('[title="Research"]')
+      expect(metadata).not.toBeNull()
+      expect(tagName).not.toBeNull()
+    }
   })
 
   it('distinguishes a Marketplace install from a manually imported ZIP', async () => {

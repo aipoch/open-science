@@ -1485,6 +1485,12 @@ const InstalledSpecialistsPanel = ({
                                   </Badge>
                                 </>
                               ) : null}
+                              <ResourceTagBadges
+                                reference={{
+                                  resourceType: 'catalog.specialist',
+                                  resourceId: item.id
+                                }}
+                              />
                             </span>
                           </div>
                         </button>
@@ -1513,9 +1519,6 @@ const InstalledSpecialistsPanel = ({
                             onToggle={() => void setEnabled(item.id, !item.enabled)}
                           />
                         )}
-                        <ResourceTagBadges
-                          reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
-                        />
                         <ResourceTagMenu
                           reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                         />
@@ -1636,14 +1639,22 @@ const InstalledSpecialistsPanel = ({
                         <span className="block truncate text-xs text-muted-foreground">
                           {item.description}
                         </span>
-                        <span className="block text-[11px] text-muted-foreground">
-                          {t('Built-in · Version {{version}}', { version: item.version })}
-                        </span>
+                        <div
+                          className="mt-0.5 flex min-w-0 items-center gap-2"
+                          data-specialist-metadata-group={item.id}
+                        >
+                          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                            {t('Built-in · Version {{version}}', { version: item.version })}
+                          </span>
+                          <ResourceTagBadges
+                            reference={{
+                              resourceType: 'catalog.specialist',
+                              resourceId: item.id
+                            }}
+                          />
+                        </div>
                       </div>
                     </button>
-                    <ResourceTagBadges
-                      reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
-                    />
                     <ResourceTagMenu
                       reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                     />

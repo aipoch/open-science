@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectorsPanel } from './ConnectorsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 
 // Radix Select/DropdownMenu call pointer-capture and scroll APIs jsdom does not implement.
 if (!Element.prototype.hasPointerCapture) {
@@ -164,6 +165,27 @@ beforeEach(() => {
     isLoaded: true,
     load: vi.fn().mockResolvedValue(undefined)
   })
+  useTagStore.setState({
+    ...createInitialTagState(),
+    status: 'ready',
+    revision: 1,
+    tags: [
+      {
+        id: 'tag-research',
+        name: 'Research',
+        iconKey: 'flask-conical',
+        colorKey: 'purple',
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    assignments: ['pubmed', 'custom-server-uuid'].map((resourceId) => ({
+      tagId: 'tag-research',
+      resourceType: 'catalog.connector' as const,
+      resourceId,
+      createdAt: 1
+    }))
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -305,6 +327,19 @@ describe('ConnectorsPanel (groups)', () => {
     expect(
       europePmcRow?.querySelector('[aria-label="Europe PMC"]')?.getAttribute('data-state')
     ).toBe('unchecked')
+  })
+
+  it('keeps Connector Tags in the third metadata row', () => {
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    for (const resourceId of ['pubmed', 'custom-server-uuid']) {
+      const metadata = document.body.querySelector(`[data-connector-metadata="${resourceId}"]`)
+      const tagName = metadata?.querySelector('[title="Research"]')
+      expect(metadata).not.toBeNull()
+      expect(tagName).not.toBeNull()
+    }
   })
 
   it('toggles a featured connector and navigates to its detail on row click', () => {
