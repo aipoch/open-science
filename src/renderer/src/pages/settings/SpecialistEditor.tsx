@@ -32,6 +32,7 @@ import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, SPECIALIST_COLOR_OPTIONS } from './specialist-icons'
 import { APP_ICON_GROUPS, APP_ICONS, DEFAULT_APP_ICON } from '@/components/app-icons/registry'
 import { useSettingsStore } from '@/stores/settings-store'
+import { CREATE_SPECIALIST_DRAFT_KEY, useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { SettingsIconAction } from './SettingsLayout'
 import {
@@ -54,6 +55,12 @@ type SpecialistEditorProps = {
   // Called when the user clicks "Reload" after a revision conflict.
   // Should fetch the latest profile from the store and return it.
   onReload?: () => Promise<SpecialistProfileView | undefined>
+  // Called when a selected Skill row is clicked to view that Skill in Settings.
+  onOpenSkillDetail?: (skillId: string) => void
+  // Called when a selected Connector row is clicked to view that Connector in
+  // Settings. Receives the canonical id: a custom server referenced by its legacy
+  // name is resolved to server.id before the call.
+  onOpenConnectorDetail?: (connectorId: string) => void
 }
 
 type FormState = {
@@ -96,11 +103,60 @@ type SkillRow = {
 // Flat view of the grouped registry for selected-value lookups (trigger label, previews).
 const ICON_ENTRIES = APP_ICON_GROUPS.flatMap((group) => group.icons)
 
+// Interaction props for a clickable capability row. A div[role="button"] does not synthesize a
+// click from Enter/Space the way a native button does, so both keys are handled explicitly.
+// Keyboard activation of an inner control (e.g. the remove button) is left to that control: the
+// row only reacts when it is itself the event target.
+const clickableRowProps = (
+  open: (() => void) | undefined,
+  label: string
+):
+  | {
+      role: 'button'
+      tabIndex: number
+      'aria-label': string
+      onClick: () => void
+      onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void
+    }
+  | undefined =>
+  open === undefined
+    ? undefined
+    : {
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': label,
+        onClick: open,
+        onKeyDown: (event) => {
+          if (event.target !== event.currentTarget) return
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          open()
+        }
+      }
+
+// Shared layout for the capability list rows; `interactive` adds the clickable affordance.
+const capabilityRowClassName = (interactive: boolean): string =>
+  cn(
+    'flex h-[40px] items-center gap-2.5 border-b border-border px-3 last:border-b-0',
+    interactive && 'cursor-pointer hover:bg-muted focus-visible:bg-muted'
+  )
+
+// The remove action sits inside a row that may itself be clickable; stopping propagation keeps
+// removal from also activating the row's navigation.
+const stopThen =
+  (remove: () => void) =>
+  (event: React.MouseEvent<HTMLButtonElement>): void => {
+    event.stopPropagation()
+    remove()
+  }
+
 const SpecialistEditor = ({
   onCancel,
   onSave,
   onSaveEdit,
   onReload,
+  onOpenSkillDetail,
+  onOpenConnectorDetail,
   existingNames = [],
   existingIds = [],
   editSpecialist,
@@ -123,42 +179,62 @@ const SpecialistEditor = ({
   const customServers = useSettingsStore((state) => state.customServers)
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
+  const saveEditorDraft = useSpecialistStore((state) => state.saveEditorDraft)
+  const clearEditorDraft = useSpecialistStore((state) => state.clearEditorDraft)
+  // Editor drafts survive unmounts — opening a capability's detail page navigates Settings away —
+  // so a returning editor re-seeds from the draft instead of the stored profile. A draft restores
+  // only while the profile revision it was taken from still matches; the create form additionally
+  // yields to a provided initialInput (e.g. a marketplace import's prefill) so an abandoned
+  // earlier draft cannot swallow the new prefill.
+  const editorDraftKey = editSpecialist ? editSpecialist.id : CREATE_SPECIALIST_DRAFT_KEY
+  const storedDraft = useSpecialistStore.getState().editorDrafts[editorDraftKey]
+  const restoredDraft =
+    storedDraft !== undefined &&
+    (editSpecialist !== undefined
+      ? storedDraft.form.baseRevision === editSpecialist.revision
+      : initialInput === undefined)
+      ? storedDraft
+      : undefined
   const [form, setForm] = useState<FormState>(() =>
-    editSpecialist
-      ? {
-          id: editSpecialist.id,
-          name: editSpecialist.displayName ?? editSpecialist.name,
-          packageVersion: editSpecialist.packageVersion ?? '0.1.0',
-          description: editSpecialist.description,
-          systemPrompt: editSpecialist.systemPrompt,
-          iconKey: editSpecialist.iconKey ?? 'brain',
-          colorKey: editSpecialist.colorKey ?? 'purple',
-          capabilityMode: editSpecialist.capabilityMode,
-          excludedSkillIds: editSpecialist.fullAccess.excludedSkillIds,
-          selectedSkillIds: editSpecialist.selectedCapabilities.skillIds,
-          excludedConnectorIds: editSpecialist.fullAccess.excludedConnectorIds,
-          connectorIds: editSpecialist.selectedCapabilities.connectorIds,
-          // Pin base revision at mount so concurrent remote writes do not silently
-          // refresh it. Only a successful save or an explicit Reload may update it.
-          baseRevision: editSpecialist.revision
-        }
-      : {
-          id: initialInput?.id ?? '',
-          name: initialInput?.name ?? '',
-          packageVersion: '0.1.0',
-          description: initialInput?.description ?? '',
-          systemPrompt: initialInput?.systemPrompt ?? '',
-          iconKey: initialInput?.iconKey ?? 'brain',
-          colorKey: initialInput?.colorKey ?? 'purple',
-          capabilityMode: initialInput?.capabilityMode ?? 'full',
-          excludedSkillIds: initialInput?.fullAccess?.excludedSkillIds ?? [],
-          selectedSkillIds: initialInput?.selectedCapabilities?.skillIds ?? [],
-          excludedConnectorIds: initialInput?.fullAccess?.excludedConnectorIds ?? [],
-          connectorIds: initialInput?.selectedCapabilities?.connectorIds ?? [],
-          baseRevision: 0
-        }
+    restoredDraft !== undefined
+      ? restoredDraft.form
+      : editSpecialist
+        ? {
+            id: editSpecialist.id,
+            name: editSpecialist.displayName ?? editSpecialist.name,
+            packageVersion: editSpecialist.packageVersion ?? '0.1.0',
+            description: editSpecialist.description,
+            systemPrompt: editSpecialist.systemPrompt,
+            iconKey: editSpecialist.iconKey ?? 'brain',
+            colorKey: editSpecialist.colorKey ?? 'purple',
+            capabilityMode: editSpecialist.capabilityMode,
+            excludedSkillIds: editSpecialist.fullAccess.excludedSkillIds,
+            selectedSkillIds: editSpecialist.selectedCapabilities.skillIds,
+            excludedConnectorIds: editSpecialist.fullAccess.excludedConnectorIds,
+            connectorIds: editSpecialist.selectedCapabilities.connectorIds,
+            // Pin base revision at mount so concurrent remote writes do not silently
+            // refresh it. Only a successful save or an explicit Reload may update it.
+            baseRevision: editSpecialist.revision
+          }
+        : {
+            id: initialInput?.id ?? '',
+            name: initialInput?.name ?? '',
+            packageVersion: '0.1.0',
+            description: initialInput?.description ?? '',
+            systemPrompt: initialInput?.systemPrompt ?? '',
+            iconKey: initialInput?.iconKey ?? 'brain',
+            colorKey: initialInput?.colorKey ?? 'purple',
+            capabilityMode: initialInput?.capabilityMode ?? 'full',
+            excludedSkillIds: initialInput?.fullAccess?.excludedSkillIds ?? [],
+            selectedSkillIds: initialInput?.selectedCapabilities?.skillIds ?? [],
+            excludedConnectorIds: initialInput?.fullAccess?.excludedConnectorIds ?? [],
+            connectorIds: initialInput?.selectedCapabilities?.connectorIds ?? [],
+            baseRevision: 0
+          }
   )
-  const [idTouched, setIdTouched] = useState(initialInput?.id !== undefined)
+  const [idTouched, setIdTouched] = useState(
+    restoredDraft !== undefined ? restoredDraft.idTouched : initialInput?.id !== undefined
+  )
   const [fallbackId] = useState(() => crypto.randomUUID())
   const [fieldErrors, setFieldErrors] = useState<SpecialistFieldError[]>([])
   const [isSaving, setIsSaving] = useState(false)
@@ -167,7 +243,9 @@ const SpecialistEditor = ({
   const [hasConflict, setHasConflict] = useState(false)
   const [isReloading, setIsReloading] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(initialInput?.id !== undefined)
-  const [activeCapTab, setActiveCapTab] = useState<'skills' | 'connectors'>('skills')
+  const [activeCapTab, setActiveCapTab] = useState<'skills' | 'connectors'>(
+    restoredDraft !== undefined ? restoredDraft.activeCapTab : 'skills'
+  )
   const [skillSearchQuery, setSkillSearchQuery] = useState('')
   const [connectorSearchQuery, setConnectorSearchQuery] = useState('')
   const [skillTagFilter, setSkillTagFilter] = useState('all')
@@ -219,6 +297,19 @@ const SpecialistEditor = ({
   useEffect(() => {
     if (skills.length === 0) void loadSkills()
   }, [skills.length, loadSkills])
+
+  // Keep the editor draft in the specialist store in sync with the live form so any unmount —
+  // detail navigation, panel switch, closing Settings — can restore the unsaved edits. A
+  // successful save suppresses the next write (the baseRevision advance) so the just-cleared
+  // draft is not immediately re-created.
+  const suppressDraftWriteRef = useRef(false)
+  useEffect(() => {
+    if (suppressDraftWriteRef.current) {
+      suppressDraftWriteRef.current = false
+      return
+    }
+    saveEditorDraft(editorDraftKey, { form, idTouched, activeCapTab })
+  }, [saveEditorDraft, editorDraftKey, form, idTouched, activeCapTab])
 
   // Persist references to unavailable entries so a temporarily missing connector is visible and
   // cannot silently broaden the profile when it returns. Main-disabled installed connectors remain
@@ -506,14 +597,18 @@ const SpecialistEditor = ({
           ...(editSpecialist.setupPending ? { completeSetup: true as const } : {}),
           ...trimmed
         })
-        // Advance the base revision only after a confirmed save.
+        // Advance the base revision only after a confirmed save, and keep that form update
+        // from re-creating the draft the save just cleared.
+        suppressDraftWriteRef.current = true
         setForm((prev) => ({ ...prev, baseRevision: prev.baseRevision + 1 }))
+        clearEditorDraft(editorDraftKey)
       } else {
         await onSave({
           ...(submittedId ? { id: submittedId } : {}),
           name: form.name.trim(),
           ...trimmed
         })
+        clearEditorDraft(editorDraftKey)
       }
     } catch (error) {
       const message =
@@ -1185,45 +1280,55 @@ const SpecialistEditor = ({
                         {t('No skills added yet.')}
                       </p>
                     ) : (
-                      selectedSkillRows.map((skill) => (
-                        <div
-                          key={skill.id}
-                          className="flex h-[40px] items-center gap-2.5 border-b border-border px-3 last:border-b-0"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[12.5px]">{skill.name}</div>
-                            {!skill.missing && skill.description ? (
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {skill.description}
-                              </div>
-                            ) : null}
+                      selectedSkillRows.map((skill) => {
+                        const openSkill =
+                          !skill.missing && onOpenSkillDetail !== undefined
+                            ? () => onOpenSkillDetail(skill.id)
+                            : undefined
+                        return (
+                          <div
+                            key={skill.id}
+                            {...clickableRowProps(
+                              openSkill,
+                              t('View {{name}} details', { name: skill.name })
+                            )}
+                            className={capabilityRowClassName(openSkill !== undefined)}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[12.5px]">{skill.name}</div>
+                              {!skill.missing && skill.description ? (
+                                <div className="truncate text-[11px] text-muted-foreground">
+                                  {skill.description}
+                                </div>
+                              ) : null}
+                            </div>
+                            {skill.missing ? (
+                              <span className="shrink-0 text-[11px] text-muted-foreground">
+                                {t('Missing · unavailable')}
+                              </span>
+                            ) : (
+                              <>
+                                {skill.source ? (
+                                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] capitalize text-muted-foreground">
+                                    {skill.source}
+                                  </span>
+                                ) : null}
+                                {!skill.mainEnabled ? (
+                                  <span className="shrink-0 text-[11px] text-muted-foreground">
+                                    {t('Main disabled · available here')}
+                                  </span>
+                                ) : null}
+                              </>
+                            )}
+                            <SettingsIconAction
+                              label={t('Remove {{name}}', { name: skill.name })}
+                              icon={X}
+                              onClick={stopThen(() => removeSkill(skill.id))}
+                              danger
+                            />
                           </div>
-                          {skill.missing ? (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
-                              {t('Missing · unavailable')}
-                            </span>
-                          ) : (
-                            <>
-                              {skill.source ? (
-                                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] capitalize text-muted-foreground">
-                                  {skill.source}
-                                </span>
-                              ) : null}
-                              {!skill.mainEnabled ? (
-                                <span className="shrink-0 text-[11px] text-muted-foreground">
-                                  {t('Main disabled · available here')}
-                                </span>
-                              ) : null}
-                            </>
-                          )}
-                          <SettingsIconAction
-                            label={t('Remove {{name}}', { name: skill.name })}
-                            icon={X}
-                            onClick={() => removeSkill(skill.id)}
-                            danger
-                          />
-                        </div>
-                      ))
+                        )
+                      })
                     )}
                   </div>
                   <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
@@ -1245,38 +1350,52 @@ const SpecialistEditor = ({
                         {t('No connectors added yet.')}
                       </p>
                     ) : (
-                      selectedConnectorRows.map((connector) => (
-                        <div
-                          key={connector.id}
-                          className="flex h-[40px] items-center gap-2.5 border-b border-border px-3 last:border-b-0"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[12.5px]">{connector.name}</div>
-                            {connector.available && connector.description ? (
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {connector.description}
-                              </div>
+                      selectedConnectorRows.map((connector) => {
+                        const canonicalConnectorId = (): string =>
+                          customServers.find(
+                            (server) => server.id === connector.id || server.name === connector.id
+                          )?.id ?? connector.id
+                        const openConnector =
+                          connector.available && onOpenConnectorDetail !== undefined
+                            ? () => onOpenConnectorDetail(canonicalConnectorId())
+                            : undefined
+                        return (
+                          <div
+                            key={connector.id}
+                            {...clickableRowProps(
+                              openConnector,
+                              t('View {{name}} details', { name: connector.name })
+                            )}
+                            className={capabilityRowClassName(openConnector !== undefined)}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[12.5px]">{connector.name}</div>
+                              {connector.available && connector.description ? (
+                                <div className="truncate text-[11px] text-muted-foreground">
+                                  {connector.description}
+                                </div>
+                              ) : null}
+                            </div>
+                            {!connector.available ? (
+                              <span className="shrink-0 text-[11px] text-muted-foreground">
+                                {t('Unavailable — {{reason}}', {
+                                  reason: connector.availability ?? t('not installed')
+                                })}
+                              </span>
+                            ) : !connector.mainEnabled ? (
+                              <span className="shrink-0 text-[11px] text-muted-foreground">
+                                {t('Main disabled · available here')}
+                              </span>
                             ) : null}
+                            <SettingsIconAction
+                              label={t('Remove {{name}}', { name: connector.name })}
+                              icon={X}
+                              onClick={stopThen(() => removeConnector(connector.id))}
+                              danger
+                            />
                           </div>
-                          {!connector.available ? (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
-                              {t('Unavailable — {{reason}}', {
-                                reason: connector.availability ?? t('not installed')
-                              })}
-                            </span>
-                          ) : !connector.mainEnabled ? (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
-                              {t('Main disabled · available here')}
-                            </span>
-                          ) : null}
-                          <SettingsIconAction
-                            label={t('Remove {{name}}', { name: connector.name })}
-                            icon={X}
-                            onClick={() => removeConnector(connector.id)}
-                            danger
-                          />
-                        </div>
-                      ))
+                        )
+                      })
                     )}
                   </div>
                   <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
@@ -1337,7 +1456,16 @@ const SpecialistEditor = ({
 
         {/* Footer actions */}
         <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={isSaving}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              // Cancel discards the form explicitly; the draft must not resurrect it later.
+              clearEditorDraft(editorDraftKey)
+              onCancel()
+            }}
+            disabled={isSaving}
+          >
             {t('Cancel')}
           </Button>
           <Button

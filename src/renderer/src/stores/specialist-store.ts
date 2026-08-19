@@ -16,6 +16,33 @@ import type {
   SpecialistPackageInstallRequest
 } from '../../../shared/specialist-package'
 
+// Draft key for the create-specialist form; edit drafts are keyed by specialist id.
+export const CREATE_SPECIALIST_DRAFT_KEY = '__create__'
+
+// One snapshot of the specialist editor's form state, kept while the editor is unmounted so a
+// round trip through Settings (e.g. opening a capability's detail page) loses nothing.
+export type SpecialistEditorFormDraft = {
+  id: string
+  name: string
+  packageVersion: string
+  description: string
+  systemPrompt: string
+  iconKey: string
+  colorKey: string
+  capabilityMode: 'full' | 'selected'
+  excludedSkillIds: string[]
+  selectedSkillIds: string[]
+  excludedConnectorIds: string[]
+  connectorIds: string[]
+  baseRevision: number
+}
+
+export type SpecialistEditorDraft = {
+  form: SpecialistEditorFormDraft
+  idTouched: boolean
+  activeCapTab: 'skills' | 'connectors'
+}
+
 type SpecialistStoreData = {
   items: SpecialistListItem[]
   isLoaded: boolean
@@ -23,6 +50,7 @@ type SpecialistStoreData = {
   integrity: SpecialistDocumentIntegrity
   packagePreview?: SpecialistPackageCandidatePreview
   exportPreview?: SpecialistExportPreview
+  editorDrafts: Record<string, SpecialistEditorDraft>
 }
 
 type SpecialistStoreActions = {
@@ -48,6 +76,8 @@ type SpecialistStoreActions = {
     includedSkillIds: readonly string[]
   ) => Promise<SpecialistExportSaveResult>
   clearExport: () => void
+  saveEditorDraft: (key: string, draft: SpecialistEditorDraft) => void
+  clearEditorDraft: (key: string) => void
 }
 
 type SpecialistStore = SpecialistStoreData & SpecialistStoreActions
@@ -88,6 +118,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   integrity: { status: 'ok' },
   packagePreview: undefined,
   exportPreview: undefined,
+  editorDrafts: {},
 
   load: () => {
     // Guard: specialist.list is Electron-only and unavailable in the web gateway.
@@ -201,6 +232,19 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   clearExport: () => {
     latestExportPreviewRequest += 1
     set({ exportPreview: undefined })
+  },
+
+  saveEditorDraft: (key, draft) => {
+    set((state) => ({ editorDrafts: { ...state.editorDrafts, [key]: draft } }))
+  },
+
+  clearEditorDraft: (key) => {
+    set((state) => {
+      if (!(key in state.editorDrafts)) return state
+      const editorDrafts = { ...state.editorDrafts }
+      delete editorDrafts[key]
+      return { editorDrafts }
+    })
   }
 }))
 

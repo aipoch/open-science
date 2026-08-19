@@ -2095,6 +2095,7 @@
   "Version {{version}}": "版本 {{version}}",
   "Version unavailable": "版本無法使用",
   "View": "檢視",
+  "View {{name}} details": "檢視 {{name}} 詳情",
   "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.": "目前所選模型不支援圖片。請在「設定 > 模型」中設定視覺模型以啟用圖片支援。",
   "The attached image is invalid.": "附加的圖片無效。",
   "The attached image is too large to prepare for the Vision model.": "附加的圖片過大，無法交給視覺模型處理。",

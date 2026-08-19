@@ -1218,6 +1218,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     view={specialistsView}
                     onNavigate={navigateSpecialists}
                     onOpenTag={navigateTag}
+                    onOpenSkillDetail={(skillId) =>
+                      navigate({
+                        ...currentLocation,
+                        panel: 'skills',
+                        skills: { kind: 'detail', id: skillId }
+                      })
+                    }
+                    onOpenConnectorDetail={(connectorId) =>
+                      navigate({
+                        ...currentLocation,
+                        panel: 'connectors',
+                        connectors: customServers.some((server) => server.id === connectorId)
+                          ? { kind: 'edit', id: connectorId }
+                          : { kind: 'detail', id: connectorId }
+                      })
+                    }
                   />
                 ) : activePanel === 'tags' ? (
                   <TagsPanel

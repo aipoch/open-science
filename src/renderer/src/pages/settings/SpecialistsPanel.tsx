@@ -149,6 +149,9 @@ type SpecialistsPanelProps = {
   view: SpecialistsView
   onNavigate: (view: SpecialistsView) => void
   onOpenTag?: (tagId: string) => void
+  // Opens one Skill / Connector from a specialist's capability list in its own settings panel.
+  onOpenSkillDetail?: (skillId: string) => void
+  onOpenConnectorDetail?: (connectorId: string) => void
 }
 
 type InstalledSpecialistsView = Exclude<SpecialistsView, SpecialistMarketplaceView>
@@ -156,11 +159,15 @@ type InstalledSpecialistsView = Exclude<SpecialistsView, SpecialistMarketplaceVi
 const InstalledSpecialistsPanel = ({
   view,
   onNavigate,
-  onOpenTag
+  onOpenTag,
+  onOpenSkillDetail,
+  onOpenConnectorDetail
 }: {
   view: InstalledSpecialistsView
   onNavigate: (view: SpecialistsView) => void
   onOpenTag?: (tagId: string) => void
+  onOpenSkillDetail?: (skillId: string) => void
+  onOpenConnectorDetail?: (connectorId: string) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -433,6 +440,8 @@ const InstalledSpecialistsPanel = ({
           await createSpecialist(input)
           onNavigate({ kind: 'list' })
         }}
+        onOpenSkillDetail={onOpenSkillDetail}
+        onOpenConnectorDetail={onOpenConnectorDetail}
       />
     )
   }
@@ -650,6 +659,8 @@ const InstalledSpecialistsPanel = ({
               if (refreshed && refreshed.kind === 'custom') return refreshed
               return undefined
             }}
+            onOpenSkillDetail={onOpenSkillDetail}
+            onOpenConnectorDetail={onOpenConnectorDetail}
           />
         </div>
       )
@@ -2025,6 +2036,8 @@ const SpecialistsPanel = (props: SpecialistsPanelProps): React.JSX.Element =>
       view={props.view}
       onNavigate={props.onNavigate}
       onOpenTag={props.onOpenTag}
+      onOpenSkillDetail={props.onOpenSkillDetail}
+      onOpenConnectorDetail={props.onOpenConnectorDetail}
     />
   )
 

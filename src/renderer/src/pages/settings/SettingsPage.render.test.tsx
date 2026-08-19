@@ -202,6 +202,8 @@ beforeEach(() => {
   useProjectStore.setState(createInitialProjectState())
   useSessionStore.setState(createInitialSessionState())
   useTagStore.setState(createInitialTagState())
+  // Editor drafts persist across mounts by design; keep tests independent of each other.
+  useSpecialistStore.setState({ editorDrafts: {} })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -2393,6 +2395,230 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
     // The pending id is consumed so a later normal open won't jump back to it.
     expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()
+  })
+
+  it('navigates from a specialist capability row to the skill detail and back', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-1',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // The capabilities whitelist lists Alpha; clicking the row navigates.
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Alpha details"]')!
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Landed on Skills › Alpha: the mocked detail metadata renders.
+    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.textContent).toContain('Test Author')
+
+    // Back returns to the specialist editor.
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+  })
+
+  it('routes connector capability rows to detail or edit by server kind', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-2',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: '',
+      systemPrompt: '',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['chemistry', 'route-uuid'],
+        connectorTools: []
+      },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    ;(window.api.settings.listConnectors as ReturnType<typeof vi.fn>).mockResolvedValue({
+      connectors: [
+        {
+          id: 'chemistry',
+          displayName: 'Chemistry',
+          description: 'Small-molecule chemistry via PubChem.',
+          sources: ['PubChem'],
+          requiresNcbi: false,
+          enabled: true,
+          autoAllow: false
+        }
+      ],
+      customServers: [
+        {
+          id: 'route-uuid',
+          name: 'route',
+          displayName: 'Public Route',
+          transport: 'stdio',
+          enabled: true
+        }
+      ],
+      ncbi: { hasApiKey: false }
+    })
+    ;(
+      window.api.settings as unknown as Record<string, ReturnType<typeof vi.fn>>
+    ).getConnectorDetail = vi.fn().mockResolvedValue({
+      id: 'chemistry',
+      name: 'chemistry',
+      displayName: 'Chemistry',
+      description: 'Small-molecule chemistry via PubChem.',
+      sources: ['PubChem'],
+      requiresNcbi: false,
+      enabled: true,
+      autoAllow: false,
+      tools: []
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Open the Connectors capability tab.
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((tab) =>
+          tab.textContent?.includes('Connectors')
+        )!
+      )
+    })
+
+    const crumb = (): string =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.closest('div')
+        ?.textContent ?? ''
+
+    // A bundled connector lands on its detail page.
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Chemistry details"]')!
+      )
+    })
+    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+    expect(crumb()).toContain('Connectors›Chemistry')
+
+    // Back to the editor (capability tabs reset to Skills on remount), then a
+    // custom server lands on its edit page.
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((tab) =>
+          tab.textContent?.includes('Connectors')
+        )!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Public Route details"]')!
+      )
+    })
+    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+    expect(crumb()).toContain('Connectors›Edit route')
+  })
+
+  it('keeps unsaved specialist edits across a capability detail round trip', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-3',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // An unsaved edit in the specialist editor.
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-description')!, {
+        target: { value: 'My unsaved edit' }
+      })
+    })
+
+    // Round trip through the skill detail page.
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Alpha details"]')!
+      )
+    })
+    expect(document.body.textContent).toContain('Test Author')
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+
+    // Back on the editor, the unsaved edit survived the trip.
+    expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
+      'My unsaved edit'
+    )
   })
 
   it('opens the specialist creation form from Write from scratch', async () => {

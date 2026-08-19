@@ -2037,6 +2037,7 @@
   "Version {{version}}": "バージョン {{version}}",
   "Version unavailable": "バージョンが利用できません",
   "View": "表示",
+  "View {{name}} details": "{{name}} の詳細を表示",
   "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.": "選択したモデルは画像をサポートしていません。 [設定] > [モデル] で Vision モデルを構成し、画像サポートを有効にします。",
   "The attached image is invalid.": "添付された画像は無効です。",
   "The attached image is too large to prepare for the Vision model.": "添付画像が大きすぎるため、Vision model 用に処理できません。",

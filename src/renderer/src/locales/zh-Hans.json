@@ -2098,6 +2098,7 @@
   "Version {{version}}": "版本 {{version}}",
   "Version unavailable": "版本不可用",
   "View": "查看",
+  "View {{name}} details": "查看 {{name}} 详情",
   "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.": "当前所选模型不支持图片。请在“设置 > 模型”中配置视觉模型以启用图片支持。",
   "The attached image is invalid.": "附加的图片无效。",
   "The attached image is too large to prepare for the Vision model.": "附加的图片过大，无法交给视觉模型处理。",
