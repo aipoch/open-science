@@ -1,8 +1,57 @@
-import { describe, expect, it, vi } from 'vitest'
+// @vitest-environment jsdom
 
-import { completeQuitPersistenceFlush } from './useQuitPersistenceFlush'
+import { renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const { resumeAutoReviewsAfterQuitAbort } = vi.hoisted(() => ({
+  resumeAutoReviewsAfterQuitAbort: vi.fn()
+}))
+
+vi.mock('../lib/acp/workspace-events', () => ({
+  resumeAutoReviewsAfterQuitAbort,
+  suppressAutoReviewsForQuit: vi.fn()
+}))
+vi.mock('../lib/acp/useWorkspaceAgentRuntime', () => ({
+  drainWorkspaceRuntimeEventsForPersistence: vi.fn(async () => undefined)
+}))
+vi.mock('../lib/session-persistence/session-persistence', () => ({
+  flushSessionPersistence: vi.fn(async () => undefined)
+}))
+
+import { completeQuitPersistenceFlush, useQuitPersistenceFlush } from './useQuitPersistenceFlush'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  resumeAutoReviewsAfterQuitAbort.mockClear()
+})
 
 describe('completeQuitPersistenceFlush', () => {
+  it('resumes renderer quit preparation when Main aborts shutdown', () => {
+    let notifyAborted = (): void => undefined
+    const removeAborted = vi.fn()
+    const removeRequest = vi.fn()
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          onFlushAborted: (listener: () => void) => {
+            notifyAborted = listener
+            return removeAborted
+          },
+          onFlushRequest: () => removeRequest,
+          sendFlushResponse: vi.fn()
+        }
+      }
+    })
+
+    const { unmount } = renderHook(() => useQuitPersistenceFlush())
+    notifyAborted()
+
+    expect(resumeAutoReviewsAfterQuitAbort).toHaveBeenCalledOnce()
+    unmount()
+    expect(removeAborted).toHaveBeenCalledOnce()
+    expect(removeRequest).toHaveBeenCalledOnce()
+  })
+
   it('drains terminal runtime events before flushing and acknowledging', async () => {
     const calls: string[] = []
 

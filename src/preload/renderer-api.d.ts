@@ -471,6 +471,7 @@ export interface OpenScienceAPI {
     deleteSession(request: DeleteSessionRequest): Promise<SessionDeletionResult>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
+    onFlushAborted?(listener: () => void): RemoveListener
     onFlushRequest?(listener: AcpListener<SessionPersistenceFlushRequest>): RemoveListener
     sendFlushResponse?(response: SessionPersistenceFlushResponse): void
     onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener

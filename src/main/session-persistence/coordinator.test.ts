@@ -2235,6 +2235,41 @@ describe('SessionPersistenceCoordinator', () => {
     expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(result)
   })
 
+  it('preserves Main-owned specialist binding fields when renderer save options are forged', async () => {
+    const authoritativeSession = createSession({
+      specialistId: 'specialist-old',
+      updatedAt: 7
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: authoritativeSession })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const forgedRendererOptions = {
+      conflictRebaseFields: ['specialistId', 'specialistBindingPending']
+    } as unknown as Parameters<SessionPersistenceCoordinator['saveSession']>[1]
+
+    const result = await coordinator.saveSession(
+      {
+        ...authoritativeSession,
+        specialistId: 'specialist-forged',
+        specialistBindingPending: true
+      },
+      forgedRendererOptions
+    )
+
+    expect(result.specialistId).toBe('specialist-old')
+    expect(result.specialistBindingPending).toBeUndefined()
+    expect(repository.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        specialistId: 'specialist-old',
+        specialistBindingPending: undefined
+      }),
+      0
+    )
+  })
+
   it('advances the session revision when a specialist binding first becomes pending', async () => {
     const authoritativeSession = createSession({
       specialistId: 'specialist-old',

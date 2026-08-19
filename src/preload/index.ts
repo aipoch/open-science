@@ -205,6 +205,8 @@ const api: OpenScienceAPI = {
     // Exports the authoritative persisted active branch through a main-owned Save As flow.
     exportConversation: (request) =>
       electronRendererContracts.invoke('sessions.exportConversation', request),
+    onFlushAborted: (listener) =>
+      electronRendererContracts.subscribe('sessions.onFlushAborted', listener),
     onFlushRequest: (listener) =>
       electronRendererContracts.subscribe('sessions.onFlushRequest', listener),
     sendFlushResponse: (response) =>

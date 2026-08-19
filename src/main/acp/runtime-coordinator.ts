@@ -461,6 +461,14 @@ class AcpRuntimeCoordinator {
     })
   }
 
+  // Quit may be cancelled when renderer persistence cannot prove its final snapshot durable. Reopen
+  // only the admission state owned by prepareForQuit; completed prompt cancellation remains completed.
+  abortQuitPreparation(): void {
+    if (this.providerShutdownStartedForQuit) return
+    this.promptAdmissionClosedForQuit = false
+    this.durableQuitDetachedSessionIds.clear()
+  }
+
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()

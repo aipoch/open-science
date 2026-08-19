@@ -17,7 +17,11 @@ import {
 } from '../../shared/session-persistence'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { diagnosticErrorFields, type Logger } from '../logger'
-import { rebaseSafeSessionFields, resolveRevisionedSessionSave } from './revision-conflict'
+import {
+  rebaseSafeSessionFields,
+  resolveRevisionedSessionSave,
+  type MainSaveSessionOptions
+} from './revision-conflict'
 import { saveSessionWithRevision } from './save-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
@@ -526,6 +530,28 @@ class SessionPersistenceStateOwner {
   async saveSession(
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
+  ): Promise<PersistedChatSession> {
+    return this.saveSessionWithAuthority(session, options)
+  }
+
+  async saveSessionSpecialistBinding(
+    session: PersistedChatSession,
+    specialistId: string | undefined,
+    specialistBindingPending = false
+  ): Promise<PersistedChatSession> {
+    return this.saveSessionWithAuthority(
+      {
+        ...session,
+        specialistId,
+        specialistBindingPending: specialistBindingPending ? true : undefined
+      },
+      { conflictRebaseFields: ['specialistId', 'specialistBindingPending'] }
+    )
+  }
+
+  private async saveSessionWithAuthority(
+    session: PersistedChatSession,
+    options: MainSaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(session.projectId, session.id, 'save')
     const authoritative = await this.options.repository.loadSessionWithDiagnostics(

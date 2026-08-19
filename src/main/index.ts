@@ -241,7 +241,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
         { routeSecondInstance },
         { createElectronCloseConfirm },
-        { createElectronSessionPersistenceFlush },
+        { createElectronSessionPersistenceFlush, notifyRendererSessionPersistenceFlushAborted },
         { installWindowShortcuts },
         { createAppIconController, buildAppIconPreviews },
         { RemoteAccessService, registerRemoteAccessIpcHandlers },
@@ -409,6 +409,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           taskControls,
           detectActiveSessions,
           prepareForQuit,
+          abortQuitPreparation,
           dispose: disposeApplicationRuntime
         } = await registerIpcHandlers({
           mainEntryPath,
@@ -514,9 +515,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           disposeApplicationRuntime,
           detectActiveSessions,
           prepareForQuit,
+          abortQuitPreparation,
           createSessionPersistenceFlush: (
             getWindow: () => InstanceType<typeof BrowserWindow> | undefined
           ) => createElectronSessionPersistenceFlush(getWindow),
+          notifySessionPersistenceFlushAborted: (
+            getWindow: () => InstanceType<typeof BrowserWindow> | undefined
+          ) => notifyRendererSessionPersistenceFlushAborted(getWindow),
           createConfirmClose: (getWindow: () => InstanceType<typeof BrowserWindow> | undefined) =>
             createElectronCloseConfirm(
               getWindow,
@@ -606,6 +611,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             createInitialWindow: !ctx.webMode.headless,
             detectActiveSessions: ctx.detectActiveSessions,
             prepareForQuit: ctx.prepareForQuit,
+            abortQuitPreparation: () => {
+              ctx.abortQuitPreparation()
+              ctx.notifySessionPersistenceFlushAborted(() => ctx.mainWindowGetterBox.current?.())
+            },
             flushSessionPersistence: ctx.createSessionPersistenceFlush(() =>
               ctx.mainWindowGetterBox.current?.()
             ),

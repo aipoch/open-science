@@ -859,12 +859,15 @@ describe('Session persistence coordinator architecture', () => {
         'removeSession',
         'replaceMetadata',
         'saveSession',
+        'saveSessionSpecialistBinding',
         'sessionProjectId',
         'setDelegationPolicy',
         'setEnabledComputeHosts'
       ].sort()
     )
-    expect(methods(stateOwner, 'private')).toEqual(['loadRuntimeContextSession'])
+    expect(methods(stateOwner, 'private')).toEqual(
+      ['loadRuntimeContextSession', 'saveSessionWithAuthority'].sort()
+    )
     expect(methods(deletionOwner, 'public')).toEqual(
       [
         'assertProjectArchivable',
@@ -935,7 +938,7 @@ describe('Session persistence coordinator architecture', () => {
       pruneSessionEnabledComputeHosts: ['stateOwner.pruneEnabledComputeHosts'],
       readSessionRuntimeContext: ['stateOwner.readRuntimeContext'],
       saveSession: ['stateOwner.saveSession'],
-      saveSessionSpecialistBinding: ['stateOwner.saveSession'],
+      saveSessionSpecialistBinding: ['stateOwner.saveSessionSpecialistBinding'],
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],

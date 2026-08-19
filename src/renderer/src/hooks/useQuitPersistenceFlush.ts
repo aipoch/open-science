@@ -5,7 +5,10 @@ import type {
   SessionPersistenceFlushResponse
 } from '../../../shared/session-persistence-flush'
 import { isSessionRevisionConflictError } from '../../../shared/session-persistence'
-import { suppressAutoReviewsForQuit } from '../lib/acp/workspace-events'
+import {
+  resumeAutoReviewsAfterQuitAbort,
+  suppressAutoReviewsForQuit
+} from '../lib/acp/workspace-events'
 import { drainWorkspaceRuntimeEventsForPersistence } from '../lib/acp/useWorkspaceAgentRuntime'
 import { flushSessionPersistence } from '../lib/session-persistence/session-persistence'
 
@@ -37,12 +40,14 @@ export const completeQuitPersistenceFlush = async (
 
 export const useQuitPersistenceFlush = (): void => {
   useEffect(() => {
+    const onFlushAborted = window.api.sessions?.onFlushAborted
     const onFlushRequest = window.api.sessions?.onFlushRequest
     const sendFlushResponse = window.api.sessions?.sendFlushResponse
     // Web/headless renderers do not participate in Electron's before-quit handshake.
     if (!onFlushRequest || !sendFlushResponse) return
 
-    return onFlushRequest((request) => {
+    const removeFlushAborted = onFlushAborted?.(resumeAutoReviewsAfterQuitAbort)
+    const removeFlushRequest = onFlushRequest((request) => {
       void completeQuitPersistenceFlush(request, {
         suppressAutoReviews: suppressAutoReviewsForQuit,
         drainRuntimeEvents: drainWorkspaceRuntimeEventsForPersistence,
@@ -50,5 +55,9 @@ export const useQuitPersistenceFlush = (): void => {
         acknowledge: sendFlushResponse
       }).catch(() => undefined)
     })
+    return () => {
+      removeFlushAborted?.()
+      removeFlushRequest()
+    }
   }, [])
 }

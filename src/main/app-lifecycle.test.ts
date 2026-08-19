@@ -123,6 +123,7 @@ type Harness = {
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  abortQuitPreparation: () => Promise<void> | void
   flushSessionPersistence: (
     timeoutMs?: number
   ) => Promise<RendererSessionPersistenceFlushOutcome | void>
@@ -140,6 +141,7 @@ const setup = (
       AppLifecycleDeps,
       | 'shutdownBackends'
       | 'prepareForQuit'
+      | 'abortQuitPreparation'
       | 'flushSessionPersistence'
       | 'log'
       | 'flushLogs'
@@ -169,6 +171,7 @@ const setup = (
   let trayHandlers: TrayHandlers | undefined
   const shutdownBackends = overrides.shutdownBackends ?? vi.fn(async () => undefined)
   const prepareForQuit = overrides.prepareForQuit ?? vi.fn(async () => undefined)
+  const abortQuitPreparation = overrides.abortQuitPreparation ?? vi.fn()
   const flushSessionPersistence =
     overrides.flushSessionPersistence ?? vi.fn(async () => 'completed' as const)
   const quit = vi.fn()
@@ -194,6 +197,7 @@ const setup = (
     },
     shutdownBackends,
     prepareForQuit,
+    abortQuitPreparation,
     flushSessionPersistence,
     log: overrides.log,
     flushLogs: overrides.flushLogs,
@@ -216,6 +220,7 @@ const setup = (
     trayHandlers,
     shutdownBackends,
     prepareForQuit,
+    abortQuitPreparation,
     flushSessionPersistence,
     quit,
     showMainWindow,
@@ -359,6 +364,7 @@ describe('installAppLifecycle', () => {
       createTray: () => ({ destroy: vi.fn() }) as unknown as import('electron').Tray,
       shutdownBackends,
       prepareForQuit: async () => undefined,
+      abortQuitPreparation: vi.fn(),
       flushSessionPersistence: async () => undefined,
       isMigrationInProgress: (): boolean => false,
       quit: vi.fn(),
@@ -441,10 +447,10 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('bounds both renderer persistence attempts and drains terminal logs before exit', async () => {
+  it('continues degraded quit when the renderer disappears and drains terminal logs before exit', async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     const flushLogs = vi.fn(async () => undefined)
-    const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
+    const flushSessionPersistence = vi.fn(async () => 'renderer-gone' as const)
     const { app, closeOpts } = setup({
       log,
       flushLogs,
@@ -462,7 +468,7 @@ describe('installAppLifecycle', () => {
         outcome: 'completed',
         degraded: true,
         usageDrainResult: 'completed',
-        rendererFlushResult: 'timeout',
+        rendererFlushResult: 'degraded',
         backendTeardownResult: 'completed'
       })
     )
@@ -503,7 +509,10 @@ describe('installAppLifecycle', () => {
     const { app, closeOpts } = setup({
       log,
       prepareForQuit: vi.fn(async () => 'timeout' as const),
-      flushSessionPersistence: vi.fn(async () => 'send-failed' as const),
+      flushSessionPersistence: vi
+        .fn()
+        .mockResolvedValueOnce('completed' as const)
+        .mockResolvedValueOnce('renderer-gone' as const),
       shutdownBackends: vi.fn(async () => 'degraded' as const)
     })
     closeOpts[0].requestQuit()
@@ -517,7 +526,7 @@ describe('installAppLifecycle', () => {
     )
     expect(log.info).toHaveBeenCalledWith(
       'operation phase',
-      expect.objectContaining({ phase: 'renderer-session-flush', result: 'failed' })
+      expect.objectContaining({ phase: 'renderer-session-flush', result: 'degraded' })
     )
     expect(log.info).toHaveBeenCalledWith(
       'operation phase',
@@ -529,7 +538,7 @@ describe('installAppLifecycle', () => {
         operation: 'application-shutdown',
         degraded: true,
         usageDrainResult: 'timeout',
-        rendererFlushResult: 'failed',
+        rendererFlushResult: 'degraded',
         backendTeardownResult: 'degraded'
       })
     )
@@ -537,7 +546,15 @@ describe('installAppLifecycle', () => {
 
   it('keeps the app open when the renderer reports an unresolved Session revision conflict', async () => {
     const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
-    const { app, closeOpts, prepareForQuit, shutdownBackends, tray, windows } = setup({
+    const {
+      app,
+      closeOpts,
+      prepareForQuit,
+      abortQuitPreparation,
+      shutdownBackends,
+      tray,
+      windows
+    } = setup({
       flushSessionPersistence
     })
     closeOpts[0].requestQuit()
@@ -547,6 +564,7 @@ describe('installAppLifecycle', () => {
 
     expect(flushSessionPersistence).toHaveBeenCalledOnce()
     expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(abortQuitPreparation).toHaveBeenCalledOnce()
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(tray?.destroy).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
@@ -554,14 +572,49 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
-  it('finishes quit from the durable preflight snapshot when the terminal flush conflicts', async () => {
+  it.each(['renderer-failed', 'send-failed', 'timeout'] as const)(
+    'keeps the app open when the renderer persistence preflight returns %s',
+    async (outcome) => {
+      const flushSessionPersistence = vi.fn(async () => outcome)
+      const {
+        app,
+        closeOpts,
+        prepareForQuit,
+        abortQuitPreparation,
+        shutdownBackends,
+        tray,
+        windows
+      } = setup({ flushSessionPersistence })
+      closeOpts[0].requestQuit()
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(flushSessionPersistence).toHaveBeenCalledOnce()
+      expect(prepareForQuit).not.toHaveBeenCalled()
+      expect(abortQuitPreparation).toHaveBeenCalledOnce()
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(tray?.destroy).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+      expect(windows[0].visible).toBe(true)
+      expect(windows[0].focused).toBe(true)
+    }
+  )
+
+  it('keeps the app open when the terminal renderer flush conflicts', async () => {
     const flushSessionPersistence = vi
       .fn()
       .mockResolvedValueOnce('completed' as const)
       .mockResolvedValueOnce('conflict' as const)
-    const { app, closeOpts, prepareForQuit, shutdownBackends } = setup({
-      flushSessionPersistence
-    })
+    const {
+      app,
+      closeOpts,
+      prepareForQuit,
+      abortQuitPreparation,
+      shutdownBackends,
+      tray,
+      windows
+    } = setup({ flushSessionPersistence })
     closeOpts[0].requestQuit()
 
     app.emit('before-quit')
@@ -569,9 +622,45 @@ describe('installAppLifecycle', () => {
 
     expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
     expect(prepareForQuit).toHaveBeenCalledOnce()
-    expect(shutdownBackends).toHaveBeenCalledOnce()
-    expect(app.exit).toHaveBeenCalledWith(0)
+    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(tray?.destroy).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+    expect(windows[0].visible).toBe(true)
+    expect(windows[0].focused).toBe(true)
   })
+
+  it.each(['renderer-failed', 'send-failed', 'timeout'] as const)(
+    'keeps the app open when the terminal renderer flush returns %s',
+    async (outcome) => {
+      const flushSessionPersistence = vi
+        .fn()
+        .mockResolvedValueOnce('completed' as const)
+        .mockResolvedValueOnce(outcome)
+      const {
+        app,
+        closeOpts,
+        prepareForQuit,
+        abortQuitPreparation,
+        shutdownBackends,
+        tray,
+        windows
+      } = setup({ flushSessionPersistence })
+      closeOpts[0].requestQuit()
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+      expect(prepareForQuit).toHaveBeenCalledOnce()
+      expect(abortQuitPreparation).toHaveBeenCalledOnce()
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(tray?.destroy).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+      expect(windows[0].visible).toBe(true)
+      expect(windows[0].focused).toBe(true)
+    }
+  )
 
   it('quits on window-all-closed only when non-darwin and no tray host', () => {
     const noTray = setup({ trayHost: false, platform: 'linux' })

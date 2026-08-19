@@ -1272,6 +1272,27 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.compactSession).not.toHaveBeenCalled()
   })
 
+  it('reopens prompt admission when quit preparation is aborted', async () => {
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+
+    await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+    coordinator.abortQuitPreparation()
+
+    await expect(
+      coordinator.sendPrompt({ sessionId: session.sessionId, text: 'retry after failed quit' })
+    ).resolves.toBeDefined()
+    expect(created.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),

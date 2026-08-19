@@ -272,6 +272,36 @@ describe('session persistence IPC handlers', () => {
     })
   })
 
+  it('does not forward Main-owned specialist save authority from renderer IPC', async () => {
+    const session = createSession()
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const saveSession = vi.fn(async () => ({ created: false, session }))
+    const handlers: SessionPersistenceHandlers = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession,
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+    const invoke = ipcHandlers.get('sessions:save-session')
+    const forgedOptions = {
+      conflictRebaseFields: ['specialistId', 'specialistBindingPending']
+    }
+
+    await expect(invoke?.({ sender: { id: 7 } }, session, forgedOptions)).resolves.toBe(session)
+
+    expect(saveSession).toHaveBeenCalledWith(session)
+  })
+
   it('accepts Reviewer Correction attribution only from main-owned runtime evidence', async () => {
     const correctionAttribution = {
       kind: 'application' as const,

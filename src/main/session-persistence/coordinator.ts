@@ -76,6 +76,7 @@ import {
   createSafeSessionUpdatePublisher as safeSessionUpdates,
   type SessionUpdatePublisher
 } from './session-update-publication'
+import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -733,7 +734,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(session, options)
+      return this.stateOwner.saveSession(session, sanitizeRendererSaveSessionOptions(options))
     })
   }
 
@@ -746,13 +747,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(
-        {
-          ...session,
-          specialistId,
-          specialistBindingPending: specialistBindingPending ? true : undefined
-        },
-        { conflictRebaseFields: ['specialistId', 'specialistBindingPending'] }
+      return this.stateOwner.saveSessionSpecialistBinding(
+        session,
+        specialistId,
+        specialistBindingPending
       )
     })
   }

@@ -61,6 +61,7 @@ type PreloadApi = {
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
+    onFlushAborted: (listener: () => void) => unknown
     onFlushRequest: (listener: (request: { requestId: string }) => void) => unknown
     sendFlushResponse: (response: { requestId: string }) => void
   }
@@ -430,6 +431,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.loadOne',
       'sessions.onCreated',
       'sessions.onDeleted',
+      'sessions.onFlushAborted',
       'sessions.onFlushRequest',
       'sessions.onUpdated',
       'sessions.saveManifest',
@@ -1349,7 +1351,15 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
 
   it('bridges the bounded Session flush request and acknowledgement channels', () => {
     const listener = vi.fn()
+    const abortedListener = vi.fn()
     const response = { requestId: 'flush-1' }
+
+    api.sessions.onFlushAborted(abortedListener)
+    expect(onMock).toHaveBeenCalledWith('sessions:flush-aborted', expect.any(Function))
+    const wrappedAbortedListener = onMock.mock.calls.at(-1)?.[1] as
+      ((_event: unknown) => void) | undefined
+    wrappedAbortedListener?.({})
+    expect(abortedListener).toHaveBeenCalledOnce()
 
     api.sessions.onFlushRequest(listener)
     expect(onMock).toHaveBeenCalledWith('sessions:flush-request', expect.any(Function))

@@ -21,6 +21,7 @@ import { withDataRootWrite } from '../storage/migration-state'
 import type { SessionMetadataSnapshot } from './coordinator'
 import { MainMessageAttributionAuthority } from './message-attribution-authority'
 import { isSessionCatalogAuthoritative } from './catalog-authority'
+import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -202,7 +203,10 @@ const registerSessionPersistenceIpcHandlers = (
     async (event, session: PersistedChatSession, options?: SaveSessionOptions) => {
       const originClientId = getLifecycleClientId(event)
       const durable = await withDataRootWrite(async () => {
-        const result = await handlers.saveSession(session, options)
+        const rendererOptions = sanitizeRendererSaveSessionOptions(options)
+        const result = rendererOptions
+          ? await handlers.saveSession(session, rendererOptions)
+          : await handlers.saveSession(session)
         broadcastLifecycleEvent(
           result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
           {

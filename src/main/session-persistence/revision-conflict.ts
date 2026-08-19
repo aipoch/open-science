@@ -5,10 +5,17 @@ import {
   SessionRevisionConflictError,
   sessionRevision,
   type PersistedChatSession,
-  type SaveSessionOptions
+  type SessionConflictRebaseField
 } from '../../shared/session-persistence'
 
-type RebaseFields = NonNullable<SaveSessionOptions['conflictRebaseFields']>
+export type MainSessionConflictRebaseField =
+  SessionConflictRebaseField | 'specialistId' | 'specialistBindingPending'
+
+export type MainSaveSessionOptions = {
+  conflictRebaseFields?: MainSessionConflictRebaseField[]
+}
+
+type RebaseFields = NonNullable<MainSaveSessionOptions['conflictRebaseFields']>
 
 export const rebaseSafeSessionFields = (
   authoritative: PersistedChatSession,

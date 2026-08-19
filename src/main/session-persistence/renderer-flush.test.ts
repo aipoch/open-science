@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL,
   SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
   SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL
 } from '../../shared/session-persistence-flush'
 import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 import {
   createElectronSessionPersistenceFlush,
+  notifyRendererSessionPersistenceFlushAborted,
   requestRendererSessionPersistenceFlush
 } from './renderer-flush'
 import type { RendererSessionPersistenceFlushOutcome } from './renderer-flush'
@@ -137,6 +139,21 @@ describe('requestRendererSessionPersistenceFlush', () => {
 })
 
 describe('createElectronSessionPersistenceFlush', () => {
+  it('notifies a surviving renderer when quit is aborted', () => {
+    const webContents = {
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      isDestroyed: vi.fn(() => false),
+      webContents
+    }
+
+    notifyRendererSessionPersistenceFlushAborted(() => window as never)
+
+    expect(webContents.send).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL)
+  })
+
   it('uses a five-second default timeout for a live renderer that never acknowledges', async () => {
     vi.useFakeTimers()
     electronMocks.on.mockClear()
