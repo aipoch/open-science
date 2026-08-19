@@ -735,8 +735,10 @@ describe('Russian catalog quality', () => {
     const offenders = Object.entries(catalog('ru'))
       .filter(([, value]) => {
         const prose = retained.reduce((text, pattern) => text.replace(pattern, ''), value)
-        return /\b(?:account|alias|backend|framework|frontmatter|module|output|partition|runtimes?|Write)\b/i.test(
-          prose
+        return (
+          /\b(?:account|alias|backend|Beaker|connection|framework|frontmatter|job|module|output|partition|Provenance|runtimes?|Write)\b/i.test(
+            prose
+          ) || prose.includes('e.g.')
         )
       })
       .map(([key]) => key)
@@ -915,7 +917,31 @@ describe('Russian catalog quality', () => {
     ['Molecule renderer failed to load', 'Не удалось загрузить визуализатор молекул'],
     ['Amber', 'Янтарный'],
     ['Teal', 'Бирюзовый'],
-    ['Slate', 'Сланцевый']
+    ['Slate', 'Сланцевый'],
+    ['Re-detect', 'Повторить обнаружение'],
+    ['Runtime', 'Среда выполнения'],
+    ['SCOPE & FEASIBILITY', 'ОБЛАСТЬ И ОСУЩЕСТВИМОСТЬ'],
+    [
+      'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.',
+      'Удалённые команды выполняются от имени вашей учётной записи на хосте и не изолированы. Одобряйте только те команды, которым доверяете.'
+    ],
+    ['Remote job details', 'Сведения об удалённом задании'],
+    ['Remote job: {{intent}}', 'Удалённое задание: {{intent}}'],
+    [
+      'Test failed: could not reach the endpoint — check the base URL/connection.',
+      'Тест не пройден: не удалось подключиться к конечной точке — проверьте базовый URL или подключение.'
+    ],
+    [
+      'This name is reserved by a built-in Connector.',
+      'Это имя зарезервировано встроенным коннектором.'
+    ],
+    [
+      'This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.',
+      'Этот план отображается как сохранённый снимок. Ход выполнения шагов недоступен для архивных сессий.'
+    ],
+    ['Beaker', 'Лабораторный стакан'],
+    ['Close Provenance', 'Закрыть сведения о происхождении'],
+    ['Open Provenance for {{title}}', 'Открыть сведения о происхождении для {{title}}']
   ])('keeps proofread Russian copy for %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
   })
