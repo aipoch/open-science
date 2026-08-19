@@ -18,7 +18,7 @@ import {
   initializeApplicationDiagnostics,
   reportApplicationStartupFailure
 } from './diagnostics/startup'
-import { createLogger, diagnosticErrorFields, flushLogs } from './logger'
+import { createLogger, diagnosticErrorFields, flushLogs, writeFatalLogSync } from './logger'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
 import { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG } from './office-preview/office-preview-runtime-protocol'
 import {
@@ -146,11 +146,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // Register process-level failure capture before loading the application modules. Keep renderer
   // diagnostics on a separate, one-way channel while the central IPC registry is being refactored.
   installChildProcessGoneLogging((listener) => app.on('child-process-gone', listener), log)
-  process.on('uncaughtException', (error) =>
-    log.error('uncaughtException', diagnosticErrorFields(error))
-  )
-  process.on('unhandledRejection', (reason) =>
-    log.error('unhandledRejection', diagnosticErrorFields(reason))
+  // Observe fatal JavaScript failures without consuming Node's default non-zero termination. A
+  // consuming uncaughtException/unhandledRejection listener would leave Electron serving IPC and
+  // mutating durable state after application invariants became unknown. The monitor also receives
+  // unhandled rejections promoted by Node's default `throw` mode, preserving their distinct origin.
+  process.on('uncaughtExceptionMonitor', (error, origin) =>
+    writeFatalLogSync('main', origin, diagnosticErrorFields(error))
   )
   registerRendererDiagnosticsIpc(
     ipcMain,
