@@ -736,7 +736,7 @@ describe('Russian catalog quality', () => {
       .filter(([, value]) => {
         const prose = retained.reduce((text, pattern) => text.replace(pattern, ''), value)
         return (
-          /\b(?:account|alias|backend|Beaker|connection|framework|frontmatter|job|module|output|partition|Provenance|runtimes?|Write)\b/i.test(
+          /\b(?:account|alias|backend|Beaker|connection|framework|frontmatter|job|module|output|partition|Provenance|runtimes?|Sandbox|Сandbox|Write)\b/i.test(
             prose
           ) || prose.includes('e.g.')
         )
@@ -941,7 +941,13 @@ describe('Russian catalog quality', () => {
     ],
     ['Beaker', 'Лабораторный стакан'],
     ['Close Provenance', 'Закрыть сведения о происхождении'],
-    ['Open Provenance for {{title}}', 'Открыть сведения о происхождении для {{title}}']
+    ['Open Provenance for {{title}}', 'Открыть сведения о происхождении для {{title}}'],
+    ['Use {{name}}', 'Использовать {{name}}'],
+    ['Go to home folder', 'Перейти в домашнюю папку'],
+    [
+      'Sandbox tools that run without preview',
+      'Инструменты песочницы, которые запускаются без предварительного просмотра'
+    ]
   ])('keeps proofread Russian copy for %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
   })
