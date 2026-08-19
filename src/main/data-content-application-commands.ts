@@ -13,14 +13,17 @@ import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 
-import type { ApplicationCommandContract } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  type ApplicationCommandContract
+} from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
 import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
 import type * as PreviewResources from '../shared/preview-resources'
 import type * as PreviewState from '../shared/preview-state'
 import * as Projects from '../shared/projects'
-import type * as SessionPersistence from '../shared/session-persistence'
+import * as SessionPersistence from '../shared/session-persistence'
 import * as Uploads from '../shared/uploads'
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -248,7 +251,11 @@ const dataContentApplicationCommands = Object.freeze({
     'update',
     Projects.projectApplicationCommandContracts.update
   ),
-  sessionDelete: sessionCommand('sessions:delete-session', 'deleteSession'),
+  sessionDelete: sessionCommand(
+    'sessions:delete-session',
+    'deleteSession',
+    SessionPersistence.sessionApplicationCommandContracts.delete
+  ),
   sessionExportConversation: electronCommand(
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
@@ -534,10 +541,18 @@ const registerDataContentApplicationCommands = (
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
         return dependencies.withDataRootWrite(async () => {
-          const result = await dependencies.sessions.saveSession(
-            invocation.args[0],
-            invocation.args[1]
-          )
+          let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
+          try {
+            result = await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
+          } catch (error) {
+            if (SessionPersistence.isSessionRevisionConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session revision conflict.'
+              )
+            }
+            throw error
+          }
           publishLifecycle(
             dependencies.events,
             result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,

@@ -65,12 +65,14 @@ type WorkflowHarness = {
   setConnected: (value: boolean) => void
   setProviderReconnectPending: (value: boolean) => void
   setSupportsImageInput: (value: boolean) => void
+  setReplayableImageHistory: (value: boolean) => void
 }
 
 const createHarness = (): WorkflowHarness => {
   let busy = false
   let connected = true
   let providerReconnectPending = false
+  let replayableImageHistory = true
   let backend: AcpBackendGenerationView = {
     framework: claudeCodeFramework,
     backendId: 'claude-code:provider',
@@ -199,6 +201,7 @@ const createHarness = (): WorkflowHarness => {
     providerReconnectPending: () => providerReconnectPending,
     isGenerationBusy: () => busy,
     contextEstimateInput: () => ({ frameworkId: 'claude-code', model: backend.context.model }),
+    hasReplayableImageHistory: vi.fn(async () => replayableImageHistory),
     emitState,
     requestReconnect,
     recoverFailedReconnect,
@@ -231,6 +234,9 @@ const createHarness = (): WorkflowHarness => {
     },
     setSupportsImageInput: (value) => {
       backend = { ...backend, context: { ...backend.context, supportsImageInput: value } }
+    },
+    setReplayableImageHistory: (value) => {
+      replayableImageHistory = value
     }
   }
 }
@@ -306,6 +312,30 @@ describe('ACP model-change workflow', () => {
 
     expect(harness.requestReconnect).toHaveBeenCalledOnce()
     expect(harness.updateModel).not.toHaveBeenCalled()
+  })
+
+  it('reconnects when an image-capable model replaces a text-only model', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.workflow.apply(target('model-b', { supportsImageInput: true }))
+    ).resolves.toBe(true)
+
+    expect(harness.requestReconnect).toHaveBeenCalledOnce()
+    expect(harness.updateModel).not.toHaveBeenCalled()
+  })
+
+  it('applies a capability-boundary model change live when history has no images', async () => {
+    const harness = createHarness()
+    harness.setSupportsImageInput(true)
+    harness.setReplayableImageHistory(false)
+
+    await expect(
+      harness.workflow.apply(target('model-b', { supportsImageInput: false }))
+    ).resolves.toBe(true)
+
+    expect(harness.requestReconnect).not.toHaveBeenCalled()
+    expect(harness.updateModel).toHaveBeenCalledOnce()
   })
 
   it('recovers a failed reconnect before releasing admission', async () => {

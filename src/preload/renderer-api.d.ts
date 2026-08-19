@@ -87,7 +87,15 @@ import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
+  ComputeHostDeletionStatus,
+  ComputePasswordCapability,
   CreateComputeHostRequest,
+  CreatePasswordComputeHostRequest,
+  CreatePasswordComputeHostResult,
+  ResetPasswordComputeHostRequest,
+  ResetPasswordComputeHostResult,
+  ChangeComputeHostAuthenticationRequest,
+  ChangeComputeHostAuthenticationResult,
   DeleteComputeHostRequest,
   DetailsAuthor,
   JobSummary,
@@ -189,6 +197,14 @@ import type {
   UpdateProjectRequest
 } from '../shared/projects'
 import type {
+  CreateTagRequest,
+  DeleteTagRequest,
+  SetTagAssignmentRequest,
+  TagSnapshot,
+  TagsChangedEvent,
+  UpdateTagRequest
+} from '../shared/tags'
+import type {
   ArtifactGroupPage,
   GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
@@ -242,6 +258,7 @@ import type {
   SetReasoningEffortRequest,
   SetReviewerModelRequest,
   SetSubagentModelRequest,
+  SetVisionModelRequest,
   SetSkillEnabledRequest,
   SetSkillsEnabledRequest,
   SettingsSnapshot,
@@ -340,7 +357,7 @@ import type {
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
   DuplicateSpecialistRequest,
-  SpecialistListItem,
+  SpecialistCatalogSnapshot,
   SpecialistProfileView,
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
@@ -359,6 +376,22 @@ import type {
   SpecialistDeleteResult
 } from '../shared/specialist-package'
 import type {
+  AddMarketplaceSourceRequest,
+  CancelMarketplaceCandidateRequest,
+  GetMarketplaceReleaseRequest,
+  InspectGitHubMarketplaceSourceRequest,
+  MarketplaceDownloadProgress,
+  MarketplaceInstallPreview,
+  MarketplaceInstallRequest,
+  MarketplaceInstallResult,
+  MarketplaceSnapshot,
+  MarketplaceSourceCandidate,
+  MarketplaceSourceView,
+  MarketplaceSpecialistRelease,
+  PrepareMarketplaceInstallRequest,
+  RemoveMarketplaceSourceRequest
+} from '../shared/specialist-marketplace'
+import type {
   CloseConfirmRequest,
   CloseConfirmResponse,
   WindowFindAppearance,
@@ -366,6 +399,11 @@ import type {
   WindowFindResult
 } from '../shared/window-controls'
 import type { DatabaseStartupState } from '../shared/database-startup'
+import type {
+  InitializeLocalePreferenceRequest,
+  LocalePreferenceSnapshot,
+  SetLocalePreferenceRequest
+} from '../shared/locale'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -384,6 +422,11 @@ export interface OpenScienceAPI {
   }
   lifecycle: {
     getClientId(): Promise<string>
+  }
+  locale: {
+    initialize(request: InitializeLocalePreferenceRequest): Promise<LocalePreferenceSnapshot>
+    setPreference(request: SetLocalePreferenceRequest): Promise<LocalePreferenceSnapshot>
+    onChanged(listener: AcpListener<LocalePreferenceSnapshot>): RemoveListener
   }
   databaseStartup: {
     getState(): Promise<DatabaseStartupState>
@@ -475,6 +518,7 @@ export interface OpenScienceAPI {
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
     setReviewerModel(request: SetReviewerModelRequest): Promise<SettingsSnapshot>
     setSubagentModel(request: SetSubagentModelRequest): Promise<SettingsSnapshot>
+    setVisionModel(request: SetVisionModelRequest): Promise<SettingsSnapshot>
     onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
     setConversationSkillImportEnabled(
@@ -549,6 +593,7 @@ export interface OpenScienceAPI {
     cancelCustomServerAuthentication(request: AuthenticateCustomServerRequest): Promise<void>
     retryCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
+    onConnectorApprovalSettled?(listener: AcpListener<string>): RemoveListener
     onConnectorRuntimeChanged(listener: AcpListener<undefined>): RemoveListener
     onSkillCatalogChanged(listener: AcpListener<undefined>): RemoveListener
     onSkillImportApprovalRequest(
@@ -557,6 +602,7 @@ export interface OpenScienceAPI {
     onSkillImportApprovalSettled(listener: AcpListener<string>): RemoveListener
     replayPendingSkillImportApprovals(): Promise<void>
     replayConnectorApproval(id: string): Promise<ConnectorApprovalRequest | null>
+    replayPendingConnectorApprovals?(): Promise<void>
     respondSkillImportApproval(response: ConversationSkillImportApprovalResponse): Promise<void>
     respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallEvent>): RemoveListener
@@ -572,7 +618,24 @@ export interface OpenScienceAPI {
     onChanged(listener: () => void): RemoveListener
   }
   specialist: {
-    list(): Promise<SpecialistListItem[]>
+    list(): Promise<SpecialistCatalogSnapshot>
+    listMarketplace(): Promise<MarketplaceSnapshot>
+    inspectGitHubMarketplaceSource(
+      request: InspectGitHubMarketplaceSourceRequest
+    ): Promise<MarketplaceSourceCandidate>
+    addMarketplaceSource(request: AddMarketplaceSourceRequest): Promise<MarketplaceSourceView>
+    removeMarketplaceSource(request: RemoveMarketplaceSourceRequest): Promise<void>
+    getMarketplaceRelease(
+      request: GetMarketplaceReleaseRequest
+    ): Promise<MarketplaceSpecialistRelease>
+    prepareMarketplaceInstall(
+      request: PrepareMarketplaceInstallRequest
+    ): Promise<MarketplaceInstallPreview>
+    cancelMarketplaceCandidate(request: CancelMarketplaceCandidateRequest): Promise<void>
+    onMarketplaceDownloadProgress(
+      listener: (progress: MarketplaceDownloadProgress) => void
+    ): RemoveListener
+    installMarketplace(request: MarketplaceInstallRequest): Promise<MarketplaceInstallResult>
     create(request: CreateSpecialistRequest): Promise<SpecialistProfileView>
     update(request: UpdateSpecialistRequest): Promise<SpecialistProfileView>
     setEnabled(request: SetSpecialistEnabledRequest): Promise<SpecialistProfileView>
@@ -665,6 +728,14 @@ export interface OpenScienceAPI {
     onUpdated(listener: AcpListener<Project>): RemoveListener
     onDeleted(listener: AcpListener<ProjectDeletedEvent>): RemoveListener
   }
+  tags: {
+    snapshot(): Promise<TagSnapshot>
+    create(request: CreateTagRequest): Promise<TagSnapshot>
+    update(request: UpdateTagRequest): Promise<TagSnapshot>
+    delete(request: DeleteTagRequest): Promise<TagSnapshot>
+    setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot>
+    onChanged(listener: AcpListener<TagsChangedEvent>): RemoveListener
+  }
   projectFiles: {
     getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
     listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
@@ -693,6 +764,15 @@ export interface OpenScienceAPI {
     list(): Promise<ComputeHost[]>
     get(providerId: string): Promise<ComputeHost | null>
     create(request: CreateComputeHostRequest): Promise<ComputeHost>
+    createPassword(
+      request: CreatePasswordComputeHostRequest
+    ): Promise<CreatePasswordComputeHostResult>
+    resetPassword(request: ResetPasswordComputeHostRequest): Promise<ResetPasswordComputeHostResult>
+    changeAuthentication(
+      request: ChangeComputeHostAuthenticationRequest
+    ): Promise<ChangeComputeHostAuthenticationResult>
+    passwordCapability(): Promise<ComputePasswordCapability>
+    deletionStatus(request: DeleteComputeHostRequest): Promise<ComputeHostDeletionStatus>
     delete(request: DeleteComputeHostRequest): Promise<void>
     // Selectable Host aliases parsed from ~/.ssh/config (patterns / Match blocks excluded).
     sshConfigAliases(): Promise<string[]>
@@ -712,9 +792,11 @@ export interface OpenScienceAPI {
     concurrencySet(providerId: string, limit: number): Promise<void>
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest(listener: (request: ComputeApprovalRequest) => void): () => void
+    onApprovalSettled?(listener: (id: string) => void): () => void
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval(request: { id: string; decision: ComputeApprovalDecision }): Promise<void>
     replayApproval(id: string): Promise<ComputeApprovalRequest | null>
+    replayPendingApprovals?(): Promise<void>
     // Lists a remote directory (browse experience).
     listDir(providerId: string, path: string): Promise<DirListing>
     // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
@@ -911,8 +993,8 @@ export interface OpenScienceAPI {
     // Onboarding location step: check a candidate parent before letting the user commit to it.
     // The final data root is always `<parent>/OpenScience`, never the parent itself.
     validateDataRoot(parent: string): Promise<DataRootValidationResult>
-    // Settings + onboarding: classify a candidate parent (move/adopt/invalid) without committing;
-    // `dataRoot` on the result is the derived `<parent>/OpenScience` path.
+    // Settings + onboarding: classify a candidate parent (move/adopt/recover/invalid) without
+    // committing; `dataRoot` on the result is the derived `<parent>/OpenScience` path.
     inspectDataRoot(parent: string): Promise<DataRootInspection>
     migrate(parent: string): Promise<MigrationOutcome>
     // No-move pointer switch: set dataRoot then relaunch. Accepts both a 'move' (first-run, no

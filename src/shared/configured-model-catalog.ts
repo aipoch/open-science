@@ -1,7 +1,8 @@
-import { isModelBridgeSupported } from './provider-registry'
+import { isModelBridgeSupported, isVendorModelMultimodal } from './provider-registry'
 import type { OfficialVendorId } from './provider-registry'
 import {
   isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   providerValidationFailed,
   selectClaudeSubscriptionProvider,
@@ -21,6 +22,7 @@ export type ConfiguredModelCatalogEntry = Readonly<{
   model: string
   label: string
   selectable: boolean
+  supportsImageInput: boolean
   unavailableReason?: 'framework-incompatible' | 'model-bridge-unsupported'
 }>
 
@@ -59,6 +61,14 @@ export const buildConfiguredModelInventory = (
     input.claudeSubscriptionProviderId
   )
 
+  const supportsImageInput = (provider: ProviderView, model: string): boolean => {
+    if (isClaudeSubscriptionProvider(provider.type) || isCodexSubscriptionProvider(provider.type)) {
+      return true
+    }
+    if (provider.type === 'custom') return provider.supportsImageInput === true
+    return provider.vendorId ? isVendorModelMultimodal(provider.vendorId, model) : false
+  }
+
   return input.providers
     .filter(
       (provider) =>
@@ -75,7 +85,8 @@ export const buildConfiguredModelInventory = (
           providerType: provider.type,
           ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
           model,
-          label: model || provider.name
+          label: model || provider.name,
+          supportsImageInput: supportsImageInput(provider, model)
         })
       )
     )

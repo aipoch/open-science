@@ -31,13 +31,15 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
   },
   skills: {
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
-    notifySkillCatalogChanged: effects.notifySkillCatalogChanged ?? (() => undefined)
+    notifySkillCatalogChanged: effects.notifySkillCatalogChanged ?? (() => undefined),
+    removeTagsForSkill: effects.removeTagsForSkill ?? (async () => undefined)
   },
   connectors: {
     invalidatePermissionProjection: effects.invalidatePermissionProjection ?? (() => undefined),
     refreshConnectorSkillDocs: effects.refreshConnectorSkillDocs ?? (async () => undefined),
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
     pruneCustomServerPermissions: effects.pruneCustomServerPermissions ?? (async () => undefined),
+    removeTagsForConnector: effects.removeTagsForConnector ?? (async () => undefined),
     beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined),
     clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined),
     resetCustomServerClient: effects.resetCustomServerClient ?? (async () => undefined)
@@ -480,19 +482,22 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const { store, capability } = fakeStore()
     const requestSkillsReload = vi.fn()
     const notifySkillCatalogChanged = vi.fn()
+    const removeTagsForSkill = vi.fn().mockResolvedValue(undefined)
     const workflows = createSettingsWorkflows(
       capability,
-      testEffects({ requestSkillsReload, notifySkillCatalogChanged })
+      testEffects({ requestSkillsReload, notifySkillCatalogChanged, removeTagsForSkill })
     ).skills
 
     await workflows.setSkillEnabled({ id: 'skill', enabled: true })
     await workflows.setSkillsEnabled({ ids: ['imported-skill'], enabled: false })
     await workflows.createSkill({ name: 'Skill', description: '', body: 'Body' })
+    await workflows.deleteSkill({ id: 'deleted-skill' })
     await workflows.setConversationSkillImportEnabled({ enabled: false })
     store.deleteSkill.mockRejectedValue(new Error('delete failed'))
     await expect(workflows.deleteSkill({ id: 'skill' })).rejects.toThrow('delete failed')
 
-    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(3)
+    expect(removeTagsForSkill).toHaveBeenCalledWith('deleted-skill')
+    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(4)
     expect(requestSkillsReload).toHaveBeenCalledOnce()
   })
 
@@ -650,7 +655,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ])
   })
 
-  it('awaits custom-server prune before refreshing and skips refresh when prune fails', async () => {
+  it('refreshes after journaled deletion even when permission pruning fails', async () => {
     const calls: string[] = []
     const { store, capability } = fakeStore()
     store.getConnectors.mockResolvedValue({
@@ -660,17 +665,30 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
         { id: 'server', name: 'Server', transport: 'stdio', command: 'mcp', enabled: true }
       ]
     })
-    store.removeCustomServer.mockImplementation(async () => {
+    store.removeCustomServer.mockImplementation(async (_request, afterPersistedRemoval) => {
       calls.push('persist')
+      await afterPersistedRemoval('server')
       return { connectors: [] }
     })
     const pruneCustomServerPermissions = vi.fn(async () => {
       calls.push('prune')
     })
+    const resetCustomServerClient = vi.fn(async () => {
+      calls.push('reset')
+    })
+    const clearCustomServerFailure = vi.fn(() => {
+      calls.push('clear')
+    })
+    const removeTagsForConnector = vi.fn(async () => {
+      calls.push('tags')
+    })
     const workflows = createSettingsWorkflows(
       capability,
       testEffects({
         pruneCustomServerPermissions,
+        resetCustomServerClient,
+        clearCustomServerFailure,
+        removeTagsForConnector,
         invalidatePermissionProjection: () => calls.push('invalidate'),
         refreshConnectorSkillDocs: async () => {
           calls.push('refresh')
@@ -679,12 +697,23 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ).connectors
 
     await workflows.removeCustomServer({ id: 'server' })
-    expect(calls).toEqual(['persist', 'prune', 'invalidate', 'refresh'])
+    expect(calls).toEqual(['persist', 'reset', 'clear', 'prune', 'tags', 'invalidate', 'refresh'])
 
     calls.length = 0
-    pruneCustomServerPermissions.mockRejectedValue(new Error('prune failed'))
+    pruneCustomServerPermissions.mockImplementation(async () => {
+      calls.push('prune')
+      throw new Error('prune failed')
+    })
     await expect(workflows.removeCustomServer({ id: 'server' })).rejects.toThrow('prune failed')
-    expect(calls).toEqual(['persist'])
+    expect(calls).toEqual(['persist', 'reset', 'clear', 'prune', 'invalidate', 'refresh'])
+
+    calls.length = 0
+    resetCustomServerClient.mockImplementationOnce(async () => {
+      calls.push('reset')
+      throw new Error('reset failed')
+    })
+    await expect(workflows.removeCustomServer({ id: 'server' })).rejects.toThrow('reset failed')
+    expect(calls).toEqual(['persist', 'reset', 'invalidate', 'refresh'])
   })
 
   it('owns the security-sensitive update barrier and rolls it back when prune fails', async () => {

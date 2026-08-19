@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { constants, type Stats } from 'node:fs'
+import { lstat, mkdir, open, rm, type FileHandle } from 'node:fs/promises'
 import { join, posix } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
@@ -159,15 +160,6 @@ export const planCliLauncher = (env: CliLauncherEnv): CliLauncherPlan => {
   }
 }
 
-const exists = async (path: string): Promise<boolean> => {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
-  }
-}
-
 // Runs a command synchronously and reports success (exit 0). Injectable so the Windows PATH edit can
 // be asserted in tests without invoking a real shell.
 export type CommandRunner = (command: string, args: string[]) => boolean
@@ -195,6 +187,134 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
   return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
 
+class UnmanagedCliLauncherError extends Error {}
+
+const refuseUnmanagedCliLauncher = (target: string): never => {
+  throw new UnmanagedCliLauncherError(
+    `Refusing to modify ${target} because it is not managed by Open Science. ` +
+      'Move or rename the existing file, then try again.'
+  )
+}
+
+const statCliLauncher = async (target: string): Promise<Stats | undefined> => {
+  try {
+    return await lstat(target)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+const isDirectRegularFile = (stats: Stats): boolean =>
+  stats.isFile() && !stats.isSymbolicLink() && stats.nlink === 1
+
+const isSameFile = (left: Stats, right: Stats): boolean =>
+  left.dev === right.dev && left.ino === right.ino
+
+type OpenCliLauncher = { handle: FileHandle; stats: Stats }
+
+// Open only a direct, single-link regular file and verify that the path still resolves to the same
+// inode after opening it. O_NOFOLLOW closes the lstat/open gap on POSIX; the identity checks provide
+// the equivalent guard on platforms where Node does not expose that flag.
+const openStableCliLauncher = async (
+  target: string,
+  flags: number
+): Promise<OpenCliLauncher | undefined> => {
+  const before = await statCliLauncher(target)
+  if (before === undefined) return undefined
+  if (!isDirectRegularFile(before)) refuseUnmanagedCliLauncher(target)
+
+  let handle: FileHandle
+  try {
+    handle = await open(target, flags | (constants.O_NOFOLLOW ?? 0))
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return undefined
+    if (code === 'ELOOP') refuseUnmanagedCliLauncher(target)
+    throw error
+  }
+
+  try {
+    const [opened, current] = await Promise.all([handle.stat(), statCliLauncher(target)])
+    if (
+      current === undefined ||
+      !isDirectRegularFile(opened) ||
+      !isDirectRegularFile(current) ||
+      !isSameFile(before, opened) ||
+      !isSameFile(opened, current)
+    ) {
+      refuseUnmanagedCliLauncher(target)
+    }
+    return { handle, stats: opened }
+  } catch (error) {
+    await handle.close()
+    throw error
+  }
+}
+
+const isOpenCliLauncherCurrent = async (target: string, opened: Stats): Promise<boolean> => {
+  const current = await statCliLauncher(target)
+  return current !== undefined && isDirectRegularFile(current) && isSameFile(opened, current)
+}
+
+const readCliLauncher = async (target: string): Promise<string | undefined> => {
+  let opened: OpenCliLauncher | undefined
+  try {
+    opened = await openStableCliLauncher(target, constants.O_RDONLY)
+  } catch (error) {
+    if (error instanceof UnmanagedCliLauncherError) return undefined
+    throw error
+  }
+  if (opened === undefined) return undefined
+
+  try {
+    const content = await opened.handle.readFile('utf8')
+    return (await isOpenCliLauncherCurrent(target, opened.stats)) ? content : undefined
+  } finally {
+    await opened.handle.close()
+  }
+}
+
+const isManagedCliLauncher = (content: string): boolean =>
+  content.includes('Open Science command-line launcher. Managed by the app')
+
+const writeCliLauncher = async (handle: FileHandle, plan: CliLauncherPlan): Promise<void> => {
+  const content = Buffer.from(plan.shim)
+  await handle.truncate(0)
+  let offset = 0
+  while (offset < content.length) {
+    const { bytesWritten } = await handle.write(content, offset, content.length - offset, offset)
+    if (bytesWritten === 0) throw new Error(`Could not write the CLI launcher at ${plan.target}.`)
+    offset += bytesWritten
+  }
+  if (plan.mode !== undefined) await handle.chmod(plan.mode)
+}
+
+const tryCreateCliLauncher = async (plan: CliLauncherPlan): Promise<boolean> => {
+  let handle: FileHandle
+  try {
+    handle = await open(
+      plan.target,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+      plan.mode ?? 0o666
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw error
+  }
+
+  try {
+    await writeCliLauncher(handle, plan)
+    const created = await handle.stat()
+    if (!(await isOpenCliLauncherCurrent(plan.target, created))) {
+      refuseUnmanagedCliLauncher(plan.target)
+    }
+    return true
+  } finally {
+    await handle.close()
+  }
+}
+
 // Writes the launcher shim and, on Windows, ensures its dir is on the user PATH. Returns the resulting
 // status (installed + whether `open-science` is callable, with a hint when a manual step remains).
 export const installCliLauncher = async (
@@ -203,8 +323,29 @@ export const installCliLauncher = async (
 ): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
   await mkdir(plan.binDir, { recursive: true })
-  await writeFile(plan.target, plan.shim, plan.mode !== undefined ? { mode: plan.mode } : {})
-  if (plan.mode !== undefined) await chmod(plan.target, plan.mode)
+
+  let written = false
+  for (let attempt = 0; attempt < 3 && !written; attempt += 1) {
+    if (await tryCreateCliLauncher(plan)) {
+      written = true
+      break
+    }
+
+    const opened = await openStableCliLauncher(plan.target, constants.O_RDWR)
+    if (opened === undefined) continue
+    try {
+      const existing = await opened.handle.readFile('utf8')
+      if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
+      await writeCliLauncher(opened.handle, plan)
+      if (!(await isOpenCliLauncherCurrent(plan.target, opened.stats))) {
+        refuseUnmanagedCliLauncher(plan.target)
+      }
+      written = true
+    } finally {
+      await opened.handle.close()
+    }
+  }
+  if (!written) throw new Error(`The CLI launcher path kept changing: ${plan.target}`)
 
   let onPath = plan.onPath
   let pathHint: string | undefined
@@ -224,29 +365,37 @@ export const installCliLauncher = async (
 
 export const uninstallCliLauncher = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
-  await rm(plan.target, { force: true })
+  const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
+  if (opened !== undefined) {
+    try {
+      const existing = await opened.handle.readFile('utf8')
+      if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
+      if (!(await isOpenCliLauncherCurrent(plan.target, opened.stats))) {
+        refuseUnmanagedCliLauncher(plan.target)
+      }
+    } finally {
+      await opened.handle.close()
+    }
+
+    const final = await statCliLauncher(plan.target)
+    if (final !== undefined) {
+      if (!isDirectRegularFile(final) || !isSameFile(opened.stats, final)) {
+        refuseUnmanagedCliLauncher(plan.target)
+      }
+      await rm(plan.target)
+    }
+  }
   return { installed: false, target: plan.target, onPath: false }
 }
 
-const readCliLauncher = async (target: string): Promise<string | undefined> => {
-  try {
-    return await readFile(target, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  }
-}
-
-const isManagedCliLauncher = (content: string): boolean =>
-  content.includes('Open Science command-line launcher. Managed by the app')
-
 // AppImage status is content-aware: a legacy shim can exist while still pointing at an unmounted
-// FUSE path. Other packages retain the existing existence-only status contract.
+// FUSE path. Other packages report installed only when the existing launcher is app-managed.
 export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
+  const content = await readCliLauncher(plan.target)
   const installed = isLinuxAppImage(env)
-    ? (await readCliLauncher(plan.target)) === plan.shim
-    : await exists(plan.target)
+    ? content === plan.shim
+    : content !== undefined && isManagedCliLauncher(content)
   return {
     installed,
     target: plan.target,

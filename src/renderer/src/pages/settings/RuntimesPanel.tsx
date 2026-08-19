@@ -58,7 +58,7 @@ type RuntimesPanelProps = {
 }
 
 const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [envs, setEnvs] = useState<EnvLists | null>(null)
   const [enablement, setEnablement] = useState<Enablements>({})
   const [loaded, setLoaded] = useState(false)
@@ -105,14 +105,13 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     void initEnv()
   }, [initEnv])
 
-  // On failure fall back to empty results (a recoverable "couldn't detect" state with Recheck)
-  // rather than hanging on "Detecting…" forever. Loads the discovered envs plus the PERSISTED
-  // enablement for both languages so cards show their saved enabled/install-auth state on open.
+  // Loads discovery and PERSISTED enablement as one strict snapshot. Any failed read rejects the
+  // snapshot rather than substituting empty/default state that could misrepresent the registry.
   const fetchAll = (): Promise<[EnvLists, Enablements]> =>
     Promise.all([
-      window.api.runtime.listEnvironments().catch(() => ({ python: [], r: [] }) as EnvLists),
-      window.api.runtime.getEnablement('python').catch(() => undefined),
-      window.api.runtime.getEnablement('r').catch(() => undefined)
+      window.api.runtime.listEnvironments(),
+      window.api.runtime.getEnablement('python'),
+      window.api.runtime.getEnablement('r')
     ]).then(([nextEnvs, python, r]) => [nextEnvs, { python, r }])
 
   // Commit discovery and persisted permissions as one snapshot. Mixing a fresh interpreter list
@@ -120,12 +119,18 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const applyAll = ([nextEnvs, nextEnablement]: [EnvLists, Enablements]): void => {
     setEnvs(nextEnvs)
     setEnablement(nextEnablement)
+    setError(null)
     setLoaded(true)
   }
 
   useEffect(() => {
-    void fetchAll().then(applyAll)
-  }, [])
+    void fetchAll()
+      .then(applyAll)
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : i18n.t('Could not load runtimes.'))
+        setLoaded(true)
+      })
+  }, [i18n])
 
   // Lazy package-count fetch: runs AFTER the env list lands (never blocks fetchAll). One bulk
   // listPackageCounts call per language (the main process does ONE discovery sweep per call and
@@ -180,14 +185,16 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
 
   // Recheck refreshes both halves of the runtime registry together for the same reason as initial
   // loading: cards and their permissions must describe one coherent backend snapshot. Counts are
-  // cleared too so every badge refetches against the new env list.
+  // cleared after a successful refresh so every badge refetches against the new env list; a failed
+  // refresh retains both the last complete registry snapshot and its matching counts.
   const recheck = async (): Promise<void> => {
     setBusy(true)
     setError(null)
-    countsRef.current = {}
-    setPackageCounts({})
     try {
-      applyAll(await fetchAll())
+      const next = await fetchAll()
+      countsRef.current = {}
+      setPackageCounts({})
+      applyAll(next)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not re-check runtimes.'))
     } finally {
@@ -238,12 +245,19 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     }
     // Disabling: warn first if live sessions are using it. Dormant-only (bound but no live kernel) or
     // no usage disables straight away; running/idle sessions get a confirm dialog (WS11).
-    const usage = await window.api.runtime
-      .describeUsage(language, env.envId)
-      .catch(() => ({ running: 0, idle: 0, dormant: 0 }) as RuntimeUsage)
-    if (usage.running + usage.idle > 0) {
-      setDisableImpact({ language, env, usage })
+    setBusy(true)
+    setError(null)
+    try {
+      const usage = await window.api.runtime.describeUsage(language, env.envId)
+      if (usage.running + usage.idle > 0) {
+        setDisableImpact({ language, env, usage })
+        return
+      }
+    } catch {
+      setError(t('Could not check whether that runtime is in use, so it was not disabled.'))
       return
+    } finally {
+      setBusy(false)
     }
     await applyEnabled(language, env, false)
   }
@@ -448,7 +462,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     )
   }
 
-  const loading = !loaded || envs === null
+  const loading = !loaded
 
   // Dialog table derivations. Build/Channel columns appear only for conda-style listings (any
   // package carrying build/channel); pip/CRAN listings get just Name/Version.
@@ -476,7 +490,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             variant="outline"
             size="sm"
             onClick={() => void recheck()}
-            disabled={busy}
+            disabled={busy || loading}
           >
             <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
             {t('Recheck')}
@@ -490,7 +504,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
         )}
         {loading ? (
           <p className="text-sm text-muted-foreground">{t('Detecting runtimes…')}</p>
-        ) : (
+        ) : envs === null ? null : (
           LANGUAGES.map(({ id, label, icon }) => {
             const list = envs[id]
             // Per-language provisioning state — set immediately on click and cleared when THIS language's

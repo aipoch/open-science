@@ -522,7 +522,7 @@ const phaseSchema = { type: 'array', items: { type: 'string', enum: PHASE_ENUM }
 export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
   {
     id: 'search_trials',
-    connector: 'clinical_trials',
+    connector: 'clinical-trials',
     description:
       'PRIMARY search over ClinicalTrials.gov. Filter by condition, intervention, sponsor, location, status (e.g. ["RECRUITING"]), phase (["PHASE1".."PHASE4"]) and study_type. condition/intervention/sponsor/location accept Essie query syntax (boolean AND/OR/NOT, "quoted phrases", grouping, automatic synonyms). Page with page_token; set count_total for the total match count. advanced_query merges a raw Essie expression into filter.advanced.',
     input: {
@@ -547,7 +547,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ count, total (only when count_total, else null), next_page_token, items: [ { nct_id, title, status, phase (array|null), conditions, interventions, sponsor, enrollment, start_date, primary_completion_date, locations_count, study_type } ] }`.',
     example:
-      'const result = await host.mcp("clinical_trials", "search_trials", {"condition": "lung cancer", "status": ["RECRUITING"], "phase": ["PHASE3"], "count_total": true, "page_size": 10})',
+      'const result = await host.mcp("clinical-trials", "search_trials", {"condition": "lung cancer", "status": ["RECRUITING"], "phase": ["PHASE3"], "count_total": true, "page_size": 10})',
     run: async (ctx, a) => {
       const countTotal = Boolean(a.count_total)
       const page = await fetchPage(
@@ -563,7 +563,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_trial_details',
-    connector: 'clinical_trials',
+    connector: 'clinical-trials',
     description:
       'Get comprehensive details for one trial by NCT id (format "NCT" + 8 digits; a bare number is prefixed, case-insensitive). Returns full eligibility criteria, study design, primary/secondary/other endpoints, all locations, sponsor and collaborators, dates, enrollment, and a results link.',
     input: {
@@ -575,7 +575,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     returns:
       'Found: `{ found: true, trial: { nct_id, title, brief_title, acronym, status, phase, study_type, conditions, interventions, sponsor, collaborators, enrollment, start_date, primary_completion_date, completion_date, brief_summary, detailed_description, eligibility_criteria, minimum_age, maximum_age, sex, healthy_volunteers ("Yes"/"No"), primary_outcomes, secondary_outcomes, other_outcomes, locations, url, has_results } }`. Missing/invalid id: `{ found: false, nct_id, error }`.',
     example:
-      'const result = await host.mcp("clinical_trials", "get_trial_details", {"nct_id": "NCT03661411"})',
+      'const result = await host.mcp("clinical-trials", "get_trial_details", {"nct_id": "NCT03661411"})',
     run: async (ctx, a) => {
       const nct = normalizeNct(a.nct_id)
       try {
@@ -589,7 +589,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_by_sponsor',
-    connector: 'clinical_trials',
+    connector: 'clinical-trials',
     description:
       'Find trials sponsored by a company or organization (partial name match, e.g. "Pfizer" matches "Pfizer Inc"). Optionally narrow by condition, phase and status. Set count_total for the total number of trials by the sponsor. Page with page_token.',
     input: {
@@ -609,7 +609,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     returns:
       'Same shape as search_trials: `{ count, total, next_page_token, items: [ trial summaries ] }`.',
     example:
-      'const result = await host.mcp("clinical_trials", "search_by_sponsor", {"sponsor_name": "Pfizer", "phase": ["PHASE3"], "count_total": true})',
+      'const result = await host.mcp("clinical-trials", "search_by_sponsor", {"sponsor_name": "Pfizer", "phase": ["PHASE3"], "count_total": true})',
     run: async (ctx, a) => {
       const countTotal = Boolean(a.count_total)
       const page = await fetchPage(
@@ -625,7 +625,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_investigators',
-    connector: 'clinical_trials',
+    connector: 'clinical-trials',
     description:
       'Find principal investigators and research sites by condition, institution, location or investigator_name. institution filters on the site facility and takes precedence over location; investigator_name searches OverallOfficialName and ResponsiblePartyInvestigatorFullName. Returns site contacts (names, roles, affiliations, facilities, cities) with their trial NCT ids. page_size caps how many trials are scanned.',
     input: {
@@ -642,7 +642,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ count, trials_analyzed, investigators: [ { name, role, affiliation, facility, location, nct_id, study_title, condition } ] }`. Deduplicated per trial by (name, role, nct_id).',
     example:
-      'const result = await host.mcp("clinical_trials", "search_investigators", {"condition": "Alzheimer", "institution": "Mayo Clinic", "page_size": 20})',
+      'const result = await host.mcp("clinical-trials", "search_investigators", {"condition": "Alzheimer", "institution": "Mayo Clinic", "page_size": 20})',
     run: async (ctx, a) => {
       const page = await fetchPage(
         ctx,
@@ -657,7 +657,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'analyze_endpoints',
-    connector: 'clinical_trials',
+    connector: 'clinical-trials',
     description:
       'Analyze primary/secondary/other outcome measures (endpoints). Provide ONLY nct_id (single-trial mode) OR condition (aggregate mode across trials); if both are given, nct_id takes precedence. Aggregate mode may be narrowed by phase and start_date_after (YYYY-MM-DD) and scans up to page_size trials. Returns the endpoint lists plus the most common measure names across the analyzed trials.',
     input: {
@@ -673,7 +673,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ trials_analyzed, nct_id (or null), condition (or null), primary_endpoints, secondary_endpoints, other_endpoints, common_measures: [str] }`. Each endpoint is `{ measure, time_frame, description, type }`; common_measures is the 20 most frequent measure names.',
     example:
-      'const result = await host.mcp("clinical_trials", "analyze_endpoints", {"nct_id": "NCT03661411"})',
+      'const result = await host.mcp("clinical-trials", "analyze_endpoints", {"nct_id": "NCT03661411"})',
     run: async (ctx, a) => {
       if (!truthy(a.nct_id) && !truthy(a.condition)) {
         throw new Error('analyze_endpoints needs nct_id or condition')
@@ -696,7 +696,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_by_eligibility',
-    connector: 'clinical_trials',
+    connector: 'clinical-trials',
     description:
       'Patient-trial matching. DEFAULTS to RECRUITING trials unless status is set. min_age/max_age are the PATIENT\'s age ("65 Years", "6 Months") and match trials whose age window admits the patient; sex matches trials accepting that sex or all comers; eligibility_keywords searches the inclusion/exclusion criteria text (e.g. "HbA1c > 8", "BRCA mutation", "ECOG 0-1"). At least one of condition, eligibility_keywords, min_age, max_age or sex is required. Page with page_token.',
     input: {
@@ -715,7 +715,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     returns:
       'Same shape as search_trials: `{ count, total (always null — count_total is not exposed here), next_page_token, items: [ trial summaries ] }`.',
     example:
-      'const result = await host.mcp("clinical_trials", "search_by_eligibility", {"condition": "diabetes", "min_age": "65 Years", "sex": "FEMALE"})',
+      'const result = await host.mcp("clinical-trials", "search_by_eligibility", {"condition": "diabetes", "min_age": "65 Years", "sex": "FEMALE"})',
     run: async (ctx, a) => {
       const page = await fetchPage(
         ctx,

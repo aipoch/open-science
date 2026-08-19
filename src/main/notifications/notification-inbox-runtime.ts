@@ -10,6 +10,7 @@ type NotificationInboxDeletionRuntimeDependencies = Readonly<{
     setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void
   }
   onSessionsDeleted?: (sessionIds: readonly string[]) => Promise<void>
+  onSessionsReconciled?: (existingSessionIds: readonly string[]) => Promise<void>
 }>
 
 // Session JSON remains authoritative for target existence. Archive acknowledges related messages
@@ -25,8 +26,11 @@ export const bindNotificationInboxDeletionRuntime = (
       ])
     },
     reconcile: async (existingSessionIds, archivedSessionIds) => {
-      await dependencies.inbox.markSessionsRead(archivedSessionIds)
-      await dependencies.inbox.reconcileSessionCatalog(existingSessionIds)
+      await Promise.all([
+        dependencies.inbox.markSessionsRead(archivedSessionIds),
+        dependencies.inbox.reconcileSessionCatalog(existingSessionIds),
+        dependencies.onSessionsReconciled?.(existingSessionIds)
+      ])
     }
   })
 }

@@ -9,6 +9,7 @@ import {
   type PersistedSideChatRelay,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
+import { saveSessionWithRevision } from './save-session'
 
 type PersistedSideChatProjection = PersistedSideChat
 
@@ -51,7 +52,7 @@ type SideChatStateRepository = Readonly<{
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
 }>
 
 type SessionSideChatPersistenceOwnerOptions = Readonly<{
@@ -192,8 +193,8 @@ class SessionSideChatPersistenceOwner {
       messages: [...session.messages, ...messages],
       updatedAt: timestamp + messages.length - 1
     })
-    await this.options.repository.saveSession(durable)
-    this.options.recordSession(durable)
+    const persisted = await saveSessionWithRevision(this.options.repository, durable)
+    this.options.recordSession(persisted)
     return messages
   }
 
@@ -242,8 +243,8 @@ class SessionSideChatPersistenceOwner {
       runtimeContext,
       updatedAt: Math.max(session.updatedAt + 1, Date.now())
     }
-    await this.options.repository.saveSession(durable)
-    this.options.recordSession(durable)
+    const persisted = await saveSessionWithRevision(this.options.repository, durable)
+    this.options.recordSession(persisted)
   }
 }
 

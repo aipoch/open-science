@@ -365,7 +365,10 @@ class ActiveTransferOwner {
       this.stagingReady = (async () => {
         await rm(stagingDir, { recursive: true, force: true })
         await mkdir(stagingDir, { recursive: true })
-      })()
+      })().catch((error) => {
+        this.stagingReady = undefined
+        throw error
+      })
     }
 
     return this.stagingReady

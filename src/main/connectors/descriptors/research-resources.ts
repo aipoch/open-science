@@ -198,7 +198,7 @@ const walkAntibodies = async (
 export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
   {
     id: 'search_grants',
-    connector: 'research_resources',
+    connector: 'research-resources',
     description:
       'Search Grants.gov funding opportunities via the search2 API (complete, count-verified retrieval). At least one criterion is required (keyword, opportunity_number, aln/CFDA, agencies, eligibilities, funding_categories, or funding_instruments). opportunity_statuses defaults to ["forecasted","posted"] (current opportunities); add "closed"/"archived" for historical ones. agencies takes codes like ["HHS-NIH11"] (NIH), ["HHS-FDA"], ["NSF"]. Set count_only for just the hit count + facets; max_records caps returned records (the walk still retrieves the complete set and flags truncated).',
     input: {
@@ -223,7 +223,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ hit_count, n_returned, truncated, records: [ { id, number, title, agencyCode, agency, oppStatus, openDate, closeDate, docType, cfdaList } ], facets? }` — records are the raw search2 hits (verbatim, sorted by oppNum). `truncated` is true when `hit_count` exceeds the returned count. `facets` (when include_facets) holds oppStatusOptions/agencies/eligibilities/fundingCategories/fundingInstruments/dateRangeOptions value counts. With `count_only`, records is [] and n_returned 0.',
     example:
-      'const result = await host.mcp("research_resources", "search_grants", {"keyword": "cancer", "agencies": ["HHS-NIH11"], "max_records": 25})',
+      'const result = await host.mcp("research-resources", "search_grants", {"keyword": "cancer", "agencies": ["HHS-NIH11"], "max_records": 25})',
     run: async (ctx, a) => {
       const statuses = pipeJoin(a.opportunity_statuses) || DEFAULT_STATUSES
       for (const s of statuses.split('|')) {
@@ -270,7 +270,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_antibodies',
-    connector: 'research_resources',
+    connector: 'research-resources',
     description:
       'Full-text search the Antibody Registry (antibodyregistry.org, ~3.2M records). Token-based matching against antibody name/target/catalog text ("TP53" and "p53" are different queries). With page omitted, all pages are walked up to max_records or the anonymous depth cap (rows beyond offset 500 need authentication upstream, flagged as anonymous_limit_hit — never silently dropped). Pass a 1-based page for single-page retrieval (page*page_size must stay <= 500).',
     input: {
@@ -287,7 +287,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     returns:
       'Walk mode (page omitted): `{ query, total_elements, retrieved, unique_ab_ids, complete, truncated_at_max_records, anonymous_limit_hit, items: [ { abId, abName, abTarget, catalogNum, vendorName, cloneId, sourceOrganism, targetSpecies, ... } ] }`. `total_elements` counts index rows (not unique antibodies). Single-page mode (page given): `{ query, page, total_elements, retrieved, complete, items }`.',
     example:
-      'const result = await host.mcp("research_resources", "search_antibodies", {"query": "CD4", "max_records": 100})',
+      'const result = await host.mcp("research-resources", "search_antibodies", {"query": "CD4", "max_records": 100})',
     run: async (ctx, a) => {
       const q = String(a.query ?? '').trim()
       if (!q) throw new Error('query must be non-empty')
@@ -330,7 +330,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_antibody',
-    connector: 'research_resources',
+    connector: 'research-resources',
     description:
       'Fetch Antibody Registry detail record(s) for one antibody accession / RRID. Accepts a plain number ("3643095"), "AB_3643095", or "RRID:AB_3643095". The upstream route is list-valued (an accession can map to several curated records, e.g. multi-vendor duplicates). A nonexistent id yields record_count 0, not an error.',
     input: {
@@ -342,7 +342,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ ab_id (numeric), rrid ("AB_<id>"), record_count, records: [ full antibody records ] }`. `record_count` is 0 (with records []) when the accession has no records.',
     example:
-      'const result = await host.mcp("research_resources", "get_antibody", {"antibody_id": "RRID:AB_3643095"})',
+      'const result = await host.mcp("research-resources", "get_antibody", {"antibody_id": "RRID:AB_3643095"})',
     url: (a) => `${AB_BASE}/antibodies/${parseAbId(a.antibody_id)}`,
     parse: (raw, a) => {
       const num = parseAbId(a.antibody_id)
@@ -357,7 +357,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'find_antibodies_by_catalog',
-    connector: 'research_resources',
+    connector: 'research-resources',
     description:
       'Find antibodies by vendor catalog number (exact, case-insensitive). Implemented as a full-text search plus client-side exact matching on the catalog number (or its listed alternatives), because the upstream column-filter route returns HTTP 500 for every key. Pass an optional vendor name (exact, case-insensitive) to further narrow the matches.',
     input: {
@@ -373,7 +373,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ catalog_num, vendor, match_count, search_total_elements, matches: [ full antibody records ] }`. `search_total_elements` is the underlying full-text hit count; `matches` are the exact catalog-number matches.',
     example:
-      'const result = await host.mcp("research_resources", "find_antibodies_by_catalog", {"catalog_number": "ab32572"})',
+      'const result = await host.mcp("research-resources", "find_antibodies_by_catalog", {"catalog_number": "ab32572"})',
     run: async (ctx, a) => {
       const catalog = String(a.catalog_number ?? '').trim()
       if (!catalog) throw new Error('catalog_number must be non-empty')
@@ -412,14 +412,14 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_antibody_registry_stats',
-    connector: 'research_resources',
+    connector: 'research-resources',
     description:
       'Antibody Registry statistics: total antibody count and last-update date. Returns the upstream /api/datainfo payload.',
     input: { type: 'object', properties: {} },
     returns:
       '`{ total (registry size), lastupdate (YYYY-MM-DD) }` — the upstream /api/datainfo payload.',
     example:
-      'const result = await host.mcp("research_resources", "get_antibody_registry_stats", {})',
+      'const result = await host.mcp("research-resources", "get_antibody_registry_stats", {})',
     url: () => `${AB_BASE}/datainfo`,
     parse: (raw) => raw
   }

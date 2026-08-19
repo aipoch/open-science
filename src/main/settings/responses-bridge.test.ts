@@ -1276,6 +1276,191 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
+  it('keeps cached reasoning isolated when Sessions reuse the same provider call id', async () => {
+    const upstreamRequests: Array<Record<string, unknown>> = []
+    const upstreamResponses = [
+      {
+        id: 'session-a-call',
+        model: 'model-a',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              reasoning_content: 'session-a reasoning',
+              tool_calls: [
+                {
+                  id: 'reused-call-id',
+                  type: 'function',
+                  function: { name: 'lookup', arguments: '{"session":"a"}' }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        id: 'session-b-call',
+        model: 'model-a',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              reasoning_content: 'session-b reasoning',
+              tool_calls: [
+                {
+                  id: 'reused-call-id',
+                  type: 'function',
+                  function: { name: 'lookup', arguments: '{"session":"b"}' }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        id: 'session-a-complete',
+        model: 'model-a',
+        choices: [{ message: { role: 'assistant', content: 'done' } }]
+      }
+    ]
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return Response.json(upstreamResponses[upstreamRequests.length - 1])
+      }
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'k' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+    const post = async (promptCacheKey: string, input: unknown): Promise<void> => {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          prompt_cache_key: promptCacheKey,
+          input,
+          stream: false
+        })
+      })
+      expect(response.ok).toBe(true)
+      await response.json()
+    }
+
+    try {
+      await post('session-a', 'start a')
+      await post('session-b', 'start b')
+      const invalidResponse = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          prompt_cache_key: 'session-a',
+          previous_response_id: 'unsupported',
+          input: 'invalid retry',
+          stream: false
+        })
+      })
+      expect(invalidResponse.status).toBe(400)
+      await post('session-a', [
+        {
+          type: 'function_call',
+          call_id: 'reused-call-id',
+          name: 'lookup',
+          arguments: '{"session":"a"}'
+        },
+        { type: 'function_call_output', call_id: 'reused-call-id', output: 'a-result' }
+      ])
+
+      expect(upstreamRequests[2]?.messages).toEqual([
+        {
+          role: 'assistant',
+          reasoning_content: 'session-a reasoning',
+          tool_calls: [
+            {
+              id: 'reused-call-id',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{"session":"a"}' }
+            }
+          ]
+        },
+        { role: 'tool', tool_call_id: 'reused-call-id', content: 'a-result' }
+      ])
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('fails closed without a Session scope and bounds cached reasoning by LRU Session', () => {
+    type ReasoningCacheHarness = {
+      cacheReasoning: (
+        promptCacheKey: string | undefined,
+        reasoning: string,
+        callIds: string[]
+      ) => void
+      reconcileReasoningForRequest: (promptCacheKey: string | undefined, input: unknown) => void
+      reasoningByPromptCacheKey: Map<string, Map<string, string>>
+      reasoningCacheEntryCount: number
+      reasoningCacheCharacterCount: number
+    }
+    const harness = (options: {
+      reasoningCacheMaxEntries: number
+      reasoningCacheMaxCharacters: number
+    }): ReasoningCacheHarness =>
+      new ResponsesBridge(
+        { baseUrl: 'https://vendor.example/v1' },
+        fetch,
+        options
+      ) as unknown as ReasoningCacheHarness
+    const fill = (cache: ReasoningCacheHarness): void => {
+      cache.cacheReasoning(undefined, 'unsafe', ['unscoped-call'])
+      cache.cacheReasoning('session-a', 'aaa', ['call-a'])
+      cache.cacheReasoning('session-b', 'bbb', ['call-b'])
+      cache.cacheReasoning('session-c', 'ccc', ['call-c'])
+    }
+
+    const entryBounded = harness({
+      reasoningCacheMaxEntries: 2,
+      reasoningCacheMaxCharacters: 100
+    })
+    fill(entryBounded)
+    expect([...entryBounded.reasoningByPromptCacheKey.keys()]).toEqual(['session-b', 'session-c'])
+    expect(entryBounded.reasoningCacheEntryCount).toBe(2)
+
+    const characterBounded = harness({
+      reasoningCacheMaxEntries: 100,
+      reasoningCacheMaxCharacters: 6
+    })
+    fill(characterBounded)
+    expect([...characterBounded.reasoningByPromptCacheKey.keys()]).toEqual([
+      'session-b',
+      'session-c'
+    ])
+    expect(characterBounded.reasoningCacheCharacterCount).toBe(6)
+
+    const reconciled = harness({
+      reasoningCacheMaxEntries: 100,
+      reasoningCacheMaxCharacters: 100
+    })
+    reconciled.cacheReasoning('session-a', 'aaa', ['retained-call', 'compacted-call'])
+    reconciled.reconcileReasoningForRequest('session-a', [
+      { type: 'function_call', call_id: 'retained-call' }
+    ])
+    expect(reconciled.reasoningByPromptCacheKey.get('session-a')).toEqual(
+      new Map([['retained-call', 'aaa']])
+    )
+    expect(reconciled.reasoningCacheEntryCount).toBe(1)
+    expect(reconciled.reasoningCacheCharacterCount).toBe(3)
+  })
+
   it('reports streamed upstream image output as unsupported', async () => {
     const upstreamFetch = vi.fn(async () => {
       const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null): string =>
@@ -1639,12 +1824,15 @@ describe('Responses-compatible bridge conversion', () => {
 
   it('clears the reasoning cache only when the upstream target actually changes', () => {
     const bridge = new ResponsesBridge({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
-    const cache = (bridge as unknown as { reasoningByCallId: Map<string, string> })
-      .reasoningByCallId
-    cache.set('call-1', 'thinking')
+    const cache = (
+      bridge as unknown as {
+        reasoningByPromptCacheKey: Map<string, Map<string, string>>
+      }
+    ).reasoningByPromptCacheKey
+    cache.set('session-1', new Map([['call-1', 'thinking']]))
     // Same target (e.g. a skill-reload reconnect): cache is preserved so a resumed thinking session works.
     bridge.setTarget({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
-    expect(cache.has('call-1')).toBe(true)
+    expect(cache.get('session-1')?.has('call-1')).toBe(true)
     // Real provider switch: cache is cleared so stale reasoning can't leak across providers.
     bridge.setTarget({ baseUrl: 'https://b.example/v1', model: 'm2', key: 'k2' })
     expect(cache.size).toBe(0)

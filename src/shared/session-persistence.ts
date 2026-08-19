@@ -1,3 +1,6 @@
+import { z } from 'zod'
+
+import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
 import {
@@ -55,6 +58,7 @@ import {
 } from './permission-grants'
 import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatEntry } from './side-chat'
 import { sanitizeAgentUserChoiceRequest, type AgentUserChoicePrompt } from './elicitation'
+import { capToolDetailText, sanitizeToolContent } from './tool-detail-sanitizer'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 2
@@ -476,6 +480,9 @@ export type PersistedChatSession = {
   id: string
   // Owning project. On load this is authoritative from the file's directory (sessions/<projectId>/).
   projectId: string
+  // Whole-Session durable revision used for optimistic concurrency. Historical files omit it and
+  // restore as revision 0; Main stamps revision 1 on their next successful state transition.
+  revision?: number
   // Immutable snapshot of the direct Session and active conversation path copied by
   // Branch in new session. Historical Sessions omit it and remain unrelated.
   branchSource?: PersistedSessionBranchSource
@@ -512,10 +519,14 @@ export type PersistedChatSession = {
   // Main-owned reversible visibility state. Whole-session renderer saves must preserve the durable
   // value; only the dedicated archive command changes it.
   archivedAt?: number
-  // Immutable Specialist UUID bound at session creation. Absent means no specialist binding (Main
-  // Agent). Written once when the session is created and never changed; the Profile is resolved
-  // fresh from ProfileService before every turn via the UUID.
+  // Desired Specialist ID for this Session. Absent means Main Agent. The Profile is resolved fresh
+  // from ProfileService before every turn via the ID.
   specialistId?: string
+  // Main-owned commit marker. True means the desired binding above is durable, but the live Agent
+  // runtime has not yet confirmed that it applied the same target. User prompts fail closed until
+  // Main applies the target and clears this marker. Older Session files omit it and are treated as
+  // already applied.
+  specialistBindingPending?: true
   // Last known context-window usage. A live attached runtime replaces or clears this snapshot; a
   // detached restored Session keeps it so the indicator survives an app restart.
   contextUsage?: AcpContextUsage
@@ -565,10 +576,40 @@ export type SessionConflictRebaseField =
   | 'enabledComputeHosts'
   | 'pinned'
   | 'specialistId'
+  | 'specialistBindingPending'
 
 export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]
 }
+
+export const SESSION_REVISION_CONFLICT_ERROR_CODE = 'session-revision-conflict' as const
+
+export class SessionRevisionConflictError extends Error {
+  readonly code = SESSION_REVISION_CONFLICT_ERROR_CODE
+
+  constructor(
+    readonly expectedRevision: number,
+    readonly actualRevision: number
+  ) {
+    super(
+      `Session revision conflict: expected ${expectedRevision}, actual ${actualRevision}. Reload the latest conversation before retrying.`
+    )
+    this.name = 'SessionRevisionConflictError'
+  }
+}
+
+export const sessionRevision = (session: Pick<PersistedChatSession, 'revision'>): number =>
+  Number.isSafeInteger(session.revision) && (session.revision ?? -1) >= 0 ? session.revision! : 0
+
+export const isSessionRevisionConflictError = (
+  error: unknown
+): error is Readonly<{ code: typeof SESSION_REVISION_CONFLICT_ERROR_CODE }> =>
+  error instanceof SessionRevisionConflictError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === SESSION_REVISION_CONFLICT_ERROR_CODE) ||
+  (error instanceof Error && error.message.includes('Session revision conflict:'))
 
 // Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
@@ -2332,113 +2373,13 @@ const sanitizeUploadedAttachment = (
   return sanitized
 }
 
-// Persisting more than the UI shows is wasteful, so bound the large text-bearing fields.
-const MAX_PERSISTED_TEXT_CHARS = 16_000
-const MAX_PERSISTED_TOOL_CONTENT_CHARS = 32_000
 const MAX_PERSISTED_RAW_CHARS = 8_000
 
-// Truncates oversized text with a trailing marker; a no-op when already within bounds (idempotent).
-const capText = (text: string, max: number): string =>
-  text.length > max ? `${text.slice(0, max)}\n…` : text
-
 // Reads a bounded string field, returning undefined when empty.
-const asCappedString = (value: unknown, max: number): string | undefined => {
+const asCappedString = (value: unknown): string | undefined => {
   const text = asString(value)
 
-  return text ? capText(text, max) : undefined
-}
-
-// Rebuilds a displayable content block (text/resource/link), dropping heavy binary payloads.
-const sanitizeContentBlock = (block: unknown): Record<string, unknown> | undefined => {
-  if (!isRecord(block)) return undefined
-
-  switch (asString(block.type)) {
-    case 'text': {
-      const text = asCappedString(block.text, MAX_PERSISTED_TEXT_CHARS)
-
-      return text !== undefined ? { type: 'text', text } : undefined
-    }
-    case 'resource_link': {
-      const uri = asString(block.uri)
-
-      if (!uri) return undefined
-
-      const link: Record<string, unknown> = { type: 'resource_link', uri }
-      const name = asString(block.name)
-      const title = asString(block.title)
-
-      if (name) link.name = name
-      if (title) link.title = title
-
-      return link
-    }
-    case 'resource': {
-      if (!isRecord(block.resource)) return undefined
-
-      const uri = asString(block.resource.uri)
-      const text = asCappedString(block.resource.text, MAX_PERSISTED_TEXT_CHARS)
-      const resource: Record<string, unknown> = {}
-
-      if (uri) resource.uri = uri
-      if (text !== undefined) resource.text = text
-
-      return Object.keys(resource).length > 0 ? { type: 'resource', resource } : undefined
-    }
-    default:
-      return undefined
-  }
-}
-
-// Rebuilds one ToolCallContent entry, keeping only the text/diff shapes the detail views read.
-const sanitizeToolContentEntry = (entry: unknown): Record<string, unknown> | undefined => {
-  if (!isRecord(entry)) return undefined
-
-  const type = asString(entry.type)
-
-  if (type === 'content') {
-    const content = sanitizeContentBlock(entry.content)
-
-    return content ? { type: 'content', content } : undefined
-  }
-  if (type === 'diff') {
-    const path = asString(entry.path)
-
-    if (!path) return undefined
-
-    const oldText = asString(entry.oldText)
-
-    return {
-      type: 'diff',
-      path,
-      oldText: oldText !== undefined ? capText(oldText, MAX_PERSISTED_TEXT_CHARS) : null,
-      newText: capText(asString(entry.newText) ?? '', MAX_PERSISTED_TEXT_CHARS)
-    }
-  }
-
-  // Terminal references carry no data in this app and other shapes are not rendered; drop them.
-  return undefined
-}
-
-// Sanitizes tool content into a bounded array, stopping once the total budget is exhausted.
-const sanitizeToolContent = (value: unknown): unknown[] | undefined => {
-  if (!Array.isArray(value)) return undefined
-
-  const entries: unknown[] = []
-  let usedChars = 0
-
-  for (const rawEntry of value) {
-    const entry = sanitizeToolContentEntry(rawEntry)
-
-    if (!entry) continue
-
-    usedChars += JSON.stringify(entry).length
-
-    if (usedChars > MAX_PERSISTED_TOOL_CONTENT_CHARS) break
-
-    entries.push(entry)
-  }
-
-  return entries.length > 0 ? entries : undefined
+  return text ? capToolDetailText(text) : undefined
 }
 
 // Keeps small raw input/output payloads verbatim but drops oversized ones (e.g. base64 file bytes).
@@ -2545,7 +2486,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
   const rawInput = sanitizeRawPayload(activity.rawInput)
   const rawOutput = sanitizeRawPayload(activity.rawOutput)
-  const terminalOutput = asCappedString(activity.terminalOutput, MAX_PERSISTED_TEXT_CHARS)
+  const terminalOutput = asCappedString(activity.terminalOutput)
   const terminalExitCode = asNumber(activity.terminalExitCode)
   const elicitation = sanitizeElicitationProjection(activity.elicitation)
   const toolDisposition = asToolActivityDisposition(activity.toolDisposition)
@@ -3371,10 +3312,12 @@ const sanitizeSession = (
           options.preserveRuntimeState ? group : normalizeActivityGroupAfterRestore(group)
         )
     : []
+  const revision = asNumber(session.revision)
   let sanitized: PersistedChatSession = {
     id,
     // Content value is a hint; the repository overrides it with the session file's directory on load.
     projectId: asString(session.projectId) ?? '',
+    revision: Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? revision : 0,
     title: asString(session.title) ?? id,
     cwd: asString(session.cwd) ?? '',
     status: asSessionStatus(session.status),
@@ -3445,10 +3388,13 @@ const sanitizeSession = (
   if (activities.length > 0) sanitized.activities = activities
   if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
-  // Specialist UUID: accept any non-empty string. The main process validates it against ProfileService
+  // Specialist ID: accept any non-empty string. The main process validates it against ProfileService
   // at send time; the sanitizer only ensures the value is safe to re-persist.
   const specialistId = asString(session.specialistId)
   if (specialistId) sanitized.specialistId = specialistId
+  // Pending is a fail-closed marker: only the explicit true value survives sanitization. Historical
+  // files omit it and retain the pre-marker behavior (their desired binding is considered applied).
+  if (session.specialistBindingPending === true) sanitized.specialistBindingPending = true
   const contextUsage = sanitizeAcpContextUsage(session.contextUsage)
   if (contextUsage) sanitized.contextUsage = contextUsage
   const runtimeContext = sanitizeSessionRuntimeContext(session.runtimeContext)
@@ -3571,6 +3517,16 @@ export type PersistedSessionFile = {
   session: MaterializedPersistedChatSession
 }
 
+type SessionFileReadOptions = {
+  preserveLegacyUploadPaths?: boolean
+  preserveRuntimeState?: boolean | ((sessionId: string) => boolean)
+}
+
+export type SessionFileDecodeResult =
+  | { status: 'ok'; session: PersistedChatSession }
+  | { status: 'invalid' }
+  | { status: 'unsupported-version' }
+
 // Wraps a session in the on-disk envelope written per file.
 export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
   const materialized = materializeSessionConversationGraph(session)
@@ -3580,24 +3536,32 @@ export const createSessionFile = (session: PersistedChatSession): PersistedSessi
   }
 }
 
-// Reads one session-file payload, tolerating either the envelope or a bare session object. Runtime
-// recovery is skipped only when the main process confirms that the owning prompt is still active.
-export const normalizeSessionFile = (
+// Decodes one Session file without treating a valid future envelope as corrupt. Bare Sessions and
+// v1 envelopes are released historical formats; every other past or malformed version fails closed.
+export const decodeSessionFile = (
   value: unknown,
-  options: {
-    preserveLegacyUploadPaths?: boolean
-    preserveRuntimeState?: boolean | ((sessionId: string) => boolean)
-  } = {}
-): PersistedChatSession | undefined => {
-  if (!isRecord(value)) return undefined
+  options: SessionFileReadOptions = {}
+): SessionFileDecodeResult => {
+  if (!isRecord(value)) return { status: 'invalid' }
 
-  const rawSession = isRecord(value.session) ? value.session : value
+  const hasEnvelopeField = Object.hasOwn(value, 'version') || Object.hasOwn(value, 'session')
+  if (hasEnvelopeField) {
+    const version = value.version
+    if (Number.isSafeInteger(version) && (version as number) > SESSION_FILE_VERSION) {
+      return { status: 'unsupported-version' }
+    }
+    if ((version !== 1 && version !== SESSION_FILE_VERSION) || !isRecord(value.session)) {
+      return { status: 'invalid' }
+    }
+  }
+
+  const rawSession = hasEnvelopeField ? (value.session as Record<string, unknown>) : value
 
   // A persisted Session needs one authoritative conversation representation. The compatibility
   // message list may be absent or malformed only when a canonical graph can replace it; otherwise
   // accepting the file would turn deterministic structural corruption into a valid empty Session.
   if (rawSession.conversationGraph === undefined && !Array.isArray(rawSession.messages)) {
-    return undefined
+    return { status: 'invalid' }
   }
 
   const sessionId = asString(rawSession.id)
@@ -3606,10 +3570,21 @@ export const normalizeSessionFile = (
       ? sessionId !== undefined && options.preserveRuntimeState(sessionId)
       : options.preserveRuntimeState
 
-  return sanitizeSession(rawSession, {
+  const session = sanitizeSession(rawSession, {
     preserveLegacyUploadPaths: options.preserveLegacyUploadPaths,
     preserveRuntimeState
   })
+  return session ? { status: 'ok', session } : { status: 'invalid' }
+}
+
+// Compatibility projection for callers that only need a readable Session. Runtime recovery is
+// skipped only when the main process confirms that the owning prompt is still active.
+export const normalizeSessionFile = (
+  value: unknown,
+  options: SessionFileReadOptions = {}
+): PersistedChatSession | undefined => {
+  const decoded = decodeSessionFile(value, options)
+  return decoded.status === 'ok' ? decoded.session : undefined
 }
 
 // Tiny app-level pointer restoring the last-open project + session after a restart.
@@ -3647,6 +3622,12 @@ export type SessionLoadWarning =
       recovered: boolean
     }
   | {
+      kind: 'unsupported-version'
+      projectId: string
+      fileName: string
+      recovered: false
+    }
+  | {
       kind: 'manifest-corrupt' | 'manifest-unreadable'
       fileName: string
       recovered: boolean
@@ -3675,15 +3656,33 @@ export type LoadSessionRequest = {
   sessionId: string
 }
 
-export type DeleteSessionRequest = {
-  projectId: string
-  sessionId: string
-}
+export const deleteSessionRequestSchema = z
+  .object({ projectId: z.string(), sessionId: z.string() })
+  .strict()
 
-export type SessionDeletionResult =
-  | { status: 'deleted'; runtimeDetached: true }
-  | { status: 'failed'; reason: 'runtime'; runtimeDetached: false }
-  | { status: 'failed'; reason: 'persistence'; runtimeDetached: true }
+export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
+
+// zod v4 requires unique discriminator values, and both failure branches share status 'failed',
+// so this stays a plain union over the exact owner-produced shapes.
+export const sessionDeletionResultSchema = z.union([
+  z.object({ status: z.literal('deleted'), runtimeDetached: z.literal(true) }).strict(),
+  z
+    .object({
+      status: z.literal('failed'),
+      reason: z.literal('runtime'),
+      runtimeDetached: z.literal(false)
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal('failed'),
+      reason: z.literal('persistence'),
+      runtimeDetached: z.literal(true)
+    })
+    .strict()
+])
+
+export type SessionDeletionResult = z.infer<typeof sessionDeletionResultSchema>
 
 export type UpdateSessionArchiveRequest = {
   projectId: string
@@ -3696,3 +3695,13 @@ export type SaveSessionManifestRequest = {
   lastProjectId?: string
   lastSessionId?: string
 }
+
+// Runtime-validated contract for the Electron-facing terminal Session deletion command. The request
+// and result schemas double as the wire types so the router enforces exactly the union the
+// SessionDeletionOwner can produce.
+export const sessionApplicationCommandContracts = Object.freeze({
+  delete: defineApplicationCommandContract(
+    validationCodec(z.tuple([deleteSessionRequestSchema])),
+    validationCodec(sessionDeletionResultSchema)
+  )
+})

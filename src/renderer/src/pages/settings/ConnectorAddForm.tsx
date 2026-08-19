@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import { ChevronDown } from 'lucide-react'
+import { RadioGroup } from 'radix-ui'
 import { useMemo, useState } from 'react'
 import { useTranslation, Trans } from 'react-i18next'
 
@@ -16,6 +17,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
 import { isCustomConnectorName, toCustomConnectorName } from '../../../../shared/custom-connector'
+import {
+  RESOURCE_ID_MAX_LENGTH,
+  inferResourceId,
+  validateResourceId
+} from '../../../../shared/resource-id'
 
 // Which kind of custom connector is being added: a local stdio command or a remote HTTP/SSE server.
 type ConnectorMode = 'local' | 'remote'
@@ -113,6 +119,7 @@ export function ConnectorAddForm({
   const updateCustomServer = useSettingsStore((s) => s.updateCustomServer)
   const connectors = useSettingsStore((s) => s.connectors)
   const customServers = useSettingsStore((s) => s.customServers)
+  const reservedCustomServerIds = useSettingsStore((s) => s.reservedCustomServerIds ?? [])
   const isEdit = editServer !== undefined
 
   const [mode, setMode] = useState<ConnectorMode>(
@@ -132,6 +139,36 @@ export function ConnectorAddForm({
     : nameTouched
       ? name
       : toCustomConnectorName(displayName)
+  const [id, setId] = useState('')
+  const [idTouched, setIdTouched] = useState(false)
+  const [fallbackId] = useState(() => crypto.randomUUID())
+  const usedIds = useMemo(
+    () =>
+      new Set([
+        ...connectors.map((connector) => connector.id),
+        ...customServers.flatMap((server) => [server.id, server.name]),
+        ...reservedCustomServerIds
+      ]),
+    [connectors, customServers, reservedCustomServerIds]
+  )
+  const inferredId = inferResourceId(currentName)
+  const generatedId = inferredId && !usedIds.has(inferredId) ? inferredId : fallbackId
+  const currentId = isEdit ? (editServer?.id ?? '') : idTouched ? id : generatedId
+  const submittedId = idTouched ? id.trim() : generatedId === fallbackId ? fallbackId : undefined
+  const rawIdError = useMemo((): string | null => {
+    if (isEdit || !idTouched || !id.trim()) return null
+    const validationError = validateResourceId(id.trim())
+    if (validationError) return validationError
+    return usedIds.has(id.trim()) ? 'ID is already in use.' : null
+  }, [id, idTouched, isEdit, usedIds])
+  const idError =
+    rawIdError === 'ID may only contain lowercase letters, numbers, and hyphens.'
+      ? t('ID may only contain lowercase letters, numbers, and hyphens.')
+      : rawIdError === 'IDs starting with os- or mcp- are reserved.'
+        ? t('IDs starting with os- or mcp- are reserved.')
+        : rawIdError === 'ID is already in use.'
+          ? t('ID is already in use.')
+          : rawIdError
   const nameError = useMemo((): string | null => {
     if (!currentName || !isCustomConnectorName(currentName)) {
       return t('Use only lowercase letters, numbers, and hyphens.')
@@ -140,12 +177,16 @@ export function ConnectorAddForm({
       return t('This name is reserved by a built-in Connector.')
     }
     if (
-      customServers.some((server) => server.id !== editServer?.id && server.name === currentName)
+      customServers.some(
+        (server) =>
+          server.id !== editServer?.id &&
+          (server.name === currentName || (!isEdit && server.id === currentName))
+      )
     ) {
       return t('A custom Connector with this name already exists.')
     }
     return null
-  }, [connectors, currentName, customServers, editServer?.id, t])
+  }, [connectors, currentName, customServers, editServer?.id, isEdit, t])
   const [description, setDescription] = useState(
     editServer?.description ?? initialTemplate?.description ?? ''
   )
@@ -216,7 +257,8 @@ export function ConnectorAddForm({
   const [error, setError] = useState<string | null>(null)
   // A generated-ID collision must remain visible instead of leaving the disabled submit button as
   // the only sign that something needs attention.
-  const advancedVisible = advancedOpen || Boolean(displayName.trim() && nameError)
+  const advancedVisible =
+    advancedOpen || Boolean(displayName.trim() && nameError) || Boolean(idError)
 
   const parsedArgs = parseArgs(argsText, initialTemplate !== undefined)
   const parsedEnv = parseEnv(envText)
@@ -236,6 +278,7 @@ export function ConnectorAddForm({
   const requiredFilled =
     displayName.trim().length > 0 &&
     !nameError &&
+    !idError &&
     (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
     requiredSecretValuesFilled
   const canSubmit = requiredFilled && trusted && !submitting
@@ -301,6 +344,7 @@ export function ConnectorAddForm({
         await updateCustomServer(request)
       } else {
         const request: AddCustomServerRequest = {
+          ...(submittedId ? { id: submittedId } : {}),
           name: currentName,
           ...shared,
           ...(mode === 'local' && Object.keys(env).length > 0 ? { env } : {}),
@@ -335,30 +379,20 @@ export function ConnectorAddForm({
             )}
           </div>
         ) : null}
-        <div
-          role="radiogroup"
+        <RadioGroup.Root
           aria-label={t('Connector type')}
+          value={mode}
+          onValueChange={(value) => switchMode(value as ConnectorMode)}
+          orientation="horizontal"
           className="inline-flex w-fit items-center rounded-lg bg-muted p-0.5"
         >
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'local'}
-            onClick={() => switchMode('local')}
-            className={segmentButtonClassName(mode === 'local')}
-          >
+          <RadioGroup.Item value="local" className={segmentButtonClassName(mode === 'local')}>
             {t('Local command')}
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'remote'}
-            onClick={() => switchMode('remote')}
-            className={segmentButtonClassName(mode === 'remote')}
-          >
+          </RadioGroup.Item>
+          <RadioGroup.Item value="remote" className={segmentButtonClassName(mode === 'remote')}>
             {t('Remote server')}
-          </button>
-        </div>
+          </RadioGroup.Item>
+        </RadioGroup.Root>
 
         <div data-slot="settings-editor-field" className={fieldClassName}>
           <label className={fieldLabelClassName} htmlFor="connector-name">
@@ -475,6 +509,43 @@ export function ConnectorAddForm({
                       {
                         name: currentName
                       }
+                    )}
+                </p>
+              </div>
+
+              <div data-slot="settings-editor-field" className={fieldClassName}>
+                <label className={fieldLabelClassName} htmlFor="connector-id">
+                  {t('Connector ID')}{' '}
+                  {isEdit ? null : (
+                    <span className="font-normal text-muted-foreground">{t('(optional)')}</span>
+                  )}
+                </label>
+                <Input
+                  id="connector-id"
+                  aria-label={t('Connector ID')}
+                  value={currentId}
+                  disabled={isEdit}
+                  maxLength={RESOURCE_ID_MAX_LENGTH}
+                  aria-invalid={idError ? true : undefined}
+                  aria-describedby="connector-id-help"
+                  className="font-mono"
+                  onChange={
+                    isEdit
+                      ? undefined
+                      : (event) => {
+                          setIdTouched(true)
+                          setId(event.target.value)
+                        }
+                  }
+                />
+                <p
+                  id="connector-id-help"
+                  className={idError ? 'text-xs leading-5 text-destructive' : helperClassName}
+                  role={idError ? 'alert' : undefined}
+                >
+                  {idError ??
+                    t(
+                      'Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.'
                     )}
                 </p>
               </div>

@@ -57,6 +57,31 @@
       "capabilityOverlays": ["renderer_state"],
       "fallbackCapability": "renderer_view"
     },
+    "image_input_compatibility": {
+      "ownerPaths": [
+        "src/main/acp/image-input-compatibility-owner.ts",
+        "src/main/acp/vision-evidence-repository.ts"
+      ],
+      "interfacePaths": ["src/main/acp/image-input-compatibility-owner.ts"],
+      "consumerModules": ["workspace_runtime"],
+      "testFiles": {
+        "owner": [
+          "src/main/acp/image-input-compatibility-owner.test.ts",
+          "src/main/acp/vision-evidence-repository.test.ts"
+        ],
+        "contract": [
+          "src/main/acp/prompt-content-owner.test.ts",
+          "src/main/acp/prompt-preparation-owner.test.ts",
+          "src/main/acp/restricted-inference-runner.test.ts"
+        ],
+        "consumer": [
+          "src/renderer/src/lib/acp/history-preamble.test.ts",
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"
+        ]
+      },
+      "capabilityOverlays": [],
+      "fallbackCapability": "main_runtime"
+    },
     "project_files_view": {
       "ownerPaths": [
         "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
@@ -196,13 +221,18 @@
         "src/main/compute/concurrency-manager.ts",
         "src/main/compute/job-dispatcher.ts",
         "src/main/compute/job-poller.ts",
+        "src/main/compute/job-poll-output.ts",
         "src/main/compute/job-repository.ts",
         "src/main/compute/enabled-hosts-registry.ts",
         "src/main/compute/session-enabled-hosts-owner.ts",
         "src/main/compute/permission-grant-adapter.ts",
+        "src/main/compute/compute-auth-owner.ts",
+        "src/main/compute/connection-adapters.ts",
+        "src/main/compute/credential-vault.ts",
         "src/main/compute/compute-service.ts"
       ],
       "interfacePaths": [
+        "src/main/compute/connection-broker.ts",
         "src/main/compute/compute-service.ts",
         "src/main/compute/ipc.ts",
         "src/main/compute/electron-ipc-adapter.ts"
@@ -219,6 +249,10 @@
           "src/main/compute/session-enabled-hosts-owner.test.ts",
           "src/main/compute/permission-grant-adapter.test.ts",
           "src/main/compute/compute-service.test.ts",
+          "src/main/compute/compute-auth-owner.test.ts",
+          "src/main/compute/connection-broker.test.ts",
+          "src/main/compute/credential-vault.test.ts",
+          "src/main/compute/compute-password-auth.architecture.test.ts",
           "src/main/compute/compute-jobs.integration.test.ts",
           "src/main/compute/concurrency-integration.test.ts"
         ],
@@ -453,7 +487,8 @@
       "ownerPaths": [
         "src/main/settings/service.ts",
         "src/main/settings/reviewer-model-owner.ts",
-        "src/main/settings/subagent-model-owner.ts"
+        "src/main/settings/subagent-model-owner.ts",
+        "src/main/settings/vision-model-owner.ts"
       ],
       "interfacePaths": [
         "src/main/settings/service.ts",
@@ -540,6 +575,7 @@
       "consumerModules": ["session_persistence"],
       "testFiles": {
         "owner": [
+          "src/main/uploads/active-transfer-owner.test.ts",
           "src/main/uploads/repository.test.ts",
           "src/main/uploads/repository.characterization.test.ts",
           "src/main/uploads/repository.architecture.test.ts"
@@ -672,6 +708,25 @@
       },
       "capabilityOverlays": ["windows_sensitive"],
       "fallbackCapability": "main_runtime"
+    },
+    "i18n_catalog": {
+      "ownerPaths": [
+        "src/renderer/src/i18n/index.ts",
+        "src/renderer/src/i18n/i18next.d.ts",
+        "src/renderer/src/i18n/resources.ts",
+        "src/renderer/src/locales/ja.json",
+        "src/renderer/src/locales/zh-Hans.json",
+        "src/renderer/src/locales/zh-Hant.json"
+      ],
+      "interfacePaths": ["src/renderer/src/i18n/resources.ts"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": ["src/renderer/src/i18n/resources.test.ts"],
+        "contract": [],
+        "consumer": []
+      },
+      "capabilityOverlays": ["i18n_catalog"],
+      "fallbackCapability": "renderer_view"
     }
   }
 }

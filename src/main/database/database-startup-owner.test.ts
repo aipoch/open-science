@@ -73,6 +73,35 @@ describe('database startup owner', () => {
     expect(verifyDatabase).toHaveBeenCalledTimes(2)
   })
 
+  it('blocks an unclassified verification failure so retry remains available', async () => {
+    let attempt = 0
+    const reportBlocked = vi.fn()
+    const verifyDatabase = vi.fn(async () => {
+      attempt += 1
+      if (attempt === 1) throw new Error('startup subscriber failed')
+    })
+    const owner = createDatabaseStartupOwner({ reportBlocked, verifyDatabase })
+
+    await expect(owner.start()).resolves.toMatchObject({
+      phase: 'blocked',
+      error: {
+        code: 'database_startup_unavailable',
+        message: 'Open Science could not finish checking its database.',
+        retryable: true
+      }
+    })
+    expect(reportBlocked).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'database_startup_unavailable',
+        retryable: true
+      })
+    )
+
+    await expect(owner.retry()).resolves.toEqual({ phase: 'checking' })
+    await expect(owner.whenVerified()).resolves.toBeUndefined()
+    expect(verifyDatabase).toHaveBeenCalledTimes(2)
+  })
+
   it('does not retry a non-retryable compatibility failure', async () => {
     const reportBlocked = vi.fn()
     const verifyDatabase = vi.fn(async () => {

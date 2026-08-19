@@ -100,12 +100,25 @@ describe('release and scheduled workflow topology', () => {
       needs: 'plan',
       if: "needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'runtime-source'",
       uses: './.github/workflows/build.yml',
-      with: { nightly: true }
+      with: {
+        nightly: true,
+        skip_verify: "${{ inputs.dry_run == 'macos-x64' }}",
+        platform_name: "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || '' }}"
+      }
     })
     expect(step(nightly.jobs.plan, 'Compare main with the rolling nightly tag').run).toContain(
       'repos/$GITHUB_REPOSITORY/commits/nightly'
     )
     expect(nightly.jobs).not.toHaveProperty('publish-dry-run')
+    const dispatch = nightly.on?.workflow_dispatch as {
+      inputs?: { dry_run?: { default?: string; options?: string[] } }
+    }
+    expect(dispatch.inputs?.dry_run).toMatchObject({
+      default: 'full',
+      options: ['full', 'runtime-source', 'macos-x64']
+    })
+    expect(nightly.jobs['package-smoke'].if).toBe("inputs.dry_run != 'macos-x64'")
+    expect(nightly.jobs['runtime-certification'].if).toContain("inputs.dry_run != 'macos-x64'")
     expect(prepare).toMatchObject({
       needs: ['plan', 'build', 'package-smoke'],
       if: "needs.build.result == 'success' && needs.package-smoke.result == 'success'",

@@ -211,4 +211,59 @@ describe('context window trend selector', () => {
       'completed'
     ])
   })
+
+  it('marks only the last terminal outcome owned by a completed compaction prompt', () => {
+    const session = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Trend',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Compact after this',
+          eventIds: [],
+          status: 'complete',
+          contextWindowSamples: [
+            {
+              ...sample('cancelled', 31_000, 100, 'runtime-1'),
+              termination: { kind: 'stop' as const, stopReason: 'cancelled' as const }
+            },
+            sample('completed', 34_000, 200, 'runtime-1')
+          ],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      activities: [
+        {
+          id: 'context-compaction:1',
+          kind: 'tool',
+          title: 'Context compacted',
+          promptMessageId: 'prompt-1',
+          status: 'completed',
+          eventIds: ['compact-start', 'compact-done'],
+          sortIndex: 2,
+          providerToolName: 'ContextCompaction',
+          toolKind: 'other',
+          createdAt: 210,
+          updatedAt: 220
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    } satisfies ChatSession
+
+    expect(
+      selectContextWindowTrendPoints(session).map((point) => ({
+        id: point.sample.id,
+        compactedAfter: point.compactedAfter
+      }))
+    ).toEqual([
+      { id: 'cancelled', compactedAfter: false },
+      { id: 'completed', compactedAfter: true }
+    ])
+  })
 })

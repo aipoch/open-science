@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
-import { usePreviewFileContent } from '../usePreviewFileContent'
+import type { PreviewFileContentLoadState } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
 
 // `unknownErrorText` is passed in because this runs outside React and can't call the t() hook; the
@@ -21,9 +21,14 @@ const formatJsonPreview = (
   }
 }
 
-export const JsonPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+// Presentation half of the JSON preview, split from the reading half so the Plan-aware JSON
+// renderer can back both its raw view and its fallback path with one loaded preview.
+export const JsonPreviewBody = ({
+  item,
+  state
+}: PreviewFileRendererProps &
+  Readonly<{ state: PreviewFileContentLoadState }>): React.JSX.Element => {
   const { t } = useTranslation()
-  const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 

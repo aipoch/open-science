@@ -19,6 +19,7 @@ import type {
   SaveSessionArtifactsRequest,
   SaveSessionArtifactsResult
 } from '../shared/file-save'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (
@@ -43,6 +44,7 @@ type RegisterFileSaveHandlersOptions = {
   ) => Promise<ManagedFileVersionHandle>
   openProjectArtifactFile?: (sourcePath: string) => Promise<ProjectArtifactFileHandle>
   projectArtifactExportLimits?: ProjectArtifactExportLimits
+  translate?: NativeTranslator
 }
 
 type ManagedFilePathResolution =
@@ -426,7 +428,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           : basename(legacySourcePath ?? request.path)
       const dialogOptions = {
         defaultPath: join(app.getPath('downloads'), safeName),
-        title: 'Save file'
+        title: (options.translate ?? englishNativeTranslator)('Save file')
       }
       const legacyManagedFile = legacySourcePath
         ? await (options.openManagedFile ?? openManagedFile)(legacySourcePath)
@@ -495,7 +497,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         const safeName = getSafeFilename(file.suggestedName, legacySourcePath ?? file.path)
         const dialogOptions = {
           defaultPath: join(app.getPath('downloads'), safeName),
-          title: 'Save artifact'
+          title: (options.translate ?? englishNativeTranslator)('Save artifact')
         }
         const { canceled, filePath } = parentWindow
           ? await dialog.showSaveDialog(parentWindow, dialogOptions)
@@ -534,7 +536,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       const directoryDialogOptions: OpenDialogOptions = {
         defaultPath: app.getPath('downloads'),
         properties: ['openDirectory', 'createDirectory'],
-        title: 'Choose where to save artifacts'
+        title: (options.translate ?? englishNativeTranslator)('Choose where to save artifacts')
       }
       const { canceled, filePaths } = parentWindow
         ? await dialog.showOpenDialog(parentWindow, directoryDialogOptions)
@@ -736,8 +738,13 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           app.getPath('downloads'),
           `${getSafeZipBaseName(request.suggestedArchiveName)}-artifacts.zip`
         ),
-        title: 'Download project artifacts',
-        filters: [{ name: 'ZIP', extensions: ['zip'] }]
+        title: (options.translate ?? englishNativeTranslator)('Download project artifacts'),
+        filters: [
+          {
+            name: (options.translate ?? englishNativeTranslator)('ZIP archive'),
+            extensions: ['zip']
+          }
+        ]
       }
       const { canceled, filePath } = parentWindow
         ? await dialog.showSaveDialog(parentWindow, dialogOptions)

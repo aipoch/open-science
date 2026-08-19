@@ -9,6 +9,7 @@ type SessionUpsertEvent = {
 // Main-owned permission authority is projected through the existing Session lifecycle channel,
 // but it must merge into the live renderer Session instead of replacing in-flight chat state.
 const MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID = 'main:permission-wait'
+const MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID = 'main:runtime-context'
 const MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID = 'main:durable-continuation'
 const MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID = 'main:enabled-compute-hosts'
 const MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID = 'main:delegated-work'
@@ -37,6 +38,7 @@ export {
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
-  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
 }
 export type { Project, ProjectDeletedEvent, SessionDeletedEvent, SessionUpsertEvent }

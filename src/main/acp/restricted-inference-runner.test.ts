@@ -53,6 +53,15 @@ const backend = (
   ...extra
 })
 
+const codexToolLessBridgeLease = (): NonNullable<ResolvedAgentBackend['responsesBridgeLease']> => ({
+  selectSkills: vi.fn(async () => []),
+  registerReviewerSession: vi.fn(),
+  unregisterReviewerSession: vi.fn(() => false),
+  registerToolLessSession: vi.fn(),
+  unregisterToolLessSession: vi.fn(() => true),
+  release: vi.fn(async () => undefined)
+})
+
 type RuntimeHarnessOptions = Readonly<{
   response?: { stopReason: 'end_turn' | 'cancelled' }
   events?: AcpRuntimeEvent[]
@@ -263,6 +272,58 @@ describe('RestrictedInferenceRunner', () => {
       readdir(join(temporaryRoot!, 'runtime-support', 'test-inference'))
     ).resolves.toEqual([])
   })
+
+  it.each([
+    [
+      'Claude Code',
+      () => backend(claudeCodeFramework, { modelRoute: 'claude-anthropic' }),
+      target('claude-code')
+    ],
+    [
+      'OpenCode',
+      () => backend(opencodeFramework, { modelRoute: 'opencode-openai' }),
+      target('opencode')
+    ],
+    [
+      'Codex Responses',
+      () =>
+        backend(codexFramework, {
+          modelRoute: 'codex-responses',
+          responsesBridgeLease: codexToolLessBridgeLease()
+        }),
+      target('codex')
+    ],
+    [
+      'Codex Bridge',
+      () =>
+        backend(codexFramework, {
+          modelRoute: 'codex-bridge',
+          responsesBridgeLease: codexToolLessBridgeLease()
+        }),
+      target('codex')
+    ]
+  ] as const)(
+    'forwards sanitized images through the %s visual route',
+    async (_name, route, runTarget) => {
+      const image = {
+        mimeType: 'image/png' as const,
+        data: Buffer.from('image').toString('base64'),
+        byteLength: 5
+      }
+      const { runner, runtimes } = await makeRunner(route(), {
+        events: [event({ role: 'assistant', text: '{}' })]
+      })
+
+      await runner.run(runInput({ images: [image], target: runTarget }))
+
+      expect(runtimes[0]?.sendPrompt).toHaveBeenCalledWith({
+        sessionId: 'provider-session-1',
+        text: 'Return PONG.',
+        historyImages: [image],
+        suppressUserMessage: true
+      })
+    }
+  )
 
   it('cancels and rejects tool events and oversized output', async () => {
     const cases: Array<{

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectorsPanel } from './ConnectorsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 
 // Radix Select/DropdownMenu call pointer-capture and scroll APIs jsdom does not implement.
 if (!Element.prototype.hasPointerCapture) {
@@ -164,6 +165,27 @@ beforeEach(() => {
     isLoaded: true,
     load: vi.fn().mockResolvedValue(undefined)
   })
+  useTagStore.setState({
+    ...createInitialTagState(),
+    status: 'ready',
+    revision: 1,
+    tags: [
+      {
+        id: 'tag-research',
+        name: 'Research',
+        iconKey: 'flask-conical',
+        colorKey: 'purple',
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    assignments: ['pubmed', 'custom-server-uuid'].map((resourceId) => ({
+      tagId: 'tag-research',
+      resourceType: 'catalog.connector' as const,
+      resourceId,
+      createdAt: 1
+    }))
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -249,7 +271,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
-  it('orders the group filter before search and keeps the narrow toolbar contained', () => {
+  it('orders scope controls before search and lets the narrow toolbar wrap', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
@@ -259,19 +281,65 @@ describe('ConnectorsPanel (groups)', () => {
     const filter = document.body.querySelector<HTMLElement>(
       '[aria-label="Filter connectors by group"]'
     )
+    const scopeFilter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter Connectors by scope"]'
+    )
+    const specialistFilter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter Connectors by Specialist"]'
+    )
     const addConnector = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).find((button) => button.textContent?.includes('Add connector'))
 
-    expect(toolbar?.className).toContain('grid-cols-[9rem_minmax(0,1fr)]')
-    expect(toolbar?.className).toContain('sm:grid-cols-[9rem_minmax(0,1fr)_auto]')
-    expect(filter?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(toolbar?.className).toContain('flex-wrap')
+    expect(filter?.compareDocumentPosition(scopeFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(scopeFilter?.compareDocumentPosition(specialistFilter!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(specialistFilter?.compareDocumentPosition(search!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
     expect(search?.compareDocumentPosition(addConnector!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(search?.parentElement?.className).toContain('min-w-0')
-    expect(search?.parentElement?.className).toContain('sm:col-start-2')
-    expect(filter?.className).toContain('w-full')
-    expect(addConnector?.className).toContain('col-span-2')
-    expect(addConnector?.className).toContain('w-full')
+    expect(search?.parentElement?.className).toContain('min-w-48')
+    expect(filter?.className).toContain('w-36')
+    expect(addConnector?.className).toContain('shrink-0')
+  })
+
+  it('shows each Connector scope without changing its Main Agent toggle', () => {
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    const pubmedRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('PubMed'))
+    const europePmcRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('Europe PMC'))
+
+    expect(pubmedRow?.textContent).toContain('Shared with Main')
+    expect(pubmedRow?.textContent).toContain('Main Agent')
+    expect(europePmcRow?.textContent).toContain('Specialist only')
+    expect(europePmcRow?.textContent).toContain('Main Agent')
+    expect(pubmedRow?.querySelector('[aria-label="PubMed"]')?.getAttribute('data-state')).toBe(
+      'checked'
+    )
+    expect(
+      europePmcRow?.querySelector('[aria-label="Europe PMC"]')?.getAttribute('data-state')
+    ).toBe('unchecked')
+  })
+
+  it('keeps Connector Tags in the third metadata row', () => {
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    for (const resourceId of ['pubmed', 'custom-server-uuid']) {
+      const metadata = document.body.querySelector(`[data-connector-metadata="${resourceId}"]`)
+      const tagName = metadata?.querySelector('[title="Research"]')
+      expect(metadata).not.toBeNull()
+      expect(tagName).not.toBeNull()
+    }
   })
 
   it('toggles a featured connector and navigates to its detail on row click', () => {
@@ -288,6 +356,59 @@ describe('ConnectorsPanel (groups)', () => {
     )
     act(() => row?.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'pubmed' })
+  })
+
+  it('distinguishes loading and a retryable Connector catalog failure from empty results', async () => {
+    let rejectLoad: ((reason?: unknown) => void) | undefined
+    const loadConnectors = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectLoad = reject
+          })
+      )
+      .mockResolvedValueOnce(undefined)
+    useSettingsStore.setState({ connectors: [], customServers: [], loadConnectors })
+
+    await act(async () => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
+      'Loading Connectors…'
+    )
+
+    await act(async () => rejectLoad?.(new Error('catalog unavailable')))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Open Science could not load Connectors.'
+    )
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => retry?.click())
+    expect(loadConnectors).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a rejected Connector access change after rollback', async () => {
+    useSettingsStore.setState({
+      setConnectorEnabled: vi.fn().mockRejectedValue(new Error('write failed'))
+    })
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    const pubmedRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('PubMed'))
+    await act(async () => {
+      pubmedRow?.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save this setting. The previous value was restored.'
+    )
   })
 
   it('warns about affected Specialists before removing a custom server', async () => {
@@ -350,6 +471,92 @@ describe('ConnectorsPanel (groups)', () => {
     expect(useSettingsStore.getState().removeCustomServer).toHaveBeenCalledWith(
       'custom-server-uuid'
     )
+  })
+
+  it('blocks Connector removal until Specialist references can be checked', async () => {
+    let finishRetry!: () => void
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('specialist store unavailable'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRetry = resolve
+          })
+      )
+    useSpecialistStore.setState({ load })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain(
+      'Specialist references could not be checked. Retry before removing this Connector.'
+    )
+    const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Remove Connector'
+    )
+    expect(confirm?.disabled).toBe(true)
+    act(() => confirm?.click())
+    expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
+
+    await act(async () => {
+      const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Retry'
+      )
+      retry?.click()
+      retry?.click()
+      await Promise.resolve()
+    })
+
+    expect(load).toHaveBeenCalledTimes(3)
+    expect(document.body.textContent).toContain('Checking…')
+    expect(confirm?.disabled).toBe(true)
+
+    await act(async () => finishRetry())
+    expect(confirm?.disabled).toBe(false)
+  })
+
+  it('does not reopen a removal dialog after cancelling a pending retry check', async () => {
+    let finishRetry!: () => void
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('specialist store unavailable'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRetry = resolve
+          })
+      )
+    useSpecialistStore.setState({ load })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')?.click()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Retry'
+      )
+      retry?.click()
+      await Promise.resolve()
+    })
+
+    act(() => {
+      const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Cancel'
+      )
+      cancel?.click()
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+
+    await act(async () => finishRetry())
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
   it('offers validated configuration import from the Add connector menu', () => {

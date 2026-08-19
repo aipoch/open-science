@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -209,6 +209,70 @@ describe('runMicromamba', () => {
     await expect(running).rejects.toThrow(/^Runtime setup cancelled\.$/)
   })
 
+  it('does not settle cancellation while a descendant can still write the target prefix', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'os-mm-cancel-tree-'))
+    const descendantPidPath = join(dir, 'descendant.pid')
+    const prefixWritePath = join(dir, 'prefix-write.log')
+    const workerSource = [
+      "const { appendFileSync } = require('node:fs')",
+      "setInterval(() => appendFileSync(process.env.MM_PREFIX_WRITE_PATH, 'write\\n'), 20)"
+    ].join(';')
+    const supervisorSource = [
+      "const { spawn } = require('node:child_process')",
+      "const { writeFileSync } = require('node:fs')",
+      "const worker = spawn(process.execPath, ['-e', process.env.MM_WORKER_SOURCE], { detached: true, env: process.env, stdio: 'ignore' })",
+      'writeFileSync(process.env.MM_DESCENDANT_PID_PATH, String(worker.pid))',
+      'worker.unref()',
+      'setInterval(() => {}, 1000)'
+    ].join(';')
+    const abort = new AbortController()
+    const running = runMicromamba(
+      [process.execPath, '-e', supervisorSource],
+      {
+        MM_DESCENDANT_PID_PATH: descendantPidPath,
+        MM_PREFIX_WRITE_PATH: prefixWritePath,
+        MM_WORKER_SOURCE: workerSource
+      },
+      abort.signal
+    )
+    let descendantPid: number | undefined
+
+    try {
+      await vi.waitFor(() => {
+        expect(existsSync(descendantPidPath)).toBe(true)
+        descendantPid = Number(readFileSync(descendantPidPath, 'utf8'))
+        expect(descendantPid).toBeGreaterThan(0)
+        expect(readFileSync(prefixWritePath, 'utf8')).toContain('write')
+      })
+
+      abort.abort()
+      const error = await running.catch((reason: unknown) => reason)
+      expect(error).toBeInstanceOf(Error)
+
+      const writesWhenCancellationSettled = readFileSync(prefixWritePath, 'utf8')
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      if ((error as Error).message === 'Runtime setup cancelled.') {
+        // A normal cancellation is safe only after every discovered writer has stopped.
+        expect(readFileSync(prefixWritePath, 'utf8')).toBe(writesWhenCancellationSettled)
+        expect(() => process.kill(descendantPid as number, 0)).toThrow()
+      } else {
+        // If the platform cannot prove the tree is gone, fail closed so the journal is retained and a
+        // retry cannot race this still-possible writer.
+        expect((error as Error).message).toContain('RUNTIME_CHILD_UNCONFIRMED')
+      }
+    } finally {
+      abort.abort()
+      await running.catch(() => undefined)
+      if (descendantPid !== undefined) {
+        try {
+          process.kill(descendantPid, 'SIGKILL')
+        } catch {
+          // The fixed path already reaped it.
+        }
+      }
+    }
+  })
+
   it('kills the child and rejects (fail-closed) when onChild throws (PID recording failed)', async () => {
     // If recording the child fails, running on would strand an unrecorded orphan. runMicromamba must
     // kill the just-spawned child and reject rather than proceed. A long-lived child proves the kill.
@@ -261,31 +325,26 @@ describe('runMicromamba', () => {
 })
 
 describe('killAndConfirmExit', () => {
-  it('resolves true once the child actually exits', async () => {
-    const listeners: Record<string, () => void> = {}
-    const fake = {
-      exitCode: null,
-      signalCode: null,
-      kill: () => true,
-      once: (event: string, cb: () => void) => {
-        listeners[event] = cb
-      }
-    } as never
-    const pending = killAndConfirmExit(fake, 1000)
-    listeners.exit?.() // the child exits
-    expect(await pending).toBe(true)
+  it('resolves true when the whole process tree is confirmed reaped', async () => {
+    const terminateTree = vi.fn(async () => ({ reaped: true }))
+    const child = { exitCode: null, signalCode: null } as never
+
+    await expect(killAndConfirmExit(child, terminateTree)).resolves.toBe(true)
+    expect(terminateTree).toHaveBeenCalledWith(child)
   })
 
-  it('resolves false when exit cannot be confirmed within the deadline (SIGTERM ignored)', async () => {
-    // A child that never emits exit (kill ignored) — the deadline elapses and we report UNconfirmed so
-    // the caller retains the recovery evidence rather than clearing it under a possibly-live worker.
-    const fake = {
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-      once: () => undefined // never fires exit
-    } as never
-    expect(await killAndConfirmExit(fake, 40)).toBe(false)
+  it('resolves false when the whole process tree cannot be confirmed reaped', async () => {
+    const terminateTree = vi.fn(async () => ({ reaped: false }))
+    const child = { exitCode: null, signalCode: null } as never
+    expect(await killAndConfirmExit(child, terminateTree)).toBe(false)
+  })
+
+  it('fails closed without probing a stale PID once the direct child has already exited', async () => {
+    const terminateTree = vi.fn(async () => ({ reaped: true }))
+    const child = { exitCode: 0, signalCode: null } as never
+
+    await expect(killAndConfirmExit(child, terminateTree)).resolves.toBe(false)
+    expect(terminateTree).not.toHaveBeenCalled()
   })
 })
 

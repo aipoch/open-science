@@ -377,6 +377,23 @@ export class NotebookSessionAggregate<
     return run
   }
 
+  // Reserves the next execution turn behind an executor lifecycle projection without making the
+  // current execution wait on its own queue tail. This matters for onTerminated callbacks fired from
+  // inside execute(): the callback may be awaited by an injected executor, while later work must not
+  // start until its durable kernel-state transition settles.
+  blockKernelExecutionUntil(processKey: string, transition: Promise<unknown>): void {
+    const current =
+      processKey === 'repl'
+        ? this.controlQueue
+        : (this.executionQueues.get(processKey) ?? Promise.resolve())
+    const barrier = Promise.all([current, transition]).then(
+      () => undefined,
+      () => undefined
+    )
+    if (processKey === 'repl') this.controlQueue = barrier
+    else this.executionQueues.set(processKey, barrier)
+  }
+
   clearProcessState(processKey: string): void {
     this.kernelStatuses.delete(processKey)
     this.terminatedKernels.delete(processKey)

@@ -270,6 +270,7 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
           .getState()
           .sessions.find((candidate) => candidate.id === sessionId)
         if (!session) return false
+        if (session.specialistBindingPending === true) return false
         if (session.specialistId === undefined) return true
         if (!specialistCatalogLoaded) {
           void loadSpecialists()
@@ -330,6 +331,7 @@ const queueSessionIsSendable = (
   !session.fixLoopActive &&
   !session.conversationGraphSyncBlocked &&
   !session.compacting &&
+  session.specialistBindingPending !== true &&
   !options.isBarrierInFlight(session.id) &&
   !options.isSideChatOpen(session.id)
 

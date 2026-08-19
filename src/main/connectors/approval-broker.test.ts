@@ -62,6 +62,31 @@ describe('ApprovalBroker', () => {
     await expect(decision).resolves.toBe('deny')
   })
 
+  it('cancels and removes a pending request when its caller aborts', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    const broker = new ApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+    const cancellation = new AbortController()
+
+    const decision = broker.request(
+      { connector: 'biomart', method: 'get_data', argsPreview: '{}' },
+      cancellation.signal
+    )
+    cancellation.abort()
+
+    await expect(decision).resolves.toBe('deny')
+    expect(broker.getPending('id-1')).toBeNull()
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+    timer.fire()
+    expect(onSettled).toHaveBeenCalledOnce()
+  })
+
   it('pauses a Session timeout while Side chat owns the composer', async () => {
     let now = 0
     const timers: Array<{ fn: () => void; ms: number }> = []
@@ -132,6 +157,39 @@ describe('ApprovalBroker', () => {
     broker.respond('id-1', 'deny')
     await decision
     expect(broker.getPending('id-1')).toBeNull()
+  })
+
+  it('replays every pending request and omits requests after settlement', async () => {
+    const timer = makeTimer()
+    const broadcast = vi.fn()
+    const replay = vi.fn()
+    let sequence = 0
+    const broker = new ApprovalBroker({
+      generateId: () => `id-${++sequence}`,
+      broadcast,
+      replay,
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+    const first = broker.request({ connector: 'biomart', method: 'search', argsPreview: '{}' })
+    const second = broker.request({ connector: 'pubmed', method: 'fetch', argsPreview: '{}' })
+    broadcast.mockClear()
+
+    broker.replayPending()
+
+    expect(replay.mock.calls.map(([request]) => request.id)).toEqual(['id-1', 'id-2'])
+    expect(broadcast).not.toHaveBeenCalled()
+
+    broker.respond('id-1', 'deny')
+    await first
+    replay.mockClear()
+    broker.replayPending()
+
+    expect(replay).toHaveBeenCalledOnce()
+    expect(replay).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-2' }))
+
+    broker.respond('id-2', 'deny')
+    await second
   })
 
   it('runs concurrent requests independently', async () => {

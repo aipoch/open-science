@@ -10,7 +10,8 @@ import type {
   ProviderValidationFailure,
   ReasoningEffort,
   ReviewerModelConfiguration,
-  SubagentModelConfiguration
+  SubagentModelConfiguration,
+  VisionModelConfiguration
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
@@ -25,6 +26,7 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import type { LanguagePreference } from '../../shared/locale'
 import type { AgentFrameworkId } from '../agent-framework'
 import type {
   OAuthClientInformationMixed,
@@ -100,6 +102,7 @@ export type StoredCustomMcpOAuthState = {
 // A user-added custom MCP server. Secret values are stored as safeStorage refs and decrypted only in
 // the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
+  // Immutable local identity. New records infer it from `name` when safe and otherwise use a UUID.
   id: string
   // Immutable public invocation name used by host.mcp, Specialists, policy, and generated Skills.
   name: string
@@ -140,6 +143,8 @@ export type StoredConnectors = {
   // enabled (default-on), mirroring disabledSkillIds. This is the authoritative bundled gate.
   disabledConnectorIds?: string[]
   customMcpServers?: StoredCustomMcpServer[]
+  // Durable tombstones for Connector deletions that still need their permission grants pruned.
+  pendingCustomServerDeletionIds?: string[]
 }
 
 export type StoredCodexInfo = CodexInfo & {
@@ -159,10 +164,15 @@ export type StoredSettings = {
   subagentModel?: SubagentModelConfiguration
   // Global Reviewer model routing. Absence in older documents means follow the Active model.
   reviewerModel?: ReviewerModelConfiguration
+  // Optional visual relay target. Absence in older documents and new installs means disabled.
+  visionModel?: VisionModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
   // Conversation-driven Skill package import. Absent means enabled.
   conversationSkillImportEnabled?: boolean
+  // Interface language preference shared by desktop renderer and native surfaces. Absent means the
+  // renderer may import the historical localStorage value once; otherwise the default is 'system'.
+  localePreference?: LanguagePreference
   // Windows titlebar-close behavior. Absent means ask every time.
   closePreference?: CloseActionPreference
   // Last Files-tab source filter (artifact collection, this computer, or a granted folder).

@@ -107,6 +107,10 @@ describe('Save as skill availability', () => {
       availability({ session: { ...session(), specialistSwitchResetRequired: true } })
         .disabledReason
     ).toContain('Session operation')
+    expect(
+      availability({ session: { ...session(), pendingHistoryReplay: { kind: 'all' } } })
+        .disabledReason
+    ).toContain('Session operation')
   })
 
   it('describes a cancelled turn as interrupted instead of still running', () => {

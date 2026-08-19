@@ -1,7 +1,7 @@
 // Per-session specialist binding store.
 //
 // Responsibilities:
-//   • Record a mutable UUID binding for each app session (in memory).
+//   • Record a mutable Specialist ID binding for each app session (in memory).
 //   • Resolve that binding against the live ProfileService catalog to produce a
 //     SessionSpecialistResolution (main | bound | unavailable).
 //   • Act as the named seam for the reconfigure barrier: the future SDK
@@ -43,11 +43,11 @@ export class SessionBindingService {
   }
 
   // Resolves the current binding against the live catalog.
-  // - 'main'        — no UUID binding present.
-  // - 'bound'       — UUID found, profile enabled.
-  // - 'unavailable' — UUID unknown, disabled, or corrupt.
+  // - 'main'        — no Specialist ID binding present.
+  // - 'bound'       — Specialist ID found, profile enabled.
+  // - 'unavailable' — Specialist ID unknown, disabled, or corrupt.
   //
-  // If `overrideSpecialistId` is provided, that UUID is resolved instead of the
+  // If `overrideSpecialistId` is provided, that ID is resolved instead of the
   // stored binding (used by the IPC handler to validate a proposed new binding).
   async resolve(
     sessionId: string,

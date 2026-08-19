@@ -19,6 +19,7 @@ import type {
   SetProjectFilesFilterRequest,
   SetReviewerModelRequest,
   SetSubagentModelRequest,
+  SetVisionModelRequest,
   ValidateProviderRequest
 } from '../../shared/settings'
 import {
@@ -37,7 +38,8 @@ import {
   readNotificationsEnabled,
   readProjectFilesFilter,
   readReviewerModel,
-  readSubagentModel
+  readSubagentModel,
+  readVisionModel
 } from './transport-validation'
 import type { AppearanceSettingsWorkflows } from './workflows/appearance'
 
@@ -79,6 +81,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setProjectFilesFilter'
   | 'setReviewerModel'
   | 'setSubagentModel'
+  | 'setVisionModel'
   | 'validateProvider'
 >
 
@@ -277,6 +280,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetSubagentModelRequest],
     StoreResult<'setSubagentModel'>
   >('settings:set-subagent-model'),
+  setVisionModel: defineApplicationCommand<
+    'settings:set-vision-model',
+    readonly [request: SetVisionModelRequest],
+    StoreResult<'setVisionModel'>
+  >('settings:set-vision-model'),
   validateProvider: defineApplicationCommand<
     'settings:validate-provider',
     readonly [request: ValidateProviderRequest],
@@ -323,6 +331,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setProjectFilesFilter,
   settingsCoreApplicationCommands.setReviewerModel,
   settingsCoreApplicationCommands.setSubagentModel,
+  settingsCoreApplicationCommands.setVisionModel,
   settingsCoreApplicationCommands.validateProvider
 ] as const)
 
@@ -441,6 +450,8 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.service.setReviewerModel(readReviewerModel(args[0])),
       'settings:set-subagent-model': ({ args }) =>
         dependencies.service.setSubagentModel(readSubagentModel(args[0])),
+      'settings:set-vision-model': ({ args }) =>
+        dependencies.service.setVisionModel(readVisionModel(args[0])),
       'settings:validate-provider': ({ args }) => dependencies.service.validateProvider(args[0])
     })
     return scope.complete()

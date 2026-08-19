@@ -4,11 +4,11 @@ import { CsvPreviewRenderer } from './renderers/CsvPreview'
 import { FastaPreviewRenderer } from './renderers/FastaPreview'
 import { HtmlPreviewRenderer } from './renderers/HtmlPreview'
 import { ImagePreviewRenderer } from './renderers/ImagePreview'
-import { JsonPreviewRenderer } from './renderers/JsonPreview'
 import { MarkdownPreviewRenderer } from './renderers/MarkdownPreview'
 import { MoleculePreviewRenderer } from './renderers/MoleculePreview'
 import { OfficePreviewRenderer } from './renderers/OfficePreview'
 import { PdbPreviewRenderer } from './renderers/PdbPreview'
+import { PlanJsonPreview } from './renderers/PlanJsonPreview'
 import { PdfPreviewRenderer } from './renderers/PdfPreview'
 import { TextPreviewRenderer } from './renderers/TextPreview'
 import { TiffPreviewRenderer } from './renderers/TiffPreview'
@@ -29,7 +29,7 @@ export const renderPreviewFile = ({
     case 'image':
       return <ImagePreviewRenderer item={item} />
     case 'json':
-      return <JsonPreviewRenderer item={item} />
+      return <PlanJsonPreview item={item} />
     case 'markdown':
       return <MarkdownPreviewRenderer item={item} />
     case 'pdb':

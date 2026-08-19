@@ -26,9 +26,7 @@ describe('runOfficePreview', () => {
     const disposeRender = vi.fn()
     mocks.render.mockImplementation(async (options) => {
       options.onStatus?.({
-        phase: 'rendering',
-        title: 'Rendering the preview',
-        description: 'Building the document view.'
+        phase: 'rendering'
       })
       return disposeRender
     })

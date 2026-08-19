@@ -34,6 +34,11 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   useComputeStore.setState({ ...createInitialComputeState(), isLoaded: true, loadHosts: vi.fn() })
+  ;(window as unknown as { api: { compute: Record<string, unknown> } }).api = {
+    compute: {
+      deletionStatus: vi.fn().mockResolvedValue({ blockedByJobs: false })
+    }
+  }
 })
 
 afterEach(() => {
@@ -83,7 +88,20 @@ describe('ComputePanel', () => {
 
   it('deletes a host and shows a confirmation toast', async () => {
     const deleteHost = vi.fn(() => Promise.resolve())
-    useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
+    useComputeStore.setState({
+      hosts: [
+        host({
+          authentication: {
+            mode: 'password',
+            credentialStatus: 'configured',
+            revision: 1,
+            lastVerifiedAt: undefined
+          }
+        })
+      ],
+      isLoaded: true,
+      deleteHost
+    })
 
     act(() => {
       root.render(<ComputePanel onNavigate={vi.fn()} />)
@@ -96,8 +114,70 @@ describe('ComputePanel', () => {
       removeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
+    expect(deleteHost).not.toHaveBeenCalled()
+    expect(window.api.compute.deletionStatus).toHaveBeenCalledWith({ providerId: 'ssh:biowulf' })
+    expect(document.body.textContent).toContain(
+      'The local Compute Host and encrypted password will be deleted.'
+    )
+    expect(document.body.textContent).toContain('password cannot be recovered')
+
+    const confirm = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')
+    ).find((button) => button.textContent?.trim() === 'Remove Host')
+    await act(async () => confirm?.click())
+
     expect(deleteHost).toHaveBeenCalledWith('ssh:biowulf')
     expect(container.textContent).toContain('Removed biowulf.')
+  })
+
+  it('blocks X-triggered removal while Compute Jobs still need attention', async () => {
+    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({ blockedByJobs: true })
+    const deleteHost = vi.fn(async () => undefined)
+    useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
+
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === 'Remove biowulf'
+    )
+    await act(async () => removeButton?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const confirm = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Remove Host'
+    )
+    expect(dialog?.textContent).toContain(
+      'This Host cannot be removed while Compute Jobs are active or still need harvesting or remote cleanup.'
+    )
+    expect(confirm?.disabled).toBe(true)
+    expect(deleteHost).not.toHaveBeenCalled()
+  })
+
+  it('shows an X-triggered deletion failure and keeps the dialog open for retry', async () => {
+    const deleteHost = vi.fn(async () => {
+      throw new Error('delete failed')
+    })
+    useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
+
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === 'Remove biowulf'
+    )
+    await act(async () => removeButton?.click())
+    const confirm = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')
+    ).find((button) => button.textContent?.trim() === 'Remove Host')
+    await act(async () => confirm?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Could not remove this Compute Host.')
+    expect(
+      Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+        (button) => button.textContent?.trim() === 'Remove Host'
+      )?.disabled
+    ).toBe(false)
+    expect(container.textContent).not.toContain('Removed biowulf.')
   })
 
   it('uses semantic success and failure roles for probed hosts', () => {

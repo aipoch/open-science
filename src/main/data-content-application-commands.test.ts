@@ -13,7 +13,11 @@ import {
   registerDataContentApplicationCommands,
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
-import type { SessionDeletionResult } from '../shared/session-persistence'
+import {
+  SessionRevisionConflictError,
+  type SessionDeletionResult
+} from '../shared/session-persistence'
+import { ApplicationCommandError } from '../shared/application-command-contract'
 
 const callerContext = createCallerContext({
   clientId: 'renderer-1',
@@ -648,6 +652,24 @@ describe('Data and content application commands', () => {
     })
   })
 
+  it('preserves the Session revision conflict code across the application command boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.saveSession.mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSave,
+        invocation([deps.session] as const)
+      )
+    ).rejects.toMatchObject({
+      code: 'session-revision-conflict',
+      message: expect.stringContaining('expected 1, actual 2')
+    })
+    expect(deps.events.publish).not.toHaveBeenCalled()
+  })
+
   it('allows only current Task automation to update main-owned delegation policy', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -762,6 +784,54 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(request)
     expect(deps.withDataRootWrite).not.toHaveBeenCalled()
     expect(deps.events.publish).not.toHaveBeenCalledWith('session:deleted', request)
+  })
+
+  it.each([
+    {
+      label: 'unknown extra field',
+      request: { projectId: 'project-1', sessionId: 'session-1', force: true }
+    },
+    { label: 'missing session id', request: { projectId: 'project-1' } },
+    { label: 'scalar payload', request: 'session-1' }
+  ])(
+    'rejects a malformed Session deletion request ($label) before reaching the owner',
+    async ({ request }) => {
+      const router = createApplicationCommandRouter()
+      const deps = createDependencies()
+      registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+      // Malformed payloads are intentionally outside the command's static arg type; dispatch
+      // through the type-widened harness so the runtime codec is what rejects them.
+      const { result: dispatched } = dispatchCommand(router, 'sessionDelete', [request])
+
+      const error = await dispatched.catch((error: unknown) => error)
+      expect(error).toBeInstanceOf(ApplicationCommandError)
+      expect(error).toMatchObject({ code: 'invalid-command-arguments' })
+      expect(deps.sessions.deleteSession).not.toHaveBeenCalled()
+      expect(deps.events.publish).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects a malformed Session deletion owner result without publishing deletion', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.deleteSession.mockResolvedValueOnce({
+      status: 'failed',
+      reason: 'runtime',
+      runtimeDetached: 'yes'
+    } as unknown as SessionDeletionResult)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const dispatched = router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionDelete,
+      invocation([{ projectId: 'project-1', sessionId: 'session-1' }] as const)
+    )
+
+    const error = await dispatched.catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(ApplicationCommandError)
+    expect(error).toMatchObject({ code: 'invalid-command-result' })
+    expect(deps.sessions.deleteSession).toHaveBeenCalledTimes(1)
+    expect(deps.events.publish).not.toHaveBeenCalled()
   })
 
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {

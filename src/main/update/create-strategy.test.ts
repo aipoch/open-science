@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const spawnSync = vi.hoisted(() => vi.fn())
 const quitAndInstall = vi.hoisted(() => vi.fn())
+const updaterListeners = vi.hoisted(() => new Map<string, (...args: unknown[]) => void>())
 const loggerMocks = vi.hoisted(() => {
   const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   return { log, createLogger: vi.fn(() => log) }
@@ -27,7 +28,9 @@ vi.mock('electron', () => ({
 }))
 vi.mock('electron-updater', () => ({
   autoUpdater: {
-    on: () => {},
+    on: (event: string, listener: (...args: unknown[]) => void) => {
+      updaterListeners.set(event, listener)
+    },
     autoDownload: true,
     autoInstallOnAppQuit: true,
     quitAndInstall
@@ -42,6 +45,7 @@ describe('createUpdateStrategy', () => {
   beforeEach(() => {
     spawnSync.mockReset()
     quitAndInstall.mockReset()
+    updaterListeners.clear()
     loggerMocks.createLogger.mockClear()
     for (const log of Object.values(loggerMocks.log)) log.mockClear()
     spawnSync.mockReturnValue({
@@ -66,6 +70,9 @@ describe('createUpdateStrategy', () => {
     'injects the production update logger into the %s strategy',
     async (_, platform, opts) => {
       const strategy = createUpdateStrategy(platform, opts)
+      if (strategy instanceof ElectronUpdaterStrategy) {
+        updaterListeners.get('update-downloaded')?.()
+      }
 
       await strategy.apply()
 
@@ -80,6 +87,7 @@ describe('createUpdateStrategy', () => {
   it('constructs the in-place strategy with its install gate', async () => {
     const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const strategy = createUpdateStrategy('win32', { installGate })
+    updaterListeners.get('update-downloaded')?.()
 
     await strategy.apply()
 

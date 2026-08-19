@@ -528,7 +528,7 @@ gate('host.agents repl privileged integration', () => {
           )
         ).result ?? '{}'
       )
-      // Simulate an existing conversation bound to this Specialist by its stable UUID.
+      // Simulate an existing conversation bound to this Specialist by its stable ID.
       durableBindings.set('session-bound-display', created.id)
       sessionBinding.setBinding('session-bound-display', created.id)
       // Before the update, the binding resolves the profile.

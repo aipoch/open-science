@@ -13,7 +13,7 @@ const bodyOf = (
 ): { query: string; variables: unknown } =>
   JSON.parse((fetchImpl.mock.calls[i][1] as RequestInit).body as string)
 
-describe('clinical_genomics — has exactly the 20 upstream tools', () => {
+describe('clinical-genomics — has exactly the 20 upstream tools', () => {
   it('exposes the ClinGen + CIViC + Open Targets ids', () => {
     expect(CLINICAL_GENOMICS_TOOLS.map((t) => t.id).sort()).toEqual(
       [
@@ -39,12 +39,12 @@ describe('clinical_genomics — has exactly the 20 upstream tools', () => {
         'open_targets_graphql'
       ].sort()
     )
-    expect(CLINICAL_GENOMICS_TOOLS.every((t) => t.connector === 'clinical_genomics')).toBe(true)
+    expect(CLINICAL_GENOMICS_TOOLS.every((t) => t.connector === 'clinical-genomics')).toBe(true)
     expect(CLINICAL_GENOMICS_TOOLS.every((t) => t.returns && t.example)).toBeTruthy()
   })
 })
 
-describe('clinical_genomics — ClinGen', () => {
+describe('clinical-genomics — ClinGen', () => {
   it('clingen_gene_validity verifies count, maps + filters + sorts records', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonRes({
@@ -269,7 +269,7 @@ describe('clinical_genomics — ClinGen', () => {
   })
 })
 
-describe('clinical_genomics — CIViC', () => {
+describe('clinical-genomics — CIViC', () => {
   it('civic_search_genes posts the entrezSymbols query and sorts aliases', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonRes({
@@ -444,7 +444,7 @@ describe('clinical_genomics — CIViC', () => {
   })
 })
 
-describe('clinical_genomics — Open Targets', () => {
+describe('clinical-genomics — Open Targets', () => {
   it('open_targets_graphql passes query+variables through and returns {data, attempts}', async () => {
     const fetchImpl = vi
       .fn()

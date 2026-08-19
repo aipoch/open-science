@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import type { RemoteAccessMode } from '../../shared/remote-access'
 
 const REMOTE_ACCESS_FILE = 'remote-access.json'
+const REMOTE_ACCESS_VERSION = 4 as const
 
 export type StoredTrustedBrowser = {
   id: string
@@ -15,7 +16,7 @@ export type StoredTrustedBrowser = {
 }
 
 export type StoredRemoteAccess = {
-  version: 4
+  version: typeof REMOTE_ACCESS_VERSION
   mode: RemoteAccessMode
   remoteItAppServiceId?: string
   remoteItBrowserServiceId?: string
@@ -24,7 +25,7 @@ export type StoredRemoteAccess = {
 }
 
 const defaults = (): StoredRemoteAccess => ({
-  version: 4,
+  version: REMOTE_ACCESS_VERSION,
   mode: 'off',
   trustedBrowsers: []
 })
@@ -46,15 +47,25 @@ const parseBrowser = (value: unknown): StoredTrustedBrowser | undefined => {
 }
 
 const parseStored = (value: unknown): StoredRemoteAccess => {
-  if (!value || typeof value !== 'object') return defaults()
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid remote access configuration.')
+  }
   const input = value as Record<string, unknown>
+  if (typeof input.version !== 'number' || !Number.isInteger(input.version) || input.version < 1) {
+    throw new Error('Invalid remote access configuration version.')
+  }
+  if (input.version > REMOTE_ACCESS_VERSION) {
+    throw new Error(
+      `Remote access configuration version ${input.version} was created by a newer version of Open Science.`
+    )
+  }
   const mode: RemoteAccessMode =
     input.mode === 'remoteit' || input.mode === 'remoteit-public' || input.mode === 'off'
       ? input.mode
       : 'off'
   const legacyServiceId = optionalString(input.remoteItServiceId)
   return {
-    version: 4,
+    version: REMOTE_ACCESS_VERSION,
     mode,
     // Before v4 both App and Browser access shared one service. Preserve that service as the
     // private App entry; Browser access creates its own managed service on first use.
@@ -82,11 +93,14 @@ export class RemoteAccessRepository {
   }
 
   async load(): Promise<StoredRemoteAccess> {
+    let contents: string
     try {
-      return parseStored(JSON.parse(await readFile(this.path, 'utf8')))
-    } catch {
-      return defaults()
+      contents = await readFile(this.path, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaults()
+      throw error
     }
+    return parseStored(JSON.parse(contents))
   }
 
   save(value: StoredRemoteAccess): Promise<void> {

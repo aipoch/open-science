@@ -76,6 +76,7 @@ import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
+import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import type { AcpElicitationOwner } from './elicitation-owner'
 import type {
   ReviewerSessionOwner,
@@ -214,8 +215,9 @@ type AcpRuntimeOptions = {
   // Local http host for app-owned session MCP servers, used for frameworks that reject stdio MCP.
   // Absent ⇒ those frameworks run without the corresponding app tooling.
   mcpHttpHost?: AgentMcpHttpHost
-  // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
-  // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
+  // Bounds inactivity while reconnecting or resuming. Target-session provider events renew the
+  // resume deadline; the fast attached-session path is never timed. Injectable timers keep tests
+  // deterministic.
   resumeTimeoutMs?: number
   cancelTimeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -223,6 +225,8 @@ type AcpRuntimeOptions = {
   // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
   // injectable so tests can drive the degrade-to-file path with small fixtures.
   inlineImageBudgetBytes?: number
+  imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'isAvailable' | 'prepare'>
+  hasReplayableImageHistory?: (projectId: string, sessionId: string) => Promise<boolean>
   contextUsageTracker?: ContextUsageTracker
   // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
   opencodeUsageFetch?: typeof fetch
@@ -987,8 +991,10 @@ class AcpRuntime {
     const hooks: AcpAgentConnectionHooks = {
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
       requestPermission: (params) => this.clientInteractions.requestPermission(params),
-      observeSessionUpdate: (notification) =>
-        this.permissionContext.observeProviderUpdate(notification),
+      observeSessionUpdate: (notification) => {
+        this.providerSessionResumer.observeProgress(notification.sessionId)
+        this.permissionContext.observeProviderUpdate(notification)
+      },
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
@@ -1321,7 +1327,7 @@ class AcpRuntime {
         ? {
             replay: {
               descriptor: this.durableContinuationHistoryReplayDescriptor(),
-              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+              supportsImageInput: await this.supportsDurableContinuationImages()
             }
           }
         : {})
@@ -1473,7 +1479,7 @@ class AcpRuntime {
           ? {
               replay: {
                 descriptor: this.durableContinuationHistoryReplayDescriptor(),
-                supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+                supportsImageInput: await this.supportsDurableContinuationImages()
               }
             }
           : {})
@@ -1795,7 +1801,7 @@ class AcpRuntime {
         ? {
             replay: {
               descriptor: this.durableContinuationHistoryReplayDescriptor(),
-              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+              supportsImageInput: await this.supportsDurableContinuationImages()
             }
           }
         : {})
@@ -2102,6 +2108,9 @@ class AcpRuntime {
   }
 
   private observeClaudeSdkMessage(params: Record<string, unknown>): void {
+    if (typeof params.sessionId === 'string') {
+      this.providerSessionResumer.observeProgress(params.sessionId)
+    }
     this.providerPromptExecutor.observeProviderMessage(params)
   }
 
@@ -2226,6 +2235,13 @@ class AcpRuntime {
       target,
       ...(backend.context.window ? { contextWindow: backend.context.window } : {})
     }
+  }
+
+  private async supportsDurableContinuationImages(): Promise<boolean> {
+    return (
+      this.backendGeneration.current.context.supportsImageInput ||
+      (await this.options.imageInputCompatibility?.isAvailable()) === true
+    )
   }
 
   private processEventDisposition(

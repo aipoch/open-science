@@ -200,12 +200,12 @@ describe('ConnectorAddForm copy', () => {
 
     switchTo('zh-Hans')
     expect(container.textContent).toContain(
-      '供 host.mcp("memory-server", …)、专家和生成的 MCP Skill 使用。'
+      '供 host.mcp("memory-server", …)、专家和生成的 MCP 技能使用。'
     )
 
     switchTo('zh-Hant')
     expect(container.textContent).toContain(
-      '供 host.mcp("memory-server", …)、專家和產生的 MCP Skill 使用。'
+      '供 host.mcp("memory-server", …)、專家和產生的 MCP 技能使用。'
     )
   })
 

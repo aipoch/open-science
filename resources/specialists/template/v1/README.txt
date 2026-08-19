@@ -20,28 +20,29 @@ during import. Do not mix root-level files with a wrapper directory. Common arch
 
 Two. Fill in specialist.json
 
-specialist.json may contain these six fields; displayName, skillIds, and connectorIds are optional:
+specialist.json contains these six fields; only display_name is optional:
 
   {
     "name": "Research Synthesizer",
-    "displayName": "Research Synthesizer",
+    "display_name": "Research Synthesizer",
     "description": "Summarizes and compares research evidence.",
-    "systemPrompt": "You synthesize evidence carefully and cite uncertainty.",
-    "skillIds": ["document-reader"],
-    "connectorIds": ["reference-library"]
+    "system_prompt": "You synthesize evidence carefully and cite uncertainty.",
+    "skill_ids": ["document-reader"],
+    "connector_ids": ["reference-library"]
   }
 
   name         Required. After trimming surrounding whitespace, 2-80 characters; letters,
                digits, spaces, hyphens, and underscores only. It must not duplicate an
                existing Specialist name.
-  displayName  Optional. Label shown in lists and pickers; defaults to name when omitted.
+  display_name Optional. Label shown in lists and pickers; defaults to name when omitted.
                When supplied, it must be non-empty and no longer than 80 characters.
-  description  Required. Short summary (may be empty). Up to 200 characters.
-  systemPrompt Required. Sets the agent identity, duties, and working rules. Up to 32,768 characters.
-  skillIds     Optional array of Skill IDs. Invalid or unavailable entries produce warnings
-               and are ignored.
-  connectorIds Optional array of Connector IDs. Invalid or unavailable entries produce warnings
-               and are ignored.
+  description  Required and non-empty. Short summary, up to 1,000 characters.
+  system_prompt Required and non-empty. Sets the agent identity, duties, and working rules.
+                Up to 32,768 characters.
+  skill_ids     Required array of unique portable Skill names. A bundled name matches its
+                skills/<name>/ directory. Unavailable names produce warnings.
+  connector_ids Required array of unique portable Connector names. Unavailable names produce
+                warnings.
 
 Choose the icon, color, Skills,
 Connectors, and full/selected mode on the configuration page after import.
@@ -75,7 +76,7 @@ Open Settings → Capabilities → Specialists, choose Add specialist → Import
 Six. Troubleshooting
 
 Resolve every error before continuing. Warnings do not block import, but should be reviewed; they
-can flag scripts or executable content, invalid optional IDs, unavailable Skills or Connectors, or
+can flag scripts or executable content, unavailable Skills or Connectors, or
 missing and malformed bundled Skills.
 
 - JSON invalid: check quotes, commas, and UTF-8 encoding.
@@ -115,15 +116,15 @@ Open Science 自定义 Specialist 导入指南
 
 二、填写 specialist.json
 
-specialist.json 只允许下面六个字段；其中 displayName、skillIds 和 connectorIds 可省略：
+specialist.json 只允许下面六个字段；仅 display_name 可省略：
 
   {
     "name": "Research Synthesizer",
-    "displayName": "Research Synthesizer",
+    "display_name": "Research Synthesizer",
     "description": "Summarizes and compares research evidence.",
-    "systemPrompt": "You synthesize evidence carefully and cite uncertainty.",
-    "skillIds": ["document-reader"],
-    "connectorIds": ["reference-library"]
+    "system_prompt": "You synthesize evidence carefully and cite uncertainty.",
+    "skill_ids": ["document-reader"],
+    "connector_ids": ["reference-library"]
   }
 
 字段说明：
@@ -131,14 +132,13 @@ specialist.json 只允许下面六个字段；其中 displayName、skillIds 和 
   name         必填。Specialist 的公开名称，去除首尾空白后须为 2-80 个字符，
                只能由字母、数字、空格、连字符和下划线组成；不能与应用中已有的
                Specialist 名称重复。
-  displayName  可选。列表和选择器中显示的名称；省略时使用 name。填写时不能
+  display_name 可选。列表和选择器中显示的名称；省略时使用 name。填写时不能
                为空，最多 80 个字符。
-  description  必填。简短说明用途（可留空），最多 200 个字符。
-  systemPrompt 必填。设定 agent 身份、职责与工作准则，最多 32,768 个字符。
-  skillIds     可选。要引用的 Skill ID 数组；不可用或格式错误的条目会以 warning
-               提示并忽略。
-  connectorIds 可选。要引用的 Connector ID 数组；不可用或格式错误的条目会以
-               warning 提示并忽略。
+  description  必填且不能为空。简短说明用途，最多 1,000 个字符。
+  system_prompt 必填且不能为空。设定 agent 身份、职责与工作准则，最多 32,768 个字符。
+  skill_ids     必填。无重复项的可移植 Skill 名称数组；随包 Skill 名称须与
+                skills/<名称>/ 目录一致；不可用的名称会产生 warning。
+  connector_ids 必填。无重复项的可移植 Connector 名称数组；不可用的名称会产生 warning。
 
 图标、颜色、Skills、Connectors 以及 full/selected
 模式可在导入后的配置页面调整。
@@ -170,7 +170,7 @@ specialist.json 只允许下面六个字段；其中 displayName、skillIds 和 
 六、异常处理
 
 所有 error 必须修复后才能继续；warning 不会阻止导入，但应复核。warning 可能来自
-脚本或可执行内容、无效的可选 ID、不可用的 Skill/Connector，以及缺失或格式错误的
+脚本或可执行内容、不可用的 Skill/Connector，以及缺失或格式错误的
 bundled Skill。
 
 - JSON invalid：检查引号、逗号和 UTF-8 编码。

@@ -37,7 +37,7 @@ export type StartTaskRunRequest = {
   skillIds?: string[]
   turnIntent?: 'plan-first'
   autoReviewEnabled?: boolean
-  // Accepts an immutable Specialist UUID or its stable Profile name. displayName is presentation-only.
+  // Accepts an immutable Specialist ID or its stable Profile name. displayName is presentation-only.
   specialist?: string
   delegationPolicy?: DelegationPolicy
 }

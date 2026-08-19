@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { createLogger } from '../logger'
-import { SpecialistRepository } from './repository'
+import { SpecialistIdConflictError, SpecialistRepository } from './repository'
 import type { StoredSpecialist } from './types'
 import type {
   BuiltinSpecialistRegistryEntry,
@@ -10,6 +10,7 @@ import type {
 } from '../../shared/specialist-package'
 import type {
   BuiltinSpecialistEntry,
+  SpecialistCatalogSnapshot,
   SpecialistProfileView,
   SpecialistListItem,
   CreateSpecialistInput,
@@ -19,6 +20,7 @@ import type {
   SpecialistSelectedConfig
 } from '../../shared/specialist'
 import {
+  inferSpecialistId,
   validateCreateSpecialistInput,
   validateUpdateSpecialistInput,
   emptyFullAccessConfig,
@@ -187,6 +189,9 @@ const assertCreateInputShape = (input: CreateSpecialistInput): void => {
   if (!input || typeof input !== 'object' || typeof input.name !== 'string') {
     throw new Error('Name must be a string.')
   }
+  if (input.id !== undefined && typeof input.id !== 'string') {
+    throw new Error('ID must be a string.')
+  }
   assertOptionalIdentityFieldShapes(input)
 
   if (
@@ -258,11 +263,19 @@ export class ProfileService {
 
   // Returns the full list for the Settings UI, including the built-in Reviewer placeholder.
   async listForSettings(): Promise<SpecialistListItem[]> {
-    const [custom, builtin] = await Promise.all([this.list(), this.builtinEntries()])
+    return (await this.listForSettingsSnapshot()).items
+  }
+
+  async listForSettingsSnapshot(): Promise<SpecialistCatalogSnapshot> {
+    const [snapshot, builtin] = await Promise.all([
+      this.repo.getAllWithIntegrity(),
+      this.builtinEntries()
+    ])
+    const custom = snapshot.document.specialists.map(toView)
     const items: SpecialistListItem[] = custom.map((v) => ({ kind: 'custom' as const, ...v }))
     items.push(...builtin.map((entry) => this.toBuiltinView(entry)))
     items.push({ kind: 'reviewer', id: 'reviewer' })
-    return items
+    return { items, integrity: snapshot.integrity }
   }
 
   async resolveRunnableById(id: string): Promise<SpecialistProfileView> {
@@ -331,18 +344,24 @@ export class ProfileService {
     const doc = await this.repo.getAll()
     const existingNames = doc.specialists.map((s) => s.name)
     const existingIds = new Map(doc.specialists.map((s) => [s.name, s.id]))
+    const usedIds = new Set([
+      'reviewer',
+      ...doc.specialists.map((specialist) => specialist.id),
+      ...(await this.builtinEntries()).map((specialist) => specialist.id)
+    ])
 
     // Validate the required name and optional display name through the shared
     // boundary rules before constructing the persisted record.
-    const errors = validateCreateSpecialistInput(input, existingNames, existingIds)
+    const errors = validateCreateSpecialistInput(input, existingNames, existingIds, [...usedIds])
     if (errors.length > 0) {
       throw new Error(errors.map((e) => e.message).join('; '))
     }
 
     const name = input.name
+    const inferredId = inferSpecialistId(name)
 
     const stored: StoredSpecialist = {
-      id: randomUUID(),
+      id: input.id ?? (inferredId && !usedIds.has(inferredId) ? inferredId : randomUUID()),
       name,
       displayName: input.displayName ?? name,
       description: input.description ?? '',
@@ -360,10 +379,17 @@ export class ProfileService {
       ownedSkillIds: []
     }
 
+    try {
+      await this.repo.insert(stored)
+    } catch (error) {
+      if (input.id !== undefined || !(error instanceof SpecialistIdConflictError)) {
+        throw error
+      }
+      stored.id = randomUUID()
+      await this.repo.insert(stored)
+    }
     // Do NOT log systemPrompt content per cross-cutting requirement.
     log.info('creating specialist', { id: stored.id, name: stored.name })
-
-    await this.repo.insert(stored)
     this.notify()
     return toView(stored)
   }

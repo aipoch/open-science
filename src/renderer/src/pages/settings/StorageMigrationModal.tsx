@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import {
   hasDelegatedActiveSession,
   type ActiveSessionInfo,
+  type DataRootRecoveryStatus,
   type MigrationOutcome,
   type MigrationPhase,
   type MigrationProgress
@@ -20,6 +21,7 @@ type Stage = 'detecting' | 'confirm' | 'migrating' | 'done' | 'committing' | 'er
 type StorageMigrationModalProps = {
   active?: boolean
   targetPath: string
+  recoveryStatus?: DataRootRecoveryStatus
   onClose: () => void
 }
 
@@ -56,11 +58,12 @@ const formatElapsed = (ms: number): string => {
 const StorageMigrationModal = ({
   active: isPresentationActive = true,
   targetPath,
+  recoveryStatus,
   onClose
 }: StorageMigrationModalProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
-  const [stage, setStage] = useState<Stage>('detecting')
+  const [stage, setStage] = useState<Stage>(recoveryStatus === 'copying' ? 'done' : 'detecting')
   const [active, setActive] = useState<ActiveSessionInfo[]>([])
   const [progress, setProgress] = useState<MigrationProgress | null>(null)
   const [outcome, setOutcome] = useState<MigrationOutcome | null>(null)
@@ -95,10 +98,13 @@ const StorageMigrationModal = ({
     }
   }, [])
 
-  // Detect running sessions once on open; skip straight to migrating when nothing is running.
+  // Detect running sessions once on open; skip straight to migrating when nothing is running. A
+  // verified recovery skips the copy and returns to the already-completed decision stage. An
+  // incomplete ('copying') recovery has no commit path, so it starts directly at discard-only done.
   // A rejected call would otherwise strand the modal on "Checking…" forever, since it's
   // non-dismissable until a stage transition happens.
   useEffect(() => {
+    if (recoveryStatus === 'copying') return
     void window.api.storage
       .detectActive()
       .then((sessions) => {
@@ -106,6 +112,8 @@ const StorageMigrationModal = ({
         if (sessions.length > 0) {
           setActive(sessions)
           setStage('confirm')
+        } else if (recoveryStatus === 'verified') {
+          setStage('done')
         } else {
           setStartedAt(Date.now())
           setStage('migrating')
@@ -116,7 +124,7 @@ const StorageMigrationModal = ({
         setIpcError(true)
         setStage('error')
       })
-  }, [])
+  }, [recoveryStatus])
 
   // Runs the move once we enter the migrating stage: subscribe to progress and call migrate,
   // routing its outcome to done / cancelled (close, no error) / error.
@@ -164,6 +172,10 @@ const StorageMigrationModal = ({
   }, [stage])
 
   const startMigration = (): void => {
+    if (recoveryStatus === 'verified') {
+      setStage('done')
+      return
+    }
     setStartedAt(Date.now())
     setStage('migrating')
   }
@@ -272,9 +284,13 @@ const StorageMigrationModal = ({
                   ? t(
                       'Subagents are still running. Return to each task below, stop its subagents, then try moving app data again.'
                     )
-                  : t(
-                      'Starting this move will interrupt the running sessions below and restart the app.'
-                    )}
+                  : recoveryStatus === 'verified'
+                    ? t(
+                        'Finishing this recovered move will interrupt the running sessions below and restart the app.'
+                      )
+                    : t(
+                        'Starting this move will interrupt the running sessions below and restart the app.'
+                      )}
               </Dialog.Description>
               <ul className="mt-3 max-h-40 space-y-1 overflow-auto rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground">
                 {active.map((session) => (
@@ -294,7 +310,9 @@ const StorageMigrationModal = ({
                 </Button>
                 {!hasDelegatedWork ? (
                   <Button type="button" onClick={startMigration}>
-                    {t('Interrupt and move')}
+                    {recoveryStatus === 'verified'
+                      ? t('Continue to recovery')
+                      : t('Interrupt and move')}
                   </Button>
                 ) : null}
               </div>
@@ -375,7 +393,48 @@ const StorageMigrationModal = ({
             </>
           ) : null}
 
-          {stage === 'done' && !cleanupWarning ? (
+          {stage === 'done' && recoveryStatus === 'copying' && !cleanupWarning ? (
+            <>
+              <div className="flex items-start gap-3">
+                <span
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  aria-hidden="true"
+                >
+                  <TriangleAlert className="size-[18px]" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <Dialog.Title className="text-sm font-semibold text-foreground">
+                    {t('Incomplete data copy found')}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {t(
+                      'Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.'
+                    )}
+                  </Dialog.Description>
+                </div>
+              </div>
+              {discardError ? (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                >
+                  {discardError}
+                </p>
+              ) : null}
+              <div className="mt-5 flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isDiscarding}
+                  onClick={handleKeepCurrent}
+                >
+                  {isDiscarding ? t('Discarding…') : t('Discard incomplete copy')}
+                </Button>
+              </div>
+            </>
+          ) : null}
+
+          {stage === 'done' && recoveryStatus !== 'copying' && !cleanupWarning ? (
             <>
               <div className="flex items-start gap-3">
                 <span
@@ -386,12 +445,18 @@ const StorageMigrationModal = ({
                 </span>
                 <div className="min-w-0 flex-1">
                   <Dialog.Title className="text-sm font-semibold text-foreground">
-                    {t('Data copied')}
+                    {recoveryStatus === 'verified'
+                      ? t('Verified data copy found')
+                      : t('Data copied')}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {t(
-                      'Restart to switch to the new location. Nothing is changed until you do — choose Keep current location to stay where you are and discard the copy.'
-                    )}
+                    {recoveryStatus === 'verified'
+                      ? t(
+                          'A completed copy from an interrupted move is ready. Finish the move to switch locations and restart, or discard the copy to stay where you are.'
+                        )
+                      : t(
+                          'Restart to switch to the new location. Nothing is changed until you do — choose Keep current location to stay where you are and discard the copy.'
+                        )}
                   </Dialog.Description>
                 </div>
               </div>
@@ -422,11 +487,15 @@ const StorageMigrationModal = ({
                     disabled={isDiscarding}
                     onClick={handleKeepCurrent}
                   >
-                    {isDiscarding ? t('Discarding…') : t('Keep current location')}
+                    {isDiscarding
+                      ? t('Discarding…')
+                      : recoveryStatus === 'verified'
+                        ? t('Discard copy')
+                        : t('Keep current location')}
                   </Button>
                   <Button type="button" disabled={isDiscarding} onClick={handleRestart}>
                     <RefreshCw aria-hidden="true" />
-                    {t('Restart now')}
+                    {recoveryStatus === 'verified' ? t('Finish move') : t('Restart now')}
                   </Button>
                 </div>
               )}

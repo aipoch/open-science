@@ -33,6 +33,7 @@ type AcpProviderSessionAdoptionRequest = Readonly<{
   identity: AcpPrimarySessionIdentityReservation
   permissionProfile?: PermissionProfileId
   specialistId?: string
+  specialistBindingPending?: true
 }>
 
 type AcpProviderSessionAdopterDependencies = Readonly<{
@@ -85,9 +86,11 @@ export class AcpProviderSessionAdopter {
         sessionCwd: request.cwd,
         projectId: request.projectId
       })
-      const specialistId =
-        request.specialistId ??
-        this.deps.registry.lookup(stableAppSessionId)?.aggregate.snapshot().specialistId
+      const hasAuthoritativeSpecialistBinding =
+        request.specialistBindingPending === true || request.specialistId !== undefined
+      const specialistId = hasAuthoritativeSpecialistBinding
+        ? request.specialistId
+        : this.deps.registry.lookup(stableAppSessionId)?.aggregate.snapshot().specialistId
       const [specialistIdentity, specialistSkills] = await Promise.all([
         this.resolveSpecialistIdentity(specialistId, startupBackend),
         this.resolveSpecialistSkills(specialistId)
@@ -167,7 +170,7 @@ export class AcpProviderSessionAdopter {
         } else if (!specialistId) {
           aggregate.setSpecialistPrefix(undefined)
         }
-        if (request.specialistId) aggregate.setSpecialistId(request.specialistId)
+        if (hasAuthoritativeSpecialistBinding) aggregate.setSpecialistId(specialistId)
         capability.commit(stableAppSessionId)
         this.deps.commitClaudeReplay(stableAppSessionId)
         provisionalSession = undefined
@@ -231,11 +234,16 @@ export class AcpProviderSessionAdopter {
     specialistId: string | undefined,
     backend: AcpBackendGenerationView
   ): Promise<{ append: string; prefix: string } | undefined> {
-    if (!specialistId || !this.deps.resolveSpecialistIdentity) return undefined
+    if (!specialistId) return undefined
+    if (!this.deps.resolveSpecialistIdentity) {
+      throw new Error('The bound specialist is unavailable.')
+    }
     try {
-      return await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+      const identity = await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+      if (!identity) throw new Error('The bound specialist is unavailable.')
+      return identity
     } catch {
-      return undefined
+      throw new Error('The bound specialist is unavailable.')
     }
   }
 

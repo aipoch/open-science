@@ -36,7 +36,11 @@ describe('settings document codec', () => {
         }
       ],
       activeProviderId: 'builtin-codex-shared',
-      connectors: { enabledIds: ['pubmed'], autoAllowIds: [] },
+      connectors: {
+        enabledIds: ['pubmed'],
+        autoAllowIds: [],
+        pendingCustomServerDeletionIds: ['rna-reviewer', '', 'rna-reviewer', 42]
+      },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
       notebookRuntimes: { python: { source: 'managed' } },
       defaultPermissionProfile: 'ask',
@@ -48,7 +52,11 @@ describe('settings document codec', () => {
       version: SETTINGS_FILE_VERSION,
       activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
       activeModel: 'codex-model',
-      connectors: { enabledIds: ['pubmed'], autoAllowIds: [] },
+      connectors: {
+        enabledIds: ['pubmed'],
+        autoAllowIds: [],
+        pendingCustomServerDeletionIds: ['rna-reviewer']
+      },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
       notebookRuntimes: { python: { source: 'managed' } },
       defaultPermissionProfile: 'ask',

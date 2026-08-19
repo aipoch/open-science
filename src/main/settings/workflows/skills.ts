@@ -29,6 +29,7 @@ type SkillSettingsWorkflowStore = Pick<
 type SkillSettingsWorkflowEffects = {
   requestSkillsReload: () => void
   notifySkillCatalogChanged: () => void
+  removeTagsForSkill: (id: string) => Promise<void>
 }
 
 type WorkflowResult<Method extends keyof SkillSettingsWorkflowStore> = Promise<
@@ -67,7 +68,10 @@ class SkillSettingsWorkflows {
   }
 
   async deleteSkill(request: DeleteSkillRequest): WorkflowResult<'deleteSkill'> {
-    return this.afterSkillsChanged(() => this.settings.deleteSkill(request))
+    const result = await this.settings.deleteSkill(request)
+    await this.effects.removeTagsForSkill(request.id)
+    this.effects.notifySkillCatalogChanged()
+    return result
   }
 
   async importSkill(request: ImportSkillRequest): WorkflowResult<'importSkill'> {

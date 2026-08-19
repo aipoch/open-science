@@ -29,19 +29,15 @@ import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { ProfileService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
+import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
 // The method name used to prefix sanitized errors and to echo in structured results.
 export const SWITCH_METHOD = 'switch' as const
 
-// Sanitizes an arbitrary cause into a top-level message. System instructions, connector args,
-// credentials, headers, environment values, and stack detail must never leak to the sandbox.
-const sanitizeCause = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause)
-
-class SwitchError extends Error {
+class SwitchError extends AgentsSafeError {
   constructor(cause: unknown) {
-    super(`host.agents.${SWITCH_METHOD}: ${sanitizeCause(cause)}`)
-    this.name = 'AgentsCallError'
+    super(formatAgentsError(SWITCH_METHOD, cause))
+    this.name = 'SwitchError'
   }
 }
 
@@ -163,7 +159,7 @@ export class SwitchOperation {
     // session id fields are already stripped by the dispatcher; we read neither here.
     const sessionId = trustedSession.sessionId
     if (!sessionId) {
-      throw new SwitchError('Missing trusted calling-session identity')
+      throw new SwitchError(agentsPublicError('Missing trusted calling-session identity'))
     }
 
     // Phase 1 — pre-approval resolution. Resolve the exact public name to the live profile so the
@@ -319,7 +315,7 @@ export class SwitchOperation {
       throw new SwitchError(error)
     }
     if (!profile.enabled) {
-      throw new SwitchError(`Specialist "${targetName}" is not enabled`)
+      throw new SwitchError(agentsPublicError(`Specialist "${targetName}" is not enabled`))
     }
     return { kind: 'specialist', profile }
   }
@@ -390,15 +386,21 @@ export class SwitchOperation {
       throw new SwitchError(error)
     }
     if (!profile.enabled) {
-      throw new SwitchError(`Specialist "${name}" was disabled before the switch committed`)
+      throw new SwitchError(
+        agentsPublicError(`Specialist "${name}" was disabled before the switch committed`)
+      )
     }
     if (profile.id !== preResolved.profile.id) {
-      throw new SwitchError(`Specialist "${name}" identity changed before the switch committed`)
+      throw new SwitchError(
+        agentsPublicError(`Specialist "${name}" identity changed before the switch committed`)
+      )
     }
     const approvedRevision = reviewedRevision ?? preResolved.profile.revision
     if (profile.revision !== approvedRevision) {
       throw new SwitchError(
-        `Specialist "${name}" revision changed (${approvedRevision} → ${profile.revision}) before the switch committed`
+        agentsPublicError(
+          `Specialist "${name}" revision changed (${approvedRevision} → ${profile.revision}) before the switch committed`
+        )
       )
     }
     return {

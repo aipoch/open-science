@@ -20,8 +20,14 @@ const MOLFILE_MIME = 'chemical/x-mdl-molfile'
 // auto-opened in the preview panel by the renderer (workspace-events), so no extra IPC is needed.
 export const createMoleculePreviewHandler =
   (writer: MoleculeArtifactWriter) =>
-  async (args: Record<string, unknown>, context: { sessionId?: string } = {}): Promise<unknown> => {
+  async (
+    args: Record<string, unknown>,
+    context: { sessionId?: string } = {},
+    signal?: AbortSignal
+  ): Promise<unknown> => {
+    signal?.throwIfAborted()
     const result = await renderMoleculeStructure(args)
+    signal?.throwIfAborted()
     if (!result.valid) return result
 
     // The artifact must attach to the calling session's run; without a session id it would fall back to
@@ -30,6 +36,7 @@ export const createMoleculePreviewHandler =
       throw new Error('molecule preview requires an active session to attach the structure to.')
     }
 
+    signal?.throwIfAborted()
     const artifact = await writer.writeArtifactForCurrentRun(context.sessionId, {
       filename: result.filename_suggestion,
       content: result.molfile,

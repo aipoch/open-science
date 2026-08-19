@@ -11,10 +11,9 @@ import {
   X
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { SpecialistListItem } from '../../../../shared/specialist'
 import type {
   ConnectorTemplateDefinition,
   ConnectorView,
@@ -42,9 +41,22 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { useTagStore } from '@/stores/tag-store'
 import { ConnectorGlyph } from './connector-icons'
-import { SettingsIconAction, SettingsSection, SettingsToggle } from './SettingsLayout'
+import {
+  SettingsIconAction,
+  SettingsLoadNotice,
+  SettingsSection,
+  SettingsToggle
+} from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
+import {
+  resourceScope,
+  specialistsUsingConnector,
+  type ResourceScope,
+  type SpecialistUsage
+} from './specialist-resource-scope'
+import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -61,6 +73,13 @@ export type ConnectorsView =
   | { kind: 'export'; id: string }
 
 type GroupFilter = 'all' | 'featured' | 'directory' | 'custom'
+type ScopeFilter = 'all' | 'main' | 'specialist-only' | 'shared'
+
+type ConnectorResourceRow<T extends { id: string; name: string; enabled: boolean }> = {
+  resource: T
+  usages: SpecialistUsage[]
+  scope: ResourceScope
+}
 
 // Keys rather than finished strings: the trigger and the option list both read from this map, so the
 // label has one source and follows a language switch on the next render.
@@ -73,22 +92,31 @@ const FILTER_LABEL_KEYS = {
 
 const FILTER_ORDER: GroupFilter[] = ['all', 'featured', 'directory', 'custom']
 
-const specialistNamesUsingConnector = (
-  items: SpecialistListItem[],
-  server: Pick<CustomServerView, 'id' | 'name'>
-): string[] => {
-  return items
-    .flatMap((item) => {
-      if (item.kind === 'reviewer') return []
-      const ids =
-        item.capabilityMode === 'full'
-          ? item.fullAccess.excludedConnectorIds
-          : item.selectedCapabilities.connectorIds
-      const matches = (id: string): boolean => id === server.id || id === server.name
-      const usesConnector = item.capabilityMode === 'full' ? !ids.some(matches) : ids.some(matches)
-      return usesConnector ? [item.displayName?.trim() || item.name] : []
-    })
-    .sort((a, b) => a.localeCompare(b))
+const SCOPE_FILTER_LABEL_KEYS = {
+  all: 'All scopes',
+  main: 'Main',
+  'specialist-only': 'Specialist only',
+  shared: 'Shared with Main'
+} as const satisfies Record<ScopeFilter, string>
+
+const SCOPE_LABEL_KEYS = {
+  'main-only': 'Main only',
+  'specialist-only': 'Specialist only',
+  shared: 'Shared with Main',
+  'not-in-use': 'Not in use'
+} as const satisfies Record<ResourceScope, string>
+
+const includesScope = (
+  scopeFilter: ScopeFilter,
+  specialistFilter: string,
+  enabled: boolean,
+  usages: readonly SpecialistUsage[],
+  scope: ResourceScope
+): boolean => {
+  if (scopeFilter === 'main' && !enabled) return false
+  if (scopeFilter === 'specialist-only' && scope !== 'specialist-only') return false
+  if (scopeFilter === 'shared' && scope !== 'shared') return false
+  return specialistFilter === 'all' || usages.some((usage) => usage.id === specialistFilter)
 }
 
 const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
@@ -115,8 +143,14 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
   const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
 
   const [filter, setFilter] = useState<GroupFilter>('all')
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
+  const [specialistFilter, setSpecialistFilter] = useState('all')
+  const [tagFilter, setTagFilter] = useState('all')
+  const tagAssignments = useTagStore((state) => state.assignments)
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<
     Partial<Record<'featured' | 'directory' | 'custom', boolean>>
@@ -132,32 +166,122 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     specialistNames?: string[]
   } | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [checkingRemoval, setCheckingRemoval] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [operationError, setOperationError] = useState<string | null>(null)
+  const loadRequestRef = useRef(0)
+  const removalCheckSequence = useRef(0)
+  const removalCheckInFlight = useRef<number | undefined>(undefined)
+
+  const loadCatalog = async (): Promise<void> => {
+    const requestId = ++loadRequestRef.current
+    setCatalogState('loading')
+    try {
+      await loadConnectors()
+      if (loadRequestRef.current === requestId) setCatalogState('ready')
+    } catch {
+      if (loadRequestRef.current === requestId) setCatalogState('error')
+    }
+  }
+
+  const retryCatalog = (): void => {
+    void loadCatalog()
+  }
 
   useEffect(() => {
-    void loadConnectors()
+    const requestId = ++loadRequestRef.current
+    void loadConnectors().then(
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('ready')
+      },
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('error')
+      }
+    )
+    return () => {
+      loadRequestRef.current += 1
+    }
   }, [loadConnectors])
 
-  const visibleConnectors = useMemo<ConnectorView[]>(() => {
-    const term = query.trim().toLowerCase()
-    if (!term) return connectors
-    return connectors.filter(
-      (connector) =>
-        connector.displayName.toLowerCase().includes(term) ||
-        connector.description.toLowerCase().includes(term)
-    )
-  }, [connectors, query])
+  useEffect(() => {
+    void loadSpecialists()
+  }, [loadSpecialists])
 
-  const visibleCustomServers = useMemo<CustomServerView[]>(() => {
+  const specialistOptions = useMemo(
+    () =>
+      specialistItems
+        .flatMap((item) =>
+          item.kind === 'reviewer'
+            ? []
+            : [{ id: item.id, name: item.displayName?.trim() || item.name }]
+        )
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [specialistItems]
+  )
+
+  const visibleConnectors = useMemo<ConnectorResourceRow<ConnectorView>[]>(() => {
     const term = query.trim().toLowerCase()
-    if (!term) return customServers
-    return customServers.filter(
-      (server) =>
-        server.displayName.toLowerCase().includes(term) ||
-        server.name.toLowerCase().includes(term) ||
-        (server.description?.toLowerCase().includes(term) ?? false)
-    )
-  }, [customServers, query])
+    return connectors.flatMap((connector) => {
+      const usages = specialistsUsingConnector(specialistItems, connector)
+      const scope = resourceScope(connector.enabled, usages)
+      if (!includesScope(scopeFilter, specialistFilter, connector.enabled, usages, scope)) return []
+      if (
+        tagFilter !== 'all' &&
+        !tagAssignments.some(
+          (assignment) =>
+            assignment.tagId === tagFilter &&
+            assignment.resourceType === 'catalog.connector' &&
+            assignment.resourceId === connector.id
+        )
+      )
+        return []
+      if (
+        term &&
+        !connector.displayName.toLowerCase().includes(term) &&
+        !connector.description.toLowerCase().includes(term)
+      ) {
+        return []
+      }
+      return [{ resource: connector, usages, scope }]
+    })
+  }, [connectors, query, scopeFilter, specialistFilter, specialistItems, tagAssignments, tagFilter])
+
+  const visibleCustomServers = useMemo<ConnectorResourceRow<CustomServerView>[]>(() => {
+    const term = query.trim().toLowerCase()
+    return customServers.flatMap((server) => {
+      const usages = specialistsUsingConnector(specialistItems, server)
+      const scope = resourceScope(server.enabled, usages)
+      if (!includesScope(scopeFilter, specialistFilter, server.enabled, usages, scope)) return []
+      if (
+        tagFilter !== 'all' &&
+        !tagAssignments.some(
+          (assignment) =>
+            assignment.tagId === tagFilter &&
+            assignment.resourceType === 'catalog.connector' &&
+            assignment.resourceId === server.id
+        )
+      )
+        return []
+      if (
+        term &&
+        !server.displayName.toLowerCase().includes(term) &&
+        !server.name.toLowerCase().includes(term) &&
+        !(server.description?.toLowerCase().includes(term) ?? false)
+      ) {
+        return []
+      }
+      return [{ resource: server, usages, scope }]
+    })
+  }, [
+    customServers,
+    query,
+    scopeFilter,
+    specialistFilter,
+    specialistItems,
+    tagAssignments,
+    tagFilter
+  ])
 
   const startEditing = (): void => {
     setEmailField(ncbi.contactEmail ?? '')
@@ -184,7 +308,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     try {
       await authenticateCustomServer({ id })
     } catch (error) {
-      await loadConnectors().catch(() => undefined)
+      await loadCatalog()
       setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
     } finally {
       setAuthenticatingIds((current) => {
@@ -211,21 +335,51 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     }
   }
 
-  const requestRemoval = async (server: CustomServerView): Promise<void> => {
-    setRemovalError(null)
+  const saveToggle = async (command: () => Promise<void>): Promise<void> => {
+    setOperationError(null)
     try {
-      await useSpecialistStore.getState().load()
-      setRemoval({
-        server,
-        specialistNames: specialistNamesUsingConnector(useSpecialistStore.getState().items, server)
-      })
+      await command()
     } catch {
-      setRemoval({ server })
+      setOperationError(t('Could not save this setting. The previous value was restored.'))
     }
   }
 
+  const requestRemoval = async (server: CustomServerView): Promise<void> => {
+    if (removalCheckInFlight.current !== undefined) return
+    const requestId = ++removalCheckSequence.current
+    removalCheckInFlight.current = requestId
+    setCheckingRemoval(true)
+    setRemovalError(null)
+    try {
+      await useSpecialistStore.getState().load()
+      if (removalCheckSequence.current !== requestId) return
+      setRemoval({
+        server,
+        specialistNames: specialistsUsingConnector(useSpecialistStore.getState().items, server).map(
+          (usage) => usage.name
+        )
+      })
+    } catch {
+      if (removalCheckSequence.current !== requestId) return
+      setRemoval({ server })
+    } finally {
+      if (removalCheckInFlight.current === requestId) {
+        removalCheckInFlight.current = undefined
+        setCheckingRemoval(false)
+      }
+    }
+  }
+
+  const cancelRemoval = (): void => {
+    removalCheckSequence.current += 1
+    removalCheckInFlight.current = undefined
+    setCheckingRemoval(false)
+    setRemoval(null)
+    setRemovalError(null)
+  }
+
   const confirmRemoval = async (): Promise<void> => {
-    if (!removal || removing) return
+    if (!removal || removal.specialistNames === undefined || removing || checkingRemoval) return
     setRemoving(true)
     setRemovalError(null)
     try {
@@ -241,16 +395,21 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const showFeatured = filter === 'all' || filter === 'featured'
   const showDirectory = filter === 'all' || filter === 'directory'
   const showCustom = filter === 'all' || filter === 'custom'
-  const featuredConnectors = visibleConnectors.filter((c) => (c.group ?? 'featured') === 'featured')
-  const directoryConnectors = visibleConnectors.filter((c) => c.group === 'directory')
+  const featuredConnectors = visibleConnectors.filter(
+    ({ resource }) => (resource.group ?? 'featured') === 'featured'
+  )
+  const directoryConnectors = visibleConnectors.filter(
+    ({ resource }) => resource.group === 'directory'
+  )
   const customExpanded = !collapsed.custom
+  const hasCachedCatalog = connectors.length > 0 || customServers.length > 0
 
   // Renders one collapsible bundled-connector section (Featured / Directory) with its rows.
   const connectorGroup = (
     groupKey: 'featured' | 'directory',
     label: string,
     subtitle: string,
-    rows: ConnectorView[]
+    rows: ConnectorResourceRow<ConnectorView>[]
   ): React.JSX.Element => {
     const expanded = !collapsed[groupKey]
 
@@ -277,36 +436,67 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         {expanded ? (
           rows.length > 0 ? (
             <ul className="mt-2 flex flex-col divide-y divide-border">
-              {rows.map((connector) => (
-                <li
-                  key={connector.id}
-                  data-slot="settings-list-row"
-                  className="flex min-h-14 items-center gap-3 py-2.5"
-                >
-                  <ConnectorGlyph size={24} />
-                  <button
-                    type="button"
-                    onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                    className="min-w-0 flex-1 text-left"
+              {rows.map(({ resource: connector, usages, scope }) => {
+                const usageLabel =
+                  usages.length === 1
+                    ? usages[0].name
+                    : usages.length === 2
+                      ? t('{{name}} + 1 Specialist', { name: usages[0].name })
+                      : usages.length > 2
+                        ? t('Used by {{count}} Specialists', { count: usages.length })
+                        : undefined
+                return (
+                  <li
+                    key={connector.id}
+                    data-slot="settings-list-row"
+                    className="flex min-h-14 items-center gap-3 py-2.5"
                   >
-                    <span className="block truncate text-sm text-foreground">
-                      {connector.displayName}
-                    </span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {connector.description}
-                    </span>
-                  </button>
-                  <SettingsToggle
-                    enabled={connector.enabled}
-                    aria-label={connector.displayName}
-                    onToggle={() =>
-                      void setConnectorEnabled(connector.id, !connector.enabled).catch(
-                        () => undefined
-                      )
-                    }
-                  />
-                </li>
-              ))}
+                    <ConnectorGlyph size={24} />
+                    <button
+                      type="button"
+                      onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="block truncate text-sm text-foreground">
+                        {connector.displayName}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {connector.description}
+                      </span>
+                      <div
+                        className="mt-0.5 flex min-w-0 items-center gap-2"
+                        data-connector-metadata={connector.id}
+                      >
+                        <span className="min-w-0 truncate text-xs text-muted-foreground">
+                          {usageLabel ? `${usageLabel} · ` : ''}
+                          {t(SCOPE_LABEL_KEYS[scope])}
+                        </span>
+                        <ResourceTagBadges
+                          reference={{
+                            resourceType: 'catalog.connector',
+                            resourceId: connector.id
+                          }}
+                        />
+                      </div>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <ResourceTagMenu
+                        reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
+                      />
+                      <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
+                      <SettingsToggle
+                        enabled={connector.enabled}
+                        aria-label={connector.displayName}
+                        onToggle={() =>
+                          void saveToggle(async () => {
+                            await setConnectorEnabled(connector.id, !connector.enabled)
+                          })
+                        }
+                      />
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           ) : (
             <p className="mt-2 py-2 text-xs text-muted-foreground">
@@ -318,8 +508,30 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     )
   }
 
+  if (!hasCachedCatalog && catalogState !== 'ready') {
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={catalogState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Connectors…')}
+          errorMessage={t('Open Science could not load Connectors.')}
+          onRetry={retryCatalog}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="p-5">
+      {catalogState === 'error' ? (
+        <SettingsLoadNotice
+          state="error"
+          loadingLabel={t('Loading Connectors…')}
+          errorMessage={t('Open Science could not load Connectors.')}
+          onRetry={retryCatalog}
+          className="mb-4"
+        />
+      ) : null}
       <SettingsSection
         title={t('Contact email')}
         description={t(
@@ -382,15 +594,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         )}
       </SettingsSection>
 
-      <div
-        className="mb-4 grid grid-cols-[9rem_minmax(0,1fr)] gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center"
-        data-testid="connectors-toolbar"
-      >
+      <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="connectors-toolbar">
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
-          <SelectTrigger
-            aria-label={t('Filter connectors by group')}
-            className="w-full sm:col-start-1 sm:row-start-1"
-          >
+          <SelectTrigger aria-label={t('Filter connectors by group')} className="w-36">
             <span>{t(FILTER_LABEL_KEYS[filter])}</span>
           </SelectTrigger>
           <SelectContent>
@@ -401,19 +607,48 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             ))}
           </SelectContent>
         </Select>
+        <Select value={scopeFilter} onValueChange={(value) => setScopeFilter(value as ScopeFilter)}>
+          <SelectTrigger aria-label={t('Filter Connectors by scope')} className="w-40">
+            <span>{t(SCOPE_FILTER_LABEL_KEYS[scopeFilter])}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(SCOPE_FILTER_LABEL_KEYS) as ScopeFilter[]).map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(SCOPE_FILTER_LABEL_KEYS[value])}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {specialistOptions.length > 0 ? (
+          <Select value={specialistFilter} onValueChange={setSpecialistFilter}>
+            <SelectTrigger aria-label={t('Filter Connectors by Specialist')} className="w-48">
+              <span>
+                {specialistFilter === 'all'
+                  ? t('All Specialists')
+                  : specialistOptions.find((item) => item.id === specialistFilter)?.name}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('All Specialists')}</SelectItem>
+              {specialistOptions.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+        <TagFilter resourceType="catalog.connector" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search connectors')}
-          containerClassName="min-w-0 sm:col-start-2 sm:row-start-1"
+          containerClassName="min-w-48 flex-1"
           placeholder={t('Search connectors…')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              className="col-span-2 row-start-2 w-full justify-center sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:w-auto sm:shrink-0"
-            >
+            <Button variant="outline" className="shrink-0">
               <Plus data-icon="inline-start" aria-hidden="true" />
               {t('Add connector')}
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
@@ -458,13 +693,13 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       </div>
 
       <div className="flex flex-col gap-4">
-        {authError ? (
+        {authError || operationError ? (
           <div
             className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
             role="alert"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{t(authError)}</span>
+            <span>{operationError ?? t(authError ?? '')}</span>
           </div>
         ) : null}
         {showFeatured
@@ -508,126 +743,159 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             {customExpanded ? (
               visibleCustomServers.length > 0 ? (
                 <ul className="mt-2 flex flex-col divide-y divide-border">
-                  {visibleCustomServers.map((server) => (
-                    <li
-                      key={server.id}
-                      data-slot="settings-list-row"
-                      className="flex min-h-14 items-center gap-3 py-2.5"
-                    >
-                      <ConnectorGlyph size={24} />
-                      <div className="min-w-0 flex-1">
-                        <span className="block truncate text-sm text-foreground">
-                          {server.displayName}
-                        </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {server.name}
-                          {server.description ? ` · ${server.description}` : ''}
-                        </span>
-                        <span
-                          className={`block truncate text-xs ${
-                            server.availability && !server.checking && !retryingIds.has(server.id)
-                              ? 'text-destructive'
-                              : 'text-muted-foreground'
-                          }`}
-                        >
-                          {retryingIds.has(server.id)
-                            ? t('Checking…')
-                            : server.checking
-                              ? t('Checking…')
-                              : server.availability === 'unavailable'
-                                ? t('Unavailable')
-                                : server.availability === 'unauthenticated'
-                                  ? t('Sign-in required')
-                                  : server.enabled
-                                    ? t('Connected')
-                                    : t('Disabled')}
-                        </span>
-                      </div>
-                      <SettingsIconAction
-                        label={t('Export {{name}}', { name: server.displayName })}
-                        icon={Download}
-                        onClick={() => onNavigate({ kind: 'export', id: server.id })}
-                      />
-                      <SettingsIconAction
-                        label={t('Edit {{name}}', { name: server.displayName })}
-                        icon={Pencil}
-                        onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                      />
-                      <SettingsIconAction
-                        label={t('Remove {{name}}', { name: server.displayName })}
-                        icon={Trash2}
-                        onClick={() => void requestRemoval(server)}
-                        danger
-                      />
-                      {server.availability === 'unavailable' && server.enabled ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={retryingIds.has(server.id)}
-                          onClick={() => void retry(server.id)}
-                        >
-                          {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
-                        </Button>
-                      ) : null}
-                      {server.availability === 'unauthenticated' && !server.oauth ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
+                  {visibleCustomServers.map(({ resource: server, usages, scope }) => {
+                    const usageLabel =
+                      usages.length === 1
+                        ? usages[0].name
+                        : usages.length === 2
+                          ? t('{{name}} + 1 Specialist', { name: usages[0].name })
+                          : usages.length > 2
+                            ? t('Used by {{count}} Specialists', { count: usages.length })
+                            : undefined
+                    return (
+                      <li
+                        key={server.id}
+                        data-slot="settings-list-row"
+                        className="flex min-h-14 items-center gap-3 py-2.5"
+                      >
+                        <ConnectorGlyph size={24} />
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-sm text-foreground">
+                            {server.displayName}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {server.name}
+                            {server.description ? ` · ${server.description}` : ''}
+                          </span>
+                          <div
+                            className="mt-0.5 flex min-w-0 items-center gap-2"
+                            data-connector-metadata={server.id}
+                          >
+                            <span
+                              className={`shrink-0 text-xs ${
+                                server.availability &&
+                                !server.checking &&
+                                !retryingIds.has(server.id)
+                                  ? 'text-destructive'
+                                  : 'text-muted-foreground'
+                              }`}
+                            >
+                              {retryingIds.has(server.id)
+                                ? t('Checking…')
+                                : server.checking
+                                  ? t('Checking…')
+                                  : server.availability === 'unavailable'
+                                    ? t('Unavailable')
+                                    : server.availability === 'unauthenticated'
+                                      ? t('Sign-in required')
+                                      : server.enabled
+                                        ? t('Connected')
+                                        : t('Disabled')}
+                            </span>
+                            <span className="min-w-0 truncate text-xs text-muted-foreground">
+                              {usageLabel ? `${usageLabel} · ` : ''}
+                              {t(SCOPE_LABEL_KEYS[scope])}
+                            </span>
+                            <ResourceTagBadges
+                              reference={{
+                                resourceType: 'catalog.connector',
+                                resourceId: server.id
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <SettingsIconAction
+                          label={t('Export {{name}}', { name: server.displayName })}
+                          icon={Download}
+                          onClick={() => onNavigate({ kind: 'export', id: server.id })}
+                        />
+                        <ResourceTagMenu
+                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
+                        />
+                        <SettingsIconAction
+                          label={t('Edit {{name}}', { name: server.displayName })}
+                          icon={Pencil}
                           onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                        >
-                          {t('Configure')}
-                        </Button>
-                      ) : null}
-                      {server.oauth ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={
-                            authenticatingIds.has(server.id) ||
-                            (server.oauth.hasTokens && server.availability !== 'unauthenticated')
-                              ? 'outline'
-                              : 'default'
-                          }
-                          disabled={
-                            authenticatingIds.has(server.id) ||
-                            (server.oauth.hasTokens && server.availability !== 'unauthenticated')
-                          }
-                          onClick={() => void signIn(server.id)}
-                        >
-                          {authenticatingIds.has(server.id)
-                            ? t('Connecting…')
-                            : server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                              ? t('Connected')
-                              : server.availability === 'unauthenticated'
-                                ? t('Retry')
-                                : t('Sign in')}
-                        </Button>
-                      ) : null}
-                      <SettingsToggle
-                        enabled={server.enabled}
-                        aria-label={server.displayName}
-                        aria-disabled={requiresSignInBeforeEnable(server) || undefined}
-                        className={
-                          requiresSignInBeforeEnable(server)
-                            ? 'cursor-not-allowed opacity-50'
-                            : undefined
-                        }
-                        title={
-                          requiresSignInBeforeEnable(server)
-                            ? t('Sign in before enabling this Connector')
-                            : undefined
-                        }
-                        onToggle={() => {
-                          if (requiresSignInBeforeEnable(server)) return
-                          void setCustomServerEnabled(server.id, !server.enabled).catch(
-                            () => undefined
-                          )
-                        }}
-                      />
-                    </li>
-                  ))}
+                        />
+                        <SettingsIconAction
+                          label={t('Remove {{name}}', { name: server.displayName })}
+                          icon={Trash2}
+                          onClick={() => void requestRemoval(server)}
+                          danger
+                        />
+                        {server.availability === 'unavailable' && server.enabled ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={retryingIds.has(server.id)}
+                            onClick={() => void retry(server.id)}
+                          >
+                            {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
+                          </Button>
+                        ) : null}
+                        {server.availability === 'unauthenticated' && !server.oauth ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                          >
+                            {t('Configure')}
+                          </Button>
+                        ) : null}
+                        {server.oauth ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              authenticatingIds.has(server.id) ||
+                              (server.oauth.hasTokens && server.availability !== 'unauthenticated')
+                                ? 'outline'
+                                : 'default'
+                            }
+                            disabled={
+                              authenticatingIds.has(server.id) ||
+                              (server.oauth.hasTokens && server.availability !== 'unauthenticated')
+                            }
+                            onClick={() => void signIn(server.id)}
+                          >
+                            {authenticatingIds.has(server.id)
+                              ? t('Connecting…')
+                              : server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                                ? t('Connected')
+                                : server.availability === 'unauthenticated'
+                                  ? t('Retry')
+                                  : t('Sign in')}
+                          </Button>
+                        ) : null}
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
+                          <SettingsToggle
+                            enabled={server.enabled}
+                            aria-label={server.displayName}
+                            aria-disabled={requiresSignInBeforeEnable(server) || undefined}
+                            className={
+                              requiresSignInBeforeEnable(server)
+                                ? 'cursor-not-allowed opacity-50'
+                                : undefined
+                            }
+                            title={
+                              requiresSignInBeforeEnable(server)
+                                ? t('Sign in before enabling this Connector')
+                                : undefined
+                            }
+                            onToggle={() => {
+                              if (requiresSignInBeforeEnable(server)) return
+                              void saveToggle(async () => {
+                                await setCustomServerEnabled(server.id, !server.enabled)
+                              })
+                            }}
+                          />
+                        </div>
+                      </li>
+                    )
+                  })}
                 </ul>
               ) : (
                 <p className="mt-2 py-2 text-xs text-muted-foreground">
@@ -642,10 +910,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       <AlertDialog.Root
         open={removal !== null}
         onOpenChange={(open) => {
-          if (!open && !removing) {
-            setRemoval(null)
-            setRemovalError(null)
-          }
+          if (!open && !removing) cancelRemoval()
         }}
       >
         <AlertDialog.Portal>
@@ -696,12 +961,24 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                     {removal.specialistNames.join(', ')}
                   </p>
                 </div>
-              ) : removal?.specialistNames === undefined ? (
-                <p className="mt-4 text-xs text-muted-foreground">
-                  {tCommon(
-                    'Specialist references could not be checked. You can still remove this Connector.'
-                  )}
-                </p>
+              ) : removal && removal.specialistNames === undefined ? (
+                <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
+                  <p>
+                    {tCommon(
+                      'Specialist references could not be checked. Retry before removing this Connector.'
+                    )}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    disabled={removing || checkingRemoval}
+                    onClick={() => void requestRemoval(removal.server)}
+                  >
+                    {checkingRemoval ? tCommon('Checking…') : tCommon('Retry')}
+                  </Button>
+                </div>
               ) : null}
               {removalError ? (
                 <div
@@ -728,7 +1005,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               <Button
                 type="button"
                 variant="destructive"
-                disabled={removing}
+                disabled={removing || checkingRemoval || removal?.specialistNames === undefined}
                 onClick={() => void confirmRemoval()}
               >
                 {removing ? t('Removing…') : t('Remove Connector')}

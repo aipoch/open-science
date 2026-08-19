@@ -59,9 +59,12 @@ describe('Web RPC contract', () => {
     expect(invokePaths.filter((path) => path.startsWith('compute.'))).toEqual([
       'compute.bookmarksGet',
       'compute.bookmarksSet',
+      'compute.changeAuthentication',
       'compute.concurrencySet',
       'compute.create',
+      'compute.createPassword',
       'compute.delete',
+      'compute.deletionStatus',
       'compute.detailsGet',
       'compute.detailsSave',
       'compute.download',
@@ -73,8 +76,11 @@ describe('Web RPC contract', () => {
       'compute.jobsPendingNotification',
       'compute.list',
       'compute.listDir',
+      'compute.passwordCapability',
       'compute.probe',
       'compute.replayApproval',
+      'compute.replayPendingApprovals',
+      'compute.resetPassword',
       'compute.respondApproval',
       'compute.revealInFolder',
       'compute.scratchSet',
@@ -88,6 +94,7 @@ describe('Web RPC contract', () => {
     ).toBe(true)
     expect(eventPaths.filter((path) => path.startsWith('compute.'))).toEqual([
       'compute.onApprovalRequest',
+      'compute.onApprovalSettled',
       'compute.onJobUpdated'
     ])
   })

@@ -5,6 +5,7 @@ type DatabaseStartupErrorCode =
   | 'database_history_invalid'
   | 'database_migration_failed'
   | 'database_validation_failed'
+  | 'database_startup_unavailable'
 
 type DatabaseStartupError = {
   code: DatabaseStartupErrorCode

@@ -21,6 +21,7 @@ import type {
   ChildRecord,
   SessionKey
 } from '../delegation/session-records'
+import { saveSessionWithRevision } from './save-session'
 import { SessionRuntimeContextRevisionConflictError } from './state-owner'
 
 type DelegatedWorkSessionRepository = {
@@ -38,12 +39,15 @@ type DelegatedWorkSessionRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
 }
 
 type SessionDelegatedWorkStoreOptions = {
   repository: DelegatedWorkSessionRepository
-  runExclusive: <Result>(work: () => Promise<Result>) => Promise<Result>
+  runExclusive: <Result>(
+    key: SessionKey | undefined,
+    work: () => Promise<Result>
+  ) => Promise<Result>
   assertMutable: (projectId: string, sessionId: string) => void
   markStartupRecoveryComplete: () => void
   notifySessionUpdated: (session: PersistedChatSession) => void
@@ -165,7 +169,7 @@ class SessionDelegatedWorkStore {
     ) => Result,
     options: Readonly<{ rejectNewQuestionQuarantine?: boolean }> = {}
   ): Promise<Result> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(key, async () => {
       if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
         throw new Error('Session runtime context expected revision must be a non-negative integer.')
       }
@@ -228,8 +232,8 @@ class SessionDelegatedWorkStore {
         runtimeContext,
         updatedAt
       }
-      await this.options.repository.saveSession(updated)
-      this.options.notifySessionUpdated(updated)
+      const persisted = await saveSessionWithRevision(this.options.repository, updated)
+      this.options.notifySessionUpdated(persisted)
       return result
     })
   }
@@ -238,7 +242,7 @@ class SessionDelegatedWorkStore {
     key: SessionKey,
     input: AttachDelegatedMessageArtifactsInput
   ): Promise<void> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(key, async () => {
       this.options.assertMutable(key.projectId, key.sessionId)
       const session = await this.loadRuntimeContextSession(key.projectId, key.sessionId, 'patch')
       const materialized = materializeSessionConversationGraph(session)
@@ -310,13 +314,13 @@ class SessionDelegatedWorkStore {
         filesRevision: (materialized.filesRevision ?? 0) + 1,
         updatedAt: Math.max(materialized.updatedAt + 1, Date.now())
       }
-      await this.options.repository.saveSession(updated)
-      this.options.notifySessionUpdated(updated)
+      const persisted = await saveSessionWithRevision(this.options.repository, updated)
+      this.options.notifySessionUpdated(persisted)
     })
   }
 
   readChildren(key: SessionKey, parentFrameId: string): Promise<readonly ChildRecord[]> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(key, async () => {
       const session = await this.loadRuntimeContextSession(key.projectId, key.sessionId, 'read')
       const materialized = materializeSessionConversationGraph(session)
       const graph = materialized.conversationGraph
@@ -343,7 +347,7 @@ class SessionDelegatedWorkStore {
   }
 
   recoverInterruptedDelegatedWork(): Promise<readonly { frameId: string; attemptId: string }[]> {
-    return this.options.runExclusive(async () => {
+    return this.options.runExclusive(undefined, async () => {
       const scan = await this.options.repository.loadAllWithDiagnostics({ mode: 'read-only' })
       if (!scan.isComplete) {
         throw new Error('Cannot recover Delegated Work from an incomplete Session catalog.')
@@ -352,8 +356,8 @@ class SessionDelegatedWorkStore {
       for (const session of scan.result.sessions) {
         const recovery = recoverInterruptedDelegatedWorkSession(session)
         if (recovery.interrupted.length === 0) continue
-        await this.options.repository.saveSession(recovery.session)
-        this.options.notifySessionUpdated(recovery.session)
+        const persisted = await saveSessionWithRevision(this.options.repository, recovery.session)
+        this.options.notifySessionUpdated(persisted)
         interrupted.push(...recovery.interrupted)
       }
       this.options.markStartupRecoveryComplete()

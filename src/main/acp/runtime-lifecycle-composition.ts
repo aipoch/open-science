@@ -36,7 +36,7 @@ type AcpRuntimeLifecycleHost = Readonly<{
 // Host callbacks retain only structural facade operations and are never invoked during construction.
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 const composeAcpRuntimeLifecycleOwners = (
-  options: Pick<AcpRuntimeOptions, 'appVersion' | 'defaultCwd'>,
+  options: Pick<AcpRuntimeOptions, 'appVersion' | 'defaultCwd' | 'hasReplayableImageHistory'>,
   base: AcpRuntimeBaseOwners,
   session: AcpRuntimeSessionOwners,
   host: AcpRuntimeLifecycleHost
@@ -136,6 +136,7 @@ const composeAcpRuntimeLifecycleOwners = (
     isGenerationBusy: () => base.generationActivity.blockers().retirement,
     contextEstimateInput: (sessionId) =>
       session.contextUsagePolicy.resolve(sessionId).estimateInput,
+    hasReplayableImageHistory: options.hasReplayableImageHistory,
     emitState: () => session.publication.emitState(),
     requestReconnect: () => base.connectionTransitions.requestProviderReconnect(),
     recoverFailedReconnect: (disconnectedGeneration) =>

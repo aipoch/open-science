@@ -138,7 +138,7 @@ vi.mock('./logger', () => ({
   })
 }))
 
-const { createAppTray, setTrayIconVariant } = await import('./tray')
+const { createAppTray, refreshAppTrayLocale, setTrayIconVariant } = await import('./tray')
 
 const originalPlatform = process.platform
 const setPlatform = (value: string): void => {
@@ -187,6 +187,22 @@ describe('createAppTray', () => {
       'Hide',
       'Quit'
     ])
+  })
+
+  it('rebuilds menu labels when the process locale changes', () => {
+    let prefix = 'en'
+    const tray = createAppTray({
+      iconPath: '/icons/tray.png',
+      onShow: vi.fn(),
+      onHide: vi.fn(),
+      onQuit: vi.fn(),
+      translate: (key) => `${prefix}:${key}`
+    })
+
+    expect(lastTemplate?.[0]?.label).toBe('en:Show')
+    prefix = 'ja'
+    refreshAppTrayLocale(tray)
+    expect(lastTemplate?.[0]?.label).toBe('ja:Show')
   })
 
   it('wires menu items and left click to the provided callbacks', () => {

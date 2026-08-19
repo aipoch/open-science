@@ -8,7 +8,7 @@ import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
-import { ReviewerModelSelect, SubagentModelSelect } from './SubagentModelSelect'
+import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
 import { SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 
@@ -353,6 +353,19 @@ const ProvidersPanel = ({
       >
         <div className="max-w-2xl">
           <ReviewerModelSelect />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title={t('Vision model')}
+        aria-label={t('Vision model')}
+        description={t(
+          'Reads attached images when the active model cannot. The selected provider receives only the image; the active model receives text evidence.'
+        )}
+        separated
+      >
+        <div className="max-w-2xl">
+          <VisionModelSelect />
         </div>
       </SettingsSection>
 

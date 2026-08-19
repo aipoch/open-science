@@ -39,6 +39,7 @@ type AcpModelChangeWorkflowOptions = Readonly<{
   providerReconnectPending: () => boolean
   isGenerationBusy: () => boolean
   contextEstimateInput: (sessionId: string) => SessionEstimateInput
+  hasReplayableImageHistory?: (projectId: string, sessionId: string) => Promise<boolean>
   emitState: () => void
   requestReconnect: () => Promise<void>
   recoverFailedReconnect: (disconnectedGeneration: number) => void
@@ -215,6 +216,15 @@ class AcpModelChangeWorkflow {
     const connection = this.options.connectionResources.connection
     if (!connection) return false
     const backend = this.options.backendGeneration.current
+    // ACP Sessions retain provider-side context that the host cannot inspect. Crossing the image
+    // capability boundary requires a fresh Session only when canonical history contains images;
+    // without replayable image history, the native and evidence projections are equivalent.
+    if (
+      backend.context.supportsImageInput !== target.supportsImageInput &&
+      (await this.hasReplayableImageHistory())
+    ) {
+      return false
+    }
     if (
       backend.framework.id === 'codex' &&
       target.route !== 'codex-bridge' &&
@@ -223,14 +233,6 @@ class AcpModelChangeWorkflow {
     ) {
       return false
     }
-    if (
-      backend.context.supportsImageInput &&
-      !target.supportsImageInput &&
-      (target.route === 'claude-anthropic' || target.route === 'codex-bridge')
-    ) {
-      return false
-    }
-
     try {
       if (
         target.providerTransportTargetId &&
@@ -340,6 +342,22 @@ class AcpModelChangeWorkflow {
       })
       return false
     }
+  }
+
+  private async hasReplayableImageHistory(): Promise<boolean> {
+    const inspect = this.options.hasReplayableImageHistory
+    if (!inspect) return true
+    for (const [sessionId] of this.activeSessions()) {
+      const projectId = this.options.registry.lookup(sessionId)?.aggregate.snapshot().projectId
+      if (!projectId) return true
+      try {
+        if (await inspect(projectId, sessionId)) return true
+      } catch {
+        // An unavailable durable projection cannot safely prove both capability projections equal.
+        return true
+      }
+    }
+    return false
   }
 
   private activeSession(appSessionId: string): ActiveSession | undefined {

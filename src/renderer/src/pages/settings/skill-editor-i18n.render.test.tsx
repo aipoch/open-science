@@ -107,7 +107,7 @@ describe('SkillEditor copy', () => {
     expect(container.textContent).toContain('最多 64 个字符，仅可使用小写字母、数字和单个连字符。')
 
     typeName('taken')
-    expect(container.textContent).toContain('已存在同名 Skill 。')
+    expect(container.textContent).toContain('已存在同名技能。')
   })
 
   it('joins the reserved prefixes with the locale’s own disjunction', () => {
@@ -140,6 +140,6 @@ describe('SkillEditor copy', () => {
     switchTo('zh-Hans')
     // Paths and the frontmatter fence are protocol, not prose — identical in every locale.
     expect(codes()).toEqual(['---', 'references/'])
-    expect(container.textContent).toContain('保存在 Skill 的')
+    expect(container.textContent).toContain('保存在技能的')
   })
 })

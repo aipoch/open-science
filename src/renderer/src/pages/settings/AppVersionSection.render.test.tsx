@@ -99,4 +99,22 @@ describe('AppVersionSection', () => {
 
     expect(button).toBeDefined()
   })
+
+  it.each([
+    ['downloading', true],
+    ['ready', false]
+  ] as const)('sets check availability while the update is %s', (state, disabled) => {
+    useUpdateStore.setState({
+      status: { state, current: '0.2.0', latest: '0.3.0' }
+    })
+
+    act(() => {
+      root.render(<AppVersionSection />)
+    })
+
+    const checkButton = Array.from(container.querySelectorAll('button')).find((element) =>
+      /check now/i.test(element.textContent ?? '')
+    )
+    expect(checkButton?.disabled).toBe(disabled)
+  })
 })

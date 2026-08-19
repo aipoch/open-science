@@ -61,35 +61,47 @@ const warning = (
   })
 }
 
-const parseOptionalNameList = (
+const parseNameList = (
   value: Record<string, unknown>,
-  field: 'skillIds' | 'connectorIds',
+  field: 'skill_ids' | 'connector_ids',
+  diagnosticField: 'skillIds' | 'connectorIds',
   diagnostics: PackageDiagnostic[]
 ): string[] | undefined => {
-  if (!(field in value)) return undefined
   if (!Array.isArray(value[field])) {
-    warning(
+    diagnostic(
       diagnostics,
-      `specialist.${field}-invalid`,
-      `${field} must be an array of names; the invalid value was ignored.`,
+      `specialist.${diagnosticField}-invalid`,
+      `${field} must be an array of names.`,
       'specialist.json'
     )
-    return []
+    return undefined
   }
   const names: string[] = []
+  let valid = true
   for (const item of value[field]) {
     if (typeof item !== 'string' || !item.trim()) {
-      warning(
+      valid = false
+      diagnostic(
         diagnostics,
-        `specialist.${field}-entry-invalid`,
-        `${field} may contain only non-empty string names; the invalid entry was ignored.`,
+        `specialist.${diagnosticField}-entry-invalid`,
+        `${field} may contain only non-empty string names.`,
         'specialist.json'
       )
       continue
     }
-    if (!names.includes(item)) names.push(item)
+    if (names.includes(item)) {
+      valid = false
+      diagnostic(
+        diagnostics,
+        `specialist.${diagnosticField}-duplicate`,
+        `${field} must not contain duplicate names.`,
+        'specialist.json'
+      )
+      continue
+    }
+    names.push(item)
   }
-  return names
+  return valid ? names : undefined
 }
 
 const parseJson = (
@@ -197,15 +209,15 @@ const parsePayload = (
   }
   const allowedFields = new Set([
     'name',
-    'displayName',
+    'display_name',
     'description',
-    'systemPrompt',
-    'skillIds',
-    'connectorIds'
+    'system_prompt',
+    'skill_ids',
+    'connector_ids'
   ])
   const identityFields = ['id', 'version'].filter((key) => key in value)
-  const presentationFields = ['iconKey', 'colorKey'].filter((key) => key in value)
-  const capabilityFields = ['capabilityMode', 'fullAccess', 'selectedCapabilities'].filter(
+  const presentationFields = ['icon_key', 'color_key'].filter((key) => key in value)
+  const capabilityFields = ['capability_mode', 'full_access', 'selected_capabilities'].filter(
     (key) => key in value
   )
   if (identityFields.length) {
@@ -220,7 +232,7 @@ const parsePayload = (
     diagnostic(
       diagnostics,
       'specialist.presentation-field-forbidden',
-      'iconKey and colorKey are chosen in the Specialist configuration page and cannot be imported.',
+      'icon_key and color_key are chosen in the Specialist configuration page and cannot be imported.',
       'specialist.json'
     )
   }
@@ -271,49 +283,68 @@ const parsePayload = (
       'specialist.json'
     )
   }
-  if (value.displayName !== undefined) {
-    if (typeof value.displayName !== 'string' || validateSpecialistDisplayName(value.displayName)) {
+  if (value.display_name !== undefined) {
+    if (
+      typeof value.display_name !== 'string' ||
+      validateSpecialistDisplayName(value.display_name)
+    ) {
       diagnostic(
         diagnostics,
         'specialist.display-name-invalid',
-        typeof value.displayName === 'string'
-          ? validateSpecialistDisplayName(value.displayName)!
+        typeof value.display_name === 'string'
+          ? validateSpecialistDisplayName(value.display_name)!
           : 'Specialist display name must be a string.',
         'specialist.json'
       )
     }
   }
   const description = typeof value.description === 'string' ? value.description : undefined
-  if (description === undefined || validateSpecialistDescription(description)) {
+  if (
+    description === undefined ||
+    !description.trim() ||
+    validateSpecialistDescription(description)
+  ) {
     diagnostic(
       diagnostics,
       'specialist.description-invalid',
       description === undefined
         ? 'Specialist description must be a string.'
-        : validateSpecialistDescription(description)!,
+        : !description.trim()
+          ? 'Specialist description must be non-empty.'
+          : validateSpecialistDescription(description)!,
       'specialist.json'
     )
   }
-  const systemPrompt = typeof value.systemPrompt === 'string' ? value.systemPrompt : undefined
-  if (systemPrompt === undefined || validateSpecialistSystemPrompt(systemPrompt)) {
+  const systemPrompt = typeof value.system_prompt === 'string' ? value.system_prompt : undefined
+  if (
+    systemPrompt === undefined ||
+    !systemPrompt.trim() ||
+    validateSpecialistSystemPrompt(systemPrompt)
+  ) {
     diagnostic(
       diagnostics,
       'specialist.system-prompt-invalid',
       systemPrompt === undefined
         ? 'Specialist system prompt must be a string.'
-        : validateSpecialistSystemPrompt(systemPrompt)!,
+        : !systemPrompt.trim()
+          ? 'Specialist system prompt must be non-empty.'
+          : validateSpecialistSystemPrompt(systemPrompt)!,
       'specialist.json'
     )
   }
-  const skillIds = parseOptionalNameList(value, 'skillIds', diagnostics)
-  const connectorIds = parseOptionalNameList(value, 'connectorIds', diagnostics)
+  const skillIds = parseNameList(value, 'skill_ids', 'skillIds', diagnostics)
+  const connectorIds = parseNameList(value, 'connector_ids', 'connectorIds', diagnostics)
   if (
     !name ||
     description === undefined ||
+    !description.trim() ||
     systemPrompt === undefined ||
-    (value.displayName !== undefined &&
-      (typeof value.displayName !== 'string' ||
-        !!validateSpecialistDisplayName(value.displayName))) ||
+    !systemPrompt.trim() ||
+    skillIds === undefined ||
+    connectorIds === undefined ||
+    (value.display_name !== undefined &&
+      (typeof value.display_name !== 'string' ||
+        !!validateSpecialistDisplayName(value.display_name))) ||
     Object.keys(value).some((key) => !allowedFields.has(key)) ||
     !!validateSpecialistDescription(description) ||
     !!validateSpecialistSystemPrompt(systemPrompt)
@@ -322,11 +353,11 @@ const parsePayload = (
   }
   return {
     name,
-    ...(typeof value.displayName === 'string' ? { displayName: value.displayName } : {}),
+    ...(typeof value.display_name === 'string' ? { displayName: value.display_name } : {}),
     description,
     systemPrompt,
-    ...(skillIds ? { skillIds } : {}),
-    ...(connectorIds ? { connectorIds } : {})
+    skillIds,
+    connectorIds
   }
 }
 
@@ -518,7 +549,7 @@ const planBundledSkills = (
       } else if (existingVersion !== version || existing.contentHash !== contentHash) {
         disposition = 'conflict'
         reason = 'The installed Skill version or normalized content differs.'
-        diagnostic(diagnostics, 'skill.existing-conflict', reason, root, id)
+        warning(diagnostics, 'skill.existing-conflict', reason, root, id)
       } else if (existing.standalone !== false && !existing.ownerIds?.length) {
         disposition = 'reuse-standalone'
         reason = 'An identical standalone Skill is already installed.'
@@ -534,6 +565,22 @@ const planBundledSkills = (
       disposition,
       files: files.map((file) => file.path),
       ...(reason ? { reason } : {}),
+      ...(disposition === 'conflict'
+        ? {
+            conflict: {
+              localId: existing!.id,
+              installedVersion: existing!.version ?? DEFAULT_BUNDLED_SKILL_VERSION,
+              installedContentHash: existing!.contentHash ?? '',
+              mainEnabled: existing!.mainEnabled ?? false,
+              specialists: (existing!.specialistIds ?? []).map((specialistId) => ({
+                id: specialistId,
+                name:
+                  catalog.specialists?.find((specialist) => specialist.id === specialistId)?.name ??
+                  specialistId
+              }))
+            }
+          }
+        : {}),
       contentHash,
       filesToInstall: files
     })
@@ -747,7 +794,8 @@ export const validateSpecialistPackage = (
             version: skill.version,
             disposition: skill.disposition,
             files: skill.files,
-            ...(skill.reason ? { reason: skill.reason } : {})
+            ...(skill.reason ? { reason: skill.reason } : {}),
+            ...(skill.conflict ? { conflict: skill.conflict } : {})
           }))
         }
       : undefined
@@ -773,5 +821,12 @@ export const validateSpecialistPackage = (
     skills: skillPlans
   }
   deepFreeze(plan)
-  return { preview: { summary, diagnostics, installable: true }, plan }
+  return {
+    preview: {
+      summary,
+      diagnostics,
+      installable: !skillPlans.some((skill) => skill.disposition === 'conflict')
+    },
+    plan
+  }
 }

@@ -194,6 +194,79 @@ describe('StorageMigrationModal', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('resumes a verified copy without copying again and can finish the move', async () => {
+    const api = installApi()
+
+    await act(async () => {
+      root.render(
+        <StorageMigrationModal targetPath="/mnt/data" recoveryStatus="verified" onClose={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Verified data copy found')
+    expect(api.migrate).not.toHaveBeenCalled()
+
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Finish move')
+      await Promise.resolve()
+    })
+
+    expect(api.commitAndRelaunch).toHaveBeenCalledWith('/mnt/data')
+  })
+
+  it('offers discard only for an incomplete recovered copy', async () => {
+    const onClose = vi.fn()
+    const api = installApi()
+
+    await act(async () => {
+      root.render(
+        <StorageMigrationModal targetPath="/mnt/data" recoveryStatus="copying" onClose={onClose} />
+      )
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Incomplete data copy found')
+    expect(document.body.textContent).not.toContain('Finish move')
+    expect(api.detectActive).not.toHaveBeenCalled()
+    expect(api.migrate).not.toHaveBeenCalled()
+
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Discard incomplete copy')
+      await Promise.resolve()
+    })
+
+    expect(api.discardMigratedCopy).toHaveBeenCalledWith('/mnt/data')
+    expect(api.commitAndRelaunch).not.toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('confirms active-session interruption before finishing a recovered copy', async () => {
+    const api = installApi({
+      detectActive: vi
+        .fn()
+        .mockResolvedValue([{ projectId: 'proj-a', sessionId: 'sess-1', kind: 'agent' }])
+    })
+
+    await act(async () => {
+      root.render(
+        <StorageMigrationModal targetPath="/mnt/data" recoveryStatus="verified" onClose={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Finishing this recovered move will interrupt')
+    expect(document.body.textContent).not.toContain('Verified data copy found')
+
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Continue to recovery')
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Verified data copy found')
+    expect(api.migrate).not.toHaveBeenCalled()
+  })
+
   it('keeps the current location usable and warns when copied-data cleanup fails', async () => {
     const onClose = vi.fn()
     installApi({

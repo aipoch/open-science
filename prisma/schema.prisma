@@ -31,6 +31,7 @@ model Project {
   updatedAt   DateTime @updatedAt
   permissionGrants PermissionGrant[]
   previewState     ProjectPreviewState?
+  visionEvidence   VisionEvidence[]
 }
 
 model PermissionGrant {
@@ -278,10 +279,37 @@ model UploadVersion {
   basedOnVersion    UploadVersion?         @relation("UploadVersionDerivations", fields: [uploadFileId, basedOnVersionId], references: [uploadFileId, id], onDelete: Restrict)
   derivedVersions   UploadVersion[]        @relation("UploadVersionDerivations")
   sourceInputs      ArtifactVersionInput[] @relation("UploadVersionSourceInputs")
+  visionEvidence    VisionEvidence[]
 
   @@unique([uploadFileId, versionNumber])
   @@unique([uploadFileId, id])
   @@index([uploadFileId, state, registeredAt])
+}
+
+// Canonical, reusable image analysis. Session transcripts keep only their existing upload/image
+// metadata; this derived record is independently invalidated by its extractor fingerprint.
+model VisionEvidence {
+  id                    String         @id
+  projectId             String
+  sessionId             String
+  sourceKind            String
+  uploadVersionId       String?
+  sourceMessageId       String?
+  sourceImageId         String?
+  imageChecksum         String
+  mimeType              String
+  extractorFingerprint  String
+  evidenceSchemaVersion Int
+  evidenceJson          String
+  evidenceChecksum      String
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  project               Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadVersion         UploadVersion? @relation(fields: [uploadVersionId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sessionId])
+  @@index([sessionId])
+  @@index([uploadVersionId])
 }
 
 model ArtifactMessageSnapshot {
@@ -521,6 +549,9 @@ model ComputeHost {
   shape            String    @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
   sshAlias         String
   sshOverrides     String? // JSON: { user?, port?, identityFile? } — never credentials
+  authenticationMode String @default("ssh_config")
+  authenticationRevision Int @default(1)
+  lastVerifiedAt   DateTime?
   scratchRoot      String?
   scratchPinned    Boolean   @default(false)
   concurrencyLimit Int? // stored but not enforced in Phase 1
@@ -530,6 +561,28 @@ model ComputeHost {
   detailsUpdatedBy String? // user | agent
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+  credential       ComputeCredential?
+}
+
+// Main-process-only password ciphertext. The renderer has no query path to this record.
+model ComputeCredential {
+  computeHostId String      @id
+  ciphertext    Bytes
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  computeHost   ComputeHost @relation(fields: [computeHostId], references: [id], onDelete: Cascade)
+}
+
+// Makes a retried local create command return the already-created Host instead of duplicating it.
+model ComputeAuthOperation {
+  id             String   @id
+  providerId     String
+  operationKind  String
+  requestFingerprint String
+  resultRevision Int
+  createdAt      DateTime @default(now())
+
+  @@index([providerId])
 }
 
 // A local folder the user explicitly granted the app access to ("Grant folder access"). Pure-additive
@@ -545,4 +598,33 @@ model GrantedLocalRoot {
   access    String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// User-defined cross-resource labels plus application-owned built-ins such as Favorites. System
+// labels derive their localized presentation from systemKey; custom labels persist their display
+// name and fixed-palette visual keys. nameKey is an internal comparison key and never crosses IPC.
+model Tag {
+  id          String          @id @default(cuid())
+  systemKey   String?         @unique
+  name        String?
+  nameKey     String?         @unique
+  iconKey     String?
+  colorKey    String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  assignments TagAssignment[]
+}
+
+// resourceType is intentionally a registry-backed string rather than a Prisma enum so later
+// resource adapters can be added without rebuilding this table. V1 validates the three catalog
+// resource types at the application boundary.
+model TagAssignment {
+  tagId        String
+  resourceType String
+  resourceId   String
+  createdAt    DateTime @default(now())
+  tag          Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([tagId, resourceType, resourceId])
+  @@index([resourceType, resourceId])
 }

@@ -13,7 +13,7 @@ const bodyOf = (fetchImpl: ReturnType<typeof vi.fn>, n = 0): Record<string, unkn
 
 // ------------------------------------------------------------------ Grants.gov
 
-describe('research_resources / search_grants', () => {
+describe('research-resources / search_grants', () => {
   const oppHit = (id: string, number: string): Record<string, unknown> => ({
     id,
     number,
@@ -228,7 +228,7 @@ const stripped = (over: Record<string, unknown> = {}): Record<string, unknown> =
   return r
 }
 
-describe('research_resources / search_antibodies', () => {
+describe('research-resources / search_antibodies', () => {
   it('walks pages, strips volatile fields, and reports unique_ab_ids', async () => {
     const fetchImpl = vi
       .fn()
@@ -333,7 +333,7 @@ describe('research_resources / search_antibodies', () => {
   })
 })
 
-describe('research_resources / get_antibody', () => {
+describe('research-resources / get_antibody', () => {
   it('parses a numeric id into ab_id/rrid/record_count with stripped records', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes([abRecord({ abId: 3643095 })]))
     const out = (await engine(fetchImpl).call(
@@ -381,7 +381,7 @@ describe('research_resources / get_antibody', () => {
   })
 })
 
-describe('research_resources / find_antibodies_by_catalog', () => {
+describe('research-resources / find_antibodies_by_catalog', () => {
   it('keeps only exact catalog matches (via catalogNum or catAlt) and reports the search total', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonRes({
@@ -432,7 +432,7 @@ describe('research_resources / find_antibodies_by_catalog', () => {
   })
 })
 
-describe('research_resources / get_antibody_registry_stats', () => {
+describe('research-resources / get_antibody_registry_stats', () => {
   it('returns the datainfo payload verbatim', async () => {
     const fetchImpl = vi
       .fn()

@@ -587,6 +587,22 @@ describe('SystemScpRunner', () => {
     expect(result.timedOut).toBe(false)
   })
 
+  it('propagates in-flight cancellation as AbortError instead of a transfer failure', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+
+    const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'], 10_000, {
+      signal: controller.signal
+    })
+    const abortError = Object.assign(new Error('The operation was aborted.'), {
+      name: 'AbortError'
+    })
+    child.emit('error', abortError)
+
+    await expect(promise).rejects.toBe(abortError)
+  })
+
   it('drops stderr chunks once the running total is already over the 8 KB cap', async () => {
     const child = new FakeChild()
     execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)

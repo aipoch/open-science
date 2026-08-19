@@ -80,7 +80,7 @@ describe('RepairFrameworkDialog copy', () => {
 
     switchTo('zh-Hant')
     expect(document.body.textContent).toContain('Claude Code 需要修復')
-    expect(document.body.textContent).toContain('請先修復該 Agent')
+    expect(document.body.textContent).toContain('請先修復該智能體')
     expect(document.body.textContent).not.toContain('needs repair')
   })
 })

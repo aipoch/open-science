@@ -5,6 +5,9 @@ import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
+import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import { imageAttachmentMimeType } from '../../shared/uploads'
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
@@ -67,6 +70,21 @@ const createProjectAgentContextResolver = (repository: {
       return undefined
     }
   }
+}
+
+const sessionHasReplayableImageHistory = (
+  session: Pick<PersistedChatSession, 'messages' | 'conversationGraph'>
+): boolean => {
+  const messages = session.conversationGraph
+    ? resolveActiveConversationMessages(session.conversationGraph)
+    : session.messages
+  return messages.some(
+    (message) =>
+      (message.images?.length ?? 0) > 0 ||
+      (message.uploads ?? []).some((upload) =>
+        Boolean(imageAttachmentMimeType(upload.name, upload.mimeType))
+      )
+  )
 }
 
 type AcpRuntimeArtifacts = {
@@ -136,6 +154,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
+  imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
 }
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
@@ -173,7 +192,8 @@ const createAcpRuntime = ({
   delegatedNotebookConnection,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
-  sideChatRelays
+  sideChatRelays,
+  imageInputCompatibility
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -399,6 +419,18 @@ const createAcpRuntime = ({
         permissionGrantStore,
         permissionGrantRegistry,
         permissionGrantContext,
+        imageInputCompatibility,
+        ...(sessionPersistenceCoordinator
+          ? {
+              hasReplayableImageHistory: async (projectId: string, sessionId: string) => {
+                const persisted = await sessionPersistenceCoordinator.loadSessionForContinuation(
+                  projectId,
+                  sessionId
+                )
+                return sessionHasReplayableImageHistory(persisted)
+              }
+            }
+          : {}),
         resolveSpecialistIdentity: profileService
           ? async (specialistId: string, frameworkId: string) => {
               let profile
@@ -494,5 +526,5 @@ const createAcpRuntime = ({
   return runtimeCoordinator
 }
 
-export { createAcpRuntime, createProjectAgentContextResolver }
+export { createAcpRuntime, createProjectAgentContextResolver, sessionHasReplayableImageHistory }
 export type { AcpRuntimeCompositionOptions }

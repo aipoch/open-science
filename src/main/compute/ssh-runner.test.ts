@@ -69,9 +69,10 @@ vi.mock('node:os', async (importOriginal) => ({
 // Controllable ChildProcess double matching execFile's surface used by
 // SystemSshRunner: stdout/stderr are EventEmitters, kill() records the signal.
 class FakeChild extends EventEmitter {
-  stdout = new EventEmitter()
-  stderr = new EventEmitter()
+  stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() })
+  stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() })
   kill = vi.fn(() => true)
+  unref = vi.fn(() => this)
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +522,119 @@ describe('SystemSshRunner', () => {
     const result = await promise
     expect(result.timedOut).toBe(true)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('settles after a bounded grace period when a timed-out child never closes', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const settled = vi.fn()
+
+    void runner.run(target(), 'ignores-signals', { timeoutMs: 1000 }).then(settled, settled)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(child.kill.mock.calls).toEqual([['SIGTERM']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ timedOut: true }))
+    expect(child.stdout.destroy).toHaveBeenCalledOnce()
+    expect(child.stderr.destroy).toHaveBeenCalledOnce()
+    expect(child.unref).toHaveBeenCalledOnce()
+  })
+
+  it('kills the child and preserves AbortSignal cancellation', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+
+    const promise = runner.run(target(), 'long-running', {
+      timeoutMs: 5000,
+      signal: controller.signal
+    })
+    const settled = vi.fn()
+    void promise.then(settled, settled)
+    controller.abort()
+
+    child.emit('exit', null)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settled).not.toHaveBeenCalled()
+
+    child.emit('close', null)
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('does not reject an aborted run until the child has closed', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+    const settled = vi.fn()
+
+    const promise = runner.run(target(), 'long-running', {
+      timeoutMs: 5000,
+      signal: controller.signal
+    })
+    void promise.then(settled, settled)
+
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settled).not.toHaveBeenCalled()
+
+    child.emit('close', null)
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('keeps a final boundary when an aborted child exits but its streams never close', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+    const settled = vi.fn()
+
+    void runner
+      .run(target(), 'leaves-streams-open', { timeoutMs: 5000, signal: controller.signal })
+      .then(settled, settled)
+
+    controller.abort()
+    child.emit('exit', null)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ name: 'AbortError' })
+    expect(child.kill.mock.calls).toEqual([['SIGTERM']])
+  })
+
+  it('rejects after a bounded grace period when an aborted child never closes', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+    const settled = vi.fn()
+
+    void runner
+      .run(target(), 'ignores-signals', { timeoutMs: 5000, signal: controller.signal })
+      .then(settled, settled)
+
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ name: 'AbortError' })
   })
 
   it('wraps the command in bash -lc when loginShell=true', async () => {

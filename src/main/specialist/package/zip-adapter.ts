@@ -1,4 +1,4 @@
-import { unzipSync, type UnzipFileInfo } from 'fflate'
+import { strToU8, unzipSync, type UnzipFileInfo } from 'fflate'
 
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
@@ -8,6 +8,7 @@ import {
   type SpecialistPackageValidationResult
 } from '../../../shared/specialist-package'
 import { validateSpecialistPackage, type SpecialistPackageFile } from './validator'
+import { buildDeterministicSpecialistZip } from './contribution-template'
 
 const LIMITS = SPECIALIST_PACKAGE_ARCHIVE_LIMITS
 const NOISE_PATH = /(?:^|\/)(?:__MACOSX(?:\/|$)|\.DS_Store$|Thumbs\.db$)/i
@@ -88,7 +89,8 @@ const issue = (
 }
 
 const scanArchive = (
-  archiveBytes: Uint8Array
+  archiveBytes: Uint8Array,
+  limits = LIMITS
 ): {
   files?: Record<string, Uint8Array>
   diagnostics: PackageDiagnostic[]
@@ -100,16 +102,16 @@ const scanArchive = (
   const normalizedPaths = new Set<string>()
   const archive: SpecialistPackageArchiveMetrics = {
     compressedBytes: archiveBytes.byteLength,
-    limits: LIMITS
+    limits
   }
 
-  if (archiveBytes.byteLength > LIMITS.compressedBytes) {
+  if (archiveBytes.byteLength > limits.compressedBytes) {
     issue(
       diagnostics,
       'package.archive-compressed-size-exceeded',
       'The compressed archive exceeds the safe preview limit.',
       undefined,
-      { actual: archiveBytes.byteLength, limit: LIMITS.compressedBytes, unit: 'bytes' }
+      { actual: archiveBytes.byteLength, limit: limits.compressedBytes, unit: 'bytes' }
     )
     return { diagnostics, archive }
   }
@@ -130,7 +132,7 @@ const scanArchive = (
           issue(diagnostics, pathCode, 'The archive entry path is unsafe.', file)
         }
         const depth = file.name.split('/').filter(Boolean).length
-        if (depth > LIMITS.pathDepth) {
+        if (depth > limits.pathDepth) {
           issue(
             diagnostics,
             'package.archive-path-depth-exceeded',
@@ -138,7 +140,7 @@ const scanArchive = (
             file,
             {
               actual: depth,
-              limit: LIMITS.pathDepth,
+              limit: limits.pathDepth,
               unit: 'levels'
             }
           )
@@ -174,7 +176,7 @@ const scanArchive = (
           )
         }
 
-        if (!isDirectory && file.originalSize > LIMITS.fileBytes) {
+        if (!isDirectory && file.originalSize > limits.fileBytes) {
           issue(
             diagnostics,
             'package.archive-file-size-exceeded',
@@ -182,7 +184,7 @@ const scanArchive = (
             file,
             {
               actual: file.originalSize,
-              limit: LIMITS.fileBytes,
+              limit: limits.fileBytes,
               unit: 'bytes'
             }
           )
@@ -197,7 +199,7 @@ const scanArchive = (
         }
         const ratio =
           file.size === 0 ? (file.originalSize === 0 ? 0 : Infinity) : file.originalSize / file.size
-        if (!isDirectory && ratio > LIMITS.compressionRatio) {
+        if (!isDirectory && ratio > limits.compressionRatio) {
           issue(
             diagnostics,
             'package.archive-compression-ratio-exceeded',
@@ -205,7 +207,7 @@ const scanArchive = (
             file,
             {
               actual: Math.ceil(ratio),
-              limit: LIMITS.compressionRatio,
+              limit: limits.compressionRatio,
               unit: 'ratio'
             }
           )
@@ -224,11 +226,11 @@ const scanArchive = (
           !pathCode &&
           !attributes?.encrypted &&
           !attributes?.link &&
-          fileCount <= LIMITS.fileCount &&
-          uncompressedBytes <= LIMITS.uncompressedBytes &&
-          file.originalSize <= LIMITS.fileBytes &&
+          fileCount <= limits.fileCount &&
+          uncompressedBytes <= limits.uncompressedBytes &&
+          file.originalSize <= limits.fileBytes &&
           (file.compression === 0 || file.compression === 8) &&
-          ratio <= LIMITS.compressionRatio
+          ratio <= limits.compressionRatio
         )
       }
     })
@@ -242,7 +244,7 @@ const scanArchive = (
   }
 
   const metrics = { ...archive, fileCount, uncompressedBytes }
-  if (fileCount > LIMITS.fileCount) {
+  if (fileCount > limits.fileCount) {
     issue(
       diagnostics,
       'package.archive-file-count-exceeded',
@@ -250,12 +252,12 @@ const scanArchive = (
       undefined,
       {
         actual: fileCount,
-        limit: LIMITS.fileCount,
+        limit: limits.fileCount,
         unit: 'files'
       }
     )
   }
-  if (uncompressedBytes > LIMITS.uncompressedBytes) {
+  if (uncompressedBytes > limits.uncompressedBytes) {
     issue(
       diagnostics,
       'package.archive-uncompressed-size-exceeded',
@@ -263,7 +265,7 @@ const scanArchive = (
       undefined,
       {
         actual: uncompressedBytes,
-        limit: LIMITS.uncompressedBytes,
+        limit: limits.uncompressedBytes,
         unit: 'bytes'
       }
     )
@@ -334,8 +336,78 @@ export const validateSpecialistZip = (
     preview: {
       ...result.preview,
       diagnostics,
-      installable: !diagnostics.some((entry) => entry.severity === 'error') && Boolean(result.plan),
+      installable:
+        result.preview.installable &&
+        !diagnostics.some((entry) => entry.severity === 'error') &&
+        Boolean(result.plan),
       archive: scanned.archive
     }
   }
+}
+
+const MARKETPLACE_ARCHIVE_LIMITS = {
+  ...SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
+  fileCount: 4_096
+}
+
+const SAFE_MARKETPLACE_CAPABILITY = /^[a-z0-9][a-z0-9-]{0,127}$/
+
+// Marketplace archives are digest-verified before this function is called. Scan the complete
+// immutable artifact with the narrowly raised file-count cap, then produce an ordinary portable
+// package containing only the capabilities the user reviewed. The resulting ZIP returns to the
+// existing 2,000-file validator and install transaction.
+export const filterMarketplaceSpecialistZip = (
+  archiveBytes: Uint8Array,
+  selectedSkillNames: readonly string[],
+  selectedConnectorIds: readonly string[]
+): Uint8Array => {
+  const skillNames = [...new Set(selectedSkillNames)]
+  const connectorIds = [...new Set(selectedConnectorIds)]
+  if (
+    skillNames.some((name) => !SAFE_MARKETPLACE_CAPABILITY.test(name)) ||
+    connectorIds.some((id) => !SAFE_MARKETPLACE_CAPABILITY.test(id))
+  ) {
+    throw new Error('Marketplace selection contains an invalid capability identity.')
+  }
+
+  const scanned = scanArchive(archiveBytes, MARKETPLACE_ARCHIVE_LIMITS)
+  if (!scanned.files) throw new Error('Marketplace archive failed safe extraction.')
+  const files = normalizedFiles(scanned.files)
+  if (!files) throw new Error('Marketplace archive has an invalid package layout.')
+
+  const availableSkills = new Set(
+    files.flatMap((file) => {
+      const match = /^skills\/([^/]+)\/SKILL\.md$/.exec(file.path)
+      return match?.[1] ? [match[1]] : []
+    })
+  )
+  const missingSkill = skillNames.find((name) => !availableSkills.has(name))
+  if (missingSkill)
+    throw new Error(`Marketplace archive is missing selected Skill ${missingSkill}.`)
+
+  const specialistFile = files.find((file) => file.path === 'specialist.json')
+  if (!specialistFile) throw new Error('Marketplace archive is missing specialist.json.')
+  let specialist: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(specialistFile.bytes)
+    )
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error()
+    specialist = parsed as Record<string, unknown>
+  } catch {
+    throw new Error('Marketplace archive contains invalid specialist.json.')
+  }
+
+  const selected = new Set(skillNames)
+  const filtered: Record<string, Uint8Array> = {}
+  for (const file of files) {
+    if (file.path === 'specialist.json') continue
+    const skillMatch = /^skills\/([^/]+)\//.exec(file.path)
+    if (skillMatch && !selected.has(skillMatch[1])) continue
+    filtered[file.path] = file.bytes
+  }
+  filtered['specialist.json'] = strToU8(
+    `${JSON.stringify({ ...specialist, skill_ids: skillNames, connector_ids: connectorIds }, null, 2)}\n`
+  )
+  return buildDeterministicSpecialistZip(filtered)
 }

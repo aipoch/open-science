@@ -40,6 +40,7 @@ import { validateAndSeedPack } from './pack-content'
 import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import {
   operationJournalPath,
+  readOperationChild,
   recordOperationChildSync,
   recordSpawnIntentSync,
   RuntimeOperationJournal,
@@ -2103,9 +2104,10 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const prefix = envPrefix(root, DEFAULT_PY_ENV)
     const blocked = new Set<string>()
     let attempts = 0
-    const runArgv = vi.fn(async (_argv: string[], _s, _c, onBeforeSpawn) => {
+    const runArgv = vi.fn(async (_argv: string[], _s, onChild, onBeforeSpawn) => {
       attempts += 1
       onBeforeSpawn?.()
+      onChild?.(4242) // convert the sidecar to a PID before the tree becomes unconfirmed
       throw new Error(`create failed: ${CHILD_UNCONFIRMED}`) // worker could not be confirmed stopped
     })
     const deps = makeDeps(root, {
@@ -2118,10 +2120,11 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     // First attempt fails unconfirmed and blocks the prefix in-process.
     await expect(provisioner.provisionPython(() => {})).rejects.toThrow(CHILD_UNCONFIRMED)
     expect(blocked.has(prefix)).toBe(true)
-    // The retained journal record is kept (guards next boot); the sidecar intent is not cleared.
-    expect(
-      (await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).length
-    ).toBe(1)
+    // The retained journal record is kept (guards next boot); the sidecar is downgraded from the dead
+    // direct PID to the existing no-verifiable-PID state because a descendant may still be alive.
+    const retained = await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()
+    expect(retained).toHaveLength(1)
+    expect(readOperationChild(root, retained[0].operationId)).toMatchObject({ spawning: true })
 
     // An in-session retry is now REFUSED by the block — it never spawns a second, racing create.
     await expect(provisioner.provisionPython(() => {})).rejects.toThrow(/RUNTIME_RECOVERY_BLOCKED/)
@@ -2129,11 +2132,10 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
   })
 
   it('force Reset refuses a prefix this process left live-unconfirmed (no PID to kill)', async () => {
-    // After an unconfirmed-child failure THIS process recorded, the orphan's PID never landed, so there is
-    // nothing to probe/kill. A force Reset would rm + rebuild the prefix — potentially out from under that
-    // still-live orphan — so it must REFUSE this session (the block only clears on restart, when the
-    // spawning process is provably gone). Distinct from the {spawning}-sidecar test above, where the
-    // intent was injected WITHOUT this process attempting the spawn, so Reset proceeds.
+    // After an unconfirmed-child failure THIS process recorded, there is no PID that proves the whole tree
+    // is gone. A force Reset would rm + rebuild the prefix — potentially out from under a still-live
+    // descendant — so it must REFUSE this session. The retained {spawning} sidecar also guards later
+    // startups until recovery has authoritative evidence. Distinct from the injected sidecar case above.
     const root = makeRoot()
     const blocked = new Set<string>()
     const runArgv = vi.fn(async (_argv: string[], _s, _c, onBeforeSpawn) => {

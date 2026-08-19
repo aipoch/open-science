@@ -5,11 +5,13 @@ import type { ProjectFileOriginSession } from '../../../shared/project-files'
 import type { FindingLocator } from '../../../shared/reviewer'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import { getUploadedAttachmentPath } from '../../../shared/uploads'
+import { resolvePlanFileProjection } from '../pages/workspace/session-plan/plan-file-projection'
 import {
   dialogPreviewGuardScope,
   previewLeaveGuards,
   workbenchPreviewGuardScope
 } from './preview-leave-guard'
+import { useSessionStore } from './session-store'
 
 const activeWorkbenchGuardScope = (state: PreviewWorkbenchStoreData): string | undefined =>
   workbenchPreviewGuardScope(state.activeProjectId, state.activeItemId)
@@ -248,6 +250,21 @@ const createSessionPlanPreviewItem = (
   ...(artifactVersionId ? { planArtifactVersionId: artifactVersionId } : {})
 })
 
+// Opening a saved Plan artifact file from any file entry point activates the Session Plan tool
+// tab — the same version-scoped tab the in-chat "view plan" entries use — so one Plan stays one
+// tab and keeps its approval and step-status surface. Files without a matching stored projection
+// (archived Session, pruned plan history) stay file previews; the JSON renderer shows the
+// document there.
+const redirectPlanArtifactFileItem = (item: PreviewItem): PreviewItem => {
+  if (item.type !== 'file' || item.format !== 'json' || !item.selectedVersionId) return item
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === item.sessionId)
+  if (!session?.projectId) return item
+  if (!resolvePlanFileProjection(session, item.selectedVersionId)) return item
+  return createSessionPlanPreviewItem(item.sessionId, session.projectId, item.selectedVersionId)
+}
+
 const createSessionSubagentsPreviewItem = (
   sessionId: string,
   projectId: string | undefined,
@@ -439,16 +456,17 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   // Opens the panel and activates the item for first-time preview requests.
   upsertAndActivateItem: (item) => {
+    const activeItem = redirectPlanArtifactFileItem(item)
     const current = get()
     if (
-      (changesActiveFileSelection(current, item) ||
-        (current.activeItemId !== undefined && current.activeItemId !== item.id)) &&
+      (changesActiveFileSelection(current, activeItem) ||
+        (current.activeItemId !== undefined && current.activeItemId !== activeItem.id)) &&
       !previewLeaveGuards.request(activeWorkbenchGuardScope(current), () => undefined)
     )
       return
     set((state) => ({
-      ...upsertPreviewItem(state, item),
-      activeItemId: item.id,
+      ...upsertPreviewItem(state, activeItem),
+      activeItemId: activeItem.id,
       panelState: 'open',
       openRequestVersion: state.openRequestVersion + 1
     }))

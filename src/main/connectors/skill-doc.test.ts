@@ -148,6 +148,16 @@ describe('renderSkillDoc', () => {
     expect(md).toMatch(/instead of running the call again/)
     expect(md).toMatch(/never re-(issue|call)/i)
   })
+  it('keeps planned connector work in fewer model round trips and bounds returned context', () => {
+    const baseline = renderConnectorInstructions(['mcp-pubmed'])
+    const skill = renderSkillDoc('pubmed')
+
+    for (const md of [baseline, skill]) {
+      expect(md).toMatch(/independent.*same `repl_execute`/i)
+      expect(md).toMatch(/keep large results.*globalThis/i)
+      expect(md).toMatch(/compact summary/i)
+    }
+  })
   it('gives custom MCP servers the same reuse guidance', () => {
     // Custom servers do not always receive the bundled connector baseline, so their compact Skill
     // still carries the minimum persistence rule without copying the full shared conventions.
@@ -159,6 +169,9 @@ describe('renderSkillDoc', () => {
     expect(md).toMatch(/instead of running the call again/)
     expect(md).toContain('Do not bypass `host.mcp` with raw HTTP')
     expect(md).toContain('approval')
+    expect(md).toMatch(/independent.*same `repl_execute`/i)
+    expect(md).toMatch(/keep large results.*globalThis/i)
+    expect(md).toMatch(/compact summary/i)
   })
 
   it('directs custom connector authentication failures to a listed login tool', () => {

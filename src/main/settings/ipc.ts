@@ -47,6 +47,7 @@ import {
   type SetReasoningEffortRequest,
   type SetReviewerModelRequest,
   type SetSubagentModelRequest,
+  type SetVisionModelRequest,
   type SetSkillEnabledRequest,
   type SetSkillsEnabledRequest,
   type SetToolPermissionRequest,
@@ -70,7 +71,8 @@ import {
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
-  readSubagentModel
+  readSubagentModel,
+  readVisionModel
 } from './transport-validation'
 
 const log = createLogger('settings-ipc')
@@ -174,6 +176,12 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-reviewer-model', async (_event, request: SetReviewerModelRequest) => {
     const configuration = readReviewerModel(request)
     const snapshot = await service.setReviewerModel(configuration)
+    broadcastToRenderers('settings:changed', snapshot)
+    return snapshot
+  })
+  ipcMainHandle('settings:set-vision-model', async (_event, request: SetVisionModelRequest) => {
+    const configuration = readVisionModel(request)
+    const snapshot = await service.setVisionModel(configuration)
     broadcastToRenderers('settings:changed', snapshot)
     return snapshot
   })

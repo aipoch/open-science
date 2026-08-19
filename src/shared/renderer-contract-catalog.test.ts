@@ -105,21 +105,7 @@ describe('renderer contract catalog', () => {
           surfaceInstallation.localWeb === 'web-rpc' &&
           parameterCodec.electron !== parameterCodec.web
       )
-    ).toEqual([
-      'acp.connect',
-      'acp.createSession',
-      'notebookEnv.cancel',
-      'runtime.describeUsage',
-      'runtime.getEnablement',
-      'runtime.listPackageCounts',
-      'runtime.listPackages',
-      'runtime.registerInterpreter',
-      'runtime.setEnvironmentEnabled',
-      'runtime.setInstallAuthorized',
-      'runtime.setSelection',
-      'runtime.unregisterInterpreter',
-      'sessions.saveSession'
-    ])
+    ).toEqual(['acp.connect', 'acp.createSession', 'notebookEnv.cancel', 'sessions.saveSession'])
 
     const explicitEquivalentTransforms = paths(
       ({ parameterCodec }) =>
@@ -129,6 +115,15 @@ describe('renderer contract catalog', () => {
         parameterCodec.web !== 'surface-native'
     )
     expect(explicitEquivalentTransforms).toEqual([
+      'runtime.describeUsage',
+      'runtime.getEnablement',
+      'runtime.listPackageCounts',
+      'runtime.listPackages',
+      'runtime.registerInterpreter',
+      'runtime.setEnvironmentEnabled',
+      'runtime.setInstallAuthorized',
+      'runtime.setSelection',
+      'runtime.unregisterInterpreter',
       'storage.commitAndRelaunch',
       'storage.discardMigratedCopy',
       'storage.inspectDataRoot',
@@ -143,7 +138,7 @@ describe('renderer contract catalog', () => {
     const specialist = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('specialist.')
     )
-    expect(specialist).toHaveLength(22)
+    expect(specialist).toHaveLength(31)
     expect(
       specialist.every(
         ({ surfaceInstallation }) =>
@@ -174,12 +169,19 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(24)
+    expect(compute).toHaveLength(31)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
         .map(({ publicPath }) => publicPath)
-    ).toEqual(['compute.download', 'compute.revealInFolder'])
+    ).toEqual([
+      'compute.changeAuthentication',
+      'compute.createPassword',
+      'compute.download',
+      'compute.passwordCapability',
+      'compute.resetPassword',
+      'compute.revealInFolder'
+    ])
   })
 
   it('records the paired window lifecycle channels and teardown ordering', () => {
@@ -201,14 +203,20 @@ describe('renderer contract catalog', () => {
     })
   })
 
-  it('marks only the runtime-validated Project command slice', () => {
+  it('marks the runtime-validated command slice', () => {
     expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
       'projects.create',
       'projects.delete',
       'projects.get',
       'projects.list',
       'projects.update',
-      'projects.updateArchive'
+      'projects.updateArchive',
+      'sessions.deleteSession',
+      'tags.create',
+      'tags.delete',
+      'tags.setAssignment',
+      'tags.snapshot',
+      'tags.update'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
       'projects:create',
@@ -216,7 +224,13 @@ describe('renderer contract catalog', () => {
       'projects:get',
       'projects:list',
       'projects:update',
-      'projects:update-archive'
+      'projects:update-archive',
+      'sessions:delete-session',
+      'tags:create',
+      'tags:delete',
+      'tags:set-assignment',
+      'tags:snapshot',
+      'tags:update'
     ])
   })
 })

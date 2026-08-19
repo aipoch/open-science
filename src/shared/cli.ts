@@ -2,7 +2,7 @@
 // The launcher is a tiny shim that runs the bundled CLI via the app's own Electron in Node mode, so no
 // separate Node install is needed. Shared between the main-process installer and the settings UI.
 export type CliLauncherStatus = {
-  // Whether the shim currently exists on disk at `target`.
+  // Whether an app-managed shim currently exists on disk at `target`.
   installed: boolean
   // Absolute path where the shim is (or would be) written.
   target: string

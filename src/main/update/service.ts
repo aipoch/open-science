@@ -13,6 +13,7 @@ import { fetchManifest } from './manifest'
 import type { UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
   channel: Channel,
@@ -38,6 +39,7 @@ export type UpdateServiceDeps = {
   // starts the installer download from scratch rather than resuming last session's fragment via Range.
   removeFile?: (path: string) => Promise<void>
   log?: Logger
+  translate?: NativeTranslator
 }
 
 const NOOP_LOGGER: Logger = {
@@ -75,6 +77,7 @@ export class UpdateService implements UpdateStrategy {
   // latest, so an older (drained) download can't clear a newer one's lifecycle.
   private downloadGeneration = 0
   private downloadOperation?: DiagnosticOperation
+  private checkInFlight = false
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -87,6 +90,7 @@ export class UpdateService implements UpdateStrategy {
   private readonly openExternal: (url: string) => Promise<void>
   private readonly removeFile: (path: string) => Promise<void>
   private readonly log: Logger
+  private readonly translate: NativeTranslator
   // Per-session set of target paths that have already been downloaded once this run. The first
   // download to a given path removes any pre-existing <target>.part so a restart starts fresh
   // (design: "app closes → start from scratch"). Within a session the path stays in the set and
@@ -106,6 +110,7 @@ export class UpdateService implements UpdateStrategy {
     this.openExternal = deps.openExternal ?? ((url) => shell.openExternal(url))
     this.removeFile = deps.removeFile ?? ((path) => rm(path, { force: true }))
     this.log = deps.log ?? NOOP_LOGGER
+    this.translate = deps.translate ?? englishNativeTranslator
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
@@ -117,7 +122,10 @@ export class UpdateService implements UpdateStrategy {
     if (this.platform !== 'darwin') return downloadsPath
 
     const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const options = { defaultPath: downloadsPath, title: 'Save the update installer' }
+    const options = {
+      defaultPath: downloadsPath,
+      title: this.translate('Save the update installer')
+    }
     const result = window
       ? await dialog.showSaveDialog(window, options)
       : await dialog.showSaveDialog(options)
@@ -137,49 +145,75 @@ export class UpdateService implements UpdateStrategy {
   }
 
   async check(): Promise<UpdateStatus> {
+    // A transfer and a manifest check cannot own the status concurrently. Once ready, checks still run
+    // but only a strictly newer release may supersede the downloaded installer.
+    if (this.downloadLifecycle || this.checkInFlight) return this.status
+
+    const readyStatus = this.status.state === 'ready' ? this.status : undefined
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',
       fields: { strategy: 'manifest' }
     })
-    this.setStatus({ state: 'checking', current: this.currentVersion })
-    operation.phase('fetch-manifest')
+    this.checkInFlight = true
     try {
-      const manifest = await fetchManifest(this.manifestUrl, this.fetchImpl)
-      if (!isNewer(manifest.version, this.currentVersion)) {
+      if (!readyStatus) this.setStatus({ state: 'checking', current: this.currentVersion })
+      operation.phase('fetch-manifest')
+      try {
+        const manifest = await fetchManifest(this.manifestUrl, this.fetchImpl)
+        if (readyStatus) {
+          // Another operation (for example apply() discovering a missing file) already moved the
+          // lifecycle forward; this check no longer owns the snapshot it started from.
+          if (this.status !== readyStatus) {
+            operation.complete({ result: 'superseded' })
+            return this.status
+          }
+          if (!isNewer(manifest.version, readyStatus.latest ?? this.currentVersion)) {
+            operation.complete({ result: 'ready-preserved' })
+            return this.status
+          }
+        }
+        if (!isNewer(manifest.version, this.currentVersion)) {
+          this.setStatus({
+            state: 'up-to-date',
+            current: this.currentVersion,
+            latest: manifest.version
+          })
+          operation.complete({ result: 'up-to-date' })
+          return this.status
+        }
+        const download = selectDownload(manifest, this.platform, this.arch) ?? undefined
         this.setStatus({
-          state: 'up-to-date',
+          state: 'available',
           current: this.currentVersion,
-          latest: manifest.version
+          latest: manifest.version,
+          notes: manifest.notes,
+          download,
+          totalBytes: download?.size
         })
-        operation.complete({ result: 'up-to-date' })
-        return this.status
+        operation.complete({ result: 'available', artifactAvailable: download !== undefined })
+      } catch (error) {
+        // A failed refresh must not discard an already downloaded installer. Ordinary checks continue
+        // to surface the provider error as before.
+        if (!readyStatus) {
+          this.setStatus({
+            state: 'error',
+            current: this.currentVersion,
+            error: error instanceof Error ? error.message : 'Update check failed'
+          })
+        }
+        operation.fail(error, { result: 'error' })
       }
-      const download = selectDownload(manifest, this.platform, this.arch) ?? undefined
-      this.setStatus({
-        state: 'available',
-        current: this.currentVersion,
-        latest: manifest.version,
-        notes: manifest.notes,
-        download,
-        totalBytes: download?.size
-      })
-      operation.complete({ result: 'available', artifactAvailable: download !== undefined })
-    } catch (error) {
-      this.setStatus({
-        state: 'error',
-        current: this.currentVersion,
-        error: error instanceof Error ? error.message : 'Update check failed'
-      })
-      operation.fail(error, { result: 'error' })
+      return this.status
+    } finally {
+      this.checkInFlight = false
     }
-    return this.status
   }
 
   async download(): Promise<UpdateStatus> {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. The abort claim
     // below is synchronous (before any await) so this guard and a cancel() during the drain both target
     // a consistent slot — a cancel while a retry is still draining must abort it, not be a no-op.
-    if (this.downloadAbort) return this.status
+    if (this.checkInFlight || this.downloadAbort) return this.status
 
     const { download } = this.status
     if (!download) return this.status

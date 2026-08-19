@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { OfficePreviewRenderer } from './renderers/OfficePreview'
+import { PlanJsonPreview } from './renderers/PlanJsonPreview'
 import { TiffPreviewRenderer } from './renderers/TiffPreview'
 import { renderPreviewFile } from './preview-registry'
 
@@ -33,5 +34,11 @@ describe('preview registry Office routing', () => {
     const rendered = renderPreviewFile({ item: createItem('tiff') })
 
     expect(rendered?.type).toBe(TiffPreviewRenderer)
+  })
+
+  it('routes JSON files through the Plan-aware JSON renderer', () => {
+    const rendered = renderPreviewFile({ item: createItem('json') })
+
+    expect(rendered?.type).toBe(PlanJsonPreview)
   })
 })

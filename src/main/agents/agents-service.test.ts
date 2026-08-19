@@ -199,16 +199,20 @@ describe('AgentsService read surface', () => {
   })
 
   it('surfaces internal failures as sanitized host.agents.<method>: errors', async () => {
+    const sensitiveMessage =
+      'request failed: token=secret-token path=/Users/alice/project params={"prompt":"private"} HOME=/Users/alice'
     const failing = {
       list: vi.fn(async () => {
-        throw new Error('internal secret: apikey=ABCDEF')
+        throw new Error(sensitiveMessage)
       })
     }
     const service = new AgentsService({
       profileService: failing as unknown as ProfileService,
       catalog: catalog()
     })
-    await expect(service.read({ op: 'list' })).rejects.toThrow(/host\.agents\.list:/)
+    await expect(service.read({ op: 'list' })).rejects.toThrow(
+      'host.agents.list: Internal operation failed.'
+    )
   })
 })
 

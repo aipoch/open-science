@@ -7,6 +7,7 @@ import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import type { StoredProvider } from './types'
+import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
 // module's top-level code so the vi.mock factory can reference the same spy instance.
@@ -146,6 +147,38 @@ describe('settings repository', () => {
     await expect(repository.getSettings()).resolves.toMatchObject({
       reviewerModel: { mode: 'inherit' }
     })
+  })
+
+  it('defaults, validates, and atomically persists the Vision model selection', async () => {
+    expect(sanitizeSettings({ providers: [] }).visionModel).toBeUndefined()
+    expect(
+      sanitizeSettings({
+        providers: [],
+        visionModel: {
+          providerId: 'provider-a',
+          model: '',
+          reasoningEffort: 'high'
+        }
+      }).visionModel
+    ).toBeUndefined()
+
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.setVisionModel({
+      providerId: 'provider-a',
+      model: 'vision-model',
+      reasoningEffort: 'high'
+    })
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      visionModel: {
+        providerId: 'provider-a',
+        model: 'vision-model',
+        reasoningEffort: 'high'
+      }
+    })
+
+    await repository.setVisionModel(undefined)
+    await expect(repository.getSettings()).resolves.not.toHaveProperty('visionModel')
   })
 
   it('keeps only an existing Claude subscription provider as the preferred mode', () => {
@@ -447,6 +480,35 @@ describe('settings repository', () => {
 
     await repository.setClosePreference(undefined)
     expect((await repository.getSettings()).closePreference).toBeUndefined()
+  })
+
+  it('persists and sanitizes the locale preference without defaulting an absent field', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    expect(sanitizeSettings({}).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'fr' }).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'system' }).localePreference).toBe('system')
+
+    await repository.setLocalePreference('ja')
+    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('ja')
+  })
+
+  it('serializes startup locale and runtime settings writes through one document store', async () => {
+    const root = await createStorageRoot()
+    const store = new SettingsDocumentStore(root)
+    const startupRepository = new SettingsRepository(store)
+    const runtimeRepository = new SettingsRepository(store)
+
+    await Promise.all([
+      startupRepository.setLocalePreference('zh-Hant'),
+      runtimeRepository.setNotificationsEnabled(false)
+    ])
+
+    await expect(store.read()).resolves.toMatchObject({
+      localePreference: 'zh-Hant',
+      notificationsEnabled: false
+    })
   })
 
   it('persists, sanitizes, and clears the project files filter preference', async () => {
@@ -1132,6 +1194,22 @@ describe('settings repository: v2 official providers & activeModel migration', (
 
     await repository.setSkillsEnabled(['imported-a', 'personal-b'], true)
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
+  })
+
+  it('serializes Main Skill enablement with package Skill replacement', async () => {
+    const root = await createStorageRoot()
+    const owner = skillMutationOwnerFor(root)
+    const repository = new SettingsRepository(root, (operation) => owner.runExclusive(operation))
+    const release = await owner.acquire()
+    let settled = false
+    const update = repository.setSkillEnabled('imported-a', false).finally(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+
+    release()
+    await expect(update).resolves.toMatchObject({ disabledSkillIds: ['imported-a'] })
   })
 
   it('persists and clears only the encrypted GitHub token reference and display mask', async () => {

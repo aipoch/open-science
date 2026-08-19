@@ -21,6 +21,8 @@ export type ComputeApprovalContext = {
 type ComputeApprovalBrokerDeps = {
   // Pushes a pending approval request to the renderer.
   broadcast: (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => void
+  // Reprojects an existing request without repeating first-delivery side effects such as notifications.
+  replay?: (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => void
   // Injectable for deterministic tests; defaults to crypto.randomUUID.
   generateId: () => string
   // How long to wait before auto-denying (default: 5 minutes).
@@ -122,6 +124,11 @@ export class ComputeApprovalBroker {
       ...pending.request,
       ...(pending.context?.sessionId ? { session_id: pending.context.sessionId } : {})
     }
+  }
+
+  replayPending(): void {
+    const replay = this.deps.replay ?? this.deps.broadcast
+    for (const entry of this.pending.values()) replay(entry.request, entry.context)
   }
 
   // Like request(), but checks conversation and project grants first. If a grant matches, resolves
@@ -320,6 +327,10 @@ export class ComputeApprovalBroker {
     if (entry.timer !== undefined) this.clearTimer(entry.timer)
     this.pending.delete(id)
     entry.resolve(decision)
-    this.deps.onSettled?.(id, state)
+    try {
+      this.deps.onSettled?.(id, state)
+    } catch {
+      // Renderer/event projection cannot roll back the broker decision or keep the call parked.
+    }
   }
 }

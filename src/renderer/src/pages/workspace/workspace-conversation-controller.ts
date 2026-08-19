@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import type { ChatSession, SessionActionabilityProjection } from '@/stores/session-store'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
@@ -241,9 +242,10 @@ const useWorkspaceConversationController = (
     const submitDraft = ({ forcedSkillIds, mode = 'continue' }: DraftSubmitIntent): void => {
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
-      if (mode === 'retry-reconfigure' && !session.actions.beginReconfigureRetry()) return
+      const reconfigureRetry = mode === 'retry-reconfigure'
+      if (reconfigureRetry && !session.actions.beginReconfigureRetry()) return
       const queueDraft = mode === 'continue' && canQueueDraft(current)
-      if (!queueDraft && !session.lifecycle.canStartSend()) return
+      if (!queueDraft && !reconfigureRetry && !session.lifecycle.canStartSend()) return
       const queueBlocksImmediateSend = Boolean(
         activeSession && messageQueue.lifecycle.blocksImmediateSend(activeSession.id)
       )
@@ -251,12 +253,13 @@ const useWorkspaceConversationController = (
 
       const branchInNewSession = mode === 'branch'
       if (branchInNewSession && !activeSession) return
+      if (branchInNewSession && !canBranch(current)) return
       if (activeSession && session.lifecycle.isBarrierInFlight(activeSession.id)) return
       if (
         current.supportsImageInput !== true &&
         composer.view.attachments.some((attachment) => attachment.mimeType?.startsWith('image/'))
       ) {
-        composer.actions.setError('The selected model is not configured for image input.')
+        composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
       }
       if (queueDraft && activeSession) {

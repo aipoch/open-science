@@ -41,6 +41,7 @@ import {
 import { NotebookExportReader } from './export-reader'
 import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import type { ProbeDeps } from './mirror-probe'
 import {
   installPackages as installPackagesDefault,
@@ -87,7 +88,7 @@ import {
   type NotebookSessionRuntimeBinding
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
-import { createLogger, getLogFilePath } from '../logger'
+import { createLogger, errorLogFields, getLogFilePath } from '../logger'
 import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
@@ -209,6 +210,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   saveIpynbAll?: (
     files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>
   ) => Promise<ExportNotebookAllResult>
+  translate?: NativeTranslator
   environmentStateTracker?: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -227,13 +229,14 @@ type RuntimeSession = NotebookSessionAggregate
 
 const saveIpynbWithDialog = async (
   suggestedName: string,
-  data: string
+  data: string,
+  translate: NativeTranslator = englishNativeTranslator
 ): Promise<ExportNotebookResult> => {
   const { app, dialog } = await import('electron')
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: join(app.getPath('downloads'), suggestedName),
-    title: 'Export notebook',
-    filters: [{ name: 'Jupyter Notebook', extensions: ['ipynb'] }]
+    title: translate('Export notebook'),
+    filters: [{ name: translate('Jupyter Notebook'), extensions: ['ipynb'] }]
   })
 
   if (canceled || !filePath) return { saved: false }
@@ -407,7 +410,19 @@ class NotebookRuntimeService {
       defaultExecutorOptions: resolveDefaultExecutorOptions,
       platform: options.platform,
       callbacks: options.callbacks,
-      toSessionReference: (session) => this.sessionReadModel.toSessionReference(session)
+      toSessionReference: (session) => this.sessionReadModel.toSessionReference(session),
+      onKernelStatusPersistenceFailure: ({ operation, lane, kind, env, error }) => {
+        const message = 'notebook kernel lifecycle persistence failed'
+        const fields = {
+          ...errorLogFields(error),
+          operation,
+          lane: notebookLaneKey(lane),
+          kind,
+          environment: env
+        }
+        if (this.runtimeLogger) this.runtimeLogger.error(message, fields)
+        else console.error(`[notebook] ${message}`, fields)
+      }
     })
     this.runtimeRepair = new NotebookRuntimeRepairOwner({
       runtimeRoot,
@@ -477,7 +492,7 @@ class NotebookRuntimeService {
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args),
       setKernelStatus: (session, status, processKey) => session.setKernelStatus(processKey, status),
       persistRecoveredKernelIdle: (session, processKey) =>
-        this.sessionLifecycle.persistKernelStatus(session as RuntimeSession, 'idle', processKey),
+        this.sessionLifecycle.persistRecoveredKernelIdle(session as RuntimeSession, processKey),
       getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
       notifyAvailable: (session, source) =>
         this.sessionLifecycle.notifyAvailable(session as RuntimeSession, source),
@@ -869,7 +884,8 @@ class NotebookRuntimeService {
   // scoped to whichever data kernel was most recently active when repl ran.
   async exportIpynb(request: ExportNotebookKernelRequest): Promise<ExportNotebookResult> {
     const file = await this.exportReader.readKernel(request)
-    return (this.options.saveIpynb ?? saveIpynbWithDialog)(file.name, file.data)
+    if (this.options.saveIpynb) return this.options.saveIpynb(file.name, file.data)
+    return saveIpynbWithDialog(file.name, file.data, this.options.translate)
   }
 
   // The "Download all" path: writes one .ipynb per data kernel that has runs to a directory the
@@ -878,13 +894,16 @@ class NotebookRuntimeService {
   // main button, so the renderer gates the secondary button on `kindsWithRuns.has('python') && has('r')`.
   async exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult> {
     const files = await this.exportReader.readAll(request)
-    return (this.options.saveIpynbAll ?? saveIpynbAll)(files)
+    if (this.options.saveIpynbAll) return this.options.saveIpynbAll(files)
+    return saveIpynbAll(files, undefined, this.options.translate)
   }
 
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the
   // executor's own in-place restart (keeps the same instance, e.g. NotebookKernelExecutor tears down
   // and lazily respawns its loops) and only shuts down + recreates for executors that don't support it.
-  // Reports 'restarting' for the duration and settles back to 'idle' once the fresh process is ready.
+  // Reports 'restarting' for the duration. A successful restart clears stale termination evidence and
+  // settles to 'idle'; a failed restart keeps that evidence and reports 'error' for kernels that were
+  // not already known to be terminated.
   async restart(request: NotebookSessionRequest): Promise<NotebookSessionState> {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
@@ -892,28 +911,48 @@ class NotebookRuntimeService {
       // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
       // is cleared. Snapshot the keys before teardown drops them from kernelStatuses.
       const envKeys = session.kernelProcessKeys()
+      const statusesBeforeRestart = new Map(
+        envKeys.map((processKey) => [processKey, session.kernelStatus(processKey)] as const)
+      )
 
       envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
-      await this.repository.clearKernelTerminations({
+      const restartingDocument = await this.repository.updateKernelStatus({
         projectId: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
         status: 'restarting'
       })
-      session.clearAllDurableKernelTerminations()
+      const hadDurableTerminations =
+        session.hasUnknownDurableKernelTermination() ||
+        (restartingDocument.kernel.terminatedKernelInstances?.length ?? 0) > 0
       this.sessionLifecycle.notifyChanged(session)
 
       try {
         await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
         this.environmentOperations.clearRestartRecommendations(envKeys)
-      } finally {
-        envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
-        await this.repository.updateKernelStatus({
+        await this.repository.clearKernelTerminations({
           projectId: session.projectId,
           sessionId: session.sessionId,
           lane: session.lane,
           status: 'idle'
         })
+        session.clearAllDurableKernelTerminations()
+        envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
+      } catch (error) {
+        await this.repository.updateKernelStatus({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          status: hadDurableTerminations ? 'terminated' : 'error'
+        })
+        envKeys.forEach((processKey) =>
+          session.setKernelStatus(
+            processKey,
+            statusesBeforeRestart.get(processKey) === 'terminated' ? 'terminated' : 'error'
+          )
+        )
+        this.sessionLifecycle.notifyChanged(session)
+        throw error
       }
       this.sessionLifecycle.notifyChanged(session)
 
@@ -940,7 +979,7 @@ class NotebookRuntimeService {
   // DIFFERENT envs proceed concurrently (the lock is keyed by resolved env name, not language).
   async managePackages(request: InstallRequest): Promise<InstallResult> {
     const manage = (): Promise<InstallResult> => this.packageOperations.manage(request)
-    if (request.projectId === undefined && request.projectId === undefined) return manage()
+    if (request.projectId === undefined && request.sessionId === undefined) return manage()
 
     // Project admission is keyed only by project identity. InstallRequest intentionally keeps the
     // session fields optional because settings and repair flows can manage a global environment.

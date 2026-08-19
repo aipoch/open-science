@@ -1,11 +1,22 @@
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const pdescribe = describe.skipIf(process.platform === 'win32')
+const symlinkDescribe = describe.skipIf(process.platform === 'win32')
 
 import {
   buildWindowsPathCommand,
@@ -157,6 +168,144 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
     const removed = await uninstallCliLauncher(env)
     expect(removed.installed).toBe(false)
     expect((await getCliLauncherStatus(env)).installed).toBe(false)
+  })
+})
+
+describe.each([
+  ['POSIX', () => posixEnv()],
+  ['Windows', () => winEnv()]
+])('unmanaged same-name launcher safety (%s)', (_platform, createEnv) => {
+  it('refuses to overwrite an unmanaged launcher during install', async () => {
+    const env = createEnv()
+    const plan = planCliLauncher(env)
+    const userContent = 'user-managed launcher\n'
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, userContent)
+
+    await expect(installCliLauncher(env, () => true)).rejects.toThrow(
+      'because it is not managed by Open Science'
+    )
+    await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
+  })
+
+  it('refuses to remove an unmanaged launcher during uninstall', async () => {
+    const env = createEnv()
+    const plan = planCliLauncher(env)
+    const userContent = 'user-managed launcher\n'
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, userContent)
+
+    await expect(uninstallCliLauncher(env)).rejects.toThrow(
+      'because it is not managed by Open Science'
+    )
+    await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
+  })
+
+  it('does not report an unmanaged launcher as installed', async () => {
+    const env = createEnv()
+    const plan = planCliLauncher(env)
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, 'user-managed launcher\n')
+
+    await expect(getCliLauncherStatus(env)).resolves.toMatchObject({
+      installed: false,
+      target: plan.target
+    })
+  })
+
+  it('continues to update and remove launchers carrying the historical ownership marker', async () => {
+    const env = createEnv()
+    const plan = planCliLauncher(env)
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(
+      plan.target,
+      'Open Science command-line launcher. Managed by the app\nlegacy launcher\n'
+    )
+
+    await expect(getCliLauncherStatus(env)).resolves.toMatchObject({ installed: true })
+    await installCliLauncher(env, () => true)
+    await expect(readFile(plan.target, 'utf8')).resolves.toBe(plan.shim)
+    await uninstallCliLauncher(env)
+    await expect(readFile(plan.target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+symlinkDescribe('symlinked launcher safety', () => {
+  const arrangeManagedTargetSymlink = async (): Promise<{
+    env: CliLauncherEnv
+    target: string
+    userFile: string
+    userContent: string
+  }> => {
+    const env = posixEnv()
+    const plan = planCliLauncher(env)
+    const userFile = join(home, 'user-script')
+    const userContent = 'Open Science command-line launcher. Managed by the app\nuser content\n'
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(userFile, userContent)
+    await symlink(userFile, plan.target, 'file')
+    return { env, target: plan.target, userFile, userContent }
+  }
+
+  it('does not report a symlink to marker-bearing user content as installed', async () => {
+    const { env } = await arrangeManagedTargetSymlink()
+
+    await expect(getCliLauncherStatus(env)).resolves.toMatchObject({ installed: false })
+  })
+
+  it('refuses to follow a symlink during install', async () => {
+    const { env, target, userFile, userContent } = await arrangeManagedTargetSymlink()
+
+    await expect(installCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
+    expect((await lstat(target)).isSymbolicLink()).toBe(true)
+  })
+
+  it('refuses to remove a symlink during uninstall', async () => {
+    const { env, target, userFile, userContent } = await arrangeManagedTargetSymlink()
+
+    await expect(uninstallCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
+    expect((await lstat(target)).isSymbolicLink()).toBe(true)
+  })
+})
+
+describe('hard-linked launcher safety', () => {
+  const arrangeManagedTargetHardLink = async (): Promise<{
+    env: CliLauncherEnv
+    target: string
+    userFile: string
+    userContent: string
+  }> => {
+    const env = posixEnv()
+    const plan = planCliLauncher(env)
+    const userFile = join(home, 'user-script')
+    const userContent = 'Open Science command-line launcher. Managed by the app\nuser content\n'
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(userFile, userContent)
+    await link(userFile, plan.target)
+    return { env, target: plan.target, userFile, userContent }
+  }
+
+  it('does not report a hard link to marker-bearing user content as installed', async () => {
+    const { env } = await arrangeManagedTargetHardLink()
+
+    await expect(getCliLauncherStatus(env)).resolves.toMatchObject({ installed: false })
+  })
+
+  it('refuses to follow a hard link during install', async () => {
+    const { env, userFile, userContent } = await arrangeManagedTargetHardLink()
+
+    await expect(installCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
+  })
+
+  it('refuses to remove a hard link during uninstall', async () => {
+    const { env, target, userFile, userContent } = await arrangeManagedTargetHardLink()
+
+    await expect(uninstallCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
+    await expect(lstat(target)).resolves.toMatchObject({ nlink: 2 })
   })
 })
 

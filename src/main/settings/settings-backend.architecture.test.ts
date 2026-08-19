@@ -56,6 +56,7 @@ const settingsPaths = {
   responsesResponseAdapter: resolve(settingsRoot, 'responses-response-adapter.ts'),
   reviewerModelOwner: resolve(settingsRoot, 'reviewer-model-owner.ts'),
   subagentModelOwner: resolve(settingsRoot, 'subagent-model-owner.ts'),
+  visionModelOwner: resolve(settingsRoot, 'vision-model-owner.ts'),
   subagentModelSettings: resolve(settingsRoot, 'subagent-model-settings.ts'),
   service: resolve(settingsRoot, 'service.ts'),
   types: resolve(settingsRoot, 'types.ts'),
@@ -305,7 +306,8 @@ describe('Settings backend ownership architecture', () => {
     )
     expect(rawLineCount(readSource(settingsPaths.reviewerModelOwner))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.subagentModelOwner))).toBeLessThanOrEqual(660)
-    // Main's facade plus typed Subagent forwarding, proxy projection, and owner composition.
+    expect(rawLineCount(readSource(settingsPaths.visionModelOwner))).toBeLessThanOrEqual(660)
+    // Main's facade plus typed Subagent/Reviewer/Vision forwarding, proxy projection, and owner composition.
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1050)
   })
 
@@ -377,8 +379,10 @@ describe('Settings backend ownership architecture', () => {
     expect(exportInventoryFrom(settingsPaths.subagentModelSettings)).toEqual([
       'type:ReviewerModelValidator',
       'type:SubagentModelValidator',
+      'type:VisionModelValidator',
       'value:buildReviewerModelMutation',
-      'value:buildSubagentModelMutation'
+      'value:buildSubagentModelMutation',
+      'value:buildVisionModelMutation'
     ])
   })
 
@@ -390,6 +394,7 @@ describe('Settings backend ownership architecture', () => {
       'clearComputeGrants',
       'clearGrantedLocalRoots',
       'clearOpencodeInfo',
+      'completeCustomServerDeletion',
       'deleteProvider',
       'getSettings',
       'hasComputeGrant',
@@ -412,6 +417,7 @@ describe('Settings backend ownership architecture', () => {
       'setDataRoot',
       'setDefaultPermissionProfile',
       'setGitHubToken',
+      'setLocalePreference',
       'setManualInterpreters',
       'setNcbiCredentials',
       'setNetworkProxy',
@@ -428,6 +434,7 @@ describe('Settings backend ownership architecture', () => {
       'setSubagentModel',
       'setToolBlocked',
       'setToolPolicy',
+      'setVisionModel',
       'updateClaudeIsolatedCredentialsIfExists',
       'updateClaudeIsolatedValidationIfKeyMatches',
       'updateClaudeSharedValidationIfUnchanged',
@@ -499,7 +506,7 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSubagentExecutionModel authenticateCustomServer buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
         buildSkillExport cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codexSkillCatalog
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
@@ -520,7 +527,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
-        setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel
+        setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider withHostSkillRead
       `
@@ -532,7 +539,9 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the current production importer graph at the public seams', () => {
     expect(importersOf(settingsPaths.repository)).toEqual([
+      'src/main/index.ts',
       'src/main/ipc.ts',
+      'src/main/locale/owner.ts',
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
@@ -543,7 +552,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
       'src/main/settings/skill-catalog.ts',
-      'src/main/settings/subagent-model-owner.ts'
+      'src/main/settings/subagent-model-owner.ts',
+      'src/main/settings/vision-model-owner.ts'
     ])
     expect(importersOf(settingsPaths.recordCodec)).toEqual([
       'src/main/settings/document-codec.ts',
@@ -553,7 +563,11 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/document-store.ts',
       'src/main/settings/repository.ts'
     ])
-    expect(importersOf(settingsPaths.documentStore)).toEqual(['src/main/settings/repository.ts'])
+    expect(importersOf(settingsPaths.documentStore)).toEqual([
+      'src/main/index.ts',
+      'src/main/ipc.ts',
+      'src/main/settings/repository.ts'
+    ])
     expect(importersOf(settingsPaths.computeGrantPort)).toEqual(['src/main/compute/ipc.ts'])
     expect(importersOf(settingsPaths.providerAccounts)).toEqual([
       'src/main/settings/agent-runtime-manager.ts',
@@ -563,10 +577,12 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
-      'src/main/settings/subagent-model-owner.ts'
+      'src/main/settings/subagent-model-owner.ts',
+      'src/main/settings/vision-model-owner.ts'
     ])
     expect(importersOf(settingsPaths.backendResolver)).toEqual([
       'src/main/acp/artifact-code-reconstruction-runner.ts',
+      'src/main/acp/image-input-compatibility-owner.ts',
       'src/main/acp/restricted-inference-runner.ts',
       'src/main/artifacts/code-reconstruction.ts',
       'src/main/notebook/host-model-service.ts',
@@ -574,6 +590,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
       'src/main/settings/subagent-model-owner.ts',
+      'src/main/settings/vision-model-owner.ts',
       'src/main/side-chat/runtime-owner.ts'
     ])
     expect(importersOf(settingsPaths.backendRoutePlanner)).toEqual([
@@ -683,6 +700,7 @@ describe('Settings backend ownership architecture', () => {
       'githubTokenRef',
       'grantedLocalRoots',
       'legacyDataMovePromptDismissedAt',
+      'localePreference',
       'networkProxy',
       'notebookManualInterpreters',
       'notebookRuntimeEnablement',
@@ -698,7 +716,8 @@ describe('Settings backend ownership architecture', () => {
       'reasoningEffort',
       'reviewerModel',
       'subagentModel',
-      'version'
+      'version',
+      'visionModel'
     ])
     expect(typePropertyNames(settingsPaths.types, 'StoredProvider')).toEqual([
       'apiEndpoints',
@@ -727,8 +746,9 @@ describe('Settings backend ownership architecture', () => {
     )
   })
 
-  it('locks one production Settings arbitration owner and the narrow Compute legacy port', () => {
+  it('locks one production Settings document owner and the narrow Compute legacy port', () => {
     expect(constructorSitesFor(settingsPaths.repository, 'SettingsRepository')).toEqual([
+      'src/main/index.ts',
       'src/main/ipc.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts'
@@ -740,6 +760,15 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants.hasComputeGrant(grant)')
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
     const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
+    const mainIndex = readSource(resolve(projectRoot, 'src/main/index.ts'))
+    expect(mainIndex).toContain(
+      'const settingsStore = new SettingsDocumentStore(resolveStorageRoot())'
+    )
+    expect(mainIndex).toContain(
+      'const startupSettingsRepository = new SettingsRepository(settingsStore)'
+    )
+    expect(mainIndex).toContain('settingsStore,\n          translate,')
+    expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
     expect(mainIpc).toContain(
       'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      applyNetworkProxy:'
     )
@@ -793,7 +822,8 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
       'src/main/settings/service.ts',
       'src/main/settings/reviewer-model-owner.ts',
-      'src/main/settings/subagent-model-owner.ts'
+      'src/main/settings/subagent-model-owner.ts',
+      'src/main/settings/vision-model-owner.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',

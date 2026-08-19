@@ -242,7 +242,7 @@ gate('host.agents repl mutation integration', () => {
         ).result ?? '{}'
       )
       const r = await send(
-        `return JSON.stringify(await host.agents.update('UpdBot', { revision: ${created.revision}, displayName: 'Updated Bot', description: 'after', systemPrompt: 'updated prompt', iconKey: 'flask', colorKey: 'blue', skillNames: ['demo'], connectorNames: ['my-server'] }))`
+        `return JSON.stringify(await host.agents.update('UpdBot', { revision: ${created.revision}, displayName: 'Updated Bot', description: 'after', systemPrompt: 'updated prompt', iconKey: 'flask', colorKey: 'blue', enabled: false, skillNames: ['demo'], connectorNames: ['my-server'] }))`
       )
       expect(r.error).toBeNull()
       const updated = JSON.parse(r.result ?? '{}')
@@ -252,6 +252,7 @@ gate('host.agents repl mutation integration', () => {
       expect(updated.systemPrompt).toBe('updated prompt')
       expect(updated.iconKey).toBe('flask')
       expect(updated.colorKey).toBe('blue')
+      expect(updated.enabled).toBe(false)
       expect(updated.capabilityMode).toBe('selected')
       expect(updated.selectedCapabilities.skillIds).toEqual(['demo'])
       expect(updated.selectedCapabilities.connectorIds).toEqual(['cust-1'])

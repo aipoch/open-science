@@ -245,6 +245,15 @@ class NotebookPackageMutationOwner {
       if (isRepairQuarantineError(error)) retainForRecovery = true
       if (isChildUnconfirmedError(error)) {
         retainForRecovery = true
+        // The direct installer PID may already be gone while an unenumerated/reparented descendant
+        // continues writing. Replace that stale identity with the existing no-verifiable-PID state so
+        // startup recovery blocks instead of clearing the journal after probing only the dead parent.
+        try {
+          recordSpawnIntentSync(runtimeRoot, operationId)
+        } catch {
+          // Retain the prior sidecar + journal as the best durable evidence still available. The
+          // in-process recovery block below remains authoritative for this app lifetime.
+        }
         this.options.blockUnconfirmedChild(target)
       }
       throw error

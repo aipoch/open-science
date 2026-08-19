@@ -218,6 +218,32 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "UploadVersion_originKind_check" CHECK ("originKind" IN ('user_upload', 'user_edit', 'legacy')),
     CONSTRAINT "UploadVersion_userEdit_check" CHECK (("originKind" <> 'user_edit' OR ("state" = 'ready' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL)))
 );`,
+  `CREATE TABLE IF NOT EXISTS "VisionEvidence" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "sourceKind" TEXT NOT NULL,
+    "uploadVersionId" TEXT,
+    "sourceMessageId" TEXT,
+    "sourceImageId" TEXT,
+    "imageChecksum" TEXT NOT NULL,
+    "mimeType" TEXT NOT NULL,
+    "extractorFingerprint" TEXT NOT NULL,
+    "evidenceSchemaVersion" INTEGER NOT NULL,
+    "evidenceJson" TEXT NOT NULL,
+    "evidenceChecksum" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "VisionEvidence_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "VisionEvidence_uploadVersionId_fkey" FOREIGN KEY ("uploadVersionId") REFERENCES "UploadVersion" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "VisionEvidence_sourceKind_check" CHECK ("sourceKind" IN ('upload-version', 'message-image')),
+    CONSTRAINT "VisionEvidence_sourceIdentity_check" CHECK ((("sourceKind" = 'upload-version' AND "uploadVersionId" IS NOT NULL AND "sourceMessageId" IS NULL AND "sourceImageId" IS NULL) OR ("sourceKind" = 'message-image' AND "uploadVersionId" IS NULL AND "sourceMessageId" IS NOT NULL AND "sourceImageId" IS NOT NULL))),
+    CONSTRAINT "VisionEvidence_schemaVersion_check" CHECK ("evidenceSchemaVersion" >= 1),
+    CONSTRAINT "VisionEvidence_imageChecksum_check" CHECK (length("imageChecksum") = 64 AND "imageChecksum" NOT GLOB '*[^0-9a-f]*'),
+    CONSTRAINT "VisionEvidence_extractorFingerprint_check" CHECK (length("extractorFingerprint") = 64 AND "extractorFingerprint" NOT GLOB '*[^0-9a-f]*'),
+    CONSTRAINT "VisionEvidence_evidenceChecksum_check" CHECK (length("evidenceChecksum") = 64 AND "evidenceChecksum" NOT GLOB '*[^0-9a-f]*'),
+    CONSTRAINT "VisionEvidence_evidenceJson_check" CHECK (json_valid("evidenceJson") AND json_type("evidenceJson") = 'object')
+);`,
   `CREATE TABLE IF NOT EXISTS "ArtifactMessageSnapshot" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT NOT NULL,
@@ -402,7 +428,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "harvestedAt" DATETIME,
     CONSTRAINT "ComputeJob_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
     CONSTRAINT "ComputeJob_status_check" CHECK ("status" IN ('queued', 'submitted', 'running', 'success', 'failed', 'timeout', 'error')),
-    CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'host_unreachable', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
+    CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
     CONSTRAINT "ComputeJob_timeoutSeconds_check" CHECK ("timeoutSeconds" IS NULL OR "timeoutSeconds" BETWEEN 1 AND 604800),
     CONSTRAINT "ComputeJob_notification_check" CHECK ("notificationConsumedAt" IS NULL OR "notifiedAt" IS NOT NULL),
     CONSTRAINT "ComputeJob_harvestPayload_check" CHECK (("harvestError" IS NULL AND "leftOnRemote" IS NULL) OR "harvestedAt" IS NOT NULL),
@@ -422,6 +448,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
     "sshAlias" TEXT NOT NULL,
     "sshOverrides" TEXT,
+    "authenticationMode" TEXT NOT NULL DEFAULT 'ssh_config',
+    "authenticationRevision" INTEGER NOT NULL DEFAULT 1,
+    "lastVerifiedAt" DATETIME,
     "scratchRoot" TEXT,
     "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
     "concurrencyLimit" INTEGER,
@@ -431,6 +460,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "detailsUpdatedBy" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ComputeHost_authenticationMode_check" CHECK ("authenticationMode" IN ('ssh_config', 'password')),
+    CONSTRAINT "ComputeHost_authenticationRevision_check" CHECK ("authenticationRevision" >= 1),
     CONSTRAINT "ComputeHost_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
     CONSTRAINT "ComputeHost_scratchPinned_check" CHECK ("scratchPinned" IN (false, true)),
     CONSTRAINT "ComputeHost_concurrencyLimit_check" CHECK ("concurrencyLimit" IS NULL OR "concurrencyLimit" BETWEEN 1 AND 500),
@@ -440,6 +471,23 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeHost_sshOverridesJson_check" CHECK ("sshOverrides" IS NULL OR (json_valid("sshOverrides") AND json_type("sshOverrides") = 'object')),
     CONSTRAINT "ComputeHost_probeResultJson_check" CHECK ("probeResult" IS NULL OR (json_valid("probeResult") AND json_type("probeResult") = 'object'))
 );`,
+  `CREATE TABLE IF NOT EXISTS "ComputeCredential" (
+    "computeHostId" TEXT NOT NULL PRIMARY KEY,
+    "ciphertext" BLOB NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ComputeCredential_computeHostId_fkey" FOREIGN KEY ("computeHostId") REFERENCES "ComputeHost" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "ComputeAuthOperation" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "providerId" TEXT NOT NULL,
+    "operationKind" TEXT NOT NULL,
+    "requestFingerprint" TEXT NOT NULL,
+    "resultRevision" INTEGER NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ComputeAuthOperation_resultRevision_check" CHECK ("resultRevision" >= 1),
+    CONSTRAINT "ComputeAuthOperation_operationKind_check" CHECK ("operationKind" IN ('create_password', 'reset_password', 'change_authentication'))
+);`,
   `CREATE TABLE IF NOT EXISTS "GrantedLocalRoot" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "path" TEXT NOT NULL,
@@ -448,6 +496,32 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "GrantedLocalRoot_access_check" CHECK ("access" IN ('ro', 'rw'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "Tag" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "systemKey" TEXT,
+    "name" TEXT,
+    "nameKey" TEXT,
+    "iconKey" TEXT,
+    "colorKey" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Tag_shape_check" CHECK ((("systemKey" IS NOT NULL AND "name" IS NULL AND "nameKey" IS NULL AND "iconKey" IS NULL AND "colorKey" IS NULL) OR ("systemKey" IS NULL AND "name" IS NOT NULL AND "nameKey" IS NOT NULL AND "iconKey" IS NOT NULL AND "colorKey" IS NOT NULL))),
+    CONSTRAINT "Tag_systemKey_check" CHECK ("systemKey" IS NULL OR "systemKey" = 'favorite'),
+    CONSTRAINT "Tag_name_check" CHECK ("name" IS NULL OR (length(trim("name")) BETWEEN 1 AND 64)),
+    CONSTRAINT "Tag_nameKey_check" CHECK ("nameKey" IS NULL OR (length("nameKey") BETWEEN 1 AND 64)),
+    CONSTRAINT "Tag_iconKey_check" CHECK ("iconKey" IS NULL OR "iconKey" IN ('tag', 'star', 'bookmark', 'flask-conical', 'book-open', 'database', 'code-2', 'bot')),
+    CONSTRAINT "Tag_colorKey_check" CHECK ("colorKey" IS NULL OR "colorKey" IN ('gray', 'red', 'orange', 'amber', 'green', 'blue', 'purple', 'pink'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "TagAssignment" (
+    "tagId" TEXT NOT NULL,
+    "resourceType" TEXT NOT NULL,
+    "resourceId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("tagId", "resourceType", "resourceId"),
+    CONSTRAINT "TagAssignment_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "Tag" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "TagAssignment_resourceId_check" CHECK (length(trim("resourceId")) BETWEEN 1 AND 256)
 );`
 ] as const
 
@@ -481,6 +555,9 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "UploadVersion_uploadFileId_state_registeredAt_idx" ON "UploadVersion"("uploadFileId", "state", "registeredAt");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "UploadVersion_uploadFileId_versionNumber_key" ON "UploadVersion"("uploadFileId", "versionNumber");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "UploadVersion_uploadFileId_id_key" ON "UploadVersion"("uploadFileId", "id");`,
+  `CREATE INDEX IF NOT EXISTS "VisionEvidence_projectId_sessionId_idx" ON "VisionEvidence"("projectId", "sessionId");`,
+  `CREATE INDEX IF NOT EXISTS "VisionEvidence_sessionId_idx" ON "VisionEvidence"("sessionId");`,
+  `CREATE INDEX IF NOT EXISTS "VisionEvidence_uploadVersionId_idx" ON "VisionEvidence"("uploadVersionId");`,
   `CREATE INDEX IF NOT EXISTS "ArtifactMessageSnapshot_projectId_sessionId_state_idx" ON "ArtifactMessageSnapshot"("projectId", "sessionId", "state");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactMessageSnapshot_projectId_sessionId_agentFrameId_messageBranchId_terminalMessageId_key" ON "ArtifactMessageSnapshot"("projectId", "sessionId", "agentFrameId", "messageBranchId", "terminalMessageId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ArtifactVersion_writeOperationId_key" ON "ArtifactVersion"("writeOperationId");`,
@@ -511,7 +588,11 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeJob_status_idx" ON "ComputeJob"("status");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId");`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`
+  `CREATE INDEX IF NOT EXISTS "ComputeAuthOperation_providerId_idx" ON "ComputeAuthOperation"("providerId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_systemKey_key" ON "Tag"("systemKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_nameKey_key" ON "Tag"("nameKey");`,
+  `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -535,6 +616,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'ArtifactLineage',
   'UploadFile',
   'UploadVersion',
+  'VisionEvidence',
   'ArtifactMessageSnapshot',
   'ArtifactVersion',
   'ManagedFileVersionWriteOperation',
@@ -543,7 +625,11 @@ const RUNTIME_SCHEMA_TABLES = [
   'ReviewScopeSnapshot',
   'ComputeJob',
   'ComputeHost',
-  'GrantedLocalRoot'
+  'ComputeCredential',
+  'ComputeAuthOperation',
+  'GrantedLocalRoot',
+  'Tag',
+  'TagAssignment'
 ] as const
 
 export {

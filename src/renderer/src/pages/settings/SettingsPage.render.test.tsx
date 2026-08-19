@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { act, createRef, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
+import { i18next } from '@/i18n'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -174,7 +176,10 @@ const installApi = (): void => {
       onChanged: vi.fn(() => () => undefined)
     },
     specialist: {
-      list: vi.fn().mockResolvedValue([{ kind: 'reviewer', id: 'reviewer' }]),
+      list: vi.fn().mockResolvedValue({
+        items: [{ kind: 'reviewer', id: 'reviewer' }],
+        integrity: { status: 'ok' }
+      }),
       create: vi.fn(),
       setEnabled: vi.fn(),
       onCatalogChanged: vi.fn(() => vi.fn())
@@ -221,6 +226,21 @@ const settingsSection = (title: string): HTMLElement | undefined =>
   )
 
 describe('SettingsPage layout', () => {
+  it('renders the model-dependent reasoning effort explanation naturally in Japanese', async () => {
+    await i18next.changeLanguage('ja')
+    try {
+      act(() => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+
+      expect(document.body.textContent).toContain(
+        '選択肢は選択したモデルによって異なり、モデルを変更しても相対的な強度は維持されます。'
+      )
+    } finally {
+      await i18next.changeLanguage('en')
+    }
+  })
+
   it('uses the header breadcrumb for archived project details', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
@@ -336,19 +356,19 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model, Agent, Permissions, Runtimes, Storage, Usage, General).
+    // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Usage, General).
     // Remote access stays isolated and Archived is anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
     expect(nav?.className).toContain('md:w-48')
     expect(nav?.className).toContain('w-[min(86vw,320px)]')
-    expect(nav?.nextElementSibling?.className).toContain('bg-card')
+    expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(14)
+    expect(navItems).toHaveLength(15)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -356,13 +376,14 @@ describe('SettingsPage layout', () => {
     expect(navItems[4]?.textContent).toContain('Network')
     expect(navItems[5]?.textContent).toContain('Model')
     expect(navItems[6]?.textContent).toContain('Agent')
-    expect(navItems[7]?.textContent).toContain('Permissions')
-    expect(navItems[8]?.textContent).toContain('Runtimes')
-    expect(navItems[9]?.textContent).toContain('Storage')
-    expect(navItems[10]?.textContent).toContain('Usage')
-    expect(navItems[11]?.textContent).toContain('General')
-    expect(navItems[12]?.textContent).toContain('Remote control')
-    expect(navItems[13]?.textContent).toContain('Archived')
+    expect(navItems[7]?.textContent).toContain('Tags')
+    expect(navItems[8]?.textContent).toContain('Permissions')
+    expect(navItems[9]?.textContent).toContain('Runtimes')
+    expect(navItems[10]?.textContent).toContain('Storage')
+    expect(navItems[11]?.textContent).toContain('Usage')
+    expect(navItems[12]?.textContent).toContain('General')
+    expect(navItems[13]?.textContent).toContain('Remote control')
+    expect(navItems[14]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()
@@ -383,20 +404,27 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model, Reasoning effort, Subagent model, and Reviewer model (their own
-    // sections) from provider management; the agent framework moved to the Agent sub-panel.
+    // The Model panel splits Active model, Reasoning effort, Subagent, Reviewer, and Vision models
+    // (their own sections) from provider management; agent framework moved to the Agent sub-panel.
     expect(document.body.textContent).toContain('Active model')
     expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('preserve relative strength when models change')
     expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(5)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(6)
     expect(
       Array.from(document.body.querySelectorAll('[data-slot="settings-section"]')).map((section) =>
         section.getAttribute('aria-label')
       )
-    ).toEqual(['Active model', 'Reasoning effort', 'Subagent model', 'Reviewer model', 'Providers'])
+    ).toEqual([
+      'Active model',
+      'Reasoning effort',
+      'Subagent model',
+      'Reviewer model',
+      'Vision model',
+      'Providers'
+    ])
     expect(document.body.textContent).toContain('Model used by subagents when Delegation is on.')
     expect(document.body.textContent).toContain(
       'Model used for manual, automatic, and re-run Reviews.'
@@ -786,6 +814,15 @@ describe('SettingsPage layout', () => {
         ?.click()
     })
     expect(nav?.getAttribute('aria-hidden')).toBeNull()
+    const drawer = document.body.querySelector<HTMLElement>(
+      '[data-slot="mobile-settings-navigation"]'
+    )
+    const content = document.body.querySelector<HTMLElement>('[data-slot="settings-main"]')
+    expect(drawer?.getAttribute('role')).toBe('dialog')
+    expect(drawer?.getAttribute('aria-modal')).toBe('true')
+    expect(content?.hasAttribute('inert')).toBe(true)
+    expect(content?.getAttribute('aria-hidden')).toBe('true')
+    expect(nav?.contains(document.activeElement)).toBe(true)
 
     const generalTab = Array.from(nav?.querySelectorAll('button') ?? []).find((button) =>
       /general/i.test(button.textContent ?? '')
@@ -2113,9 +2150,10 @@ describe('SettingsPage layout', () => {
       selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
       revision: 1
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { kind: 'custom', ...researcher }
-    ])
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
     useSettingsStore.setState({ pendingSpecialistId: researcher.id })
 
@@ -2164,6 +2202,88 @@ describe('SettingsPage layout', () => {
 
     expect(document.body.querySelector('h3')?.textContent).toBe('Identity')
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')).not.toBeNull()
+  })
+
+  it('uses a multi-level header breadcrumb for Marketplace Specialist details', async () => {
+    useSettingsStore.setState({ pendingSettingsPanel: 'specialists' })
+    Object.assign(window.api.specialist, {
+      listMarketplace: vi.fn().mockResolvedValue({
+        sources: [
+          {
+            id: 'official',
+            kind: 'official',
+            name: 'OpenScience Marketplace',
+            repositoryUrl: 'https://github.com/aipoch/marketplace',
+            ref: 'published',
+            trust: 'official',
+            keyId: 'key-1',
+            keyFingerprint: 'a'.repeat(64),
+            removable: false
+          }
+        ],
+        specialists: [
+          {
+            sourceId: 'official',
+            sourceName: 'OpenScience Marketplace',
+            sourceTrust: 'official',
+            id: 'example-specialist',
+            displayName: 'Example Specialist',
+            summary: 'Focused research workflows.',
+            publisher: { id: 'aipoch', name: 'Aipoch' },
+            version: '1.0.0'
+          }
+        ],
+        failures: []
+      }),
+      getMarketplaceRelease: vi.fn().mockResolvedValue({
+        sourceId: 'official',
+        specialistId: 'example-specialist',
+        displayName: 'Example Specialist',
+        summary: 'Focused research workflows.',
+        publisher: { id: 'aipoch', name: 'Aipoch' },
+        version: '1.0.0',
+        repository: 'https://github.com/aipoch/example',
+        commit: 'a'.repeat(40),
+        license: 'MIT',
+        compressedBytes: 100,
+        uncompressedBytes: 200,
+        fileCount: 2,
+        defaultSkillIds: [],
+        defaultConnectorIds: [],
+        skills: [],
+        connectors: []
+      })
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      const marketplaceTab = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      ).find((button) => button.textContent?.trim() === 'Marketplace')
+      if (marketplaceTab) fireEvent.mouseDown(marketplaceTab, { button: 0 })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.includes('Example Specialist'))
+        ?.click()
+      await Promise.resolve()
+    })
+
+    const marketplaceCrumb = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Back to Marketplace"]'
+    )
+    expect(marketplaceCrumb).not.toBeNull()
+    expect(marketplaceCrumb?.closest('div')?.textContent).toContain(
+      'Specialists›Marketplace›example-specialist'
+    )
+    expect(document.body.textContent).not.toContain('Back to Marketplace')
+
+    await act(async () => marketplaceCrumb?.click())
+    expect(document.body.querySelector('[aria-label="Search Marketplace"]')).not.toBeNull()
   })
 
   it('pushes Agent after storage recovery so Back returns to Storage', async () => {

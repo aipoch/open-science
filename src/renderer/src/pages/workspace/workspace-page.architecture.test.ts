@@ -140,8 +140,8 @@ const conversationPanelPropNames = (): string[] => {
 
 describe('workspace page architecture', () => {
   it('keeps the page and extracted owners within their completion gates', () => {
-    // The i18n and queue subscriptions add wiring without adding a page responsibility.
-    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_207)
+    // History-replay follow-on gates add wiring without adding a page-owned behavior.
+    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_214)
     for (const ownerPath of [
       ownerPaths.layout,
       ownerPaths.composer,

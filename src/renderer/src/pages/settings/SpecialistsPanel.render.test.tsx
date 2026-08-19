@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SpecialistsPanel } from './SpecialistsPanel'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import { i18next } from '@/i18n'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import type { SpecialistExportPreview } from '../../../../shared/specialist-package'
 
@@ -92,11 +94,12 @@ const specialistItems: SpecialistListItem[] = [
 beforeEach(() => {
   window.api = {
     specialist: {
-      list: vi.fn().mockResolvedValue(specialistItems),
+      list: vi.fn().mockResolvedValue({ items: specialistItems, integrity: { status: 'ok' } }),
       create: vi.fn(),
       setEnabled: vi.fn(),
       onCatalogChanged: vi.fn(() => vi.fn())
     },
+    storage: { revealAppStorage: vi.fn() },
     settings: {
       listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [], ncbi: null }),
       onConnectorRuntimeChanged: vi.fn(() => vi.fn()),
@@ -108,6 +111,27 @@ beforeEach(() => {
     ...initialStore,
     isLoaded: true,
     items: specialistItems
+  })
+  useTagStore.setState({
+    ...createInitialTagState(),
+    status: 'ready',
+    revision: 1,
+    tags: [
+      {
+        id: 'tag-research',
+        name: 'Research',
+        iconKey: 'flask-conical',
+        colorKey: 'purple',
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    assignments: ['rna-reviewer', 'builtin-curator'].map((resourceId) => ({
+      tagId: 'tag-research',
+      resourceType: 'catalog.specialist' as const,
+      resourceId,
+      createdAt: 1
+    }))
   })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -144,7 +168,7 @@ describe('SpecialistsPanel', () => {
     const list = vi
       .fn()
       .mockRejectedValueOnce(new Error('specialist database unavailable'))
-      .mockResolvedValueOnce(specialistItems)
+      .mockResolvedValueOnce({ items: specialistItems, integrity: { status: 'ok' } })
     window.api.specialist.list = list
     useSpecialistStore.setState({ items: [], isLoaded: false })
 
@@ -165,6 +189,39 @@ describe('SpecialistsPanel', () => {
 
     await vi.waitFor(() => expect(document.body.textContent).toContain('RNA Reviewer'))
     expect(list).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps healthy rows visible but disables mutations when the document is degraded', async () => {
+    window.api.specialist.list = vi.fn().mockResolvedValue({
+      items: specialistItems,
+      integrity: {
+        status: 'degraded',
+        issues: [{ code: 'record-invalid', recordIndex: 1 }]
+      }
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: false, integrity: { status: 'ok' } })
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Some Specialist data could not be read.')
+    )
+    expect(document.body.textContent).toContain('RNA Reviewer')
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit RNA Reviewer"]')?.disabled
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle RNA Reviewer"]')?.disabled
+    ).toBe(true)
+
+    const openFolder = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Open data folder'
+    )
+    expect(openFolder).toBeDefined()
+    await act(async () => fireEvent.click(openFolder!))
+    expect(window.api.storage.revealAppStorage).toHaveBeenCalledOnce()
   })
 
   // Shared preview fixture: builtin + owned selected by default, referenced skill unchecked.
@@ -335,7 +392,60 @@ describe('SpecialistsPanel', () => {
       )
     })
     expect(document.body.textContent).toContain('Choose Skills to include')
-    expect(document.body.textContent).toContain('package.archive-file-size-exceeded')
+    expect(document.body.textContent).toContain('Single file too large')
+    expect(document.body.textContent).not.toContain('package.archive-file-size-exceeded')
+  })
+
+  it('localizes capability and export diagnostics without exposing raw codes or messages', async () => {
+    const preview = exportPreviewFixture({
+      canExport: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'specialist.skillIds-duplicate',
+          message: 'Raw duplicate Skill message.'
+        },
+        {
+          severity: 'error',
+          code: 'specialist.description-invalid',
+          message: 'Raw description message.'
+        }
+      ]
+    })
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      previewExport: makePreviewExportMock(preview)
+    })
+    const onNavigate = vi.fn()
+
+    try {
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hans')
+        root.render(
+          <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={onNavigate} />
+        )
+      })
+      expect(document.body.textContent).toContain('技能名称重复')
+      expect(document.body.textContent).toContain('技能列表不得包含重复名称')
+      expect(document.body.textContent).toContain('无效的描述')
+      expect(document.body.textContent).toContain('描述必须是长度限制内的非空字符串')
+
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hant')
+      })
+      expect(document.body.textContent).toContain('技能名稱重複')
+      expect(document.body.textContent).toContain('技能清單不得包含重複名稱')
+      expect(document.body.textContent).toContain('無效的描述')
+      expect(document.body.textContent).toContain('描述必須是長度限制內的非空字串')
+      expect(document.body.textContent).not.toContain('specialist.skillIds-duplicate')
+      expect(document.body.textContent).not.toContain('specialist.description-invalid')
+      expect(document.body.textContent).not.toContain('Raw duplicate Skill message.')
+      expect(document.body.textContent).not.toContain('Raw description message.')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
   })
 
   it('falls back to the skill chooser with an error when the direct export save fails', async () => {
@@ -451,7 +561,9 @@ describe('SpecialistsPanel', () => {
     expect(checkboxFor('document-reader')).toMatchObject({ checked: true, disabled: false })
     expect(checkboxFor('analysis-tools')).toMatchObject({ checked: true, disabled: false })
     expect(checkboxFor('citation-manager')).toMatchObject({ checked: false, disabled: false })
-    expect(document.body.textContent).toContain('Content changed but the package version remains')
+    expect(document.body.textContent).toContain(
+      'Content changed but the package version was not increased.'
+    )
     expect(document.body.textContent).toContain('Only checked Skills are bundled')
 
     const exportButton = Array.from(document.body.querySelectorAll('button')).find(
@@ -795,11 +907,14 @@ describe('SpecialistsPanel', () => {
         .find((button) => button.textContent === 'Overwrite and continue')
         ?.click()
     })
-    expect(installPackage).toHaveBeenCalledWith(true)
+    expect(installPackage).toHaveBeenCalledWith({
+      confirmOverwrite: true,
+      skillConflictResolutions: []
+    })
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
   })
 
-  it('shows imported version and derived modification provenance in list and detail', async () => {
+  it('shows manual import metadata as separate badges in list and detail', async () => {
     const imported: SpecialistListItem = {
       ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
       kind: 'custom',
@@ -814,16 +929,22 @@ describe('SpecialistsPanel', () => {
       }
     }
     useSpecialistStore.setState({ items: [imported, { kind: 'reviewer', id: 'reviewer' }] })
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      imported,
-      { kind: 'reviewer', id: 'reviewer' }
-    ])
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [imported, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
-    expect(document.body.textContent).toContain(
-      'Imported · Original version 1.2.0 · Modified after import'
+    const metadata = document.body.querySelector(
+      '[data-specialist-metadata-group="research-synth"]'
     )
+    expect(metadata?.querySelectorAll('[data-specialist-metadata]')).toHaveLength(4)
+    expect(metadata?.textContent).toContain('Full access')
+    expect(metadata?.textContent).toContain('Imported ZIP')
+    expect(metadata?.textContent).toContain('Version 1.2.0')
+    expect(metadata?.textContent).toContain('Modified locally')
+    expect(metadata?.textContent).not.toContain(' · ')
 
     await act(async () => {
       root.render(
@@ -833,6 +954,58 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain('Package provenance')
     expect(document.body.textContent).toContain('Original version')
     expect(document.body.textContent).toContain('Modified after import')
+  })
+
+  it('keeps Specialist Tags in the third metadata row', async () => {
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    for (const resourceId of ['rna-reviewer', 'builtin-curator']) {
+      const metadata = document.body.querySelector(
+        `[data-specialist-metadata-group="${resourceId}"]`
+      )
+      const tagName = metadata?.querySelector('[title="Research"]')
+      expect(metadata).not.toBeNull()
+      expect(tagName).not.toBeNull()
+    }
+  })
+
+  it('distinguishes a Marketplace install from a manually imported ZIP', async () => {
+    const installed: SpecialistListItem = {
+      ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
+      kind: 'custom',
+      id: 'marketplace-specialist',
+      origin: 'imported',
+      packageVersion: '1.0.1',
+      modifiedSinceImport: false,
+      marketplaceProvenance: { publisher: 'Open Science' },
+      importBaseline: {
+        importedAt: '2026-08-18T10:00:00.000Z',
+        archiveDigest: 'c'.repeat(64),
+        contentDigest: 'd'.repeat(64)
+      }
+    }
+    useSpecialistStore.setState({ items: [installed, { kind: 'reviewer', id: 'reviewer' }] })
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [installed, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const metadata = document.body.querySelector(
+      '[data-specialist-metadata-group="marketplace-specialist"]'
+    )
+    expect(metadata?.querySelectorAll('[data-specialist-metadata]')).toHaveLength(5)
+    expect(metadata?.textContent).toContain('Marketplace')
+    expect(metadata?.textContent).toContain('By Open Science')
+    expect(metadata?.textContent).toContain('Version 1.0.1')
+    expect(metadata?.textContent).toContain('Unchanged locally')
+    expect(metadata?.textContent).not.toContain('Imported ZIP')
+    expect(metadata?.textContent).not.toContain(' · ')
   })
 
   it('filters specialists by a user-entered search term', async () => {
@@ -905,7 +1078,7 @@ describe('SpecialistsPanel', () => {
     const custom = Array.from(tabs).find((tab) => tab.textContent?.includes('Custom'))
     expect(custom).toBeDefined()
     await act(async () => {
-      custom!.click()
+      fireEvent.mouseDown(custom!, { button: 0 })
     })
 
     expect(document.body.textContent).toContain('RNA Reviewer')
@@ -953,10 +1126,10 @@ describe('SpecialistsPanel', () => {
       setupPending: true,
       origin: 'imported' as const
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      pending,
-      { kind: 'reviewer', id: 'reviewer' }
-    ])
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [pending, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
     useSpecialistStore.setState({ items: [pending, { kind: 'reviewer', id: 'reviewer' }] })
     const onNavigate = vi.fn()
 
@@ -964,11 +1137,9 @@ describe('SpecialistsPanel', () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
     })
 
-    expect(document.body.textContent).toContain('Setup incomplete · Continue setup')
-    const toggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Complete setup before enabling RNA Reviewer"]'
-    )
-    expect(toggle?.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Setup incomplete')
+    expect(document.body.textContent).toContain('Continue setup')
+    expect(document.body.querySelector('[aria-label="Toggle RNA Reviewer"]')).toBeNull()
     await act(async () => {
       document.body
         .querySelector<HTMLButtonElement>('[aria-label="Continue setup for RNA Reviewer"]')
@@ -1076,16 +1247,16 @@ describe('SpecialistsPanel', () => {
     ;(window.api.specialist as unknown as { list: ReturnType<typeof vi.fn> }).list = vi.fn(
       async () => {
         listCallCount++
-        if (listCallCount > 1) return updatedItems
-        return specialistItems
+        if (listCallCount > 1) return { items: updatedItems, integrity: { status: 'ok' } }
+        return { items: specialistItems, integrity: { status: 'ok' } }
       }
     )
     useSpecialistStore.setState({
       ...useSpecialistStore.getState(),
       update: updateMock,
       load: async () => {
-        const items = await window.api.specialist.list()
-        useSpecialistStore.setState({ items })
+        const snapshot = await window.api.specialist.list()
+        useSpecialistStore.setState({ items: snapshot.items, integrity: snapshot.integrity })
       }
     })
 
@@ -1143,7 +1314,7 @@ describe('SpecialistsPanel', () => {
         },
         {
           id: 'standalone-tool',
-          displayName: 'Standalone Tool',
+          displayName: 'Gene Protein Expression Matrix Normalization',
           source: 'personal',
           kind: 'standalone',
           deletable: false,
@@ -1200,17 +1371,10 @@ describe('SpecialistsPanel', () => {
 
     expect(previewDelete).toHaveBeenCalledWith('rna-reviewer')
     expect(document.body.textContent).toContain('Skills you can also delete')
-    expect(document.body.textContent).toContain('Exclusive Skill')
-    expect(document.body.textContent).toContain('Shared Tool')
-    expect(document.body.textContent).toContain('Imported')
-    expect(document.body.textContent).toContain('Personal')
+    expect(document.body.textContent).not.toContain('Exclusive Skill')
+    expect(document.body.textContent).not.toContain('Shared Tool')
     expect(document.body.textContent).not.toContain('Built-in Tool')
     expect(document.body.textContent).not.toContain('personal-exclusive')
-    expect(document.body.textContent).toContain('Already exists independently and will be kept.')
-    expect(document.body.textContent).toContain(
-      'Also owned by another Specialist and will be kept.'
-    )
-    expect(document.body.textContent).toContain('Used by another Specialist and will be kept.')
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(dialog?.className).toContain('p-0')
     expect(
@@ -1223,13 +1387,58 @@ describe('SpecialistsPanel', () => {
         element.className.includes('border-t border-border-300/90')
       )
     ).toBe(true)
+    const disclosure = dialog?.querySelector<HTMLButtonElement>(
+      '[aria-controls="specialist-delete-skills"]'
+    )
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('false')
+    const selectAll = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent === 'Select all'
+    )
+    expect(selectAll).not.toBeNull()
+    expect(selectAll?.dataset.variant).toBe('outline')
+    expect(selectAll?.getAttribute('aria-pressed')).toBe('false')
+    await act(async () => selectAll?.click())
+    expect(selectAll?.textContent).toContain('Clear selection')
+    expect(selectAll?.getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => disclosure?.click())
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.textContent).toContain('Exclusive Skill')
+    expect(document.body.textContent).toContain('Shared Tool')
+    expect(document.body.textContent).toContain('Imported')
+    expect(document.body.textContent).toContain('Personal')
+    expect(document.body.textContent).toContain('Already exists independently and will be kept.')
+    expect(document.body.textContent).toContain(
+      'Also owned by another Specialist and will be kept.'
+    )
+    expect(document.body.textContent).toContain('Used by another Specialist and will be kept.')
+    const longSkillName = Array.from(dialog?.querySelectorAll<HTMLElement>('[title]') ?? []).find(
+      (element) => element.title === 'Gene Protein Expression Matrix Normalization'
+    )
+    expect(longSkillName?.className).toContain('truncate')
+    expect(longSkillName?.nextElementSibling?.className).toContain('shrink-0')
+
     const checkboxes = Array.from(
       document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
     )
     expect(checkboxes).toHaveLength(4)
+    const disabledCheckboxes = checkboxes.filter((input) => input.disabled)
     expect(checkboxes.filter((input) => !input.disabled)).toHaveLength(1)
-    expect(checkboxes.every((input) => !input.checked)).toBe(true)
-    await act(async () => checkboxes.find((input) => !input.disabled)?.click())
+    expect(disabledCheckboxes).toHaveLength(3)
+    expect(checkboxes.filter((input) => !input.disabled).every((input) => input.checked)).toBe(true)
+    expect(disabledCheckboxes.every((input) => !input.checked)).toBe(true)
+    expect(
+      disabledCheckboxes.every((input) => input.className.includes('disabled:opacity-50'))
+    ).toBe(true)
+    const disabledSkillTriggers = Array.from(
+      dialog?.querySelectorAll<HTMLElement>('[data-slot="specialist-delete-disabled-skill"]') ?? []
+    )
+    expect(disabledSkillTriggers).toHaveLength(3)
+    expect(disabledSkillTriggers.every((trigger) => trigger.tabIndex === 0)).toBe(true)
+    await act(async () => disabledSkillTriggers[0]?.focus())
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe(
+      'Already exists independently and will be kept.'
+    )
 
     const confirmBtn = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (btn) =>

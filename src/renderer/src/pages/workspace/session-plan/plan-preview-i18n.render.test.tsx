@@ -102,7 +102,7 @@ describe('plan preview i18n', () => {
     mount(projection(PARALLEL, 'medium'))
 
     expect(container.textContent).toContain('按顺序完成 2 个阶段。同一阶段内的委派可以并行执行。')
-    expect(container.textContent).toContain('主 Agent')
+    expect(container.textContent).toContain('主智能体')
     expect(container.textContent).toContain('并行执行')
     // The level itself is translated, not interpolated as the protocol enum.
     expect(container.textContent).toContain('范围与可行性 · 中等置信度')
@@ -115,7 +115,7 @@ describe('plan preview i18n', () => {
     mount(projection(SOLO, 'low'))
 
     expect(container.textContent).toContain('按順序完成 1 個階段。同一階段內的委派可以平行執行。')
-    expect(container.textContent).toContain('主 Agent')
+    expect(container.textContent).toContain('主智能體')
     expect(container.textContent).toContain('範圍與可行性 · 低信賴度')
     expect(container.textContent).not.toContain('low confidence')
   })

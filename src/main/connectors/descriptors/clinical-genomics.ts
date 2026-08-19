@@ -560,7 +560,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   // ------------------------------------------------------------- ClinGen --
   {
     id: 'clingen_gene_validity',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'ClinGen gene-disease validity curations (how strong the evidence is that variation in a gene causes a disease: Definitive/Strong/Moderate/Limited/Disputed/Refuted/No Known Disease Relationship). Omit gene to list all 3,600+ curations.',
     input: {
@@ -570,7 +570,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total": int, "records": [ { "gene_symbol": str, "hgnc_id": str, "disease_label": str, "mondo_id": str, "moi": str, "sop": str, "classification": str, "expert_panel": str, "affiliate_id": str, "animal_model_only": bool, "assertion_id": str } ], "source": str }` — records filtered to the gene (exact, case-insensitive) or the full table when gene is omitted.',
     example:
-      'const result = await host.mcp("clinical_genomics", "clingen_gene_validity", {"gene": "BRCA2"})',
+      'const result = await host.mcp("clinical-genomics", "clingen_gene_validity", {"gene": "BRCA2"})',
     url: () => `${CLINGEN_SEARCH}/api/validity`,
     parse: (raw, a) => {
       const d = raw as { total: number; rows: Record<string, unknown>[] }
@@ -595,7 +595,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'clingen_dosage_sensitivity',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'ClinGen dosage sensitivity curations: haploinsufficiency and triplosensitivity assertions for genes (and optionally ISCA genomic/CNV regions). A gene symbol or an ISCA region id filters exactly; omit for the full table.',
     input: {
@@ -608,7 +608,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total": int, "records": [ { "record_type": "gene"|"region", "symbol": str, "id": str, "cytoband": str, "grch37": str, "grch38": str, "haploinsufficiency": { "code": str, "label": str }|null, "triplosensitivity": {...}|null, "haplo_disease": str, "haplo_mondo": str, "triplo_disease": str, "triplo_mondo": str, "omim": str, "morbid": str } ], "source": str }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "clingen_dosage_sensitivity", {"gene": "TP53"})',
+      'const result = await host.mcp("clinical-genomics", "clingen_dosage_sensitivity", {"gene": "TP53"})',
     url: () => `${CLINGEN_SEARCH}/api/dosage`,
     parse: (raw, a) => {
       const d = raw as { total: number; rows: Record<string, unknown>[] }
@@ -643,7 +643,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'clingen_actionability',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'ClinGen clinical actionability curations: for disorders associated with a gene, whether early intervention in pre-symptomatic carriers is actionable (intervention/outcome pairs with severity, likelihood, effectiveness, nature-of-intervention component scores and the total score). Gene filter matches any member of multi-gene topics.',
     input: {
@@ -656,7 +656,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "adult"?: { "total": int, "records": [...] }, "pediatric"?: { "total": int, "records": [...] }, "source": str }` — one block per requested context; each record has doc_id, genes, disease, outcome, intervention, severity, likelihood, nature_of_intervention, effectiveness, overall_score, release/release_date.',
     example:
-      'const result = await host.mcp("clinical_genomics", "clingen_actionability", {"gene": "BRCA1", "context": "adult"})',
+      'const result = await host.mcp("clinical-genomics", "clingen_actionability", {"gene": "BRCA1", "context": "adult"})',
     run: async (ctx, a) => {
       const ctxMap: Record<string, string[]> = {
         adult: ['Adult'],
@@ -698,7 +698,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'clingen_variant_classifications',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'ClinGen Evidence Repository (ERepo) expert-panel variant pathogenicity classifications (VCEP interpretations under ACMG criteria). Provide EXACTLY ONE of gene (HGNC symbol), caid (ClinGen canonical allele id, e.g. CA114360), or hgvs (e.g. NM_000277.2:c.1222C>T). Complete retrieval (matchLimit=none).',
     input: {
@@ -712,7 +712,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total": int, "records": [ { "interpretation_id": str, "uuid": str, "caid": str, "clinvar_variation_id": str, "gene_symbol": str, "gene_ncbi_id": str, "condition_id": str, "condition_label": str, "hgvs": [str], "evidence_links": [str], "published_date": str, "guidelines": [ { "guideline": str, "guideline_id": str, "outcome": str, "agents": [ { "agent_id": str, "affiliation": str, "outcome": str, "evidence_codes_met": [str], "evidence_codes_not_met": [str] } ] } ] } ], "query": { <gene|caid|hgvs>: str }, "source": str }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "clingen_variant_classifications", {"gene": "BRCA1"})',
+      'const result = await host.mcp("clinical-genomics", "clingen_variant_classifications", {"gene": "BRCA1"})',
     url: (a) => {
       const [param, value] = erepoKey(a)
       const qs = new URLSearchParams({ [param]: value, matchMode: 'exact', matchLimit: 'none' })
@@ -734,7 +734,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   // --------------------------------------------------------------- CIViC --
   {
     id: 'civic_search_genes',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Find CIViC gene records by exact Entrez symbol (e.g. "BRAF"). Fully paginated, count-verified. Use the returned CIViC gene id with civic_gene_variants.',
     input: {
@@ -746,7 +746,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "entrezId": int, "fullName": str, "featureAliases": [str], "description": str, "link": str } ], "query": { "mode": "search_genes", "entrez_symbol": str } }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_search_genes", {"entrez_symbol": "BRAF"})',
+      'const result = await host.mcp("clinical-genomics", "civic_search_genes", {"entrez_symbol": "BRAF"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -761,7 +761,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'civic_gene_variants',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'All variants of one CIViC gene (by CIViC gene id), fully paginated — complete even for genes with hundreds of variants. Sorted by variant id.',
     input: {
@@ -773,7 +773,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "link": str, "variantAliases": [str], "variantTypes": [{ "id": int, "name": str, "soid": str }], "feature": { "id": int, "name": str }, "singleVariantMolecularProfileId": int, "alleleRegistryId"?: str, "clinvarIds"?: [str], "hgvsDescriptions"?: [str], "coordinates"?: {...} } ], "query": {...} }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_gene_variants", {"gene_id": 5})',
+      'const result = await host.mcp("clinical-genomics", "civic_gene_variants", {"gene_id": 5})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -792,7 +792,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'civic_get_variant',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'One CIViC variant by its CIViC variant id (aliases, variant types, feature/gene linkage, coordinates for gene variants). Returns found=false if absent.',
     input: {
@@ -804,12 +804,12 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query": { "mode": "variant", "id": int }, "found": bool, "record": { "id": int, "name": str, "variantTypes": [...], "feature": {...}, "coordinates"?: {...}, ... }|null }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_get_variant", {"variant_id": 12})',
+      'const result = await host.mcp("clinical-genomics", "civic_get_variant", {"variant_id": 12})',
     run: async (ctx, a) => civicSingle(ctx, 'variant', Number(a.variant_id), VARIANT_FIELDS)
   },
   {
     id: 'civic_search_variants',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Search CIViC variants by name substring (e.g. "V600"), optionally scoped to a CIViC gene id. Fully paginated; sorted by variant id.',
     input: {
@@ -824,7 +824,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <variant record> ], "query": { "mode": "search_variants", "name": str, "gene_id": int|null } }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_search_variants", {"name": "V600", "gene_id": 5})',
+      'const result = await host.mcp("clinical-genomics", "civic_search_variants", {"name": "V600", "gene_id": 5})',
     run: async (ctx, a) => {
       let decls = ', $name: String'
       let refs = ', name: $name'
@@ -845,7 +845,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'civic_get_evidence_item',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'One CIViC evidence item by id: clinical significance of a molecular profile in a disease/therapy context (evidence level A-E, type, direction, significance, rating, disease, therapies, source). Returns found=false if absent.',
     input: {
@@ -857,19 +857,19 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query": { "mode": "evidenceItem", "id": int }, "found": bool, "record": { "id": int, "evidenceLevel": str, "evidenceType": str, "evidenceDirection": str, "significance": str, "evidenceRating": int, "disease": {...}, "therapies": [...], "molecularProfile": {...}, "source": {...}, ... }|null }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_get_evidence_item", {"evidence_id": 1409})',
+      'const result = await host.mcp("clinical-genomics", "civic_get_evidence_item", {"evidence_id": 1409})',
     run: async (ctx, a) => civicSingle(ctx, 'evidenceItem', Number(a.evidence_id), EVIDENCE_FIELDS)
   },
   {
     id: 'civic_search_evidence',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Search CIViC evidence items by any combination of filters; fully paginated, count-verified, sorted by ascending evidence id. Enum filters take CIViC GraphQL enum values verbatim (evidence_level "A".."E"; evidence_type PREDICTIVE|PROGNOSTIC|DIAGNOSTIC|PREDISPOSING|ONCOGENIC|FUNCTIONAL; evidence_direction SUPPORTS|DOES_NOT_SUPPORT; status ACCEPTED|SUBMITTED|REJECTED|ALL). Provide at least one filter — no filters walks the entire 10k+ corpus.',
     input: filterInput(EVIDENCE_FILTERS),
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <evidence record> ], "query": { "mode": "search_evidence", "filters": {...} } }` — records sorted by ascending evidence id.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_search_evidence", {"disease_name": "melanoma", "evidence_level": "A"})',
+      'const result = await host.mcp("clinical-genomics", "civic_search_evidence", {"disease_name": "melanoma", "evidence_level": "A"})',
     run: async (ctx, a) =>
       civicFilteredSearch(
         ctx,
@@ -883,7 +883,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'civic_get_assertion',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'One CIViC assertion by id: an expert-curated summary claim (AMP/ASCO/CAP tier, ACMG/ClinGen codes, FDA companion-test flags) aggregating evidence for a molecular profile in a disease/therapy context. Returns found=false if absent.',
     input: {
@@ -895,19 +895,19 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query": { "mode": "assertion", "id": int }, "found": bool, "record": { "id": int, "assertionType": str, "assertionDirection": str, "significance": str, "ampLevel": str, "summary": str, "acmgCodes": [...], "clingenCodes": [...], "disease": {...}, "therapies": [...], "evidenceItemsCount": int, ... }|null }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_get_assertion", {"assertion_id": 7})',
+      'const result = await host.mcp("clinical-genomics", "civic_get_assertion", {"assertion_id": 7})',
     run: async (ctx, a) => civicSingle(ctx, 'assertion', Number(a.assertion_id), ASSERTION_FIELDS)
   },
   {
     id: 'civic_search_assertions',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Search CIViC assertions by any combination of filters; fully paginated, count-verified, sorted by ascending assertion id. assertion_type PREDICTIVE|PROGNOSTIC|DIAGNOSTIC|PREDISPOSING|ONCOGENIC; assertion_direction SUPPORTS|DOES_NOT_SUPPORT; amp_level e.g. TIER_I_LEVEL_A; status ACCEPTED|SUBMITTED|REJECTED|ALL. No filters walks the full corpus.',
     input: filterInput(ASSERTION_FILTERS),
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <assertion record> ], "query": { "mode": "search_assertions", "filters": {...} } }` — records sorted by ascending assertion id.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_search_assertions", {"disease_name": "melanoma"})',
+      'const result = await host.mcp("clinical-genomics", "civic_search_assertions", {"disease_name": "melanoma"})',
     run: async (ctx, a) =>
       civicFilteredSearch(
         ctx,
@@ -921,7 +921,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'civic_get_molecular_profile',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'One CIViC molecular profile by id (variant combination that evidence/assertions attach to), incl. parsed name, score, and component variants. Returns found=false if absent.',
     input: {
@@ -933,13 +933,13 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query": { "mode": "molecularProfile", "id": int }, "found": bool, "record": { "id": int, "name": str, "rawName": str, "molecularProfileScore": float, "isComplex": bool, "isMultiVariant": bool, "molecularProfileAliases": [str], "variants": [{ "id": int, "name": str, "feature": {...} }], "evidenceCountsByStatus": {...} }|null }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_get_molecular_profile", {"mp_id": 12})',
+      'const result = await host.mcp("clinical-genomics", "civic_get_molecular_profile", {"mp_id": 12})',
     run: async (ctx, a) =>
       civicSingle(ctx, 'molecularProfile', Number(a.mp_id), MOLECULAR_PROFILE_FIELDS)
   },
   {
     id: 'civic_search_molecular_profiles',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Search CIViC molecular profiles by name substring (e.g. "BRAF V600E"). Fully paginated; sorted by id.',
     input: {
@@ -951,7 +951,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <molecular profile record> ], "query": { "mode": "search_molecular_profiles", "name": str } }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_search_molecular_profiles", {"name": "BRAF V600E"})',
+      'const result = await host.mcp("clinical-genomics", "civic_search_molecular_profiles", {"name": "BRAF V600E"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -970,7 +970,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'civic_search_diseases',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Search CIViC disease records by name substring (e.g. "melanoma"). Returns DOIDs + display names; fully paginated; sorted by id.',
     input: {
@@ -982,7 +982,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "displayName": str, "doid": str, "diseaseUrl": str, "diseaseAliases": [str], "link": str } ], "query": { "mode": "search_diseases", "name": str } }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_search_diseases", {"name": "melanoma"})',
+      'const result = await host.mcp("clinical-genomics", "civic_search_diseases", {"name": "melanoma"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -1001,7 +1001,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'civic_search_therapies',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Search CIViC therapy records by name substring (e.g. "vemurafenib"). Returns NCIt ids + names; fully paginated; sorted by id.',
     input: {
@@ -1013,7 +1013,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "ncitId": str, "therapyUrl": str, "therapyAliases": [str], "link": str } ], "query": { "mode": "search_therapies", "name": str } }`.',
     example:
-      'const result = await host.mcp("clinical_genomics", "civic_search_therapies", {"name": "vemurafenib"})',
+      'const result = await host.mcp("clinical-genomics", "civic_search_therapies", {"name": "vemurafenib"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -1033,7 +1033,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   // --------------------------------------------------------- Open Targets --
   {
     id: 'open_targets_graphql',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Run an arbitrary GraphQL query against the Open Targets Platform API (targets, diseases, drugs, target-disease association scores, evidence, tractability, safety, known drugs). Introspection queries work for schema discovery. Note knownDrugs was renamed to drugAndClinicalCandidates upstream.',
     input: {
@@ -1048,7 +1048,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "data": {...}|null, "attempts": int, "errors"?: [ { "message": str } ] }` — the raw GraphQL data payload; transient HTTP-200 "Internal server error" responses are retried up to 3 attempts before being surfaced in errors.',
     example:
-      'const result = await host.mcp("clinical_genomics", "open_targets_graphql", {"query": "query($id: String!){ target(ensemblId: $id){ approvedSymbol associatedDiseases{ count } } }", "variables": {"id": "ENSG00000157764"}})',
+      'const result = await host.mcp("clinical-genomics", "open_targets_graphql", {"query": "query($id: String!){ target(ensemblId: $id){ approvedSymbol associatedDiseases{ count } } }", "variables": {"id": "ENSG00000157764"}})',
     run: async (ctx, a) => {
       const variables = asObj(a.variables)
       return otExecute(ctx, String(a.query), Object.keys(variables).length ? variables : undefined)
@@ -1056,7 +1056,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'open_targets_disease_drugs',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Known/investigational drugs for a disease (Open Targets Platform) — wraps Disease.drugAndClinicalCandidates. efo_id is a disease ontology id (EFO/MONDO/etc., e.g. "MONDO_0004992").',
     input: {
@@ -1071,7 +1071,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "id": str, "name": str, "drugAndClinicalCandidates": { "count": int, "rows": [ { "id": str, "maxClinicalStage": str, "drug": { "id": str, "name": str, "drugType": str } } ] } }` (rows capped at `size`, default 25), or `{ "errors": [...] }` on GraphQL error / unknown id.',
     example:
-      'const result = await host.mcp("clinical_genomics", "open_targets_disease_drugs", {"efo_id": "MONDO_0004992", "size": 25})',
+      'const result = await host.mcp("clinical-genomics", "open_targets_disease_drugs", {"efo_id": "MONDO_0004992", "size": 25})',
     run: async (ctx, a) => {
       const size = Number(a.size ?? 25)
       const node = await otQuery(ctx, OT_DISEASE_DRUGS_Q, { id: String(a.efo_id) }, 'disease')
@@ -1082,7 +1082,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'open_targets_disease_targets',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Top associated targets for a disease, ranked by Open Targets overall association score — wraps Disease.associatedTargets. efo_id is a disease ontology id (EFO/MONDO/etc.).',
     input: {
@@ -1097,7 +1097,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "id": str, "name": str, "associatedTargets": { "count": int, "rows": [ { "score": float, "target": { "id": str, "approvedSymbol": str } } ] } }` (up to `size` rows, default 25), or `{ "errors": [...] }` on GraphQL error / unknown id.',
     example:
-      'const result = await host.mcp("clinical_genomics", "open_targets_disease_targets", {"efo_id": "MONDO_0004992", "size": 25})',
+      'const result = await host.mcp("clinical-genomics", "open_targets_disease_targets", {"efo_id": "MONDO_0004992", "size": 25})',
     run: async (ctx, a) =>
       otQuery(
         ctx,
@@ -1108,7 +1108,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'open_targets_drug',
-    connector: 'clinical_genomics',
+    connector: 'clinical-genomics',
     description:
       'Drug details by ChEMBL id (Open Targets Platform) — name, type, maximum clinical stage, and mechanisms of action (target + action type). chembl_id e.g. "CHEMBL1201583".',
     input: {
@@ -1120,7 +1120,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "id": str, "name": str, "drugType": str, "maximumClinicalStage": str, "mechanismsOfAction": { "rows": [ { "mechanismOfAction": str, "actionType": str, "targets": [ { "id": str, "approvedSymbol": str } ] } ] } }`, or `{ "errors": [...] }` on GraphQL error / unknown id.',
     example:
-      'const result = await host.mcp("clinical_genomics", "open_targets_drug", {"chembl_id": "CHEMBL1201583"})',
+      'const result = await host.mcp("clinical-genomics", "open_targets_drug", {"chembl_id": "CHEMBL1201583"})',
     run: async (ctx, a) => otQuery(ctx, OT_DRUG_Q, { id: String(a.chembl_id) }, 'drug')
   }
 ]

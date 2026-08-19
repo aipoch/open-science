@@ -71,7 +71,8 @@ const createAcpTaskAgentPort = (
       previousBackendId: request.previousBackendId,
       providerSessionId: request.providerSessionId,
       providerContinuityToken: request.providerContinuityToken,
-      ...(request.specialistId ? { specialistId: request.specialistId } : {})
+      ...(request.specialistId ? { specialistId: request.specialistId } : {}),
+      ...(request.specialistBindingPending === true ? { specialistBindingPending: true } : {})
     }),
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),

@@ -81,12 +81,12 @@ describe('SkillUploadView copy', () => {
     expect(container.textContent).toContain('Drag and drop or click to upload')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('上传 Skill')
+    expect(container.textContent).toContain('上传技能')
     expect(container.textContent).toContain('拖放文件或点击上传')
     expect(container.textContent).not.toContain('Upload skills')
 
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('上傳 Skill')
+    expect(container.textContent).toContain('上傳技能')
     expect(container.textContent).toContain('拖放檔案或點按上傳')
   })
 
@@ -100,9 +100,9 @@ describe('SkillUploadView copy', () => {
 
     // zh has no singular/plural distinction — one _other form covers both counts.
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('找到 1 個 Skill')
+    expect(container.textContent).toContain('找到 1 個技能')
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('找到 1 个 Skill')
+    expect(container.textContent).toContain('找到 1 个技能')
   })
 
   it('uses the plural form for counts above one', async () => {
@@ -112,7 +112,7 @@ describe('SkillUploadView copy', () => {
     expect(container.textContent).toContain('Found 2 skills')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('找到 2 个 Skill')
+    expect(container.textContent).toContain('找到 2 个技能')
   })
 
   it('keeps the selected count inside the translated import button', async () => {
@@ -163,7 +163,7 @@ describe('SkillUploadView copy', () => {
     expect(container.textContent).toContain('pack/one — no SKILL.md')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('已跳过 1 个 Skill')
+    expect(container.textContent).toContain('已跳过 1 个技能')
     expect(container.textContent).toContain('pack/one — no SKILL.md')
   })
 

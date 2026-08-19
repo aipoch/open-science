@@ -352,7 +352,12 @@ afterEach(async () => {
 describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
   it('resolves all checks when re-review passes; exactly 1 [Auditor] injection for 1 round', async () => {
     const process = new FakeAgentProcess()
-    const shared = makeSharedSession(makeSession())
+    const shared = makeSharedSession(
+      makeSession({
+        specialistId: 'specialist-new',
+        specialistBindingPending: true
+      })
+    )
 
     const correctionPrompts: string[] = []
 
@@ -433,6 +438,15 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     )
     expect(reviewerSessions).toHaveLength(2)
     expect(activitySpy).toHaveBeenCalledOnce()
+    expect(activitySpy).toHaveBeenCalledWith(
+      {
+        session: expect.objectContaining({
+          specialistId: 'specialist-new',
+          specialistBindingPending: true
+        })
+      },
+      expect.any(Function)
+    )
 
     // The original review's warn/fail check must now be resolved.
     const reviews = await repository.getReviewsForSession('session-1')

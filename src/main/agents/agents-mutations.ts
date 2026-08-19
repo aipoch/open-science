@@ -27,15 +27,17 @@
 import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
 import { applyNameOrIdFilter } from './agents-service'
 import type { ProfileService } from '../specialist/service'
-import type { SpecialistProfileView } from '../../shared/specialist'
 import type {
   CreateSpecialistInput,
   SpecialistCapabilityMode,
   SpecialistFullAccessConfig,
-  SpecialistSelectedConfig
+  SpecialistProfileView,
+  SpecialistSelectedConfig,
+  UpdateSpecialistInput
 } from '../../shared/specialist'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 import type { ApprovalGateway } from '../../shared/agents-contract'
+import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
 // The catalog resolution seam this module consumes. It receives the ALREADY-PROJECTED public read
 // models (the same models the read slice returns from list_skills/list_connectors), so this module
@@ -67,17 +69,9 @@ export type AgentsOrdinaryMutationRequest =
   | { op: 'attach_connector'; params: Record<string, unknown> }
   | { op: 'detach_connector'; params: Record<string, unknown> }
 
-const METHOD_PREFIX = 'host.agents'
-
-// Sanitizes an arbitrary error into its top-level message only. System instructions, connector args,
-// credentials, headers, environment values, internal stack detail, and tokens must never reach the
-// sandbox. We keep only the message string (no nested secret-bearing JSON).
-const sanitizeError = (value: unknown): string =>
-  value instanceof Error ? value.message : String(value)
-
-class AgentsMutationError extends Error {
+class AgentsMutationError extends AgentsSafeError {
   constructor(method: string, cause: unknown) {
-    super(`${METHOD_PREFIX}.${method}: ${sanitizeError(cause)}`)
+    super(formatAgentsError(method, cause))
     this.name = 'AgentsMutationError'
   }
 }
@@ -100,7 +94,7 @@ const isFinitePositiveInt = (value: unknown): value is number =>
 
 const optionalStringOrThrow = (value: unknown, label: string): string | undefined => {
   if (value === undefined) return undefined
-  if (!isString(value)) throw new Error(`${label} must be a string.`)
+  if (!isString(value)) throw agentsPublicError(`${label} must be a string.`)
   return value
 }
 
@@ -110,7 +104,7 @@ const optionalStringOrThrow = (value: unknown, label: string): string | undefine
 export const asStringArray = (value: unknown): string[] | undefined => {
   if (value === undefined) return undefined
   if (!Array.isArray(value) || !value.every((item) => isString(item) && item.length > 0)) {
-    throw new Error('Must be an array of non-empty strings.')
+    throw agentsPublicError('Must be an array of non-empty strings.')
   }
   return value as string[]
 }
@@ -130,7 +124,7 @@ export const resolveSkillRefs = async (
   for (const ref of refs) {
     const matched = applyNameOrIdFilter(entries, ref, method)
     if (matched.length === 0) {
-      throw new Error(`No skill matches "${ref}".`)
+      throw agentsPublicError(`No skill matches "${ref}".`)
     }
     ids.push(matched[0].id)
   }
@@ -153,11 +147,13 @@ export const resolveConnectorRefs = async (
   for (const ref of refs) {
     const matched = applyNameOrIdFilter(entries, ref, method)
     if (matched.length === 0) {
-      throw new Error(`No connector matches "${ref}".`)
+      throw agentsPublicError(`No connector matches "${ref}".`)
     }
     const model = matched[0]
     if (options.gateUnavailable && model.availability !== 'available') {
-      throw new Error(`Connector "${ref}" is ${model.availability} and cannot be newly attached.`)
+      throw agentsPublicError(
+        `Connector "${ref}" is ${model.availability} and cannot be newly attached.`
+      )
     }
     ids.push(model.id)
     models.push(model)
@@ -197,7 +193,7 @@ export const projectCapabilityFields = async (
   method: string
 ): Promise<CapabilityProjection> => {
   if (patch.unrestricted !== undefined && !isBoolean(patch.unrestricted)) {
-    throw new Error('unrestricted must be a boolean.')
+    throw agentsPublicError('unrestricted must be a boolean.')
   }
   const skillRefs = asStringArray(patch.skill_names)
   const connectorRefs = asStringArray(patch.connector_names)
@@ -252,7 +248,7 @@ const handleCreate = async (
   rejectUnknownKeys(params, CREATE_ALLOWED_KEYS, 'create')
 
   const name = isString(params.name) ? params.name : throwShape('name is required')
-  if (!name.trim()) throw new Error('name is required')
+  if (!name.trim()) throw agentsPublicError('name is required')
 
   const description = optionalStringOrThrow(params.description, 'description')
   const displayName = optionalStringOrThrow(params.display_name, 'display name')
@@ -264,11 +260,11 @@ const handleCreate = async (
   // new specialist enabled; the update op toggles it. We validate the shape and ignore the value so
   // a malformed boolean is rejected before reaching the repository.
   if (params.enabled !== undefined && !isBoolean(params.enabled)) {
-    throw new Error('enabled must be a boolean.')
+    throw agentsPublicError('enabled must be a boolean.')
   }
 
   if (params.unrestricted !== undefined && !isBoolean(params.unrestricted)) {
-    throw new Error('unrestricted must be a boolean.')
+    throw agentsPublicError('unrestricted must be a boolean.')
   }
   // `unrestricted` is validated for shape but does not change create semantics here: the presence of
   // a capability array always produces Selected, and the absence of both always produces Full (AC).
@@ -342,31 +338,20 @@ const handleUpdate = async (
 
   // params.name resolves the immutable Specialist name; every field in patch is a change.
   const patch = params.patch
-  if (!isRecord(patch)) throw new Error('patch is required and must be an object.')
+  if (!isRecord(patch)) throw agentsPublicError('patch is required and must be an object.')
   rejectUnknownKeys(patch, UPDATE_ALLOWED_KEYS, 'update')
 
   const revision = patch.revision
   if (!isFinitePositiveInt(revision)) {
-    throw new Error('revision must be a positive integer.')
+    throw agentsPublicError('revision must be a positive integer.')
   }
 
   const current = await deps.profileService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
-    throw new Error('revision does not match the current specialist revision.')
+    throw agentsPublicError('revision does not match the current specialist revision.')
   }
 
-  const input: {
-    id: string
-    revision: number
-    displayName?: string
-    description?: string
-    systemPrompt?: string
-    iconKey?: string
-    colorKey?: string
-    capabilityMode?: SpecialistCapabilityMode
-    fullAccess?: SpecialistFullAccessConfig
-    selectedCapabilities?: SpecialistSelectedConfig
-  } = { id: current.id, revision }
+  const input: UpdateSpecialistInput = { id: current.id, revision }
 
   const displayName = optionalStringOrThrow(patch.display_name, 'display name')
   if (displayName !== undefined) input.displayName = displayName
@@ -380,8 +365,9 @@ const handleUpdate = async (
   if (colorKey !== undefined) input.colorKey = colorKey
 
   if (patch.enabled !== undefined && !isBoolean(patch.enabled)) {
-    throw new Error('enabled must be a boolean.')
+    throw agentsPublicError('enabled must be a boolean.')
   }
+  if (patch.enabled !== undefined) input.enabled = patch.enabled
 
   // Capability projection centralizes the Selected/Full + collection-replacement semantics.
   const capability = await projectCapabilityFields(patch, current, deps.catalog, 'update')
@@ -395,15 +381,7 @@ const handleUpdate = async (
     input.fullAccess = capability.fullAccess
   }
 
-  // enabled lives on a separate ProfileService method (update() does not carry it). When the
-  // requested state differs from the current, we toggle AFTER the identity/capability update so the
-  // optimistic-concurrency check (revision) gates the whole mutation first, then setEnabled flips the
-  // enabled flag. setEnabled is not revision-guarded, so ordering update-first is safe.
-  let readBack = await deps.profileService.update(input)
-  if (patch.enabled !== undefined && patch.enabled !== readBack.enabled) {
-    readBack = await deps.profileService.setEnabled(current.id, patch.enabled)
-  }
-  return readBack
+  return deps.profileService.update(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +402,7 @@ const handleAttachDetach = async (
   const name = isString(params.name) ? params.name : throwShape('name is required')
   const revision = params.revision
   if (!isFinitePositiveInt(revision)) {
-    throw new Error('revision must be a positive integer.')
+    throw agentsPublicError('revision must be a positive integer.')
   }
 
   const refKey = op.endsWith('skill') ? 'skill_ref' : 'connector_ref'
@@ -434,7 +412,7 @@ const handleAttachDetach = async (
 
   const current = await deps.profileService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
-    throw new Error('revision does not match the current specialist revision.')
+    throw agentsPublicError('revision does not match the current specialist revision.')
   }
   const mode: SpecialistCapabilityMode = current.capabilityMode
 
@@ -496,14 +474,14 @@ export function rejectUnknownKeys(
 ): void {
   for (const key of Object.keys(params)) {
     if (!allowed.has(key)) {
-      throw new Error(`Unknown field "${key}".`)
+      throw agentsPublicError(`Unknown field "${key}".`)
     }
   }
   void method
 }
 
 function throwShape(message: string): never {
-  throw new Error(message)
+  throw agentsPublicError(message)
 }
 
 // ---------------------------------------------------------------------------
@@ -532,7 +510,7 @@ export async function executeAgentsMutation(
         return await handleAttachDetach(method, params, deps)
       default:
         // Exhaustiveness guard: the switch covers every ordinary-mutation op.
-        throw new Error(`Operation "${String(method)}" is not an ordinary mutation.`)
+        throw agentsPublicError(`Operation "${String(method)}" is not an ordinary mutation.`)
     }
   } catch (error) {
     throw new AgentsMutationError(method, error)

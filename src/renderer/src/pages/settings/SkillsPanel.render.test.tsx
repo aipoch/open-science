@@ -9,6 +9,7 @@ import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { openRadixMenu } from './test-utils'
 
 let container: HTMLDivElement
@@ -153,6 +154,25 @@ beforeEach(() => {
       skills: []
     })
   })
+  useSpecialistStore.setState({
+    items: [
+      {
+        kind: 'custom',
+        id: 'literature-reviewer',
+        name: 'LITERATURE_REVIEWER',
+        displayName: 'Literature Reviewer',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: ['a', 'b'], connectorIds: [], connectorTools: [] },
+        revision: 1
+      }
+    ],
+    isLoaded: true,
+    load: vi.fn().mockResolvedValue(undefined)
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -270,6 +290,61 @@ describe('SkillsPanel (list view)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'a' })
   })
 
+  it('shows a distinct loading state before an empty Skill catalog settles', () => {
+    useSettingsStore.setState({
+      skills: [],
+      loadSkills: vi.fn(() => new Promise<void>(() => undefined))
+    })
+
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain('Loading Skills…')
+    expect(document.body.textContent).not.toContain('No skills match your search.')
+    expect(document.body.textContent).not.toContain('No imported skills yet.')
+  })
+
+  it('shows a retryable error instead of an empty catalog when Skill loading fails', async () => {
+    const loadSkills = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+      .mockResolvedValueOnce(undefined)
+    useSettingsStore.setState({ skills: [], loadSkills })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Open Science could not load Skills.'
+    )
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => retry?.click())
+    expect(loadSkills).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a rejected Skill access change after the optimistic rollback', async () => {
+    useSettingsStore.setState({
+      setSkillEnabled: vi.fn().mockRejectedValue(new Error('write failed'))
+    })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save this setting. The previous value was restored.'
+    )
+  })
+
   it('opens bulk management as a dedicated Skills sub-view', () => {
     const onNavigate = vi.fn()
     act(() => {
@@ -293,6 +368,42 @@ describe('SkillsPanel (list view)', () => {
     setValue('Search skills', 'beta')
     expect(document.body.textContent).toContain('Beta')
     expect(document.body.textContent).not.toContain('Alpha')
+  })
+
+  it('shows Specialist usage separately from the Main Agent toggle', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const alphaRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('Alpha'))
+    const betaRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('Beta'))
+
+    expect(alphaRow?.textContent).toContain('Literature Reviewer')
+    expect(alphaRow?.textContent).toContain('Shared with Main')
+    expect(alphaRow?.textContent).toContain('Main Agent')
+    expect(betaRow?.textContent).toContain('Literature Reviewer')
+    expect(betaRow?.textContent).toContain('Specialist only')
+    expect(betaRow?.textContent).toContain('Main Agent')
+    expect(alphaRow?.querySelector('[aria-label="Toggle Alpha"]')?.getAttribute('data-state')).toBe(
+      'checked'
+    )
+    expect(betaRow?.querySelector('[aria-label="Toggle Beta"]')?.getAttribute('data-state')).toBe(
+      'unchecked'
+    )
+    const mainAgentLabel = Array.from(alphaRow?.querySelectorAll('span') ?? []).find(
+      (element) => element.textContent === 'Main Agent'
+    )
+    const tagMenu = alphaRow?.querySelector('[aria-label="Manage Tags"]')
+    const toggle = alphaRow?.querySelector('[aria-label="Toggle Alpha"]')
+    expect(mainAgentLabel).toBeDefined()
+    expect(tagMenu).not.toBeNull()
+    expect(toggle).not.toBeNull()
+    expect(mainAgentLabel!.compareDocumentPosition(tagMenu!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(tagMenu!.compareDocumentPosition(toggle!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('deletes a personal skill from its row control', () => {
@@ -410,6 +521,42 @@ describe('SkillsPanel (list view)', () => {
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
       'Skill is referenced by rna-reviewer.'
     )
+  })
+
+  it('explains and blocks deletion for a Skill still owned by a Specialist', async () => {
+    const deleteSkill = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ deleteSkill })
+    useSpecialistStore.setState((state) => ({
+      items: state.items.map((item) =>
+        item.kind === 'custom'
+          ? {
+              ...item,
+              selectedCapabilities: {
+                ...item.selectedCapabilities,
+                skillIds: item.selectedCapabilities.skillIds.filter(
+                  (skillId) => skillId !== 'personal-mine'
+                )
+              },
+              ownedSkillIds: ['personal-mine']
+            }
+          : item
+      )
+    }))
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')
+    expect(remove?.getAttribute('aria-disabled')).toBe('true')
+
+    await act(async () => remove?.focus())
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toContain(
+      'Owned by Literature Reviewer. Delete this Skill when deleting that Specialist.'
+    )
+
+    act(() => remove?.click())
+    expect(deleteSkill).not.toHaveBeenCalled()
   })
 
   it('always offers installed-skill import, including for other frameworks', () => {
@@ -734,6 +881,39 @@ describe('SkillsPanel (sub-views)', () => {
       metadata: { author: 'Ada' },
       references: []
     })
+  })
+
+  it('uses one Content mode Tab stop and switches mode with ArrowRight', async () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+    })
+
+    const radios = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        '[role="radiogroup"][aria-label="Content mode"] [role="radio"]'
+      )
+    )
+    const group = document.body.querySelector<HTMLElement>(
+      '[role="radiogroup"][aria-label="Content mode"]'
+    )
+    expect(group?.tabIndex).toBe(0)
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([-1, -1])
+
+    act(() => {
+      group?.focus()
+    })
+    expect(document.activeElement).toBe(radios[0])
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([0, -1])
+
+    await act(async () => {
+      radios[0].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(document.body.textContent).toContain('Upload a SKILL.md or text file')
+    expect(document.activeElement).toBe(radios[1])
   })
 
   it('preserves a leading YAML block authored as ordinary skill body content', () => {

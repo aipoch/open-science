@@ -38,6 +38,14 @@ type NotebookSessionLifecycleCallbacks = {
   onNotebookChanged?: (event: NotebookSessionReference) => void
 }
 
+type NotebookKernelStatusPersistenceFailure = {
+  operation: 'idle-shutdown' | 'terminated' | 'recovered-idle'
+  lane: NotebookLaneIdentity
+  kind?: KernelProcessKind
+  env?: string
+  error: unknown
+}
+
 type NotebookSessionLifecycleOptions = {
   storageRoot: string
   defaultProjectId: string
@@ -53,6 +61,7 @@ type NotebookSessionLifecycleOptions = {
   platform?: NodeJS.Platform
   callbacks?: NotebookSessionLifecycleCallbacks
   toSessionReference: (session: RuntimeSession) => NotebookSessionReference
+  onKernelStatusPersistenceFailure?: (failure: NotebookKernelStatusPersistenceFailure) => void
 }
 
 type InternalNotebookSessionRequest = NotebookSessionRequest & {
@@ -241,8 +250,28 @@ class NotebookSessionLifecycleOwner {
       executor: new NotebookKernelExecutor({
         ...this.options.defaultExecutorOptions(),
         platform: this.options.platform,
-        onIdleShutdown: (kind, env) => void lifecycle.onIdleShutdown(kind, env),
-        onTerminated: (kind, env) => void lifecycle.onTerminated(kind, env)
+        onIdleShutdown: (kind, env) => {
+          void lifecycle.onIdleShutdown(kind, env).catch((error: unknown) => {
+            this.options.onKernelStatusPersistenceFailure?.({
+              operation: 'idle-shutdown',
+              lane,
+              kind,
+              env,
+              error
+            })
+          })
+        },
+        onTerminated: (kind, env) => {
+          void lifecycle.onTerminated(kind, env).catch((error: unknown) => {
+            this.options.onKernelStatusPersistenceFailure?.({
+              operation: 'terminated',
+              lane,
+              kind,
+              env,
+              error
+            })
+          })
+        }
       })
     }
   }
@@ -341,13 +370,11 @@ class NotebookSessionLifecycleOwner {
     status: NotebookKernelMetadata['lastKnownStatus'],
     processKey: string
   ): Promise<void> {
-    session.setKernelStatus(processKey, status)
     const kernelInstance = kernelInstanceForProcessKey(processKey)
-    try {
-      if (status === 'terminated') {
-        // A legacy coarse terminated status has unknown ownership. Keep it conservative until an
-        // explicit restart instead of replacing the ambiguity with a partial known-instance set.
-        if (session.hasUnknownDurableKernelTermination()) return
+    if (status === 'terminated') {
+      // A legacy coarse terminated status has unknown ownership. Keep it conservative until an
+      // explicit restart instead of replacing the ambiguity with a partial known-instance set.
+      if (!session.hasUnknownDurableKernelTermination()) {
         await this.options.repository.markKernelTerminated({
           projectId: session.projectId,
           sessionId: session.sessionId,
@@ -355,8 +382,9 @@ class NotebookSessionLifecycleOwner {
           kernelInstance
         })
         session.markDurableKernelTermination(processKey)
-      } else if (status === 'idle') {
-        if (!session.hasDurableKernelTermination(processKey)) return
+      }
+    } else if (status === 'idle') {
+      if (session.hasDurableKernelTermination(processKey)) {
         await this.options.repository.clearKernelTermination({
           projectId: session.projectId,
           sessionId: session.sessionId,
@@ -364,16 +392,30 @@ class NotebookSessionLifecycleOwner {
           kernelInstance
         })
         session.clearDurableKernelTermination(processKey)
-      } else {
-        await this.options.repository.updateKernelStatus({
-          projectId: session.projectId,
-          sessionId: session.sessionId,
-          lane: session.lane,
-          status
-        })
       }
-    } catch {
-      return
+    } else {
+      await this.options.repository.updateKernelStatus({
+        projectId: session.projectId,
+        sessionId: session.sessionId,
+        lane: session.lane,
+        status
+      })
+    }
+    session.setKernelStatus(processKey, status)
+  }
+
+  async persistRecoveredKernelIdle(session: RuntimeSession, processKey: string): Promise<void> {
+    try {
+      await this.persistKernelStatus(session, 'idle', processKey)
+    } catch (error) {
+      const kernelInstance = kernelInstanceForProcessKey(processKey)
+      this.options.onKernelStatusPersistenceFailure?.({
+        operation: 'recovered-idle',
+        lane: session.lane,
+        kind: kernelInstance.kind,
+        env: 'environment' in kernelInstance ? kernelInstance.environment : undefined,
+        error
+      })
     }
   }
 
@@ -423,9 +465,12 @@ class NotebookSessionLifecycleOwner {
   ): Promise<void> {
     const session = this.options.sessions.get(lane)
     if (!session) return
-    await session.runExecutorLifecycleCallback(generation, async () => {
+    const processKey = processKeyFor(kind, env)
+    const projection = session.runExecutorLifecycleCallback(generation, async () => {
       await this.projectKernelIdleShutdown(lane, kind, env)
     })
+    session.blockKernelExecutionUntil(processKey, projection)
+    await projection
   }
 
   private async handleTerminated(
@@ -436,9 +481,12 @@ class NotebookSessionLifecycleOwner {
   ): Promise<void> {
     const session = this.options.sessions.get(lane)
     if (!session) return
-    await session.runExecutorLifecycleCallback(generation, async () => {
+    const processKey = processKeyFor(kind, env)
+    const projection = session.runExecutorLifecycleCallback(generation, async () => {
       await this.projectKernelTerminated(lane, kind, env)
     })
+    session.blockKernelExecutionUntil(processKey, projection)
+    await projection
   }
 }
 

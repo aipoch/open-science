@@ -1674,10 +1674,14 @@ describe('ACP runtime provider prompt acceptance', () => {
     ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
     ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
   ] as const)(
-    'reports provider acceptance after the first %s update',
+    'forwards visual input and reports provider acceptance after the first %s update',
     async (_name, framework, modelRoute, backendId) => {
       const process = new FakeAgentProcess()
+      let receivedPrompt: ContentBlock[] = []
       startFakeAgent(process, ['acceptance-session'], {
+        onPrompt: ({ prompt }) => {
+          receivedPrompt = prompt
+        },
         ...(framework.id === 'codex'
           ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
           : {})
@@ -1700,8 +1704,24 @@ describe('ACP runtime provider prompt acceptance', () => {
       })
 
       const session = await runtime.createSession({ cwd: '/workspace' })
-      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+      const imageData = Buffer.from(`visual-${modelRoute}`).toString('base64')
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Research this.',
+        historyImages: [
+          {
+            mimeType: 'image/png',
+            data: imageData,
+            byteLength: Buffer.byteLength(`visual-${modelRoute}`)
+          }
+        ]
+      })
 
+      expect(receivedPrompt).toContainEqual({
+        type: 'image',
+        mimeType: 'image/png',
+        data: imageData
+      })
       expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
       expect(onProviderPromptAccepted).toHaveBeenCalledWith(session.sessionId, undefined)
     }
@@ -2869,9 +2889,22 @@ describe('ACP runtime restored permission continuation', () => {
     )
   })
 
-  it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
+  it.each([
+    ...RESTORED_CONTINUATION_FRAMEWORKS.map(
+      ([name, framework, modelRoute, backendId]) =>
+        [name, framework, modelRoute, backendId, true, false] as const
+    ),
+    [
+      'OpenCode with Vision relay',
+      opencodeFramework,
+      'opencode-openai',
+      'opencode:provider-a',
+      false,
+      true
+    ] as const
+  ])(
     'builds restored permission replay through %s from Main-owned Session history after context reset',
-    async (_name, framework, modelRoute, backendId) => {
+    async (_name, framework, modelRoute, backendId, supportsImageInput, usesImageRelay) => {
       const process = new FakeAgentProcess()
       const receivedPrompts: ContentBlock[][] = []
       const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
@@ -2970,9 +3003,22 @@ describe('ACP runtime restored permission continuation', () => {
         }
       )
       const loadSessionForContinuation = vi.fn(async () => structuredClone(persistedSession))
+      const imageInputCompatibility = {
+        isAvailable: vi.fn(async () => true),
+        prepare: vi.fn(async ({ content }: { content: string | ContentBlock[] }) =>
+          typeof content === 'string'
+            ? content
+            : content.map((block) =>
+                block.type === 'image'
+                  ? { type: 'text' as const, text: 'Vision-relayed historical image evidence.' }
+                  : block
+              )
+        )
+      }
       const runtime = new AcpRuntime({
         appVersion: '0.1.0',
         defaultCwd: '/workspace',
+        ...(usesImageRelay ? { imageInputCompatibility } : {}),
         permissionWait: {
           sessions: {
             readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
@@ -2988,7 +3034,7 @@ describe('ACP runtime restored permission continuation', () => {
           executablePath: '/bin/agent',
           env: {},
           contextWindow: 200_000,
-          supportsImageInput: true,
+          supportsImageInput,
           ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
         })
       })
@@ -3010,9 +3056,27 @@ describe('ACP runtime restored permission continuation', () => {
       expect(loadSessionForContinuation).toHaveBeenCalledWith('project-1', 'restored-session')
       expect(fakeAgent.prompts[0]?.text).toContain('Main-owned earlier request.')
       expect(fakeAgent.prompts[0]?.text).toContain('approved the pending tool permission')
-      expect(receivedPrompts[0]).toEqual(
-        expect.arrayContaining([expect.objectContaining({ type: 'image' })])
-      )
+      if (usesImageRelay) {
+        expect(imageInputCompatibility.isAvailable).toHaveBeenCalledOnce()
+        expect(imageInputCompatibility.prepare).toHaveBeenCalledWith(
+          expect.objectContaining({ supportsImageInput: false, historyImageCount: 1 })
+        )
+        expect(receivedPrompts[0]).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'text',
+              text: 'Vision-relayed historical image evidence.'
+            })
+          ])
+        )
+        expect(receivedPrompts[0]).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ type: 'image' })])
+        )
+      } else {
+        expect(receivedPrompts[0]).toEqual(
+          expect.arrayContaining([expect.objectContaining({ type: 'image' })])
+        )
+      }
     }
   )
 
@@ -3876,7 +3940,7 @@ describe('ACP runtime session management', () => {
 
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
     expect(fakeAgent.prompts[0]?.text).toContain('approved the pending Session Plan')
-    expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
+    expect(fakeAgent.prompts[0]?.text).toContain('approval=approved lifecycle=approved')
     expect(promptAttempts).toEqual([undefined])
     await vi.waitFor(() => expect(runtimeContext.plan?.continuation).toBeUndefined())
   })
@@ -4253,7 +4317,8 @@ describe('ACP runtime session management', () => {
         expectedRevision: 4
       })
     )
-    expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
+    expect(fakeAgent.prompts[0]?.text).toContain('approval=approved lifecycle=approved')
+    expect(fakeAgent.prompts[0]?.text).not.toContain('artifact_version_id=')
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'plan',
@@ -4607,7 +4672,7 @@ describe('ACP runtime session management', () => {
       expect(onStateChanged).not.toHaveBeenCalled()
 
       runtime.shutdown()
-      vi.advanceTimersByTime(16)
+      vi.advanceTimersByTime(33)
 
       expect(onStateChanged).not.toHaveBeenCalled()
     } finally {
@@ -5201,14 +5266,13 @@ describe('ACP runtime session management', () => {
     const planPrompt = fakeAgent.prompts[0].text
     expect(planPrompt).toContain('## Plan mode (ACTIVE — MANDATORY)')
     expect(planPrompt).toContain(
-      'Review the Skills available in the current session to confirm the catalog has what the task needs.'
+      'Review the Skills available in the current session to confirm the catalog covers the task.'
     )
     expect(planPrompt).toContain('directly ask the user in an ordinary response')
     expect(planPrompt).toContain('complete revised plan')
-    expect(planPrompt).toContain('creates a new immutable plan and re-requests approval')
-    expect(planPrompt).toContain(
-      'Do NOT run code without an approved plan. Always call `mcp__open-science-plan__generate_plan` first.'
-    )
+    expect(planPrompt).toContain('short exact `title`')
+    expect(planPrompt).toContain('Execution starts only after approval.')
+    expect(planPrompt).not.toContain('The plan is presented to the user for review')
     for (const forbidden of [
       'search_skills',
       'ask_user',
@@ -7570,6 +7634,57 @@ describe('ACP runtime session management', () => {
         .events.filter((event) => event.kind === 'message' || event.kind === 'thought')
     ).toEqual([])
   })
+
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+    ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+    ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
+    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+  ] as const)(
+    'accepts a zero usage update from the %s native compaction turn',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['remote-session-1'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        usageForPrompt: (text) => {
+          if (text.includes('establish positive usage')) return { used: 120_000, size: 200_000 }
+          if (text === '/compact') return { used: 0, size: 200_000 }
+          return undefined
+        }
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'establish positive usage' })
+      expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toMatchObject({
+        used: 120_000,
+        size: 200_000
+      })
+
+      await runtime.compactSession({ sessionId: session.sessionId })
+
+      expect(agent.prompts.at(-1)).toEqual({ sessionId: 'remote-session-1', text: '/compact' })
+      expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toMatchObject({
+        used: 0,
+        size: 200_000
+      })
+    }
+  )
 
   it('keeps compaction successful when a hidden usage update state callback throws', async () => {
     const process = new FakeAgentProcess()
@@ -15740,6 +15855,94 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
+  it.each(['session-update', 'claude-sdk-message'] as const)(
+    'keeps a pending session/resume alive on %s progress',
+    async (progressKind) => {
+      const process = new FakeAgentProcess()
+      const resumeReceived = createDeferred()
+      const emitProgress = createDeferred()
+      const progressSent = createDeferred()
+      const finishResume = createDeferred<Record<string, never>>()
+
+      acp
+        .agent({ name: 'progressing-agent' })
+        .onRequest(acp.methods.agent.initialize, () => ({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: {
+            loadSession: false,
+            sessionCapabilities: { close: {}, resume: {} }
+          },
+          authMethods: []
+        }))
+        .onRequest(acp.methods.agent.session.resume, async (ctx) => {
+          resumeReceived.resolve(undefined)
+          await emitProgress.promise
+          if (progressKind === 'session-update') {
+            await ctx.client.notify(acp.methods.client.session.update, {
+              sessionId: ctx.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: 'restoring history' }
+              }
+            })
+          } else {
+            await ctx.client.notify('_claude/sdkMessage', {
+              sessionId: ctx.params.sessionId,
+              message: { type: 'progress', text: 'restoring history' }
+            })
+          }
+          progressSent.resolve(undefined)
+          return finishResume.promise
+        })
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      let now = 0
+      const timers: Array<{ active: boolean; deadline: number; fire: () => void }> = []
+      const advanceBy = (elapsedMs: number): void => {
+        now += elapsedMs
+        for (const timer of timers) {
+          if (timer.active && timer.deadline <= now) {
+            timer.active = false
+            timer.fire()
+          }
+        }
+      }
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        resumeTimeoutMs: 1000,
+        setTimer: (fire, timeoutMs) => {
+          const handle = timers.length
+          timers.push({ active: true, deadline: now + timeoutMs, fire })
+          return handle as unknown as ReturnType<typeof setTimeout>
+        },
+        clearTimer: (handle) => {
+          const timer = timers[handle as unknown as number]
+          if (timer) timer.active = false
+        }
+      })
+
+      const resume = runtime.resumeSession({ sessionId: 'streaming-session', cwd: '/workspace' })
+      await resumeReceived.promise
+      advanceBy(900)
+      emitProgress.resolve(undefined)
+      await progressSent.promise
+
+      // The original deadline has passed, but provider activity renewed the inactivity budget.
+      advanceBy(200)
+      finishResume.resolve({})
+
+      await expect(resume).resolves.toMatchObject({ sessionId: 'streaming-session' })
+      expect(process.killed).toBe(false)
+    }
+  )
+
   it('adopts a fresh session under the same id when a replaced agent no longer holds it', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
@@ -16043,7 +16246,8 @@ describe('ACP runtime session management', () => {
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      spawnAgent: () => asAgentProcess(process),
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: '' })
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
     await runtime.sendPrompt({
@@ -17291,7 +17495,8 @@ describe('ACP runtime session management', () => {
         expectedRevision: 11
       })
       expect(fakeAgent.prompts[0]?.text).toContain('<open_science_protected_plan_context>')
-      expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-7')
+      expect(fakeAgent.prompts[0]?.text).toContain('approval=approved lifecycle=approved')
+      expect(fakeAgent.prompts[0]?.text).not.toContain('artifact_version_id=')
       expect(fakeAgent.prompts[0]?.text).toContain('Analyze data: not_started')
       expect(fakeAgent.prompts[0]?.text).toContain('continue')
     }
@@ -22286,7 +22491,8 @@ describe('ACP runtime — model hot switch', () => {
       runtime.applyModelChange(
         modelTarget('model-b', {
           backendId: 'claude-code:provider-b',
-          anthropicBridgeTargetId: 'provider-b/model-b'
+          anthropicBridgeTargetId: 'provider-b/model-b',
+          supportsImageInput: false
         })
       )
     ).resolves.toBe(true)
@@ -22294,7 +22500,8 @@ describe('ACP runtime — model hot switch', () => {
       runtime.applyModelChange(
         modelTarget('model-a', {
           backendId: 'claude-code:provider-a',
-          anthropicBridgeTargetId: 'provider-a/model-a'
+          anthropicBridgeTargetId: 'provider-a/model-a',
+          supportsImageInput: false
         })
       )
     ).resolves.toBe(true)
@@ -22388,7 +22595,7 @@ describe('ACP runtime — model hot switch', () => {
     expect(process.killed).toBe(false)
   })
 
-  it('hot-switches from a text-only model to an image-capable model in place', async () => {
+  it('reconnects when switching from a text-only model to an image-capable model', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-model'], { configOptions: [modelOption()] })
     const { runtime } = createModelRuntime(process, vi.fn(), false)
@@ -22397,17 +22604,15 @@ describe('ACP runtime — model hot switch', () => {
 
     await runtime.applyModelChange(modelTarget('model-b'))
 
-    expect(fakeAgent.configChanges).toEqual([
-      { sessionId: 's-model', configId: 'model', value: 'model-b' }
-    ])
-    expect(process.killed).toBe(false)
+    expect(fakeAgent.configChanges).toEqual([])
+    expect(process.killed).toBe(true)
   })
 
   it.each([
     ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
     ['native Codex', codexFramework, 'codex-responses', 'codex:provider-a']
   ] as const)(
-    'lets %s filter historical images while hot-switching to a text-only model',
+    'reconnects %s before switching to a text-only model',
     async (_name, framework, route, backendId) => {
       const process = new FakeAgentProcess()
       const fakeAgent = startFakeAgent(process, ['s-model'], {
@@ -22445,10 +22650,8 @@ describe('ACP runtime — model hot switch', () => {
         reasoningEffort: 'default'
       })
 
-      expect(fakeAgent.configChanges).toEqual([
-        { sessionId: 's-model', configId: 'model', value: 'model-b' }
-      ])
-      expect(process.killed).toBe(false)
+      expect(fakeAgent.configChanges).toEqual([])
+      expect(process.killed).toBe(true)
     }
   )
 

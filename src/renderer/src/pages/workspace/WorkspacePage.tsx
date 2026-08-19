@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
-
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -13,7 +12,7 @@ import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persist
 import { deleteSession } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
-import { useSettingsStore } from '@/stores/settings-store'
+import { selectVisionRelayAvailable, useSettingsStore } from '@/stores/settings-store'
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
@@ -23,6 +22,7 @@ import {
 import {
   projectSessionActionability,
   resolveRootPermissionPending,
+  sessionAwaitsHistoryReplay,
   useSessionStore
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -108,7 +108,8 @@ const WorkspacePage = ({
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const supportsImageInput = useSettingsStore(
     (state) =>
-      state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput
+      state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput ===
+        true || selectVisionRelayAvailable(state)
   )
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>
@@ -370,11 +371,13 @@ const WorkspacePage = ({
   const sideChat = useSideChatController(
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
-  const sideChatDisabledReason =
-    sideChat.unavailableReason ??
-    (activeProviderType !== undefined && isCodexSubscriptionProvider(activeProviderType)
-      ? 'Side chat is unavailable for Codex subscription because strict tool isolation cannot be enforced.'
-      : undefined)
+  const awaitsHistoryReplay = sessionAwaitsHistoryReplay(activeSession)
+  const sideChatDisabledReason = awaitsHistoryReplay
+    ? t('Resolve the current Session operation first.')
+    : (sideChat.unavailableReason ??
+      (activeProviderType !== undefined && isCodexSubscriptionProvider(activeProviderType)
+        ? 'Side chat is unavailable for Codex subscription because strict tool isolation cannot be enforced.'
+        : undefined))
 
   useEffect(() => {
     const getPlanProjection = window.api.acp?.getPlanProjection
@@ -501,6 +504,7 @@ const WorkspacePage = ({
   const isRequestReviewDisabled = useReviewStore((state) => {
     if (!activeSessionId) return true
     if (!activeSession) return true
+    if (sessionAwaitsHistoryReplay(activeSession)) return true
     const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
     if (!lastAgentMessage) return true
     if (isReviewing) return true
@@ -575,6 +579,7 @@ const WorkspacePage = ({
     isSessionPersistenceReady &&
     !activeSessionHasSendPreparation &&
     !activeSession?.compacting &&
+    !awaitsHistoryReplay &&
     conversation.queue.items.length === 0
   const canCompactContext =
     isSessionPersistenceReady &&
@@ -583,7 +588,8 @@ const WorkspacePage = ({
     !activeSessionHasRuntimeInteraction &&
     !activeSession.interrupted &&
     !activeSession.fixLoopActive &&
-    !activeSession.compacting
+    !activeSession.compacting &&
+    !awaitsHistoryReplay
   const customizeAvailable =
     catalogSkillIds.has('customize') &&
     !sessionController.view.specialist.unavailable &&
@@ -600,11 +606,12 @@ const WorkspacePage = ({
     hasRunningSubagents: hasCurrentRunningDelegatedAttempt(activeSession),
     sideChatOpen: sideChat.view !== undefined
   })
-  const compactContextDisabledReason = !activeSessionSupportsNativeCompaction
-    ? 'Send a message to reconnect this session before compacting.'
-    : activeSession?.status === 'error'
-      ? 'Resolve the current session error before compacting.'
-      : 'Wait for the current agent activity to finish.'
+  const compactContextDisabledReason =
+    !activeSessionSupportsNativeCompaction || awaitsHistoryReplay
+      ? 'Send a message to reconnect this session before compacting.'
+      : activeSession?.status === 'error'
+        ? 'Resolve the current session error before compacting.'
+        : 'Wait for the current agent activity to finish.'
   const durablePermissionError =
     activeSession?.status === 'waiting-permission' &&
     activeSession.runtimeContext?.permission?.state === 'pending'

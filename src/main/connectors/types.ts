@@ -1,6 +1,7 @@
 export type ConnectorCredentials = { ncbiEmail?: string; ncbiApiKey?: string }
 
 export type ToolContext = {
+  signal?: AbortSignal
   fetchJson(url: string): Promise<unknown>
   fetchText(url: string): Promise<string>
   // GET JSON plus the response headers — for APIs that report totals/pagination in headers rather than

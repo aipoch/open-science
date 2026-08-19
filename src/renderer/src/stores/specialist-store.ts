@@ -1,6 +1,7 @@
 import { create, type StoreApi } from 'zustand'
 import type {
   SpecialistListItem,
+  SpecialistDocumentIntegrity,
   SpecialistProfileView,
   CreateSpecialistInput,
   UpdateSpecialistInput
@@ -11,13 +12,15 @@ import type {
   SpecialistExportPreview,
   SpecialistExportSaveResult,
   SpecialistDeletePreview,
-  SpecialistDeleteResult
+  SpecialistDeleteResult,
+  SpecialistPackageInstallRequest
 } from '../../../shared/specialist-package'
 
 type SpecialistStoreData = {
   items: SpecialistListItem[]
   isLoaded: boolean
   loadError: string | undefined
+  integrity: SpecialistDocumentIntegrity
   packagePreview?: SpecialistPackageCandidatePreview
   exportPreview?: SpecialistExportPreview
 }
@@ -35,7 +38,9 @@ type SpecialistStoreActions = {
   ) => Promise<SpecialistDeleteResult>
   duplicate: (id: string) => Promise<CreateSpecialistInput>
   selectPackage: () => Promise<{ cancelled: true } | SpecialistPackageCandidatePreview>
-  installPackage: (confirmOverwrite?: boolean) => Promise<SpecialistPackageInstallResult>
+  installPackage: (
+    options?: Omit<SpecialistPackageInstallRequest, 'candidateToken'>
+  ) => Promise<SpecialistPackageInstallResult>
   cancelPackage: () => Promise<void>
   previewExport: (specialistId: string) => Promise<SpecialistExportPreview>
   exportSpecialist: (
@@ -48,6 +53,8 @@ type SpecialistStoreActions = {
 type SpecialistStore = SpecialistStoreData & SpecialistStoreActions
 
 const SAFE_SPECIALIST_LOAD_ERROR = 'Open Science could not load Specialists. Retry to continue.'
+const SPECIALIST_DOCUMENT_READ_ONLY_ERROR =
+  'Specialist data must be repaired before changes can be saved.'
 
 let latestCatalogRequest = 0
 let latestExportPreviewRequest = 0
@@ -56,9 +63,14 @@ const refreshCatalog = async (set: StoreApi<SpecialistStore>['setState']): Promi
   const requestId = ++latestCatalogRequest
   set({ loadError: undefined })
   try {
-    const items = await window.api.specialist.list()
+    const snapshot = await window.api.specialist.list()
     if (requestId === latestCatalogRequest) {
-      set({ items, isLoaded: true, loadError: undefined })
+      set({
+        items: snapshot.items,
+        integrity: snapshot.integrity,
+        isLoaded: true,
+        loadError: undefined
+      })
     }
   } catch (error) {
     if (requestId === latestCatalogRequest) {
@@ -73,6 +85,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   items: [],
   isLoaded: false,
   loadError: undefined,
+  integrity: { status: 'ok' },
   packagePreview: undefined,
   exportPreview: undefined,
 
@@ -80,7 +93,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     // Guard: specialist.list is Electron-only and unavailable in the web gateway.
     if (typeof window.api?.specialist?.list !== 'function') {
       latestCatalogRequest += 1
-      set({ items: [], isLoaded: true, loadError: undefined })
+      set({ items: [], integrity: { status: 'ok' }, isLoaded: true, loadError: undefined })
       return Promise.resolve()
     }
     const request = refreshCatalog(set)
@@ -91,6 +104,9 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   },
 
   create: async (input: CreateSpecialistInput) => {
+    if (useSpecialistStore.getState().integrity.status === 'degraded') {
+      throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
+    }
     const view = await window.api.specialist.create(input)
     // Reload the full list so Reviewer and ordering stay consistent.
     await refreshCatalog(set)
@@ -98,6 +114,9 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   },
 
   update: async (input: UpdateSpecialistInput) => {
+    if (useSpecialistStore.getState().integrity.status === 'degraded') {
+      throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
+    }
     const view = await window.api.specialist.update(input)
     // Reload the full list so Reviewer and ordering stay consistent.
     await refreshCatalog(set)
@@ -105,6 +124,9 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   },
 
   setEnabled: async (id: string, enabled: boolean) => {
+    if (useSpecialistStore.getState().integrity.status === 'degraded') {
+      throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
+    }
     await window.api.specialist.setEnabled({ id, enabled })
     await refreshCatalog(set)
   },
@@ -112,6 +134,9 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   previewDelete: async (id: string) => window.api.specialist.previewDelete({ id }),
 
   delete: async (id: string, expectedRevision: number, deleteSkillIds: readonly string[]) => {
+    if (useSpecialistStore.getState().integrity.status === 'degraded') {
+      throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
+    }
     const result = await window.api.specialist.delete({ id, expectedRevision, deleteSkillIds })
     if (result.status === 'deleted') {
       await refreshCatalog(set)
@@ -122,17 +147,23 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   duplicate: async (id: string) => window.api.specialist.duplicate({ id }),
 
   selectPackage: async () => {
+    if (useSpecialistStore.getState().integrity.status === 'degraded') {
+      throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
+    }
     const result = await window.api.specialist.selectPackage()
     set({ packagePreview: 'cancelled' in result ? undefined : result })
     return result
   },
 
-  installPackage: async (confirmOverwrite = false) => {
+  installPackage: async (options = {}) => {
+    if (useSpecialistStore.getState().integrity.status === 'degraded') {
+      throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
+    }
     const preview = useSpecialistStore.getState().packagePreview
     if (!preview) return { status: 'failed', code: 'candidate-invalid' }
     const result = await window.api.specialist.installPackage({
       candidateToken: preview.candidateToken,
-      ...(confirmOverwrite ? { confirmOverwrite: true as const } : {})
+      ...options
     })
     if (result.status === 'installed') {
       await refreshCatalog(set)

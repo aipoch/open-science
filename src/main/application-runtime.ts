@@ -4,6 +4,7 @@ import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecyc
 type Awaitable<T> = T | Promise<T>
 
 export const APPLICATION_MODULE_DISPOSAL_BUDGET_MS = 1000
+export const APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS = 5000
 
 export class ApplicationModuleDisposalTimeoutError extends Error {
   constructor(
@@ -60,7 +61,8 @@ export type ApplicationLifecycleShutdownDependencies = {
 
 // Direct Web/Task adapters close before the application command router, which in turn closes before
 // its underlying RemoteAccess owner. Closing Web first can publish RemoteAccess's stopped state, but
-// this path runs only while the app is quitting. A failed surface still cannot strand a later one.
+// this path runs only while the app is quitting. A failed surface still cannot strand a later one, and
+// the shared deadline reserves time for every later surface before app.exit().
 export const shutdownApplicationSurfaces = async ({
   disposeApplicationRuntime,
   shutdownRemoteAccess,
@@ -88,30 +90,67 @@ export const shutdownApplicationSurfaces = async ({
     return priority[next] > priority[current] ? next : current
   }
   let overallOutcome: ShutdownStepOutcome = 'completed'
-  const dispose = async (surface: string, operation: () => Awaitable<void>): Promise<void> => {
-    try {
-      await operation()
-    } catch (error) {
-      for (const cause of flattenErrors(error)) {
-        const result = classifyError(cause)
-        overallOutcome = combineOutcomes(overallOutcome, result)
-        try {
-          log?.error('application surface shutdown failed', {
-            surface,
-            result,
-            ...diagnosticErrorFields(cause)
-          })
-        } catch {
-          // A diagnostic sink failure must not prevent the remaining surfaces from closing.
-        }
+  const dispose = async (
+    surface: string,
+    operation: () => Awaitable<void>,
+    timeoutMs: number
+  ): Promise<void> => {
+    const observed = Promise.resolve()
+      .then(operation)
+      .then(
+        () => ({ status: 'fulfilled' as const }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason })
+      )
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<{ status: 'timeout' }>((resolve) => {
+      timer = setTimeout(() => resolve({ status: 'timeout' }), timeoutMs)
+      timer.unref?.()
+    })
+    const outcome = await Promise.race([observed, deadline])
+    if (timer) clearTimeout(timer)
+
+    if (outcome.status === 'timeout') {
+      overallOutcome = combineOutcomes(overallOutcome, 'timeout')
+      try {
+        log?.error('application surface shutdown failed', {
+          surface,
+          result: 'timeout',
+          errorCategory: 'timeout'
+        })
+      } catch {
+        // The timeout remains authoritative when the diagnostic sink also fails.
+      }
+      return
+    }
+    if (outcome.status === 'fulfilled') return
+
+    for (const cause of flattenErrors(outcome.reason)) {
+      const result = classifyError(cause)
+      overallOutcome = combineOutcomes(overallOutcome, result)
+      try {
+        log?.error('application surface shutdown failed', {
+          surface,
+          result,
+          ...diagnosticErrorFields(cause)
+        })
+      } catch {
+        // A diagnostic sink failure must not prevent the remaining surfaces from closing.
       }
     }
   }
 
-  await dispose('web-controller', disposeWebController)
-  await dispose('application-runtime', disposeApplicationRuntime)
-  await dispose('remote-access', shutdownRemoteAccess)
-  await dispose('ipc-handlers', disposeIpcHandlers)
+  const surfaces: ReadonlyArray<readonly [string, () => Awaitable<void>]> = [
+    ['web-controller', disposeWebController],
+    ['application-runtime', disposeApplicationRuntime],
+    ['remote-access', shutdownRemoteAccess],
+    ['ipc-handlers', disposeIpcHandlers]
+  ]
+  const shutdownDeadline = Date.now() + APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS
+  for (const [index, [surface, operation]] of surfaces.entries()) {
+    const remainingBudgetMs = Math.max(0, shutdownDeadline - Date.now())
+    const remainingSurfaceCount = surfaces.length - index
+    await dispose(surface, operation, Math.floor(remainingBudgetMs / remainingSurfaceCount))
+  }
   return overallOutcome
 }
 

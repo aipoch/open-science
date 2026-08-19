@@ -52,13 +52,14 @@ const validZip = (
       JSON.stringify({
         name: 'Research Synthesizer',
         description: overrides.description ?? 'Synthesizes research.',
-        systemPrompt: 'Private imported instructions.',
-        ...(overrides.connectorIds ? { connectorIds: overrides.connectorIds } : {})
+        system_prompt: 'Private imported instructions.',
+        skill_ids: [],
+        connector_ids: overrides.connectorIds ?? []
       })
     )
   })
 
-const bundledZip = (): Uint8Array =>
+const bundledZip = (overrides: { skillVersion?: string; skillBody?: string } = {}): Uint8Array =>
   zipSync({
     'manifest.json': encoder.encode(
       JSON.stringify({
@@ -72,11 +73,13 @@ const bundledZip = (): Uint8Array =>
       JSON.stringify({
         name: 'Research Synthesizer',
         description: 'Synthesizes research.',
-        systemPrompt: 'Private imported instructions.'
+        system_prompt: 'Private imported instructions.',
+        skill_ids: [],
+        connector_ids: []
       })
     ),
     'skills/analysis-tools/SKILL.md': encoder.encode(
-      '---\nname: analysis-tools\ndescription: Analyze data\nversion: 1.0.0\n---\nUse the tools.'
+      `---\nname: analysis-tools\ndescription: Analyze data\nversion: ${overrides.skillVersion ?? '1.0.0'}\n---\n${overrides.skillBody ?? 'Use the tools.'}`
     ),
     'skills/analysis-tools/scripts/run.sh': encoder.encode('exit 99')
   })
@@ -135,6 +138,154 @@ afterEach(async () => {
 })
 
 describe('SpecialistPackageService', () => {
+  it('requires a conflict decision and can keep the installed Skill', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const userSkills = new UserSkillRepository(storageDir)
+    const installedPlan = validateSpecialistZip(bundledZip(), catalog).plan!.skills[0]
+    await skillPort.prepare('seed-conflict', 'former-owner', [installedPlan])
+    await skillPort.commit('seed-conflict')
+    await skillPort.recover('seed-conflict', 'commit')
+    await repository.insert({
+      id: 'existing-user',
+      name: 'Existing User',
+      description: 'Uses the installed Skill.',
+      systemPrompt: 'Use the current Skill.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: ['personal-analysis-tools'],
+        connectorIds: [],
+        connectorTools: []
+      },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      catalog: async () => ({
+        ...catalog,
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false,
+          mainEnabled: true
+        }))
+      })
+    })
+
+    const preview = await service.preview(
+      bundledZip({ skillVersion: '2.0.0', skillBody: 'Use the replacement.' })
+    )
+    expect(preview.installable).toBe(false)
+    expect(preview.summary?.skills[0]).toMatchObject({
+      disposition: 'conflict',
+      conflict: {
+        localId: 'personal-analysis-tools',
+        installedVersion: '1.0.0',
+        mainEnabled: true,
+        specialists: [{ id: 'existing-user', name: 'Existing User' }]
+      }
+    })
+    expect(service.candidateNewSkillIds(preview.candidateToken)).toEqual([])
+    await expect(service.install({ candidateToken: preview.candidateToken })).resolves.toEqual({
+      status: 'failed',
+      code: 'skill-conflict-resolution-required'
+    })
+    await repository.insert({
+      id: 'late-user',
+      name: 'Late User',
+      description: 'Started using the Skill after preview.',
+      systemPrompt: 'Use the installed Skill.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: ['personal-analysis-tools'],
+        connectorIds: [],
+        connectorTools: []
+      },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    await expect(
+      service.install({
+        candidateToken: preview.candidateToken,
+        skillConflictResolutions: [{ skillId: 'analysis-tools', resolution: 'use-installed' }]
+      })
+    ).resolves.toEqual({ status: 'failed', code: 'stale-candidate' })
+    const retriedPreview = await service.preview(
+      bundledZip({ skillVersion: '2.0.0', skillBody: 'Use the replacement.' })
+    )
+
+    const result = await service.install({
+      candidateToken: retriedPreview.candidateToken,
+      skillConflictResolutions: [{ skillId: 'analysis-tools', resolution: 'use-installed' }]
+    })
+    expect(result).toMatchObject({
+      status: 'installed',
+      specialist: {
+        selectedCapabilities: { skillIds: ['personal-analysis-tools'] },
+        ownedSkillIds: []
+      }
+    })
+    await expect(userSkills.body('personal-analysis-tools')).resolves.toContain('Use the tools.')
+  })
+
+  it('atomically replaces an installed Skill when the package version is selected', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const userSkills = new UserSkillRepository(storageDir)
+    const installedPlan = validateSpecialistZip(bundledZip(), catalog).plan!.skills[0]
+    await skillPort.prepare('seed-replacement', 'former-owner', [installedPlan])
+    await skillPort.commit('seed-replacement')
+    await skillPort.recover('seed-replacement', 'commit')
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      catalog: async () => ({
+        ...catalog,
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false
+        }))
+      })
+    })
+    const preview = await service.preview(
+      bundledZip({ skillVersion: '2.0.0', skillBody: 'Use the replacement.' })
+    )
+
+    const result = await service.install({
+      candidateToken: preview.candidateToken,
+      skillConflictResolutions: [{ skillId: 'analysis-tools', resolution: 'use-incoming' }]
+    })
+
+    expect(result).toMatchObject({
+      status: 'installed',
+      specialist: { ownedSkillIds: ['personal-analysis-tools'] }
+    })
+    await expect(userSkills.body('personal-analysis-tools')).resolves.toContain(
+      'Use the replacement.'
+    )
+    await expect(skillPort.snapshot()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'personal-analysis-tools',
+        version: '2.0.0',
+        standalone: false,
+        ownerIds: ['former-owner', 'research-synth']
+      })
+    ])
+  })
+
   it('coexists with a same-ID GitHub import that lands while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
     const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
@@ -380,6 +531,53 @@ describe('SpecialistPackageService', () => {
     })
   })
 
+  it('blocks package export with actionable diagnostics when the profile is incomplete', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'draft-specialist',
+      name: 'DRAFT_SPECIALIST',
+      displayName: 'Draft Specialist',
+      description: '',
+      systemPrompt: '',
+      enabled: false,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+
+    await expect(service.previewExport('draft-specialist')).resolves.toMatchObject({
+      canExport: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'specialist.description-invalid',
+          message: expect.stringContaining('description')
+        },
+        {
+          severity: 'error',
+          code: 'specialist.system-prompt-invalid',
+          message: expect.stringContaining('system prompt')
+        }
+      ]
+    })
+    await expect(
+      service.export({
+        specialistId: 'draft-specialist',
+        expectedRevision: 1,
+        includedSkillIds: []
+      })
+    ).rejects.toThrow(/description.*system prompt/i)
+  })
+
   it('exports builtin and owned Skills with exact IDs and editable capability references only', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({
@@ -461,15 +659,15 @@ describe('SpecialistPackageService', () => {
     const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as Record<string, unknown>
 
     expect(Object.keys(payload).sort()).toEqual([
-      'connectorIds',
+      'connector_ids',
       'description',
-      'displayName',
+      'display_name',
       'name',
-      'skillIds',
-      'systemPrompt'
+      'skill_ids',
+      'system_prompt'
     ])
-    expect(payload.skillIds).toEqual(['document-reader', 'analysis-tools'])
-    expect(payload.connectorIds).toEqual(['reference-library'])
+    expect(payload.skill_ids).toEqual(['document-reader', 'analysis-tools'])
+    expect(payload.connector_ids).toEqual(['reference-library'])
     expect(archive['skills/document-reader/SKILL.md']).toBeUndefined()
     expect(archive['skills/analysis-tools/SKILL.md']).toBeDefined()
     expect(archive['skills/os-document-reader/SKILL.md']).toBeUndefined()
@@ -524,10 +722,10 @@ describe('SpecialistPackageService', () => {
     })
     const archive = unzipSync(exported.archiveBytes)
     const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as {
-      skillIds: string[]
+      skill_ids: string[]
     }
 
-    expect(payload.skillIds).toEqual(['literature-review'])
+    expect(payload.skill_ids).toEqual(['literature-review'])
     expect(archive['skills/literature-review/SKILL.md']).toBeDefined()
     expect(archive['skills/personal-literature-review/SKILL.md']).toBeUndefined()
   })
@@ -1268,6 +1466,33 @@ describe('SpecialistPackageService', () => {
     expect(duplicate).toMatchObject({ origin: 'local', packageVersion: '0.1.0', ownedSkillIds: [] })
   })
 
+  it('forwards Marketplace activation to the package transaction', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+    const preview = await service.preview(validZip())
+
+    await expect(
+      service.install({ candidateToken: preview.candidateToken }, undefined, {
+        activateAfterInstall: true
+      })
+    ).resolves.toMatchObject({
+      status: 'installed',
+      specialist: {
+        id: 'research-synth',
+        enabled: true,
+        setupPending: false
+      }
+    })
+    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+      enabled: true,
+      setupPending: false
+    })
+  })
+
   it('does not erase a profile created while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
     const profiles = new ProfileService(repository)
@@ -1842,11 +2067,13 @@ describe('SpecialistPackageService', () => {
       rollback: async () => undefined,
       recover: async () => undefined
     }
+    const onResourcesDeleted = vi.fn().mockResolvedValue(undefined)
     const service = new SpecialistPackageService({
       storageDir,
       repository,
       skillPort,
-      catalog: async () => catalog
+      catalog: async () => catalog,
+      onResourcesDeleted
     })
     const preview = await service.previewSpecialistDelete({ id: 'safe-owner' })
     await service.deleteSpecialist({
@@ -1858,6 +2085,7 @@ describe('SpecialistPackageService', () => {
     expect(journal).not.toContain('DO-NOT-LOG-THIS-PROMPT')
     expect(journal).not.toContain(storageDir)
     expect(journal).not.toContain('systemPrompt')
+    expect(onResourcesDeleted).toHaveBeenCalledWith('safe-owner', [])
   })
 
   it('rolls back prepared Skill deletion when the Specialist document swap fails', async () => {

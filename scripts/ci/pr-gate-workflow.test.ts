@@ -97,7 +97,7 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage']
+          options: ['classified', 'unit-coverage', 'i18n']
         }
       }
     })
@@ -153,8 +153,13 @@ describe('PR Gate workflow', () => {
     expect(classify?.run).toContain(
       '[[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "unit-coverage" ]]'
     )
+    expect(classify?.run).toContain(
+      '[[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "i18n" ]]'
+    )
     expect(classify?.run).toContain('"lanes":["policy","unit_macos"]')
     expect(classify?.run).toContain('"bundles":["policy","unit"]')
+    expect(classify?.run).toContain('"lanes":["policy","i18n"]')
+    expect(classify?.run).toContain('"bundles":["policy","static"]')
     expect(classify?.run).toContain(
       'node "$TRUSTED_CLASSIFIER_DIR/classify-pr-changes.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
@@ -217,7 +222,7 @@ describe('PR Gate workflow', () => {
       with: {
         'fetch-depth': 1,
         'persist-credentials': false,
-        ref: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}'
+        ref: "${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}"
       }
     })
     expect(gate.steps?.at(-1)).toMatchObject({
@@ -283,6 +288,26 @@ describe('PR Gate workflow', () => {
       TYPECHECKS_OUTCOME: '${{ steps.typechecks.outcome }}'
     })
     expect(enforce?.run).toContain('check typechecks "$TYPECHECKS_OUTCOME"')
+  })
+
+  it('runs the i18n catalog guard as a named static check', () => {
+    const i18n = workflow.jobs.static.steps?.find(({ name }) => name === 'Check i18n catalog')
+    const enforce = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Enforce selected static checks'
+    )
+
+    expect(i18n).toMatchObject({
+      id: 'i18n',
+      'continue-on-error': true,
+      run: 'npx vitest run src/renderer/src/i18n/resources.test.ts'
+    })
+    expect(i18n?.if).toContain("'i18n'")
+    expect(enforce?.env).toMatchObject({
+      I18N_OUTCOME: '${{ steps.i18n.outcome }}'
+    })
+    expect(enforce?.run).toContain('check i18n "$I18N_OUTCOME"')
+    expect(manifest.laneBundles.i18n).toBe('static')
+    expect(manifest.laneOrder).toContain('i18n')
   })
 
   it('shards only full macOS Module tests and merges coverage into the stable unit bundle', () => {

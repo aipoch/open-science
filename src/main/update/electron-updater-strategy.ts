@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
-import type { UpdateStatus } from '../../shared/update'
+import { isNewer, type UpdateStatus } from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
 import { fetchManifest } from './manifest'
@@ -185,6 +185,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // latest, so an older (drained) download can't clear a newer one's lifecycle.
   private downloadGeneration = 0
   private downloadOperation?: DiagnosticOperation
+  private checkInFlight = false
+  private readyCheckStatus?: UpdateStatus
+  private readyCheckError?: unknown
   private status: UpdateStatus
   private applying = false
   private installerStarted = false
@@ -231,9 +234,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private subscribe(): void {
-    this.updater.on('checking-for-update', () => this.setStatus({ state: 'checking' }))
+    this.updater.on('checking-for-update', () => {
+      if (this.readyCheckStatus && this.status === this.readyCheckStatus) return
+      this.setStatus({ state: 'checking' })
+    })
     this.updater.on('update-available', (info) => {
       const i = info as { version?: string; releaseNotes?: unknown; files?: UpdateFeedFile[] }
+      const readyStatus = this.readyCheckStatus
+      if (
+        readyStatus &&
+        this.status === readyStatus &&
+        (!i.version || !isNewer(i.version, readyStatus.latest ?? this.currentVersion))
+      ) {
+        return
+      }
       const totalBytes = extractArtifactSize(i.files, this.platform, this.arch)
       this.setStatus({
         state: 'available',
@@ -247,6 +261,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       if (i.version) this.notesHydration = this.hydrateNotes(i.version)
     })
     this.updater.on('update-not-available', (info) => {
+      if (this.readyCheckStatus && this.status === this.readyCheckStatus) return
       const i = info as { version?: string }
       this.setStatus({ state: 'up-to-date', latest: i.version })
     })
@@ -285,6 +300,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return
+      if (this.readyCheckStatus && this.status === this.readyCheckStatus) {
+        this.readyCheckError = err
+        return
+      }
       if (this.installerStarted) {
         this.pendingInstallRollback?.()
         this.pendingInstallRollback = undefined
@@ -337,36 +356,56 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   async check(): Promise<UpdateStatus> {
-    if (this.applying) return this.status
+    // Keep provider checks mutually exclusive with downloads. A ready update may still be refreshed,
+    // but its events are reconciled against the downloaded version by the subscribers above.
+    if (this.applying || this.checkInFlight || this.downloadLifecycle) {
+      return this.status
+    }
+    const readyStatus = this.status.state === 'ready' ? this.status : undefined
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',
       fields: { strategy: 'in-place' }
     })
-    operation.phase('query-provider')
+    this.checkInFlight = true
+    this.readyCheckStatus = readyStatus
+    this.readyCheckError = undefined
     try {
-      await this.updater.checkForUpdates()
-    } catch (error) {
-      this.setStatus({
-        state: 'error',
-        error: error instanceof Error ? error.message : 'Update check failed'
-      })
-      operation.fail(error, { result: 'error' })
+      operation.phase('query-provider')
+      let providerFailure: unknown
+      try {
+        await this.updater.checkForUpdates()
+      } catch (error) {
+        providerFailure = error
+        if (!readyStatus || this.status !== readyStatus) {
+          this.setStatus({
+            state: 'error',
+            error: error instanceof Error ? error.message : 'Update check failed'
+          })
+        }
+      }
+      // Wait for the notes fetch triggered by update-available so the returned status carries them.
+      await this.notesHydration
+      providerFailure ??= this.readyCheckError
+      if (providerFailure) {
+        operation.fail(providerFailure, { result: 'error' })
+      } else if (this.status.state === 'error') {
+        operation.fail(new Error('Updater check failed'), { result: 'error' })
+      } else {
+        operation.complete({ result: this.status.state })
+      }
+      return this.status
+    } finally {
+      this.checkInFlight = false
+      this.readyCheckStatus = undefined
+      this.readyCheckError = undefined
     }
-    // Wait for the notes fetch triggered by update-available so the returned status carries them.
-    await this.notesHydration
-    if (this.status.state === 'error') {
-      operation.fail(new Error('Updater check failed'), { result: 'error' })
-    } else {
-      operation.complete({ result: this.status.state })
-    }
-    return this.status
   }
 
   async download(): Promise<UpdateStatus> {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
     // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
     // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
-    if (this.applying || this.downloadToken) return this.status
+    if (this.applying || this.checkInFlight || this.downloadToken) return this.status
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-download',
@@ -446,10 +485,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // isSilent=true bypasses the assisted NSIS wizard and isForceRunAfter=true relaunches into the new
   // version. Other updaters ignore isSilent.
   async apply(): Promise<UpdateStatus> {
-    // Claim the update synchronously so repeat clicks or concurrent renderers cannot start a second
-    // teardown/install. The broadcast also gives the renderer immediate feedback during the shutdown
-    // gate, which can take up to 15 seconds on Windows.
-    if (this.applying) return this.status
+    // Ignore stale/out-of-order renderer calls until electron-updater reports a completed download,
+    // then claim the update synchronously so repeat clicks or concurrent renderers cannot start a
+    // second teardown/install. The broadcast also gives the renderer immediate feedback during the
+    // shutdown gate, which can take up to 15 seconds on Windows.
+    if (this.status.state !== 'ready' || this.applying) return this.status
     this.applying = true
     this.installerStarted = false
     this.setStatus({ ...this.status, state: 'applying' })

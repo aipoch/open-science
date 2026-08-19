@@ -1,25 +1,31 @@
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { createLogger } from '../logger'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
-import type {
-  AcpRuntimeSnapshotOwner,
-  RuntimeEventInput,
-  RuntimeSnapshotProjection
+import {
+  ACP_RUNTIME_EVENT_RETENTION_LIMIT,
+  type AcpRuntimeSnapshotOwner,
+  type RuntimeEventInput,
+  type RuntimeSnapshotProjection
 } from './runtime-snapshot-owner'
 
-// Dev-facing counters for the acp:state trailing-edge coalescer; a throttled debug summary rides
+// Dev-facing counters for the acp:state window coalescer; a throttled debug summary rides
 // the existing logger level gating (debug is dev-only), leaving production unaffected.
 const log = createLogger('acp')
 let acpStateBroadcastsSent = 0
 let acpStateBroadcastsSuppressed = 0
+const acpRuntimeEventsPublished = new Map<AcpRuntimeEvent['kind'], number>()
 
-const recordAcpStateBroadcastSent = (): void => {
+const recordAcpStateBroadcastSent = (snapshot: AcpStateSnapshot): void => {
   acpStateBroadcastsSent += 1
-  // Streaming still emits ~one broadcast per frame, so log a periodic summary instead.
+  // Streaming still emits ~one broadcast per renderer presentation tick, so summarize periodically.
   if (acpStateBroadcastsSent % 100 === 0) {
     log.debug('acp:state broadcasts', {
       sent: acpStateBroadcastsSent,
-      suppressed: acpStateBroadcastsSuppressed
+      suppressed: acpStateBroadcastsSuppressed,
+      eventKinds: Object.fromEntries(acpRuntimeEventsPublished),
+      ...(process.env.NODE_ENV === 'development'
+        ? { snapshotChars: JSON.stringify(snapshot).length }
+        : {})
     })
   }
 }
@@ -38,15 +44,19 @@ type AcpRuntimePublicationOwnerOptions = Readonly<{
   scheduleStatePublication?: (publish: () => void) => () => void
 }>
 
-const STATE_PUBLICATION_INTERVAL_MS = 16
+const STATE_PUBLICATION_INTERVAL_MS = 33
+// A fast provider can emit more than one retained window before the 33 ms timer runs. Publish
+// midway through that window so every prefix chunk reaches subscribers before bounded history can
+// evict it, while ordinary streams still receive the same frame-level coalescing.
+const MAX_COALESCED_EVENTS = Math.floor(ACP_RUNTIME_EVENT_RETENTION_LIMIT / 2)
 
 const scheduleStatePublication = (publish: () => void): (() => void) => {
   const timer = setTimeout(publish, STATE_PUBLICATION_INTERVAL_MS)
   return () => clearTimeout(timer)
 }
 
-const isCoalescibleAssistantTextEvent = (event: AcpRuntimeEvent): boolean =>
-  event.kind === 'message' &&
+const isCoalescibleAssistantStreamEvent = (event: AcpRuntimeEvent): boolean =>
+  (event.kind === 'message' || event.kind === 'thought') &&
   event.role === 'assistant' &&
   typeof event.text === 'string' &&
   event.text.length > 0 &&
@@ -62,6 +72,8 @@ const preservingFrozen = <Value extends object>(source: Value, copy: Value): Val
 // Every projection is read live from the authoritative owners; this owner caches no runtime facts.
 class AcpRuntimePublicationOwner {
   private cancelScheduledStatePublication?: () => void
+  private coalescedEvents = 0
+  private readonly activeToolCallIdsBySession = new Map<string | undefined, Set<string>>()
 
   constructor(private readonly options: AcpRuntimePublicationOwnerOptions) {}
 
@@ -84,12 +96,52 @@ class AcpRuntimePublicationOwner {
         : event
     const runtimeEvent = this.options.snapshotOwner.appendEvent(scopedEvent)
     onAppended?.()
+    acpRuntimeEventsPublished.set(
+      runtimeEvent.kind,
+      (acpRuntimeEventsPublished.get(runtimeEvent.kind) ?? 0) + 1
+    )
     this.options.callbacks.onEvent?.(runtimeEvent)
-    if (isCoalescibleAssistantTextEvent(runtimeEvent)) {
-      this.scheduleStatePublication()
+    if (this.isCoalescibleRuntimeEvent(runtimeEvent)) {
+      this.coalescedEvents += 1
+      if (this.coalescedEvents >= MAX_COALESCED_EVENTS) {
+        this.emitState()
+      } else {
+        this.scheduleStatePublication()
+      }
     } else {
       this.emitState()
     }
+  }
+
+  private isCoalescibleRuntimeEvent(event: AcpRuntimeEvent): boolean {
+    if (isCoalescibleAssistantStreamEvent(event)) return true
+    if (event.kind === 'stop' || event.kind === 'error') {
+      this.activeToolCallIdsBySession.delete(event.sessionId)
+      return false
+    }
+    if (event.kind !== 'tool' || !event.toolCallId) return false
+
+    const activeToolCallIds = this.activeToolCallIdsBySession.get(event.sessionId)
+    const wasActive = activeToolCallIds?.has(event.toolCallId) === true
+    if (event.status === 'completed' || event.status === 'failed') {
+      activeToolCallIds?.delete(event.toolCallId)
+      if (activeToolCallIds?.size === 0) {
+        this.activeToolCallIdsBySession.delete(event.sessionId)
+      }
+      return false
+    }
+    if (activeToolCallIds) {
+      activeToolCallIds.add(event.toolCallId)
+    } else {
+      this.activeToolCallIdsBySession.set(event.sessionId, new Set([event.toolCallId]))
+    }
+
+    return (
+      wasActive &&
+      (event.toolContent !== undefined ||
+        event.terminalOutput !== undefined ||
+        event.rawOutput !== undefined)
+    )
   }
 
   publishPermissionRequest(request: AcpPermissionRequest): void {
@@ -107,12 +159,26 @@ class AcpRuntimePublicationOwner {
   }
 
   emitState(): void {
-    this.cancelPendingStatePublication()
-    recordAcpStateBroadcastSent()
-    this.options.callbacks.onStateChanged?.(this.getSnapshot())
+    this.cancelScheduledPublication()
+    this.publishState()
+  }
+
+  private publishState(): void {
+    this.coalescedEvents = 0
+    const onStateChanged = this.options.callbacks.onStateChanged
+    if (!onStateChanged) return
+
+    const snapshot = this.getSnapshot()
+    recordAcpStateBroadcastSent(snapshot)
+    onStateChanged(snapshot)
   }
 
   cancelPendingStatePublication(): void {
+    this.cancelScheduledPublication()
+    this.activeToolCallIdsBySession.clear()
+  }
+
+  private cancelScheduledPublication(): void {
     this.cancelScheduledStatePublication?.()
     this.cancelScheduledStatePublication = undefined
   }
@@ -126,8 +192,7 @@ class AcpRuntimePublicationOwner {
     const schedule = this.options.scheduleStatePublication ?? scheduleStatePublication
     this.cancelScheduledStatePublication = schedule(() => {
       this.cancelScheduledStatePublication = undefined
-      recordAcpStateBroadcastSent()
-      this.options.callbacks.onStateChanged?.(this.getSnapshot())
+      this.publishState()
     })
   }
 }

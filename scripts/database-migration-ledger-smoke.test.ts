@@ -4,7 +4,10 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { MIGRATION_MANIFEST } from '../src/main/database/migration-service'
+import {
+  MIGRATION_MANIFEST,
+  migrateApplicationDatabase
+} from '../src/main/database/migration-service'
 import {
   assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
@@ -17,7 +20,7 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
+      'fd269c67c41caf4b0863d04564165a0373737817c5ec742a3160739324e1d3c1'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
@@ -44,6 +47,64 @@ describe('packaged database migration ledger smoke', () => {
     expect(() =>
       assertApplicationMigrationLedger(MIGRATION_MANIFEST, releasedLedger.length)
     ).toThrow(/expected application database migration ledger/)
+  })
+
+  it('applies the compute authentication persistence columns and named checks to a legacy database', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-auth-persistence-'))
+    await seedLegacyDatabase(root)
+    const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
+    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+
+    try {
+      await migrateApplicationDatabase(client)
+
+      const jobColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+        `PRAGMA table_info('ComputeJob')`
+      )
+      const credentialColumns = await client.$queryRawUnsafe<Array<{ name: string; pk: bigint }>>(
+        `PRAGMA table_info('ComputeCredential')`
+      )
+      const operationColumns = await client.$queryRawUnsafe<
+        Array<{ name: string; notnull: bigint; dflt_value: string | null }>
+      >(`PRAGMA table_info('ComputeAuthOperation')`)
+      expect(jobColumns.map(({ name }) => name)).not.toContain('lastHarvestError')
+      expect(credentialColumns.map(({ name }) => name)).not.toContain('id')
+      expect(credentialColumns.find(({ name }) => name === 'computeHostId')).toMatchObject({
+        pk: 1n
+      })
+      expect(operationColumns.map(({ name }) => name)).toEqual(
+        expect.arrayContaining(['operationKind', 'requestFingerprint'])
+      )
+      expect(operationColumns.find(({ name }) => name === 'operationKind')).toMatchObject({
+        notnull: 1n,
+        dflt_value: null
+      })
+      expect(operationColumns.find(({ name }) => name === 'requestFingerprint')).toMatchObject({
+        notnull: 1n
+      })
+
+      const tableSchemas = await client.$queryRawUnsafe<Array<{ name: string; sql: string }>>(
+        `SELECT "name", "sql" FROM "sqlite_schema"
+         WHERE "type" = 'table' AND "name" IN ('ComputeHost', 'ComputeAuthOperation')`
+      )
+      const schemaByTable = new Map(tableSchemas.map(({ name, sql }) => [name, sql]))
+      expect(schemaByTable.get('ComputeHost')).toContain(
+        'CONSTRAINT "ComputeHost_authenticationMode_check"'
+      )
+      expect(schemaByTable.get('ComputeHost')).toContain(
+        'CONSTRAINT "ComputeHost_authenticationRevision_check"'
+      )
+      expect(schemaByTable.get('ComputeAuthOperation')).toContain(
+        'CONSTRAINT "ComputeAuthOperation_resultRevision_check"'
+      )
+      expect(schemaByTable.get('ComputeAuthOperation')).toContain(
+        'CONSTRAINT "ComputeAuthOperation_operationKind_check"'
+      )
+      expect(schemaByTable.get('ComputeAuthOperation')).not.toContain("'legacy'")
+    } finally {
+      await client.$disconnect()
+      await rm(root, { force: true, recursive: true })
+    }
   })
 
   it.each([0, 1.5, Number.NaN, MIGRATION_MANIFEST.length + 1])(

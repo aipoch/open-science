@@ -99,6 +99,7 @@ describe('settings Connectors slice', () => {
   it('loads the authoritative Connector, custom-server, and NCBI projection', async () => {
     const result: ConnectorsSnapshot = {
       ...snapshot([connector('pubmed')], [server('custom')]),
+      reservedCustomServerIds: ['pending-delete'],
       ncbi: { contactEmail: 'science@example.test', hasApiKey: true }
     }
     vi.mocked(commands.listConnectors).mockResolvedValue(result)
@@ -514,5 +515,21 @@ describe('settings Connectors slice', () => {
     )
 
     expect(store.getState().pendingApprovals).toEqual([request])
+  })
+
+  it('dismisses a settled approval idempotently', () => {
+    const first: ConnectorApprovalRequest = {
+      id: 'first',
+      connector: 'pubmed',
+      method: 'search',
+      argsPreview: '{}'
+    }
+    const second = { ...first, id: 'second' }
+    store.setState({ pendingApprovals: [first, second] })
+
+    store.getState().dismissApproval('first')
+    store.getState().dismissApproval('first')
+
+    expect(store.getState().pendingApprovals).toEqual([second])
   })
 })

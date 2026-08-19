@@ -49,6 +49,31 @@ type ProjectDeletionRecoveryLoopOptions = {
   onError?: (error: unknown) => void
 }
 
+type ProjectDeletionFailure = {
+  projectId: string
+  error: unknown
+}
+
+class ProjectDeletionRecoveryError extends AggregateError {
+  readonly failures: readonly ProjectDeletionFailure[]
+
+  constructor(failures: readonly ProjectDeletionFailure[]) {
+    const firstError = failures[0]?.error
+    super(
+      failures.map(({ error }) => error),
+      firstError instanceof Error
+        ? firstError.message
+        : `Project deletion recovery failed: ${failures[0]?.projectId ?? 'unknown'}`
+    )
+    this.name = 'ProjectDeletionRecoveryError'
+    this.failures = failures
+  }
+
+  affectsAny(projectIds: ReadonlySet<string>): boolean {
+    return this.failures.some(({ projectId }) => projectIds.has(projectId))
+  }
+}
+
 class ProjectDeletionRecoveryLoop {
   private readonly retryDelayMs: number
   private readonly onError: (error: unknown) => void
@@ -109,7 +134,9 @@ class ProjectDeletionRecoveryLoop {
 }
 
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
-// same sticky recovery gate is shared by project CRUD, session persistence, and Files queries.
+// the same recovery work is shared by project CRUD, session persistence, and Files queries. Strict
+// recovery reports every failure for background retry; foreground Project/Files admission filters
+// those failures by durable Project ownership.
 class ProjectDeletionCoordinator {
   private operationQueue: Promise<void> = Promise.resolve()
   private recoveryPromise: Promise<void> | undefined
@@ -129,11 +156,13 @@ class ProjectDeletionCoordinator {
   deleteProject(projectId: string): Promise<void> {
     const deletion = this.operationQueue.then(() =>
       withDataRootWrite(async () => {
-        await this.recoverPendingDeletionsNow()
+        const recoveryComplete = await this.waitForProjectOperationsNow([projectId])
         this.isRecoveryComplete = false
         try {
           await this.runDeletion(projectId)
-          this.isRecoveryComplete = true
+          // Preserve sticky completion only when scoped admission did not suppress failures owned by
+          // other Projects. Suppressed durable intents must remain eligible for retry.
+          this.isRecoveryComplete = recoveryComplete
         } catch (error) {
           this.isRecoveryComplete = false
           throw error
@@ -149,6 +178,14 @@ class ProjectDeletionCoordinator {
   async recoverPendingDeletions(): Promise<void> {
     await this.operationQueue
     return withDataRootWrite(() => this.recoverPendingDeletionsNow())
+  }
+
+  // Foreground operations still drive durable recovery, but a failed tail only denies access to the
+  // Project(s) that own that intent. Infrastructure failures remain global because intent ownership
+  // could not be established safely. An empty set represents Project list/create operations.
+  async waitForProjectOperations(projectIds: readonly string[]): Promise<void> {
+    await this.operationQueue
+    await withDataRootWrite(() => this.waitForProjectOperationsNow(projectIds))
   }
 
   // Restores fail-closed in-memory barriers from local durable authority only. Startup waits for this
@@ -173,9 +210,7 @@ class ProjectDeletionCoordinator {
     if (this.recoveryPromise) return this.recoveryPromise
     if (this.isRecoveryComplete) return
 
-    const recovery = this.runPendingDeletionRecovery().then((retainedProjectIds) =>
-      this.adoptLegacyProjectSessionTombstones(retainedProjectIds)
-    )
+    const recovery = this.recoverEveryPendingDeletion()
     this.recoveryPromise = recovery
     try {
       await recovery
@@ -186,6 +221,27 @@ class ProjectDeletionCoordinator {
     } finally {
       if (this.recoveryPromise === recovery) this.recoveryPromise = undefined
     }
+  }
+
+  private async waitForProjectOperationsNow(projectIds: readonly string[]): Promise<boolean> {
+    try {
+      await this.recoverPendingDeletionsNow()
+      return true
+    } catch (error) {
+      if (!(error instanceof ProjectDeletionRecoveryError)) throw error
+      if (error.affectsAny(new Set(projectIds))) throw error
+      return false
+    }
+  }
+
+  private async recoverEveryPendingDeletion(): Promise<void> {
+    const { projectIds, retainedProjectIds, failures } = await this.runPendingDeletionRecovery()
+    failures.push(
+      ...(await this.adoptLegacyProjectSessionTombstones(
+        new Set([...projectIds, ...retainedProjectIds])
+      ))
+    )
+    if (failures.length > 0) throw new ProjectDeletionRecoveryError(failures)
   }
 
   // Install the non-destructive admission fence before committing deletion intent, then persist
@@ -218,55 +274,70 @@ class ProjectDeletionCoordinator {
   }
 
   // Replays intents serially so crash recovery follows the same ordering as an online deletion.
-  private async runPendingDeletionRecovery(): Promise<Set<string>> {
+  private async runPendingDeletionRecovery(): Promise<{
+    projectIds: readonly string[]
+    retainedProjectIds: Set<string>
+    failures: ProjectDeletionFailure[]
+  }> {
     const projectIds = await this.projects.listDeletionIntents()
     const retainedProjectIds = new Set<string>()
+    const failures: ProjectDeletionFailure[] = []
     for (const projectId of projectIds) {
-      await this.prepareDeletion(projectId)
-      // An absent Project plus an unmarked tombstone identifies a cross-version orphan adoption.
-      // Re-derive its conservative policy from durable state so a crash immediately after intent
-      // creation cannot turn the next retry into authority-creating normal deletion. Any rejection
-      // naturally retains the intent because runtime cleanup may already have removed resources.
-      const requireExistingUploadAuthority =
-        !(await this.projects.get(projectId)) &&
-        (await this.sessions.getProjectSessionDeletionState(projectId)) === 'legacy-committed'
-      const result: ProjectSessionDeletionResult = requireExistingUploadAuthority
-        ? await this.sessions.deleteProjectSessions(projectId, {
-            requireExistingUploadAuthority: true
-          })
-        : await this.sessions.deleteProjectSessions(projectId)
-      if (result.status === 'orphan-retained') {
-        await this.projects.deleteDeletionIntent(projectId)
-        await this.lifecycle?.abortProjectDeletion?.(projectId)
-        retainedProjectIds.add(projectId)
-        continue
+      try {
+        await this.prepareDeletion(projectId)
+        // An absent Project plus an unmarked tombstone identifies a cross-version orphan adoption.
+        // Re-derive its conservative policy from durable state so a crash immediately after intent
+        // creation cannot turn the next retry into authority-creating normal deletion. Any rejection
+        // naturally retains the intent because runtime cleanup may already have removed resources.
+        const requireExistingUploadAuthority =
+          !(await this.projects.get(projectId)) &&
+          (await this.sessions.getProjectSessionDeletionState(projectId)) === 'legacy-committed'
+        const result: ProjectSessionDeletionResult = requireExistingUploadAuthority
+          ? await this.sessions.deleteProjectSessions(projectId, {
+              requireExistingUploadAuthority: true
+            })
+          : await this.sessions.deleteProjectSessions(projectId)
+        if (result.status === 'orphan-retained') {
+          await this.projects.deleteDeletionIntent(projectId)
+          await this.lifecycle?.abortProjectDeletion?.(projectId)
+          retainedProjectIds.add(projectId)
+          continue
+        }
+        await this.finishDeletion(projectId)
+      } catch (error) {
+        failures.push({ projectId, error })
       }
-      await this.finishDeletion(projectId)
     }
-    return retainedProjectIds
+    return { projectIds, retainedProjectIds, failures }
   }
 
   // Older releases could remove the Project row and intent before their best-effort physical
   // tombstone cleanup. Adopt every surviving unmarked tombstone into the durable intent protocol
   // before its Session migration can write a prepared marker or create new Version authority.
   private async adoptLegacyProjectSessionTombstones(
-    retainedProjectIds: ReadonlySet<string>
-  ): Promise<void> {
+    skippedProjectIds: ReadonlySet<string>
+  ): Promise<ProjectDeletionFailure[]> {
     const projectIds = await this.sessions.listLegacyProjectSessionTombstones()
+    const failures: ProjectDeletionFailure[] = []
     for (const projectId of projectIds) {
-      if (retainedProjectIds.has(projectId)) continue
-      await this.createDeletionIntentWithFence(projectId)
-      await this.lifecycle?.beforeProjectDelete(projectId)
-      const result = await this.sessions.deleteProjectSessions(projectId, {
-        requireExistingUploadAuthority: true
-      })
-      if (result.status === 'orphan-retained') {
-        await this.projects.deleteDeletionIntent(projectId)
-        await this.lifecycle?.abortProjectDeletion?.(projectId)
-        continue
+      if (skippedProjectIds.has(projectId)) continue
+      try {
+        await this.createDeletionIntentWithFence(projectId)
+        await this.lifecycle?.beforeProjectDelete(projectId)
+        const result = await this.sessions.deleteProjectSessions(projectId, {
+          requireExistingUploadAuthority: true
+        })
+        if (result.status === 'orphan-retained') {
+          await this.projects.deleteDeletionIntent(projectId)
+          await this.lifecycle?.abortProjectDeletion?.(projectId)
+          continue
+        }
+        await this.finishDeletion(projectId)
+      } catch (error) {
+        failures.push({ projectId, error })
       }
-      await this.finishDeletion(projectId)
     }
+    return failures
   }
 
   // The Project row is removed only after every fallible authority cleanup succeeds. Keeping both

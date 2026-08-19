@@ -17,7 +17,11 @@ import type {
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
-import { isReportableRunFailure } from '../../../../shared/run-error-classification'
+import {
+  isReportableRunFailure,
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
+  visionRunFailureMessage
+} from '../../../../shared/run-error-classification'
 import {
   AlertTriangle,
   ArrowUp,
@@ -74,6 +78,7 @@ import { ComposerContextUsage } from './ComposerContextUsage'
 import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
 import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
+import { ComposerSpecialistPicker } from './ComposerSpecialistPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { normalizeRunFailureError } from './error-report'
@@ -102,6 +107,31 @@ import { hasMainConversation, type SideChatController } from './use-side-chat-co
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
+import { getAvatarColor } from '../settings/specialist-icons'
+
+const localizeVisionRunFailure = (
+  error: string | null | undefined,
+  t: TFunction
+): string | undefined => {
+  switch (visionRunFailureMessage(error)) {
+    case VISION_MODEL_NOT_CONFIGURED_MESSAGE:
+      return t(
+        "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+      )
+    case 'The attached image is too large to prepare for the Vision model.':
+      return t('The attached image is too large to prepare for the Vision model.')
+    case 'The attached image is invalid.':
+      return t('The attached image is invalid.')
+    case 'The current images exceed the Vision evidence request budget.':
+      return t('The current images exceed the Vision evidence request budget.')
+    case 'The current Vision evidence exceeds the request budget.':
+      return t('The current Vision evidence exceeds the request budget.')
+    case 'The Vision model returned invalid image evidence.':
+      return t('The Vision model returned invalid image evidence.')
+    default:
+      return undefined
+  }
+}
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
@@ -428,6 +458,7 @@ const ConversationPanel = ({
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const settingsLoaded = useSettingsStore((state) => state.isLoaded)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const stopSubmissionPendingRef = useRef(false)
   const [isStopping, setIsStopping] = useState(false)
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
@@ -437,12 +468,16 @@ const ConversationPanel = ({
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [resumingSessionId, setResumingSessionId] = useState<string>()
-  const isResuming = activeSession?.id === resumingSessionId
+  const isResuming =
+    activeSession !== undefined &&
+    resumingSessionId !== undefined &&
+    activeSession.id === resumingSessionId
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
   const [composerRestoreFocusRequest, setComposerRestoreFocusRequest] = useState<number>()
+  const [agentControlsOpenRequest, setAgentControlsOpenRequest] = useState(0)
 
   const openReportDialog = (): void => {
     setReportDialogEpoch((epoch) => epoch + 1)
@@ -505,7 +540,13 @@ const ConversationPanel = ({
     activeSession?.status === 'waiting-plan-approval'
       ? activePendingPlan
       : undefined
-  const resolvedRunError = normalizeRunFailureError(activeSession?.error)
+  const resolvedRunError =
+    localizeVisionRunFailure(activeSession?.error, t) ??
+    normalizeRunFailureError(activeSession?.error)
+  const resolvedActionError = localizeVisionRunFailure(actionError, t) ?? actionError
+  const showVisionModelSettings =
+    visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
+    visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
   // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
@@ -516,6 +557,13 @@ const ConversationPanel = ({
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
     : undefined
+  const selectedSpecialist = specialistId
+    ? specialistItems.find((item) => item.kind !== 'reviewer' && item.id === specialistId)
+    : undefined
+  const specialistComposerColor =
+    selectedSpecialist && selectedSpecialist.kind !== 'reviewer' && !specialistUnavailable
+      ? getAvatarColor(selectedSpecialist.colorKey)
+      : undefined
   const effectiveSpecialistSkills = resolveEffectiveSpecialistSkills(
     activeSpecialist?.kind === 'custom' ? activeSpecialist : undefined,
     catalogSkills.map((skill) => ({
@@ -644,7 +692,7 @@ const ConversationPanel = ({
   }
 
   const handleBranchInNewSession = (): void => {
-    if (!effectiveCanSend || !onBranchInNewSession) return
+    if (!effectiveCanSend || !onBranchInNewSession || !canBranchInNewSession) return
     onBranchInNewSession(docToSkillIds(draftDoc))
   }
 
@@ -668,11 +716,14 @@ const ConversationPanel = ({
 
   const openPendingPlan = (): void => {
     if (!activeSession || !pendingPlan) return
-    usePreviewWorkbenchStore
-      .getState()
-      .upsertAndActivateItem(
-        createSessionPlanPreviewItem(activeSession.id, activeSession.projectId)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createSessionPlanPreviewItem(
+        activeSession.id,
+        activeSession.projectId,
+        // Version-scoped id keeps this tab identical to the progress chip / "view plan" entry.
+        pendingPlan.artifactVersionId
       )
+    )
   }
 
   const hasTextDraft = draftDoc.nodes.some(
@@ -812,12 +863,12 @@ const ConversationPanel = ({
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
-                ) : actionError || activeSession?.status === 'error' ? (
+                ) : resolvedActionError || activeSession?.status === 'error' ? (
                   <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
-                    {actionError ? (
-                      <span className="min-w-0 break-words">{actionError}</span>
+                    {resolvedActionError ? (
+                      <span className="min-w-0 break-words">{resolvedActionError}</span>
                     ) : null}
                     {activeSession?.status === 'error' ? (
                       <div className="flex items-start gap-2">
@@ -837,6 +888,17 @@ const ConversationPanel = ({
                             {t('Report error')}
                           </button>
                         ) : null}
+                      </div>
+                    ) : null}
+                    {showVisionModelSettings ? (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => openSettingsToPanel('model')}
+                          className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                        >
+                          {t('Model settings')}
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -960,9 +1022,46 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (sideChat || hasPendingPermission || pendingElicitation) && 'hidden'
+                      (sideChat ||
+                        hasPendingPermission ||
+                        pendingElicitation ||
+                        specialistUnavailable) &&
+                        'hidden'
                     )}
                   />
+
+                  {!sideChat && activeSession && specialistUnavailable ? (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      data-testid="specialist-unavailable-notice"
+                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-warning-100/50 bg-warning-100/10 px-3 py-2"
+                    >
+                      <AlertTriangle
+                        className="mt-0.5 size-3.5 shrink-0 text-warning-900"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12px] font-medium leading-5 text-warning-900">
+                          {t('This Specialist is no longer available')}
+                        </div>
+                        <div className="text-[11px] leading-4 text-text-100">
+                          {t('Choose another Specialist before sending a message.')}{' '}
+                          {t('Your draft is preserved.')}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        className="ml-auto border-warning-100/50 bg-transparent text-warning-900 hover:bg-warning-100/20 hover:text-warning-900"
+                        onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
+                      >
+                        {t('Choose Specialist')}
+                      </Button>
+                    </div>
+                  ) : null}
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
@@ -979,14 +1078,22 @@ const ConversationPanel = ({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="text-[12px] font-medium leading-5 text-red-300">
-                          {t('Could not switch to {{name}}', {
-                            name: reconfigureError.specialistName
-                          })}
+                          {reconfigureError.committed
+                            ? t('Specialist switch is pending for {{name}}', {
+                                name: reconfigureError.specialistName
+                              })
+                            : t('Could not switch to {{name}}', {
+                                name: reconfigureError.specialistName
+                              })}
                         </div>
                         <div className="text-[11px] leading-4 text-red-400/80">
-                          {t(
-                            'The agent session could not be reconfigured. Your draft has been preserved.'
-                          )}
+                          {reconfigureError.committed
+                            ? t(
+                                'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
+                              )
+                            : t(
+                                'The agent session could not be reconfigured. Your draft has been preserved.'
+                              )}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <button
@@ -1103,9 +1210,18 @@ const ConversationPanel = ({
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
                       ordinaryComposerBlocked && 'hidden'
                     )}
+                    data-specialist-color={specialistComposerColor}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
                   >
+                    {specialistComposerColor && selectedSpecialist ? (
+                      <span
+                        key={selectedSpecialist.id}
+                        className="composer-specialist-color-in"
+                        style={{ borderColor: specialistComposerColor }}
+                        aria-hidden="true"
+                      />
+                    ) : null}
                     {/* File-drag overlay is scoped to the composer input card only. */}
                     {isDragging ? (
                       <FileDropOverlay label={t('Drop files to attach')} className="rounded-2xl" />
@@ -1514,6 +1630,13 @@ const ConversationPanel = ({
                           specialistId={specialistId}
                           specialistUnavailable={specialistUnavailable}
                           onSpecialistChange={onSpecialistChange}
+                          openRequest={agentControlsOpenRequest}
+                        />
+
+                        <ComposerSpecialistPicker
+                          selectedId={specialistId}
+                          readOnly={!canChangeAgentControls}
+                          onChange={onSpecialistChange}
                         />
 
                         {/* Compatibility indicator for an explicit user selection while a turn is
@@ -1689,7 +1812,9 @@ const ConversationPanel = ({
                                           !canPlanFirst &&
                                           !canStartSideChat &&
                                           !canRetrySideChatHydration &&
-                                          (!effectiveCanSend || !onBranchInNewSession)
+                                          (!effectiveCanSend ||
+                                            !onBranchInNewSession ||
+                                            !canBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
                                         aria-label={t('More send options')}
@@ -1745,7 +1870,11 @@ const ConversationPanel = ({
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-branch-in-new-session"
-                                    disabled={!effectiveCanSend || !onBranchInNewSession}
+                                    disabled={
+                                      !effectiveCanSend ||
+                                      !onBranchInNewSession ||
+                                      !canBranchInNewSession
+                                    }
                                     onSelect={handleBranchInNewSession}
                                     className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
                                   >
@@ -1823,6 +1952,7 @@ const ConversationPanel = ({
         <ContextWindowDialog
           open={isContextWindowOpen}
           session={activeSession}
+          contextUsage={contextUsage}
           onOpenChange={setIsContextWindowOpen}
         />
       </section>

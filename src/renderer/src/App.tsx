@@ -112,7 +112,9 @@ const AppContent = (): React.JSX.Element | null => {
   )
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
+  const dismissApproval = useSettingsStore((state) => state.dismissApproval)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
+  const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
   const hasComputeApproval = useComputeStore((state) =>
     state.pendingApprovals.some(
       (candidate) =>
@@ -333,10 +335,16 @@ const AppContent = (): React.JSX.Element | null => {
 
   // Subscribe once to connector approval requests from the main-process gate; they surface as a
   // modal the user must answer before the held connector call proceeds.
-  useEffect(
-    () => window.api.settings.onConnectorApprovalRequest(enqueueApproval),
-    [enqueueApproval]
-  )
+  useEffect(() => {
+    const removeRequest = window.api.settings.onConnectorApprovalRequest(enqueueApproval)
+    const removeSettled =
+      window.api.settings.onConnectorApprovalSettled?.(dismissApproval) ?? (() => undefined)
+    void window.api.settings.replayPendingConnectorApprovals?.().catch(() => undefined)
+    return () => {
+      removeSettled()
+      removeRequest()
+    }
+  }, [dismissApproval, enqueueApproval])
 
   useEffect(
     () => window.api.settings.onSkillImportApprovalRequest(enqueueSkillImport),
@@ -465,10 +473,16 @@ const AppContent = (): React.JSX.Element | null => {
   }, [openPendingNotificationSession])
 
   // Subscribe once to compute approval requests. The card must be answered before the SSH call runs.
-  useEffect(
-    () => window.api.compute.onApprovalRequest(enqueueComputeApproval),
-    [enqueueComputeApproval]
-  )
+  useEffect(() => {
+    const removeRequest = window.api.compute.onApprovalRequest(enqueueComputeApproval)
+    const removeSettled =
+      window.api.compute.onApprovalSettled?.(dismissComputeApproval) ?? (() => undefined)
+    void window.api.compute.replayPendingApprovals?.().catch(() => undefined)
+    return () => {
+      removeSettled()
+      removeRequest()
+    }
+  }, [dismissComputeApproval, enqueueComputeApproval])
 
   // Subscribe once to job-updated broadcasts so the session job feed stays live for the badge and
   // inline job rows. Updates are applied globally — the store filters by sessionId at query time.

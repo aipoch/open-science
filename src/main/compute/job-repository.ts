@@ -145,8 +145,25 @@ export class ComputeJobRepository {
   private mutationQueue: Promise<unknown> = Promise.resolve()
   private readonly deletingProjects = new Set<string>()
   private readonly deletingSessions = new Set<string>()
+  private readonly deletingProviders = new Set<string>()
 
   constructor(private readonly getClient: ComputeJobClientProvider) {}
+
+  async beginProviderDeletion(providerId: string): Promise<void> {
+    await this.runMutation(async () => {
+      this.deletingProviders.add(providerId)
+    })
+  }
+
+  async abortProviderDeletion(providerId: string): Promise<void> {
+    await this.runMutation(async () => {
+      this.deletingProviders.delete(providerId)
+    })
+  }
+
+  async completeProviderDeletion(providerId: string): Promise<void> {
+    await this.abortProviderDeletion(providerId)
+  }
 
   async beginOwnerDeletion(owner: ComputeJobOwner): Promise<void> {
     await this.runMutation(async () => {
@@ -189,6 +206,9 @@ export class ComputeJobRepository {
 
   async create(request: CreateJobRequest): Promise<ComputeJob> {
     return this.runMutation(async () => {
+      if (this.deletingProviders.has(request.providerId)) {
+        throw new Error(`Compute Host is being removed: ${request.providerId}`)
+      }
       this.assertOwnerMutable(request.projectId, request.sessionId)
       const client = await this.getClient()
       const initialStatus = request.initialStatus ?? 'submitted'
@@ -326,6 +346,31 @@ export class ComputeJobRepository {
       where: { providerId, status: { in: ['queued', 'submitted', 'running'] } }
     })
     return count > 0
+  }
+
+  async hasIdentityChangeBlockingJobsForProvider(providerId: string): Promise<boolean> {
+    const client = await this.getClient()
+    const count = await client.computeJob.count({
+      where: {
+        providerId,
+        OR: [
+          { status: { in: ['queued', 'submitted', 'running'] } },
+          { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: null }
+        ]
+      }
+    })
+    return count > 0
+  }
+
+  // Host deletion must retain authentication while any Job row remains. Even a dispatch-error Job
+  // can have created remote state before its workdir was persisted, and the owner-deletion workflow
+  // derives that cleanup path from the Host when needed.
+  async hasDeletionBlockingJobsForProvider(providerId: string): Promise<boolean> {
+    return this.runMutation(async () => {
+      const client = await this.getClient()
+      const count = await client.computeJob.count({ where: { providerId } })
+      return count > 0
+    })
   }
 
   // Returns jobs for a session that have been notified (notifiedAt set) but not yet consumed

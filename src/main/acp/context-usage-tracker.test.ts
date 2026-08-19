@@ -703,6 +703,79 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('retains positive provider usage when a later update reports zero without a reset', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'glm-5.3' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 62_000,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+
+    tracker.deleteSession('s1')
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'glm-5.3' })
+    tracker.appendText('s1', 'messages', 'new conversation')
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 0,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
+  it('rejects a zero terminal reading after positive provider usage', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+
+    expect(tracker.reconcileUsed('s1', 0)).toBe(false)
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 62_000,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
+  it('accepts a deferred zero provider reading when provider compaction completes', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+
+    expect(tracker.usage('s1')?.used).toBe(62_000)
+    expect(tracker.confirmProviderCompaction('s1')).toBe(true)
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 0,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
+  it('accepts only the first zero provider reading after provider compaction completes', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'codex', model: 'gpt-5.6-sol' })
+    tracker.appendText('s1', 'messages', 'committed conversation history')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+
+    expect(tracker.confirmProviderCompaction('s1')).toBe(false)
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+    expect(tracker.usage('s1')?.used).toBe(0)
+
+    tracker.reconcileProviderUsage('s1', { used: 10_000, size: 1_000_000 })
+    expect(tracker.confirmProviderCompaction('s1')).toBe(false)
+    tracker.reconcileProviderUsage('s1', { used: 8_000, size: 1_000_000 })
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+    expect(tracker.usage('s1')?.used).toBe(8_000)
+  })
+
   it('restores the last provider reading when a preflight estimate receives no fresh update', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
@@ -967,6 +1040,24 @@ describe('ContextUsageTracker', () => {
       used: 12,
       size: 200_000,
       breakdown: { status: 'reconciled' }
+    })
+  })
+
+  it('accepts a fresh zero provider reading after context compaction', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const input = { frameworkId: 'opencode' as const, model: 'glm-5.3' }
+    tracker.beginSession('s1', input)
+    tracker.appendText('s1', 'messages', 'conversation before compaction')
+    tracker.reconcileProviderUsage('s1', { used: 62_000, size: 1_000_000 })
+    const compactionCheckpoint = tracker.checkpointSession('s1')
+
+    tracker.reconcileProviderUsage('s1', { used: 0, size: 1_000_000 })
+    tracker.resetAfterCompaction('s1', input, compactionCheckpoint, 1_000_000)
+
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 0,
+      size: 1_000_000,
+      breakdown: { status: 'reconciled', estimatedTokens: 0 }
     })
   })
 

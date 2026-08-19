@@ -83,9 +83,14 @@ export type ResponsesBridgeSkillInput = Pick<ResponsesBridgeSkillCandidate, 'nam
 
 type ResponsesBridgeOptions = {
   skillSelectorTimeoutMs?: number
+  reasoningCacheMaxEntries?: number
+  reasoningCacheMaxCharacters?: number
 }
 
 type BridgeFetch = typeof fetch
+
+const DEFAULT_REASONING_CACHE_MAX_ENTRIES = 4_096
+const DEFAULT_REASONING_CACHE_MAX_CHARACTERS = 8 * 1024 * 1024
 
 // The upstream Chat Completions endpoint. `target.baseUrl` is already the resolved OpenAI base (an
 // official vendor's exact versioned base, or a custom root normalized to `<root>/v1`), so this only
@@ -95,10 +100,12 @@ const chatUrl = (value: string): string => appendChatCompletions(value)
 export class ResponsesBridge {
   private readonly host: ProviderLoopbackHttpHost<ResponsesBridgeConnection>
   private target: ResponsesBridgeTarget
-  // reasoning_content produced with each tool call, keyed by call_id, so a follow-up request can pass
-  // it back to thinking-mode providers that require it. Grows within a session; cleared on close (a
-  // provider switch / disconnect). Keyed by call_id, which Codex round-trips, so lookups stay stable.
-  private readonly reasoningByCallId = new Map<string, string>()
+  // reasoning_content produced with each tool call, partitioned by Codex's prompt_cache_key (its
+  // provider Session id) before call_id. The bridge is shared across Sessions, and providers may
+  // reuse call ids, so a bridge-global call-id map would mix otherwise unrelated histories.
+  private readonly reasoningByPromptCacheKey = new Map<string, Map<string, string>>()
+  private reasoningCacheEntryCount = 0
+  private reasoningCacheCharacterCount = 0
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
   private readonly toolLessSessionKeys = new Set<string>()
@@ -260,7 +267,7 @@ export class ResponsesBridge {
       this.target.reasoningEffortTransport !== target.reasoningEffortTransport ||
       this.target.key !== target.key
     this.target = target
-    if (changed) this.reasoningByCallId.clear()
+    if (changed) this.clearReasoningCache()
   }
 
   setModelTarget(target: ResponsesBridgeModelTarget): void {
@@ -315,7 +322,7 @@ export class ResponsesBridge {
   }
 
   async close(): Promise<void> {
-    this.reasoningByCallId.clear()
+    this.clearReasoningCache()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
     this.toolLessSessionKeys.clear()
@@ -326,11 +333,102 @@ export class ResponsesBridge {
     await this.host.close()
   }
 
-  // Records this turn's reasoning against its tool-call ids so the next request can pass it back to
-  // thinking-mode providers. No-op when the turn produced no reasoning or made no tool calls.
-  private cacheReasoning(reasoning: string, callIds: string[]): void {
-    if (!reasoning) return
-    for (const callId of callIds) this.reasoningByCallId.set(callId, reasoning)
+  private clearReasoningCache(): void {
+    this.reasoningByPromptCacheKey.clear()
+    this.reasoningCacheEntryCount = 0
+    this.reasoningCacheCharacterCount = 0
+  }
+
+  private reasoningForRequest(promptCacheKey: string | undefined): Map<string, string> | undefined {
+    if (!promptCacheKey) return undefined
+    return this.reasoningByPromptCacheKey.get(promptCacheKey)
+  }
+
+  private reconcileReasoningForRequest(promptCacheKey: string | undefined, input: unknown): void {
+    if (!promptCacheKey) return
+    const reasoningByCallId = this.reasoningByPromptCacheKey.get(promptCacheKey)
+    if (!reasoningByCallId) return
+
+    const retainedCallIds = new Set<string>()
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (!item || typeof item !== 'object' || !('type' in item)) continue
+        if (item.type !== 'function_call') continue
+        const callId = 'call_id' in item ? item.call_id : 'id' in item ? item.id : undefined
+        if (callId !== undefined && callId !== null) retainedCallIds.add(String(callId))
+      }
+    }
+
+    for (const [callId, reasoning] of reasoningByCallId) {
+      if (retainedCallIds.has(callId)) continue
+      reasoningByCallId.delete(callId)
+      this.reasoningCacheEntryCount -= 1
+      this.reasoningCacheCharacterCount -= reasoning.length
+    }
+    if (reasoningByCallId.size === 0) {
+      this.reasoningByPromptCacheKey.delete(promptCacheKey)
+      return
+    }
+
+    // Refresh this Session's insertion order so overflow evicts the least recently used scope.
+    this.reasoningByPromptCacheKey.delete(promptCacheKey)
+    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByCallId)
+  }
+
+  // Records this turn's reasoning against its Session-scoped tool-call ids so the next request can
+  // pass it back to thinking-mode providers. Missing prompt_cache_key fails closed: without a stable
+  // Session boundary, cached reasoning cannot be replayed safely.
+  private cacheReasoning(
+    promptCacheKey: string | undefined,
+    reasoning: string,
+    callIds: string[]
+  ): void {
+    if (!promptCacheKey || !reasoning || callIds.length === 0) return
+    let reasoningByCallId = this.reasoningByPromptCacheKey.get(promptCacheKey)
+    if (!reasoningByCallId) {
+      reasoningByCallId = new Map()
+    } else {
+      this.reasoningByPromptCacheKey.delete(promptCacheKey)
+    }
+    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByCallId)
+
+    for (const callId of callIds) {
+      const previous = reasoningByCallId.get(callId)
+      if (previous !== undefined) {
+        this.reasoningCacheCharacterCount -= previous.length
+      } else {
+        this.reasoningCacheEntryCount += 1
+      }
+      reasoningByCallId.set(callId, reasoning)
+      this.reasoningCacheCharacterCount += reasoning.length
+    }
+    this.enforceReasoningCacheLimits()
+  }
+
+  private enforceReasoningCacheLimits(): void {
+    const maxEntries = Math.max(
+      1,
+      Math.floor(this.options.reasoningCacheMaxEntries ?? DEFAULT_REASONING_CACHE_MAX_ENTRIES)
+    )
+    const maxCharacters = Math.max(
+      1,
+      Math.floor(this.options.reasoningCacheMaxCharacters ?? DEFAULT_REASONING_CACHE_MAX_CHARACTERS)
+    )
+    while (
+      this.reasoningByPromptCacheKey.size > 0 &&
+      (this.reasoningCacheEntryCount > maxEntries ||
+        this.reasoningCacheCharacterCount > maxCharacters)
+    ) {
+      const oldestPromptCacheKey = this.reasoningByPromptCacheKey.keys().next().value
+      if (typeof oldestPromptCacheKey !== 'string') break
+      const oldest = this.reasoningByPromptCacheKey.get(oldestPromptCacheKey)
+      this.reasoningByPromptCacheKey.delete(oldestPromptCacheKey)
+      if (!oldest) continue
+      for (const reasoning of oldest.values()) {
+        this.reasoningCacheEntryCount -= 1
+        this.reasoningCacheCharacterCount -= reasoning.length
+      }
+    }
   }
 
   private async handle(
@@ -372,10 +470,11 @@ export class ResponsesBridge {
       reviewerScoped || toolLessScoped || hostMessageScoped || hostMessageBoundaryActive
         ? { ...body, tools: [], tool_choice: 'auto' }
         : body
+    const reasoningByCallId = this.reasoningForRequest(promptCacheKey)
     const chatRequest = responsesToChatRequest(
       scopedBody,
       this.target.model,
-      this.reasoningByCallId,
+      reasoningByCallId,
       namespacedTools,
       {
         reasoningEffortOverride: this.target.reasoningEffort,
@@ -383,6 +482,7 @@ export class ResponsesBridge {
         reasoningEffortTransport: this.target.reasoningEffortTransport
       }
     )
+    this.reconcileReasoningForRequest(promptCacheKey, body.input)
 
     // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
     // model, not the upstream) and whether Codex's advertised tools survived translation into Chat
@@ -440,7 +540,7 @@ export class ResponsesBridge {
         String(body.model ?? ''),
         namespacedTools
       )
-      this.cacheReasoning(reasoning, callIds)
+      this.cacheReasoning(promptCacheKey, reasoning, callIds)
       return
     }
     const completion = (await upstream.json()) as JsonObject
@@ -449,6 +549,7 @@ export class ResponsesBridge {
     const outputItems = Array.isArray(result.output) ? (result.output as JsonObject[]) : []
     const toolCalls = outputItems.filter((item) => item.type === 'function_call')
     this.cacheReasoning(
+      promptCacheKey,
       typeof message.reasoning_content === 'string' ? message.reasoning_content : '',
       toolCalls.map((item) => String(item.call_id))
     )

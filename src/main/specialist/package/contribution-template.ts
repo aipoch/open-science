@@ -7,6 +7,7 @@ import {
   SPECIALIST_PACKAGE_SCHEMA_VERSION,
   type ContributionTemplateExportResult
 } from '../../../shared/specialist-package'
+import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
 
 export const CONTRIBUTION_TEMPLATE_FILENAME = 'openscience-specialist-template.zip'
 
@@ -26,6 +27,7 @@ type ContributionTemplateExporterDependencies = {
   readReadme: () => Promise<string>
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<void>
   generatePackageId?: () => string
+  translate?: NativeTranslator
 }
 
 const assertValidAppVersion = (appVersion: string): void => {
@@ -61,9 +63,9 @@ export const buildContributionTemplateZip = (input: {
   const specialist = {
     name: '',
     description: '',
-    systemPrompt: '',
-    skillIds: [],
-    connectorIds: []
+    system_prompt: '',
+    skill_ids: [],
+    connector_ids: []
   }
   return buildDeterministicSpecialistZip({
     'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
@@ -78,9 +80,14 @@ export const createContributionTemplateExporter =
   ): (() => Promise<ContributionTemplateExportResult>) =>
   async () => {
     const destination = await dependencies.showSaveDialog({
-      title: 'Save contribution template',
+      title: (dependencies.translate ?? englishNativeTranslator)('Save contribution template'),
       defaultPath: CONTRIBUTION_TEMPLATE_FILENAME,
-      filters: [{ name: 'ZIP archive', extensions: ['zip'] }]
+      filters: [
+        {
+          name: (dependencies.translate ?? englishNativeTranslator)('ZIP archive'),
+          extensions: ['zip']
+        }
+      ]
     })
     if (destination.canceled || !destination.filePath) return { saved: false }
 

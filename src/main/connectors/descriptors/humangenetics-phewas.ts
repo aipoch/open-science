@@ -281,17 +281,17 @@ function requireCapability(inst: PhewebInstance, cap: Capability, key: string): 
 export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
   {
     id: 'phewas_instances',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'List the public PheWeb PheWAS portals this server can query, with genome build and capability registry. Returns {instances:{key:{label, base_url, genome_build, capabilities, notes}}}. capabilities name the endpoints each instance exposes: variant (phewas_variant), gene (phewas_finngen_gene), phenotypes (phewas_list_phenotypes), autocomplete (phewas_search_phenotypes). NOTE the build split: FinnGen R12 variant IDs are GRCh38; BioBank Japan (pheweb.jp) is GRCh37/hg19 — liftover coordinates before cross-querying.',
     input: { type: 'object', properties: {} },
     returns: '{instances:{key:{label, base_url, genome_build, capabilities, notes}}}.',
-    example: 'const result = await host.mcp("human_genetics", "phewas_instances", {})',
+    example: 'const result = await host.mcp("human-genetics", "phewas_instances", {})',
     run: async () => ({ instances: PHEWEB_INSTANCES })
   },
   {
     id: 'phewas_variant',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       "PheWAS for one variant: its association statistics against every phenotype in a biobank PheWeb portal, most significant first. Args: instance (finngen FinnGen R12 GRCh38, or bbj BioBank Japan GRCh37; variant coords MUST be on the instance's build); variant (chrom-pos-ref-alt, :/_ separators and chr prefix tolerated, e.g. 19-44908822-C-T APOE rs7412 GRCh38/finngen or 1-55505647-G-T PCSK9 rs11591147 GRCh37/bbj); max_phenos (cap default 200; FinnGen returns ~2470 rows; sorted by p-value ascending before capping). Returns {instance, genome_build, variant, variant_meta, total, returned, truncated, phenotypes}; variant_meta {chrom, pos, ref, alt, rsids, nearest_genes, gnomad (FinnGen only)}. Each phenotype row {phenocode, phenostring, category, pval, mlogp, beta, sebeta, af|maf, maf_case, maf_control, n_cases, n_controls, n_samples} (unpublished fields null; BBJ rows have af, FinnGen rows have maf triplets + mlogp). Unknown variants raise a not-found error.",
     input: {
@@ -307,7 +307,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{instance, genome_build, variant (normalized chrom-pos-ref-alt), variant_meta{chrom, pos, ref, alt, rsids[], nearest_genes[], gnomad|null}, total, returned, truncated, phenotypes[]}.',
     example:
-      'const result = await host.mcp("human_genetics", "phewas_variant", {"instance": "finngen", "variant": "19-44908822-C-T", "max_phenos": 50})',
+      'const result = await host.mcp("human-genetics", "phewas_variant", {"instance": "finngen", "variant": "19-44908822-C-T", "max_phenos": 50})',
     run: async (ctx, a) => {
       const key = String(a.instance)
       const inst = requireInstance(key)
@@ -368,7 +368,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'phewas_finngen_gene',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'Gene-level PheWAS from FinnGen R12: for every disease endpoint, the best-associated variant in the gene region, most significant first. Args: gene_symbol (HGNC symbol e.g. PCSK9, APOE; unknown symbols raise a not-found error); max_phenos (cap default 200; FinnGen has ~2470 endpoints, one row each; sorted by p-value ascending before capping). Returns {instance:"finngen", genome_build:"GRCh38", gene_symbol, total, returned, truncated, phenotypes}; each row is the phewas_variant row shape plus variant:{chrom, pos, ref, alt, varid, rsids} — the top variant for that endpoint in this gene\'s region (region != gene body; PheWeb pads gene boundaries). Most rows are null results (pval~1) — the per-endpoint BEST variant is still reported; filter by pval yourself for significant hits.',
     input: {
@@ -383,7 +383,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{instance:"finngen", genome_build:"GRCh38", gene_symbol, total, returned, truncated, phenotypes[<phewas_variant row> + variant:{chrom, pos, ref, alt, varid, rsids[]}]}.',
     example:
-      'const result = await host.mcp("human_genetics", "phewas_finngen_gene", {"gene_symbol": "PCSK9", "max_phenos": 50})',
+      'const result = await host.mcp("human-genetics", "phewas_finngen_gene", {"gene_symbol": "PCSK9", "max_phenos": 50})',
     run: async (ctx, a) => {
       const inst = PHEWEB_INSTANCES.finngen
       const sym = String(a.gene_symbol).trim()
@@ -423,7 +423,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'phewas_list_phenotypes',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'Complete phenotype (disease endpoint) catalogue of a PheWeb instance, with case/control counts. Args: instance (currently only finngen exposes this endpoint; BBJ does not — use phewas_search_phenotypes there); max_records (cap default 3000 > FinnGen\'s ~2470 endpoints, so the default returns the complete catalogue). Returns {instance, total, returned, truncated, phenotypes} sorted by phenocode; each row {phenocode (e.g. "T2D"), phenostring, category, num_cases, num_controls, num_gw_significant (count of genome-wide-significant loci for that endpoint)}.',
     input: {
@@ -436,7 +436,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{instance, total, returned, truncated, phenotypes[{phenocode, phenostring, category, num_cases, num_controls, num_gw_significant}]} sorted by phenocode.',
     example:
-      'const result = await host.mcp("human_genetics", "phewas_list_phenotypes", {"instance": "finngen", "max_records": 3000})',
+      'const result = await host.mcp("human-genetics", "phewas_list_phenotypes", {"instance": "finngen", "max_records": 3000})',
     run: async (ctx, a) => {
       const key = a.instance != null ? String(a.instance) : 'finngen'
       const inst = requireInstance(key)
@@ -464,7 +464,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'phewas_search_phenotypes',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'Search a PheWeb instance\'s phenotypes (and entities) by name — the entry point for resolving a disease name to a phenocode. Args: query (free-text phenotype query e.g. "diabetes", "asthma"; matches phenotype names/codes; some instances also match gene names and rsIDs); instance (finngen default or bbj — both expose autocomplete); max_records (cap default 500; autocomplete responses are short lists, rarely capped). Returns {instance, query, total, returned, truncated, matches}; each match {display, phenocode, url}. Use the phenocode with phewas_list_phenotypes rows or the instance website; BBJ display strings embed the code in parentheses.',
     input: {
@@ -479,7 +479,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns: '{instance, query, total, returned, truncated, matches[{display, phenocode, url}]}.',
     example:
-      'const result = await host.mcp("human_genetics", "phewas_search_phenotypes", {"query": "diabetes", "instance": "finngen"})',
+      'const result = await host.mcp("human-genetics", "phewas_search_phenotypes", {"query": "diabetes", "instance": "finngen"})',
     run: async (ctx, a) => {
       const key = a.instance != null ? String(a.instance) : 'finngen'
       const inst = requireInstance(key)

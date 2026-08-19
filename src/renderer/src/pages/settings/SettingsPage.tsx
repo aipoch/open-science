@@ -16,11 +16,13 @@ import {
   ScrollText,
   Settings2,
   TerminalSquare,
+  Tags as TagsIcon,
   Users,
   X,
   Zap
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -41,6 +43,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { useTagStore } from '@/stores/tag-store'
 import { AgentPanel } from './AgentPanel'
 import { ProvidersPanel } from './ProvidersPanel'
 import { GeneralPanel } from './GeneralPanel'
@@ -51,6 +54,8 @@ import { RemoteControlPanel } from './RemoteControlPanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { SpecialistsPanel, type SpecialistsView } from './SpecialistsPanel'
+import { TagsPanel } from './TagsPanel'
+import { ResourceTagSummary } from './ResourceTagControls'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { ConnectorExportView } from './ConnectorExportView'
@@ -185,6 +190,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
+      { id: 'tags', labelKey: 'Tags', Icon: TagsIcon },
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
@@ -279,6 +285,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const consumePendingSpecialist = useSettingsStore((state) => state.consumePendingSpecialist)
   const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
   const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
+  const pendingComputeAuthentication = useSettingsStore(
+    (state) => state.pendingComputeAuthentication
+  )
+  const consumePendingComputeAuthentication = useSettingsStore(
+    (state) => state.consumePendingComputeAuthentication
+  )
   const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
   const clearSettingsWriteError = useSettingsStore((state) => state.clearSettingsWriteError)
   const canImportInstalledSkills =
@@ -294,11 +306,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [isExpanded, setIsExpanded] = useState(false)
   const isMobile = useMediaQuery('(max-width: 767px)')
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
+  const mobileNavRef = useRef<HTMLElement | null>(null)
+  const mobileNavTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const mobileNavWasOpenRef = useRef(false)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const computeHosts = useComputeStore((state) => state.hosts)
   const specialistItems = useSpecialistStore((state) => state.items)
+  const loadTags = useTagStore((state) => state.load)
+  const listenForTagChanges = useTagStore((state) => state.listen)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -314,6 +331,25 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useEffect(() => {
     if (open) void load()
   }, [open, load])
+
+  useEffect(() => {
+    if (!open) return
+    void loadTags()
+    return listenForTagChanges()
+  }, [listenForTagChanges, loadTags, open])
+
+  useEffect(() => {
+    if (isMobile && isMobileNavOpen) {
+      mobileNavWasOpenRef.current = true
+      const activeItem = mobileNavRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+      const firstItem = mobileNavRef.current?.querySelector<HTMLElement>('button')
+      ;(activeItem ?? firstItem)?.focus()
+      return
+    }
+    if (!mobileNavWasOpenRef.current) return
+    mobileNavWasOpenRef.current = false
+    mobileNavTriggerRef.current?.focus()
+  }, [isMobile, isMobileNavOpen])
 
   // When opened from a skill mention, seed the history straight to that skill's detail page. This is
   // the derive-state-during-render pattern (guarded so it runs once per request); the guard resets on
@@ -348,6 +384,36 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setSeededSettingsPanel(undefined)
   }
 
+  const [seededComputeAuthentication, setSeededComputeAuthentication] = useState<
+    string | undefined
+  >()
+  const pendingComputeAuthenticationKey = pendingComputeAuthentication
+    ? String(pendingComputeAuthentication.requestId)
+    : undefined
+  if (
+    open &&
+    pendingComputeAuthentication &&
+    pendingComputeAuthenticationKey !== seededComputeAuthentication
+  ) {
+    setSeededComputeAuthentication(pendingComputeAuthenticationKey)
+    setHistory([
+      {
+        ...INITIAL_LOCATION,
+        panel: 'compute',
+        compute: {
+          kind: 'detail',
+          providerId: pendingComputeAuthentication.providerId,
+          authenticationFocus: pendingComputeAuthentication.errorCode,
+          authenticationRequestId: pendingComputeAuthentication.requestId
+        }
+      }
+    ])
+    setHistoryIndex(0)
+  }
+  if (!open && seededComputeAuthentication !== undefined) {
+    setSeededComputeAuthentication(undefined)
+  }
+
   // When opened from the specialist switch approval card, seed the history straight onto that
   // specialist's editor. Same derive-during-render pattern as the skill seed above; the
   // Specialists panel resolves the profile from the catalog once it mounts.
@@ -378,6 +444,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useEffect(() => {
     if (pendingSpecialistId !== undefined) consumePendingSpecialist()
   }, [pendingSpecialistId, consumePendingSpecialist])
+  useEffect(() => {
+    if (pendingComputeAuthentication !== undefined) consumePendingComputeAuthentication()
+  }, [pendingComputeAuthentication, consumePendingComputeAuthentication])
 
   // Auto-detect opencode the first time its detection card is shown without a known path, so the card
   // reflects reality without a manual re-detect. Guarded on path + in-flight to run at most once.
@@ -441,9 +510,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       nextCompute.kind === computeView.kind &&
       ('providerId' in nextCompute ? nextCompute.providerId : undefined) ===
         ('providerId' in computeView ? computeView.providerId : undefined) &&
-      nextSpecialists.kind === specialistsView.kind &&
-      ('id' in nextSpecialists ? nextSpecialists.id : undefined) ===
-        ('id' in specialistsView ? specialistsView.id : undefined) &&
+      JSON.stringify(nextSpecialists) === JSON.stringify(specialistsView) &&
       nextArchived.kind === archivedView.kind &&
       ('projectId' in nextArchived ? nextArchived.projectId : undefined) ===
         ('projectId' in archivedView ? archivedView.projectId : undefined)
@@ -505,6 +572,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const breadcrumb = ((): {
     rootLabelKey: DrillablePanelName
     rootTo: NavLocation
+    parents?: ReadonlyArray<{ label: string; to: NavLocation; ariaLabel: string }>
     leaf: string
   } | null => {
     if (activePanel === 'skills' && skillsView.kind !== 'list') {
@@ -599,6 +667,32 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       }
     }
     if (activePanel === 'specialists' && specialistsView.kind !== 'list') {
+      const rootTo: NavLocation = {
+        panel: 'specialists',
+        skills: currentLocation.skills,
+        model: currentLocation.model,
+        specialists: { kind: 'list' }
+      }
+      if (
+        specialistsView.kind === 'marketplace-sources' ||
+        specialistsView.kind === 'marketplace-release'
+      ) {
+        return {
+          rootLabelKey: 'Specialists',
+          rootTo,
+          parents: [
+            {
+              label: t('Marketplace'),
+              to: { ...rootTo, specialists: { kind: 'marketplace' } },
+              ariaLabel: t('Back to Marketplace')
+            }
+          ],
+          leaf:
+            specialistsView.kind === 'marketplace-sources'
+              ? t('Marketplace sources')
+              : specialistsView.id
+        }
+      }
       const editingSpecialist =
         specialistsView.kind === 'edit'
           ? specialistItems.find(
@@ -609,15 +703,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         specialistsView.kind === 'create'
           ? t('New specialist')
-          : (editingSpecialist?.name ?? t('Edit specialist'))
+          : specialistsView.kind === 'marketplace'
+            ? t('Marketplace')
+            : (editingSpecialist?.name ?? t('Edit specialist'))
       return {
         rootLabelKey: 'Specialists',
-        rootTo: {
-          panel: 'specialists',
-          skills: currentLocation.skills,
-          model: currentLocation.model,
-          specialists: { kind: 'list' }
-        },
+        rootTo,
         leaf
       }
     }
@@ -807,6 +898,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           // the whole panel. The dropdown's own dismiss still closes just the dropdown; the panel is
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => {
+            if (!isMobileNavOpen) return
+            event.preventDefault()
+            setIsMobileNavOpen(false)
+          }}
           className={cn(
             'fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
             isExpanded
@@ -825,70 +921,98 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               type="button"
               className="fixed inset-0 z-[65] bg-black/45 md:hidden"
               aria-label={t('Close settings navigation')}
+              tabIndex={-1}
               onClick={() => setIsMobileNavOpen(false)}
             />
           ) : null}
 
           {/* Left navigation becomes an off-canvas drawer on narrow browser screens. */}
-          <nav
-            aria-label={t('Settings')}
-            aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
-            inert={isMobile && !isMobileNavOpen ? true : undefined}
-            className={cn(
-              'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
-              isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
-            )}
+          <FocusScope
+            asChild
+            loop={isMobile && isMobileNavOpen}
+            trapped={isMobile && isMobileNavOpen}
           >
-            {SETTINGS_GROUPS.map((group) => (
-              <div
-                key={group.labelKey ?? group.panels[0]?.id}
-                className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
+            <div
+              data-slot="mobile-settings-navigation"
+              role={isMobile && isMobileNavOpen ? 'dialog' : undefined}
+              aria-modal={isMobile && isMobileNavOpen ? true : undefined}
+              aria-label={isMobile && isMobileNavOpen ? t('Settings navigation') : undefined}
+              className="contents"
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape' || !isMobileNavOpen) return
+                event.preventDefault()
+                event.stopPropagation()
+                setIsMobileNavOpen(false)
+              }}
+            >
+              <nav
+                ref={mobileNavRef}
+                aria-label={t('Settings')}
+                aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
+                inert={isMobile && !isMobileNavOpen ? true : undefined}
+                className={cn(
+                  'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
+                  isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+                )}
               >
-                {group.labelKey ? (
-                  <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
-                    {t(group.labelKey)}
+                {SETTINGS_GROUPS.map((group) => (
+                  <div
+                    key={group.labelKey ?? group.panels[0]?.id}
+                    className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
+                  >
+                    {group.labelKey ? (
+                      <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                        {t(group.labelKey)}
+                      </div>
+                    ) : null}
+                    <ul className="flex flex-col gap-0.5">
+                      {group.panels.map(({ id, labelKey, Icon }) => {
+                        const isActive = activePanel === id
+                        return (
+                          <li key={id}>
+                            <button
+                              type="button"
+                              aria-current={isActive ? 'page' : undefined}
+                              onClick={() => {
+                                setIsMobileNavOpen(false)
+                                navigatePanel(id)
+                              }}
+                              className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                                isActive
+                                  ? 'bg-muted font-medium text-foreground'
+                                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                              }`}
+                            >
+                              <Icon
+                                className="size-4 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                              <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
                   </div>
-                ) : null}
-                <ul className="flex flex-col gap-0.5">
-                  {group.panels.map(({ id, labelKey, Icon }) => {
-                    const isActive = activePanel === id
-                    return (
-                      <li key={id}>
-                        <button
-                          type="button"
-                          aria-current={isActive ? 'page' : undefined}
-                          onClick={() => {
-                            setIsMobileNavOpen(false)
-                            navigatePanel(id)
-                          }}
-                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
-                            isActive
-                              ? 'bg-muted font-medium text-foreground'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                          }`}
-                        >
-                          <Icon
-                            className="size-4 shrink-0 text-muted-foreground"
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            ))}
-          </nav>
+                ))}
+              </nav>
+            </div>
+          </FocusScope>
 
           {/* Right column: header bar + scrollable panel content. */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card">
+          <div
+            data-slot="settings-main"
+            aria-hidden={isMobile && isMobileNavOpen ? true : undefined}
+            inert={isMobile && isMobileNavOpen ? true : undefined}
+            className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
+          >
             <TooltipProvider delayDuration={300}>
               <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
                 <div className="flex min-w-0 items-center gap-1">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
+                        ref={mobileNavTriggerRef}
                         type="button"
                         variant="ghost"
                         size="icon-sm"
@@ -947,6 +1071,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       >
                         {t(breadcrumb.rootLabelKey)}
                       </button>
+                      {breadcrumb.parents?.map((parent) => (
+                        <span key={parent.label} className="contents">
+                          <span className="shrink-0 text-muted-foreground" aria-hidden="true">
+                            ›
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => navigate(parent.to)}
+                            aria-label={parent.ariaLabel}
+                            className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
+                          >
+                            {parent.label}
+                          </button>
+                        </span>
+                      ))}
                       <span className="shrink-0 text-muted-foreground" aria-hidden="true">
                         ›
                       </span>
@@ -1007,7 +1146,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
                 >
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <p className="min-w-0 flex-1 break-words py-0.5">{settingsWriteError}</p>
+                  <p className="min-w-0 flex-1 break-words py-0.5">
+                    {settingsWriteError ===
+                    'Could not save Vision model. Refresh the model catalog and try again.'
+                      ? t('Could not save Vision model. Refresh the model catalog and try again.')
+                      : settingsWriteError}
+                  </p>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -1037,12 +1181,58 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   />
                 ) : activePanel === 'specialists' ? (
                   <SpecialistsPanel view={specialistsView} onNavigate={navigateSpecialists} />
+                ) : activePanel === 'tags' ? (
+                  <TagsPanel
+                    onOpenResource={(reference) => {
+                      if (reference.resourceType === 'catalog.skill') {
+                        navigate({
+                          ...currentLocation,
+                          panel: 'skills',
+                          skills: { kind: 'detail', id: reference.resourceId }
+                        })
+                        return
+                      }
+                      if (reference.resourceType === 'catalog.connector') {
+                        navigate({
+                          ...currentLocation,
+                          panel: 'connectors',
+                          connectors: customServers.some(
+                            (server) => server.id === reference.resourceId
+                          )
+                            ? { kind: 'edit', id: reference.resourceId }
+                            : { kind: 'detail', id: reference.resourceId }
+                        })
+                        return
+                      }
+                      const specialist = specialistItems.find(
+                        (item) => item.id === reference.resourceId
+                      )
+                      navigate({
+                        ...currentLocation,
+                        panel: 'specialists',
+                        specialists:
+                          specialist?.kind === 'builtin'
+                            ? { kind: 'builtin', id: reference.resourceId }
+                            : { kind: 'edit', id: reference.resourceId }
+                      })
+                    }}
+                  />
                 ) : activePanel === 'connectors' ? (
                   connectorsView.kind === 'detail' ? (
-                    <ConnectorDetailView
-                      id={connectorsView.id}
-                      onManagePermissions={() => navigatePanel('permissions')}
-                    />
+                    <div>
+                      <ResourceTagSummary
+                        reference={{
+                          resourceType: 'catalog.connector',
+                          resourceId: connectorsView.id
+                        }}
+                        className="px-5 pt-5"
+                      />
+                      <ConnectorDetailView
+                        key={connectorsView.id}
+                        id={connectorsView.id}
+                        onManagePermissions={() => navigatePanel('permissions')}
+                      />
+                    </div>
                   ) : connectorsView.kind === 'add' ? (
                     <ConnectorAddForm
                       initialTransport={connectorsView.transport}
@@ -1068,11 +1258,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       onDone={() => navigateConnectors({ kind: 'list' })}
                     />
                   ) : connectorsView.kind === 'edit' ? (
-                    <ConnectorAddForm
-                      editServer={customServers.find((s) => s.id === connectorsView.id)}
-                      onDone={() => navigateConnectors({ kind: 'list' })}
-                      onCancel={() => navigateConnectors({ kind: 'list' })}
-                    />
+                    <div>
+                      <ResourceTagSummary
+                        reference={{
+                          resourceType: 'catalog.connector',
+                          resourceId: connectorsView.id
+                        }}
+                        className="px-5 pt-5"
+                      />
+                      <ConnectorAddForm
+                        editServer={customServers.find((s) => s.id === connectorsView.id)}
+                        onDone={() => navigateConnectors({ kind: 'list' })}
+                        onCancel={() => navigateConnectors({ kind: 'list' })}
+                      />
+                    </div>
                   ) : (
                     <ConnectorsPanel onNavigate={navigateConnectors} />
                   )
@@ -1085,7 +1284,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   ) : computeView.kind === 'detail' ? (
                     <ComputeHostDetail
                       providerId={computeView.providerId}
-                      onRemoved={() => navigateCompute({ kind: 'list' })}
+                      authenticationFocus={computeView.authenticationFocus}
+                      authenticationRequestId={computeView.authenticationRequestId}
                     />
                   ) : (
                     <ComputePanel onNavigate={navigateCompute} />

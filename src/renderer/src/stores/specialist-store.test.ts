@@ -14,6 +14,7 @@ beforeEach(() => {
     items: [],
     isLoaded: false,
     loadError: undefined,
+    integrity: { status: 'ok' },
     packagePreview: undefined,
     exportPreview: undefined
   })
@@ -32,7 +33,7 @@ describe('specialist store catalog', () => {
     const list = vi
       .fn()
       .mockRejectedValueOnce(new Error('specialist database unavailable'))
-      .mockResolvedValueOnce(items)
+      .mockResolvedValueOnce({ items, integrity: { status: 'ok' } })
     setSpecialistApi({ list })
 
     await expect(useSpecialistStore.getState().load()).rejects.toThrow(
@@ -53,51 +54,96 @@ describe('specialist store catalog', () => {
   })
 
   it('keeps the latest overlapping catalog refresh authoritative', async () => {
-    let resolveFirst: ((items: [{ kind: 'reviewer'; id: string }]) => void) | undefined
-    let resolveSecond: ((items: [{ kind: 'reviewer'; id: string }]) => void) | undefined
+    type TestCatalog = {
+      items: [{ kind: 'reviewer'; id: string }]
+      integrity: { status: 'ok' }
+    }
+    let resolveFirst: ((snapshot: TestCatalog) => void) | undefined
+    let resolveSecond: ((snapshot: TestCatalog) => void) | undefined
     setSpecialistApi({
       list: vi
         .fn()
         .mockImplementationOnce(
-          () =>
-            new Promise<[{ kind: 'reviewer'; id: string }]>((resolve) => (resolveFirst = resolve))
+          () => new Promise<TestCatalog>((resolve) => (resolveFirst = resolve))
         )
         .mockImplementationOnce(
-          () =>
-            new Promise<[{ kind: 'reviewer'; id: string }]>((resolve) => (resolveSecond = resolve))
+          () => new Promise<TestCatalog>((resolve) => (resolveSecond = resolve))
         )
     })
 
     const firstLoad = useSpecialistStore.getState().load()
     const secondLoad = useSpecialistStore.getState().load()
-    resolveSecond?.([{ kind: 'reviewer', id: 'new-catalog' }])
+    resolveSecond?.({
+      items: [{ kind: 'reviewer', id: 'new-catalog' }],
+      integrity: { status: 'ok' }
+    })
     await secondLoad
-    resolveFirst?.([{ kind: 'reviewer', id: 'stale-catalog' }])
+    resolveFirst?.({
+      items: [{ kind: 'reviewer', id: 'stale-catalog' }],
+      integrity: { status: 'ok' }
+    })
     await firstLoad
 
     expect(useSpecialistStore.getState().items).toEqual([{ kind: 'reviewer', id: 'new-catalog' }])
   })
 
   it('prevents a pre-mutation load from overwriting the mutation refresh', async () => {
-    let resolveInitial: ((items: [{ kind: 'reviewer'; id: string }]) => void) | undefined
+    let resolveInitial:
+      | ((snapshot: {
+          items: [{ kind: 'reviewer'; id: string }]
+          integrity: { status: 'ok' }
+        }) => void)
+      | undefined
     const refreshedItems = [{ kind: 'reviewer' as const, id: 'after-mutation' }]
     setSpecialistApi({
       list: vi
         .fn()
         .mockImplementationOnce(
           () =>
-            new Promise<[{ kind: 'reviewer'; id: string }]>((resolve) => (resolveInitial = resolve))
+            new Promise<{
+              items: [{ kind: 'reviewer'; id: string }]
+              integrity: { status: 'ok' }
+            }>((resolve) => (resolveInitial = resolve))
         )
-        .mockResolvedValueOnce(refreshedItems),
+        .mockResolvedValueOnce({ items: refreshedItems, integrity: { status: 'ok' } }),
       setEnabled: vi.fn().mockResolvedValue(undefined)
     })
 
     const initialLoad = useSpecialistStore.getState().load()
     await useSpecialistStore.getState().setEnabled('researcher', true)
-    resolveInitial?.([{ kind: 'reviewer', id: 'before-mutation' }])
+    resolveInitial?.({
+      items: [{ kind: 'reviewer', id: 'before-mutation' }],
+      integrity: { status: 'ok' }
+    })
     await initialLoad
 
     expect(useSpecialistStore.getState().items).toEqual(refreshedItems)
+  })
+
+  it('retains healthy rows and blocks mutations for a degraded document', async () => {
+    const items = [{ kind: 'reviewer' as const, id: 'reviewer' as const }]
+    const setEnabled = vi.fn()
+    setSpecialistApi({
+      list: vi.fn().mockResolvedValue({
+        items,
+        integrity: {
+          status: 'degraded',
+          issues: [{ code: 'record-invalid', recordIndex: 2 }]
+        }
+      }),
+      setEnabled
+    })
+
+    await useSpecialistStore.getState().load()
+
+    expect(useSpecialistStore.getState()).toMatchObject({
+      items,
+      integrity: { status: 'degraded' }
+    })
+    await expect(useSpecialistStore.getState().setEnabled('researcher', false)).rejects.toThrow(
+      /repaired/
+    )
+    expect(setEnabled).not.toHaveBeenCalled()
   })
 })
 
@@ -269,7 +315,10 @@ describe('specialist store package import', () => {
       origin: 'imported' as const,
       ownedSkillIds: []
     }
-    const list = vi.fn().mockResolvedValue([installed, { kind: 'reviewer', id: 'reviewer' }])
+    const list = vi.fn().mockResolvedValue({
+      items: [installed, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
     setSpecialistApi({
       selectPackage: vi.fn().mockResolvedValue(preview),
       installPackage: vi.fn().mockResolvedValue({ status: 'installed', specialist: installed }),

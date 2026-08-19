@@ -327,6 +327,14 @@ export const DEFAULT_REVIEWER_MODEL_CONFIGURATION: ReviewerModelConfiguration = 
   mode: 'inherit'
 })
 
+// Optional fixed target used only to translate image input for a text-only active model. Absence is
+// disabled; unlike Subagent and Reviewer routing there is no inherited active-model mode.
+export type VisionModelConfiguration = Readonly<{
+  providerId: string
+  model: string
+  reasoningEffort: ReasoningEffort
+}>
+
 // Desktop notifications for finished/failed agent tasks are opt-out: they only fire while the app
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
@@ -422,6 +430,7 @@ export type SettingsSnapshot = {
   reasoningEffort: ReasoningEffort
   subagentModel?: SubagentModelConfiguration
   reviewerModel?: ReviewerModelConfiguration
+  visionModel?: VisionModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
   // Whether conversations may detect attached Skill packages and request an app-owned import flow.
@@ -465,6 +474,10 @@ export type SetSubagentModelRequest = {
 
 export type SetReviewerModelRequest = {
   configuration: ReviewerModelConfiguration
+}
+
+export type SetVisionModelRequest = {
+  configuration?: VisionModelConfiguration
 }
 
 export type SetNotificationsEnabledRequest = {
@@ -1241,6 +1254,8 @@ export type CustomServerView = {
 export type ConnectorsSnapshot = {
   connectors: ConnectorView[]
   customServers: CustomServerView[]
+  // Local IDs reserved until interrupted custom Connector deletion cleanup completes.
+  reservedCustomServerIds?: string[]
   ncbi: NcbiCredentialsView
 }
 
@@ -1251,6 +1266,8 @@ export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string
 
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
+  // Optional immutable local ID. Omission lets main infer one from `name` and fall back to a UUID.
+  id?: string
   name: string
   displayName: string
   description?: string

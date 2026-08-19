@@ -29,7 +29,10 @@ type ConfigurationFacts = {
 }
 
 type AdopterHarness = {
-  adopt: (specialistId?: string) => Promise<AcpCreateSessionResponse>
+  adopt: (
+    specialistId?: string,
+    specialistBindingPending?: true
+  ) => Promise<AcpCreateSessionResponse>
   commit: ReturnType<typeof vi.fn>
   commitClaudeReplay: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
@@ -164,13 +167,17 @@ const createHarness = (
     },
     diagnosticContext: () => ({})
   })
-  const adopt = (specialistId?: string): Promise<AcpCreateSessionResponse> =>
+  const adopt = (
+    specialistId?: string,
+    specialistBindingPending?: true
+  ): Promise<AcpCreateSessionResponse> =>
     adopter.adopt('stable-app-session', {
       connection,
       cwd: '/workspace',
       projectId: 'project-a',
       identity: reservation.reservation,
-      specialistId
+      specialistId,
+      specialistBindingPending
     })
   return {
     adopt,
@@ -310,6 +317,32 @@ describe('AcpProviderSessionAdopter', () => {
     expect(harness.order.indexOf('handoff commit')).toBeGreaterThan(
       harness.order.indexOf('registry publish')
     )
+  })
+
+  it('rejects an authoritative Specialist adoption when its identity cannot be resolved', async () => {
+    const harness = createHarness()
+
+    await expect(harness.adopt('specialist-1', true)).rejects.toThrow(
+      'The bound specialist is unavailable.'
+    )
+
+    expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
+    expect(harness.connection.agent.buildSession).not.toHaveBeenCalled()
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+  })
+
+  it('clears detached Specialist affinity when a pending binding explicitly selects Main', async () => {
+    const harness = createHarness()
+    harness.registry
+      .ensureAffinity('stable-app-session')
+      .aggregate.setSpecialistId('specialist-old')
+
+    await harness.adopt(undefined, true)
+
+    expect(
+      harness.registry.lookup('stable-app-session')?.aggregate.snapshot().specialistId
+    ).toBeUndefined()
   })
 
   it('reconfigures against a live effort update before publishing the adopted Session', async () => {

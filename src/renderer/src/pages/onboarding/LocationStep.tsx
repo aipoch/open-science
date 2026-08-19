@@ -74,8 +74,8 @@ const LocationStep = ({
       if (!picked) return
 
       const result = await window.api.storage.inspectDataRoot(picked)
-      if (result.kind === 'invalid') {
-        setLocationError(result.error)
+      if (result.kind !== 'move' && result.kind !== 'adopt') {
+        setLocationError(result.error ?? t('The selected folder is not usable.'))
         return
       }
 

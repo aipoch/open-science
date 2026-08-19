@@ -78,6 +78,29 @@ describe('ConnectorService', () => {
     expect(out).toEqual({ ok: true })
     expect(engine.call).not.toHaveBeenCalled()
   })
+  it('passes the caller signal to a bundled local handler', async () => {
+    const localHandler = vi.fn().mockResolvedValue({ ok: true })
+    const svc = new ConnectorService({
+      getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      localToolHandlers: { 'molecule/preview_molecule': localHandler }
+    })
+    const cancellation = new AbortController()
+
+    await svc.call(
+      'molecule',
+      'preview_molecule',
+      { smiles: 'C' },
+      { origin: 'internal', sessionId: 's-1' },
+      cancellation.signal
+    )
+
+    expect(localHandler).toHaveBeenCalledWith(
+      { smiles: 'C' },
+      { origin: 'internal', sessionId: 's-1' },
+      cancellation.signal
+    )
+  })
   it('falls through to the engine when no local handler is registered', async () => {
     const svc = new ConnectorService({
       getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
@@ -159,6 +182,83 @@ describe('ConnectorService', () => {
 
     await expect(call).rejects.toThrow(/blocked by policy/)
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch a bundled call after its pending approval is cancelled', async () => {
+    const fetchImpl = vi.fn()
+    let approvalSignal: AbortSignal | undefined
+    const requestApproval = vi.fn(
+      async (_info: unknown, signal?: AbortSignal): Promise<'deny'> =>
+        new Promise((resolve) => {
+          approvalSignal = signal
+          signal?.addEventListener('abort', () => resolve('deny'), { once: true })
+        })
+    )
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        askToolIds: ['chemistry/pubchem_get_compounds']
+      }),
+      resolveApiKey: () => undefined,
+      requestApproval
+    })
+    const cancellation = new AbortController()
+
+    const call = svc.call(
+      'chemistry',
+      'pubchem_get_compounds',
+      { cids: [1] },
+      internal,
+      cancellation.signal
+    )
+    await vi.waitFor(() => expect(approvalSignal).toBe(cancellation.signal))
+    cancellation.abort()
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('does not mark a custom MCP server unavailable when discovery is cancelled', async () => {
+    let discoverySignal: AbortSignal | undefined
+    const listTools = vi.fn(
+      async (_config: CustomMcpServerConfig, signal?: AbortSignal) =>
+        new Promise<Array<{ name: string }>>((_, reject) => {
+          discoverySignal = signal
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+    const callTool = vi.fn()
+    const onCustomServerAvailabilityChanged = vi.fn()
+    const svc = new ConnectorService({
+      mcpClientManager: { listTools, call: callTool },
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: ['myserver'],
+        customMcpServers: [
+          {
+            id: 'srv-1',
+            name: 'myserver',
+            displayName: 'My server',
+            transport: 'stdio',
+            command: 'npx',
+            enabled: true
+          }
+        ]
+      }),
+      resolveApiKey: () => undefined,
+      onCustomServerAvailabilityChanged
+    })
+    const cancellation = new AbortController()
+
+    const call = svc.call('myserver', 'do_thing', {}, internal, cancellation.signal)
+    await vi.waitFor(() => expect(discoverySignal).toBe(cancellation.signal))
+    cancellation.abort()
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' })
+    expect(callTool).not.toHaveBeenCalled()
+    expect(onCustomServerAvailabilityChanged).not.toHaveBeenCalled()
   })
 
   it('does not dispatch from a stale cached Allow after durable policy becomes Block', async () => {

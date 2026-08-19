@@ -5,8 +5,10 @@ import { basename, join } from 'node:path'
 import {
   createEmptySessionManifest,
   createSessionFile,
-  normalizeSessionFile,
+  decodeSessionFile,
+  SessionRevisionConflictError,
   sanitizeSessionUploadedAttachments,
+  sessionRevision,
   normalizeSessionManifest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
@@ -16,6 +18,7 @@ import {
   type SessionLoadWarning
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
+import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 
 const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
@@ -181,11 +184,12 @@ const assertSafeSegment = (segment: string): string => {
   return segment
 }
 
-// Owns per-session durable reads/writes: one file per session under sessions/<projectId>/<id>.json,
-// plus a small manifest for the last-open selection. Writes are serialized and atomic (temp + rename),
-// while malformed JSON is backed up and I/O failures preserve the existing file for later recovery.
+// Owns per-session durable reads/writes: one file per Session under sessions/<projectId>/<id>.json,
+// plus a small manifest for the last-open selection. Writes are atomic (temp + rename) and serialized
+// at their Project/Session scope, while malformed JSON is backed up for later recovery.
 class SessionRepository {
-  private saveQueue: Promise<void> = Promise.resolve()
+  private readonly operationScheduler = new SessionPersistenceOperationScheduler()
+  private readonly sessionRevisions = new Map<string, number>()
   private writeSequence = 0
   private backupSequence = 0
   private readonly dependencies: SessionRepositoryDependencies
@@ -404,23 +408,60 @@ class SessionRepository {
     )
   }
 
-  // Writes one session file (serialized through the save queue to preserve write order).
-  async saveSession(session: PersistedChatSession): Promise<void> {
-    return this.enqueue(() => this.writeSession(session))
+  // Compares and advances whole-Session authority inside the same Project/Session lane as the atomic
+  // replacement. Callers that own a stale renderer projection pass expectedRevision; trusted Main
+  // mutations omit it after loading within the coordinator's matching Session lane.
+  async saveSession(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
+      const key = `${session.projectId}:${session.id}`
+      let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
+      if (expectedRevision !== undefined) {
+        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+          throw new Error('Session expected revision must be a non-negative integer.')
+        }
+        const current = await this.loadSessionWithDiagnostics(session.projectId, session.id, {
+          mode: 'read-only'
+        })
+        if (current.status === 'unreadable') {
+          throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
+        }
+        actualRevision = current.status === 'found' ? sessionRevision(current.session) : 0
+        if (actualRevision !== expectedRevision) {
+          throw new SessionRevisionConflictError(expectedRevision, actualRevision)
+        }
+      }
+
+      const durableSession: PersistedChatSession = {
+        ...session,
+        revision: actualRevision + 1
+      }
+      await this.writeSession(durableSession)
+      this.sessionRevisions.set(key, durableSession.revision!)
+      return durableSession
+    })
   }
 
   async saveCommittedProjectSession(session: PersistedChatSession): Promise<void> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       if ((await this.getProjectSessionDeletionState(session.projectId)) !== 'legacy-committed') {
         throw new Error('Cannot save a Session outside committed Project deletion authority.')
       }
-      await this.writeSessionToDirectory(session, this.deletedProjectDir(session.projectId))
+      const key = `${session.projectId}:${session.id}`
+      const durableSession: PersistedChatSession = {
+        ...session,
+        revision: Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0) + 1
+      }
+      await this.writeSessionToDirectory(durableSession, this.deletedProjectDir(session.projectId))
+      this.sessionRevisions.set(key, durableSession.revision!)
     })
   }
 
   // Removes a single session file.
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
       const safeProjectId = assertSafeSegment(projectId)
       const safeSessionId = assertSafeSegment(sessionId)
       const diagnostic = await this.loadSessionWithDiagnostics(safeProjectId, safeSessionId)
@@ -460,7 +501,7 @@ class SessionRepository {
   // retained until Project deletion finishes so recovery can distinguish a committed Session phase
   // from an attempt that failed before the rename, including for Projects with no Session files.
   async deleteProjectSessions(projectId: string): Promise<void> {
-    return this.enqueue(async () => {
+    return this.operationScheduler.runProject(projectId, async () => {
       const safeProjectId = assertSafeSegment(projectId)
       const state = await this.getProjectSessionDeletionState(safeProjectId)
       if (state === 'legacy-committed' || state === 'prepared') return
@@ -526,7 +567,7 @@ class SessionRepository {
   }
 
   async markCommittedProjectSessionsPrepared(projectId: string): Promise<void> {
-    await this.enqueue(async () => {
+    await this.operationScheduler.runProject(projectId, async () => {
       if ((await this.getProjectSessionDeletionState(projectId)) !== 'legacy-committed') return
       await this.atomicWrite(
         join(this.deletedProjectDir(assertSafeSegment(projectId)), PROJECT_DELETION_COMMIT_MARKER),
@@ -536,7 +577,7 @@ class SessionRepository {
   }
 
   async completeProjectSessionDeletion(projectId: string): Promise<void> {
-    await this.enqueue(() =>
+    await this.operationScheduler.runProject(projectId, () =>
       this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
         recursive: true,
         force: true
@@ -574,19 +615,7 @@ class SessionRepository {
 
   // Persists the last-open project/session pointer.
   async saveManifest(request: SaveSessionManifestRequest): Promise<void> {
-    return this.enqueue(() => this.writeManifest(request))
-  }
-
-  // Serializes writes so an older save cannot finish after a newer one.
-  private enqueue(operation: () => Promise<unknown>): Promise<void> {
-    const run = this.saveQueue.then(() => operation()).then(() => undefined)
-
-    this.saveQueue = run.then(
-      () => undefined,
-      () => undefined
-    )
-
-    return run
+    return this.operationScheduler.runManifest(() => this.writeManifest(request))
   }
 
   // Writes through a unique temp file, then atomically replaces the target session file.
@@ -928,12 +957,25 @@ class SessionRepository {
     if (options.scanMetrics) options.scanMetrics.sessionBytes += Buffer.byteLength(raw, 'utf8')
 
     try {
-      const session = normalizeSessionFile(JSON.parse(raw) as unknown, {
+      const decoded = decodeSessionFile(JSON.parse(raw) as unknown, {
         preserveLegacyUploadPaths: true,
         preserveRuntimeState: (sessionId) =>
           this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
       })
-      if (!session) {
+      if (decoded.status === 'unsupported-version') {
+        // A newer app still owns this authority. Leaving the primary file untouched and reporting an
+        // incomplete scan blocks reconciliation and all ordinary saving until a compatible app loads it.
+        return {
+          isComplete: false,
+          warning: {
+            kind: 'unsupported-version',
+            projectId,
+            fileName: basename(filePath),
+            recovered: false
+          }
+        }
+      }
+      if (decoded.status === 'invalid') {
         const wasQuarantined =
           options.quarantineInvalidFiles !== false && (await this.tryBackupInvalidFile(filePath))
         return {
@@ -947,6 +989,7 @@ class SessionRepository {
           }
         }
       }
+      const session = decoded.session
 
       // The file name is authoritative for global Session identity. Unlike the owning Project,
       // an id mismatch is corruption rather than a legacy field that may be repaired from the path.

@@ -363,6 +363,66 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[0].captureSessionModel).toHaveBeenCalledWith('owned-session')
   })
 
+  it('notifies the reconciliation observer only after resumed runtime ownership commits', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const observer = vi.fn(async () => undefined)
+    coordinator.setSessionResumeObserver(observer)
+    const request = {
+      sessionId: 'session-1',
+      cwd: '/workspace',
+      specialistId: 'specialist-new',
+      specialistBindingPending: true as const
+    }
+
+    const response = await coordinator.resumeSession(request)
+
+    expect(created[0].resumeSession).toHaveBeenCalledWith(request)
+    expect(observer).toHaveBeenCalledWith(request, response)
+    expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
+  })
+
+  it('retries pending binding reconciliation without resuming the attached provider twice', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const observer = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('pending marker clear failed'))
+      .mockResolvedValueOnce(undefined)
+    coordinator.setSessionResumeObserver(observer)
+    const request = {
+      sessionId: 'session-1',
+      cwd: '/workspace',
+      specialistId: 'specialist-new',
+      specialistBindingPending: true as const
+    }
+
+    await expect(coordinator.resumeSession(request)).rejects.toThrow('pending marker clear failed')
+    await expect(coordinator.resumeSession(request)).resolves.toMatchObject({
+      sessionId: 'session-1'
+    })
+
+    expect(created[0].resumeSession).toHaveBeenCalledOnce()
+    expect(observer).toHaveBeenCalledTimes(2)
+    expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
+  })
+
   it('projects delegated permissions and cascades root permission and Stop controls', async () => {
     const rootPermission: AcpPermissionRequest = {
       requestId: 'delegated:permission-1',
@@ -557,6 +617,58 @@ describe('AcpRuntimeCoordinator', () => {
       expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
     }
   )
+
+  it.each([
+    ['Claude Code', 'claude-code'],
+    ['OpenCode', 'opencode'],
+    ['Codex Responses', 'codex'],
+    ['Codex bridge', 'codex']
+  ] as const)(
+    'acknowledges a %s user prompt at provider acceptance before turn completion',
+    async (_route, frameworkId) => {
+      const completion = createDeferred<unknown>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => completion.promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession()
+
+      await expect(
+        coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+      ).resolves.toBeUndefined()
+
+      expect(created.sendPrompt).toHaveBeenCalledOnce()
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+
+      completion.resolve({ stopReason: 'end_turn' })
+      await vi.waitFor(() =>
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
+  it('rejects prompt admission when the turn ends without provider acceptance', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          skipProviderPromptAccepted: true
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+
+    await expect(
+      coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+    ).rejects.toThrow('ACP prompt ended before provider acceptance.')
+  })
 
   it('does not report provider acceptance when dispatch fails before acceptance', async () => {
     const coordinator = new AcpRuntimeCoordinator(
@@ -3005,6 +3117,10 @@ describe('AcpRuntimeCoordinator', () => {
     })
     await coordinator.createSession({ cwd: '/workspace' })
     await coordinator.requestAgentFrameworkSwitch()
+    const resumeObserver = vi.fn(async () => undefined)
+    const admissionGuard = vi.fn(async () => undefined)
+    coordinator.setSessionResumeObserver(resumeObserver)
+    coordinator.setPromptAdmissionGuard(admissionGuard)
 
     await coordinator.withActivity(
       {
@@ -3013,6 +3129,8 @@ describe('AcpRuntimeCoordinator', () => {
           cwd: '/workspace',
           projectId: 'project-1',
           previousFrameworkId: 'claude-code',
+          specialistId: 'specialist-new',
+          specialistBindingPending: true,
           historyPreamble: 'prior transcript'
         }
       },
@@ -3035,8 +3153,12 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: 'old-session',
       cwd: '/workspace',
       projectId: 'project-1',
-      previousFrameworkId: 'claude-code'
+      previousFrameworkId: 'claude-code',
+      specialistId: 'specialist-new',
+      specialistBindingPending: true
     })
+    expect(resumeObserver).toHaveBeenCalledOnce()
+    expect(admissionGuard).toHaveBeenCalledWith('old-session')
     expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledWith(
       {
         sessionId: 'old-session',
@@ -3054,6 +3176,48 @@ describe('AcpRuntimeCoordinator', () => {
       'prompt-attempt-1'
     )
     expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
+  })
+
+  it('blocks a scoped application prompt when an attached Session still has a pending binding', async () => {
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    await coordinator.createSession({ cwd: '/workspace' })
+    coordinator.setPromptAdmissionGuard(async () => {
+      throw new Error('The selected Specialist is saved but has not been applied yet.')
+    })
+
+    await expect(
+      coordinator.withActivity(
+        {
+          session: {
+            sessionId: 'session-1',
+            cwd: '/workspace',
+            specialistId: 'specialist-new',
+            specialistBindingPending: true
+          }
+        },
+        (runtime) =>
+          runtime.sendApplicationPrompt(
+            { sessionId: 'session-1', text: '[Auditor] fix this' },
+            {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            }
+          )
+      )
+    ).rejects.toThrow('has not been applied yet')
+
+    expect(vi.mocked(created.runtime.resumeSession)).not.toHaveBeenCalled()
+    expect(vi.mocked(created.runtime.sendApplicationPrompt)).not.toHaveBeenCalled()
   })
 
   it('removes a runtime from aggregation after its retirement completes', async () => {

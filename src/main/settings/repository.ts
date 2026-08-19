@@ -25,6 +25,7 @@ import {
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import type { LanguagePreference } from '../../shared/locale'
 import {
   type StoredComputeGrant,
   type StoredConnectors,
@@ -36,14 +37,28 @@ import {
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
-import { buildReviewerModelMutation, buildSubagentModelMutation } from './subagent-model-settings'
+import {
+  appendCustomServer,
+  beginCustomServerDeletion,
+  completeCustomServerDeletion
+} from './custom-server-identity'
+import {
+  buildReviewerModelMutation,
+  buildSubagentModelMutation,
+  buildVisionModelMutation
+} from './subagent-model-settings'
+
+type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
 
 // Stable semantic mutation facade. The injected document store owns arbitration and atomic IO; all
 // secret handling remains above this layer in crypto.ts and service.ts.
 class SettingsRepository {
   private readonly store: SettingsDocumentStore
 
-  constructor(storage: string | SettingsDocumentStore) {
+  constructor(
+    storage: string | SettingsDocumentStore,
+    private readonly guardSkillMutation?: SkillMutationGuard
+  ) {
     this.store = typeof storage === 'string' ? new SettingsDocumentStore(storage) : storage
   }
 
@@ -289,6 +304,12 @@ class SettingsRepository {
     return this.mutate(buildReviewerModelMutation(...args))
   }
 
+  async setVisionModel(
+    ...args: Parameters<typeof buildVisionModelMutation>
+  ): Promise<StoredSettings> {
+    return this.mutate(buildVisionModelMutation(...args))
+  }
+
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
   }
@@ -297,30 +318,29 @@ class SettingsRepository {
     return this.mutate((settings) => ({ ...settings, conversationSkillImportEnabled: enabled }))
   }
 
-  // Persists the Windows titlebar-close behavior; undefined restores the confirmation dialog.
+  async setLocalePreference(preference: LanguagePreference): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, localePreference: preference }))
+  }
+
   async setClosePreference(preference: CloseActionPreference | undefined): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, closePreference: preference }))
   }
 
-  // Persists the selected app-icon look; applied live to the window and dock/taskbar by the caller.
   async setAppIconVariant(variant: AppIconVariant): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, appIconVariant: variant }))
   }
 
-  // Persists the approval profile applied to conversations created after this preference changes.
   async setDefaultPermissionProfile(profile: PermissionProfileId): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, defaultPermissionProfile: profile }))
   }
 
-  // Persists the Files-tab source filter; undefined restores the default ("All artifacts").
   async setProjectFilesFilter(
     filter: ProjectFilesFilterPreference | undefined
   ): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, projectFilesFilter: filter }))
   }
 
-  // Removes the legacy settings.grantedLocalRoots field after the one-time import into the
-  // GrantedLocalRoot table has landed every row. Production never writes this field again.
+  // Removes settings.grantedLocalRoots after its one-time import; production never writes it again.
   async clearGrantedLocalRoots(): Promise<void> {
     await this.mutate((settings) => {
       const next = { ...settings }
@@ -492,14 +512,13 @@ class SettingsRepository {
   }
 
   async setSkillsEnabled(ids: string[], enabled: boolean): Promise<StoredSettings> {
-    return this.mutate((settings) => {
-      const disabled = new Set(settings.disabledSkillIds ?? [])
-      for (const id of ids) {
-        if (enabled) disabled.delete(id)
-        else disabled.add(id)
-      }
-      return { ...settings, disabledSkillIds: disabled.size ? [...disabled] : undefined }
-    })
+    const update = (): Promise<StoredSettings> =>
+      this.mutate((settings) => {
+        const disabled = new Set(settings.disabledSkillIds ?? [])
+        for (const id of ids) enabled ? disabled.delete(id) : disabled.add(id)
+        return { ...settings, disabledSkillIds: disabled.size ? [...disabled] : undefined }
+      })
+    return this.guardSkillMutation ? this.guardSkillMutation(update) : update()
   }
 
   // Adds or removes a bundled connector id from the disabled set (default-on model).
@@ -572,28 +591,21 @@ class SettingsRepository {
   // Appends a fully-formed custom MCP server record.
   async addCustomServer(server: StoredCustomMcpServer): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
-      connectors.customMcpServers = [...(connectors.customMcpServers ?? []), server]
+      connectors.customMcpServers = appendCustomServer(
+        connectors.customMcpServers,
+        server,
+        connectors.pendingCustomServerDeletionIds
+      )
     })
   }
 
-  // Removes a custom MCP server by id and policy entries owned by its public name.
+  // Removes a custom MCP server and journals its id until permission cleanup is durable.
   async removeCustomServer(id: string): Promise<StoredSettings> {
-    return this.mutateConnectors((connectors) => {
-      const removed = (connectors.customMcpServers ?? []).find((s) => s.id === id)
-      connectors.customMcpServers = (connectors.customMcpServers ?? []).filter((s) => s.id !== id)
-      if (!removed) return
+    return this.mutateConnectors((connectors) => beginCustomServerDeletion(connectors, id))
+  }
 
-      const aliases = new Set([removed.name])
-      connectors.autoAllowIds = connectors.autoAllowIds.filter((entry) => !aliases.has(entry))
-      const withoutToolAliases = (entries: string[] | undefined): string[] | undefined => {
-        const kept = (entries ?? []).filter(
-          (entry) => !Array.from(aliases).some((alias) => entry.startsWith(`${alias}/`))
-        )
-        return kept.length > 0 ? kept : undefined
-      }
-      connectors.blockedToolIds = withoutToolAliases(connectors.blockedToolIds)
-      connectors.askToolIds = withoutToolAliases(connectors.askToolIds)
-    })
+  async completeCustomServerDeletion(id: string): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => completeCustomServerDeletion(connectors, id))
   }
 
   // Enables or disables one custom MCP server by id.

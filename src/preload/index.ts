@@ -4,6 +4,10 @@ import { createElectronRendererContractAdapter } from './electron-renderer-contr
 import type { OpenScienceAPI } from './renderer-api'
 
 import type { ComputeApprovalDecision, ComputeApprovalRequest, JobSummary } from '../shared/compute'
+import type {
+  InitializeLocalePreferenceRequest,
+  SetLocalePreferenceRequest
+} from '../shared/locale'
 import type { NotebookLanguage } from '../shared/notebook'
 import type { DiscoveredInterpreter } from '../shared/notebook-runtime'
 import type {
@@ -50,6 +54,16 @@ import type {
   SpecialistExportRequest,
   SpecialistPackageInstallRequest
 } from '../shared/specialist-package'
+import type {
+  AddMarketplaceSourceRequest,
+  CancelMarketplaceCandidateRequest,
+  GetMarketplaceReleaseRequest,
+  InspectGitHubMarketplaceSourceRequest,
+  MarketplaceDownloadProgress,
+  MarketplaceInstallRequest,
+  PrepareMarketplaceInstallRequest,
+  RemoveMarketplaceSourceRequest
+} from '../shared/specialist-marketplace'
 import type {
   ReviewRunRequest,
   ReviewSessionRequest,
@@ -102,6 +116,13 @@ const api: OpenScienceAPI = {
   }),
   lifecycle: {
     getClientId: () => electronRendererContracts.invoke('lifecycle.getClientId')
+  },
+  locale: {
+    initialize: (request: InitializeLocalePreferenceRequest) =>
+      electronRendererContracts.invoke('locale.initialize', request),
+    setPreference: (request: SetLocalePreferenceRequest) =>
+      electronRendererContracts.invoke('locale.setPreference', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('locale.onChanged', listener)
   },
   databaseStartup: {
     getState: () => electronRendererContracts.invoke('databaseStartup.getState'),
@@ -224,6 +245,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setReviewerModel', request),
     setSubagentModel: (request) =>
       electronRendererContracts.invoke('settings.setSubagentModel', request),
+    setVisionModel: (request) =>
+      electronRendererContracts.invoke('settings.setVisionModel', request),
     onChanged: (listener) => electronRendererContracts.subscribe('settings.onChanged', listener),
     setNotificationsEnabled: (request) =>
       electronRendererContracts.invoke('settings.setNotificationsEnabled', request),
@@ -335,6 +358,8 @@ const api: OpenScienceAPI = {
     // Fires when a connector call needs the user's approval (external data-egress gate).
     onConnectorApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),
+    onConnectorApprovalSettled: (listener) =>
+      electronRendererContracts.subscribe('settings.onConnectorApprovalSettled', listener),
     onConnectorRuntimeChanged: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorRuntimeChanged', listener),
     onSkillCatalogChanged: (listener) =>
@@ -347,6 +372,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.replayPendingSkillImportApprovals'),
     replayConnectorApproval: (id: string) =>
       electronRendererContracts.invoke('settings.replayConnectorApproval', id),
+    replayPendingConnectorApprovals: () =>
+      electronRendererContracts.invoke('settings.replayPendingConnectorApprovals'),
     respondSkillImportApproval: (response) =>
       electronRendererContracts.invoke('settings.respondSkillImportApproval', response),
     respondConnectorApproval: (request: RespondApprovalRequest) =>
@@ -369,6 +396,23 @@ const api: OpenScienceAPI = {
   },
   specialist: {
     list: () => electronRendererContracts.invoke('specialist.list'),
+    listMarketplace: () => electronRendererContracts.invoke('specialist.listMarketplace'),
+    inspectGitHubMarketplaceSource: (request: InspectGitHubMarketplaceSourceRequest) =>
+      electronRendererContracts.invoke('specialist.inspectGitHubMarketplaceSource', request),
+    addMarketplaceSource: (request: AddMarketplaceSourceRequest) =>
+      electronRendererContracts.invoke('specialist.addMarketplaceSource', request),
+    removeMarketplaceSource: (request: RemoveMarketplaceSourceRequest) =>
+      electronRendererContracts.invoke('specialist.removeMarketplaceSource', request),
+    getMarketplaceRelease: (request: GetMarketplaceReleaseRequest) =>
+      electronRendererContracts.invoke('specialist.getMarketplaceRelease', request),
+    prepareMarketplaceInstall: (request: PrepareMarketplaceInstallRequest) =>
+      electronRendererContracts.invoke('specialist.prepareMarketplaceInstall', request),
+    cancelMarketplaceCandidate: (request: CancelMarketplaceCandidateRequest) =>
+      electronRendererContracts.invoke('specialist.cancelMarketplaceCandidate', request),
+    onMarketplaceDownloadProgress: (listener: AcpListener<MarketplaceDownloadProgress>) =>
+      electronRendererContracts.subscribe('specialist.onMarketplaceDownloadProgress', listener),
+    installMarketplace: (request: MarketplaceInstallRequest) =>
+      electronRendererContracts.invoke('specialist.installMarketplace', request),
     create: (request: CreateSpecialistRequest) =>
       electronRendererContracts.invoke('specialist.create', request),
     update: (request: UpdateSpecialistRequest) =>
@@ -479,6 +523,14 @@ const api: OpenScienceAPI = {
     onUpdated: (listener) => electronRendererContracts.subscribe('projects.onUpdated', listener),
     onDeleted: (listener) => electronRendererContracts.subscribe('projects.onDeleted', listener)
   },
+  tags: {
+    snapshot: () => electronRendererContracts.invoke('tags.snapshot'),
+    create: (request) => electronRendererContracts.invoke('tags.create', request),
+    update: (request) => electronRendererContracts.invoke('tags.update', request),
+    delete: (request) => electronRendererContracts.invoke('tags.delete', request),
+    setAssignment: (request) => electronRendererContracts.invoke('tags.setAssignment', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('tags.onChanged', listener)
+  },
   // Files exposes metadata pages only. Thumbnail/full-preview bytes continue through the existing
   // artifact/upload APIs after a visible item has been selected or rendered.
   projectFiles: {
@@ -506,6 +558,14 @@ const api: OpenScienceAPI = {
     list: () => electronRendererContracts.invoke('compute.list'),
     get: (providerId) => electronRendererContracts.invoke('compute.get', providerId),
     create: (request) => electronRendererContracts.invoke('compute.create', request),
+    createPassword: (request) =>
+      electronRendererContracts.invoke('compute.createPassword', request),
+    resetPassword: (request) => electronRendererContracts.invoke('compute.resetPassword', request),
+    changeAuthentication: (request) =>
+      electronRendererContracts.invoke('compute.changeAuthentication', request),
+    passwordCapability: () => electronRendererContracts.invoke('compute.passwordCapability'),
+    deletionStatus: (request) =>
+      electronRendererContracts.invoke('compute.deletionStatus', request),
     delete: (request) => electronRendererContracts.invoke('compute.delete', request),
     sshConfigAliases: () => electronRendererContracts.invoke('compute.sshConfigAliases'),
     probe: (providerId) => electronRendererContracts.invoke('compute.probe', providerId),
@@ -533,10 +593,14 @@ const api: OpenScienceAPI = {
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) =>
       electronRendererContracts.subscribe('compute.onApprovalRequest', listener),
+    onApprovalSettled: (listener: (id: string) => void) =>
+      electronRendererContracts.subscribe('compute.onApprovalSettled', listener),
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) =>
       electronRendererContracts.invoke('compute.respondApproval', request),
     replayApproval: (id: string) => electronRendererContracts.invoke('compute.replayApproval', id),
+    replayPendingApprovals: () =>
+      electronRendererContracts.invoke('compute.replayPendingApprovals'),
     listDir: (providerId, path) =>
       electronRendererContracts.invoke('compute.listDir', providerId, path),
     bookmarksGet: (providerId) =>

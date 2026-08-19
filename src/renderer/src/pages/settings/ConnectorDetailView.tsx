@@ -1,5 +1,5 @@
 import { ArrowUpRight, ChevronRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -8,10 +8,13 @@ import type {
 } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { Button } from '@/components/ui/button'
 import { ConnectorGlyph } from './connector-icons'
-import { SettingsToggle } from './SettingsLayout'
+import { SettingsLoadNotice, SettingsToggle } from './SettingsLayout'
 import { ToolPermissionControl } from './ToolPermissionControl'
+import { ResourceAvailability } from './ResourceAvailability'
+import { specialistsUsingConnector } from './specialist-resource-scope'
 
 type ConnectorDetailViewProps = {
   id: string
@@ -48,9 +51,14 @@ const ConnectorDetailView = ({
   // enabled/autoAllow from the store (falling back to the initial detail) keeps the two header
   // switches live after a toggle, mirroring how SkillDetailView derives enabled from the store.
   const storeConnector = useSettingsStore((state) => state.connectors.find((c) => c.id === id))
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
   const permissionGrants = usePermissionGrantsStore((state) => state.grants)
   const loadPermissionGrants = usePermissionGrantsStore((state) => state.load)
   const [detail, setDetail] = useState<ConnectorDetail | null>(null)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [operationError, setOperationError] = useState<string | undefined>()
+  const loadRequestRef = useRef(0)
   // Ids of tools whose description is expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -62,13 +70,38 @@ const ConnectorDetailView = ({
       return next
     })
 
+  const loadDetail = async (): Promise<void> => {
+    const requestId = ++loadRequestRef.current
+    setDetail(null)
+    setLoadState('loading')
+    try {
+      const result = await window.api.settings.getConnectorDetail(id)
+      if (loadRequestRef.current !== requestId) return
+      setDetail(result)
+      setLoadState('ready')
+    } catch {
+      if (loadRequestRef.current === requestId) setLoadState('error')
+    }
+  }
+
+  const retryLoad = (): void => {
+    void loadDetail()
+  }
+
   useEffect(() => {
-    let active = true
-    void window.api.settings.getConnectorDetail(id).then((result) => {
-      if (active) setDetail(result)
-    })
+    const requestId = ++loadRequestRef.current
+    void window.api.settings.getConnectorDetail(id).then(
+      (result) => {
+        if (loadRequestRef.current !== requestId) return
+        setDetail(result)
+        setLoadState('ready')
+      },
+      () => {
+        if (loadRequestRef.current === requestId) setLoadState('error')
+      }
+    )
     return () => {
-      active = false
+      loadRequestRef.current += 1
     }
   }, [id])
 
@@ -76,20 +109,46 @@ const ConnectorDetailView = ({
     void loadPermissionGrants()
   }, [loadPermissionGrants])
 
-  // Persist one tool's permission, folding the refreshed detail back into local state.
-  const handleToolChange = async (toolId: string, permission: ToolPermission): Promise<void> => {
-    await setToolPermission(toolId, permission).then(setDetail)
+  useEffect(() => {
+    void loadSpecialists()
+  }, [loadSpecialists])
+
+  const savePolicy = async (command: () => Promise<void>): Promise<void> => {
+    setOperationError(undefined)
+    try {
+      await command()
+    } catch {
+      setOperationError(t('Could not save this setting. The previous value was restored.'))
+    }
   }
 
-  if (!detail) return <div className="p-5" />
+  // Persist one tool's permission, folding the refreshed detail back into local state.
+  const handleToolChange = (toolId: string, permission: ToolPermission): Promise<void> =>
+    savePolicy(async () => {
+      setDetail(await setToolPermission(toolId, permission))
+    })
+
+  if (!detail) {
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={loadState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Connector…')}
+          errorMessage={t('Open Science could not load this Connector.')}
+          onRetry={retryLoad}
+        />
+      </div>
+    )
+  }
 
   const enabled = storeConnector?.enabled ?? detail.enabled
   const autoAllow = storeConnector?.autoAllow ?? detail.autoAllow
+  const usages = specialistsUsingConnector(specialistItems, storeConnector ?? detail)
 
   return (
     <div className="p-5">
-      {/* Header: icon + name + Featured badge + enable toggle, then description below. */}
-      <div className="flex items-start justify-between gap-3">
+      {/* Header: icon + name + Featured badge, then description below. */}
+      <div className="flex items-start gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <ConnectorGlyph size={28} />
           <div className="flex min-w-0 items-center gap-2">
@@ -101,11 +160,6 @@ const ConnectorDetailView = ({
             </span>
           </div>
         </div>
-        <SettingsToggle
-          enabled={enabled}
-          aria-label={t('Toggle {{name}}', { name: detail.displayName })}
-          onToggle={() => void setConnectorEnabled(id, !enabled).catch(() => undefined)}
-        />
       </div>
 
       {detail.description ? (
@@ -113,6 +167,26 @@ const ConnectorDetailView = ({
           {detail.description}
         </p>
       ) : null}
+
+      {operationError ? (
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+        >
+          {operationError}
+        </p>
+      ) : null}
+
+      <ResourceAvailability
+        mainEnabled={enabled}
+        mainToggleLabel={t('Toggle {{name}}', { name: detail.displayName })}
+        usages={usages}
+        onToggleMain={() =>
+          void savePolicy(async () => {
+            await setConnectorEnabled(id, !enabled)
+          })
+        }
+      />
 
       {/* Skip approvals: allow every tool without a per-call approval card. */}
       <div className="mt-4 flex items-start justify-between gap-3">
@@ -127,7 +201,11 @@ const ConnectorDetailView = ({
         <SettingsToggle
           enabled={autoAllow}
           aria-label={t('Skip approvals for {{name}}', { name: id })}
-          onToggle={() => void setConnectorAutoAllow(id, !autoAllow).catch(() => undefined)}
+          onToggle={() =>
+            void savePolicy(async () => {
+              await setConnectorAutoAllow(id, !autoAllow)
+            })
+          }
         />
       </div>
 

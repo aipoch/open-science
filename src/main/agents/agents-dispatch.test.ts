@@ -589,15 +589,11 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     expect(invalidateCatalog).not.toHaveBeenCalled()
   })
 
-  // A displayName patch that also toggles `enabled` must land both. The
-  // ordinary update path applies `enabled` via a separate ProfileService.setEnabled(...) call after
-  // the identity/capability update.
-  it('a displayName patch that also toggles enabled applies both changes', async () => {
-    const renamed = specialist({ displayName: 'Biology', revision: 4, enabled: true })
-    const afterToggle = specialist({ displayName: 'Biology', revision: 5, enabled: false })
+  // A displayName patch that also toggles `enabled` must land both in one CAS-backed update.
+  it('a displayName patch that also toggles enabled applies both changes atomically', async () => {
+    const updated = specialist({ displayName: 'Biology', revision: 4, enabled: false })
     const { service, profileService } = buildService({ profiles: [specialist()] })
-    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(renamed)
-    ;(profileService.setEnabled as ReturnType<typeof vi.fn>) = vi.fn(async () => afterToggle)
+    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
 
     const result = (await service.dispatch({
       op: 'update',
@@ -607,11 +603,9 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     expect(result.name).toBe('Bio')
     expect(result.displayName).toBe('Biology')
     expect(result.enabled).toBe(false)
-    expect(result.revision).toBe(5)
-    // setEnabled was invoked with the toggled value, after the atomic rename committed.
-    expect(profileService.setEnabled as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-      'sp-1',
-      false
+    expect(result.revision).toBe(4)
+    expect(profileService.update as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'sp-1', revision: 3, displayName: 'Biology', enabled: false })
     )
   })
 

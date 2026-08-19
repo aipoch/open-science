@@ -32,6 +32,48 @@ export const RESUME_MODEL_INCOMPATIBLE_MESSAGE =
 export const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
   'This conversation needs image replay, but the selected model does not support image input.'
 
+// App-owned Vision relay failures cross Electron's invoke boundary as Error text, so public error
+// identity is kept in shared constants instead of depending on non-enumerable Error properties.
+export const VISION_MODEL_NOT_CONFIGURED_MESSAGE =
+  "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+const LEGACY_VISION_MODEL_NOT_CONFIGURED_MESSAGE =
+  'Configure a Vision model in Settings > Model before sending images to this model.'
+export const VISION_IMAGE_TOO_LARGE_MESSAGE =
+  'The attached image is too large to prepare for the Vision model.'
+export const VISION_IMAGE_INVALID_MESSAGE = 'The attached image is invalid.'
+export const VISION_IMAGE_BUDGET_MESSAGE =
+  'The current images exceed the Vision evidence request budget.'
+export const VISION_EVIDENCE_BUDGET_MESSAGE =
+  'The current Vision evidence exceeds the request budget.'
+export const VISION_EVIDENCE_INVALID_MESSAGE = 'The Vision model returned invalid image evidence.'
+
+const VISION_RUN_FAILURE_MESSAGES = [
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
+  VISION_IMAGE_TOO_LARGE_MESSAGE,
+  VISION_IMAGE_INVALID_MESSAGE,
+  VISION_IMAGE_BUDGET_MESSAGE,
+  VISION_EVIDENCE_BUDGET_MESSAGE,
+  VISION_EVIDENCE_INVALID_MESSAGE
+] as const
+
+export type VisionRunFailureMessage = (typeof VISION_RUN_FAILURE_MESSAGES)[number]
+
+export const visionRunFailureMessage = (
+  error: string | null | undefined
+): VisionRunFailureMessage | undefined => {
+  const message = error?.trim()
+  if (!message) return undefined
+  if (
+    message === LEGACY_VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
+    message.endsWith(`Error: ${LEGACY_VISION_MODEL_NOT_CONFIGURED_MESSAGE}`)
+  ) {
+    return VISION_MODEL_NOT_CONFIGURED_MESSAGE
+  }
+  return VISION_RUN_FAILURE_MESSAGES.find(
+    (candidate) => message === candidate || message.endsWith(`Error: ${candidate}`)
+  )
+}
+
 // App-authored agent-setup guidance thrown by settings/service.ts:resolveActiveAgentBackend at spawn
 // time — surfaced when a conversation FAILS TO START (createSession), which does not route through the
 // resume-path softener. All three are wrong-config the user fixes in Settings → Model, not app bugs, so
@@ -84,6 +126,7 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   if (!message) return false
 
   if (EXPECTED_RUN_FAILURE_MESSAGES.has(message)) return true
+  if (visionRunFailureMessage(message)) return true
   // The reworded provider not-found (a model-config problem the user fixes in Settings, not a bug).
   if (message.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)) return true
   // Model↔framework incompatibility raised at spawn/createSession. The main-side message names the

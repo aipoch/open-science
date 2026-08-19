@@ -153,7 +153,123 @@ describe('storage IPC handlers', () => {
     await expect(owner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({ ok: true })
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.runtime.disconnect).toHaveBeenCalledOnce()
+    expect(deps.notebook.shutdownAll).toHaveBeenCalledOnce()
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a recovered commit when the source changed after verification', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    await mkdir(join(dataRoot, 'artifacts'), { recursive: true })
+    await writeFile(join(dataRoot, 'artifacts', 'new-after-restart.txt'), 'new')
+    const deps = fakeDeps()
+    const restartedOwner = createStorageCommandOwner(deps)
+
+    await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'The staged copy changed after verification. Run the move again.'
+    })
+
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it.each(['copying', 'verified'] as const)(
+    'discards a %s marker after the command owner is recreated',
+    async (status) => {
+      initDataRoot(dataRoot)
+      await seedVerifiedMarker(target, dataRoot)
+      const marker = await readMigrationMarker(target)
+      await writeMigrationMarker(target, { ...marker!, status })
+      const restartedOwner = createStorageCommandOwner(fakeDeps())
+
+      await expect(restartedOwner.discardMigratedCopy({ parent: targetParent })).resolves.toEqual({
+        ok: true
+      })
+
+      expect(existsSync(target)).toBe(false)
+    }
+  )
+
+  it('recovers a verified staged copy after the command owner is recreated', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const deps = fakeDeps()
+
+    // Recreating the owner models a fresh main process after the copy verified but before the user
+    // chose Restart now. The verified marker is durable, so the staged copy should remain resolvable.
+    const restartedOwner = createStorageCommandOwner(deps)
+    await expect(readMigrationMarker(target)).resolves.toMatchObject({
+      status: 'verified',
+      source: dataRoot,
+      target
+    })
+    await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: true
+    })
+
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.runtime.disconnect).toHaveBeenCalledOnce()
+    expect(deps.notebook.shutdownAll).toHaveBeenCalledOnce()
+    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not lock staged-copy resolution after a malformed recovered commit request', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:commit-and-relaunch', { parent: null })).resolves.toMatchObject({
+      ok: false
+    })
+    await expect(invoke('storage:discard-migrated-copy', { parent: null })).resolves.toMatchObject({
+      ok: false
+    })
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(existsSync(target)).toBe(false)
+  })
+
+  it('keeps a recovered marker and clears the write gate when writers cannot be paused', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const pauseDataRootWriters = vi.fn().mockRejectedValue(new Error('busy'))
+    const deps = fakeDeps({ pauseDataRootWriters })
+    const restartedOwner = createStorageCommandOwner(deps)
+
+    await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'Could not pause running work to finish moving your data safely. Please try again.'
+    })
+
+    expect(await readMigrationMarker(target)).toMatchObject({ status: 'verified' })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('blocks recovered commit while delegated work is still running', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const pauseDataRootWriters = vi.fn()
+    const deps = fakeDeps({
+      getActiveDelegatedSessions: vi
+        .fn()
+        .mockReturnValue([{ projectId: 'project-1', sessionId: 'session-1' }]),
+      pauseDataRootWriters
+    })
+    const restartedOwner = createStorageCommandOwner(deps)
+
+    await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error:
+        'Subagents are still running. Return to their tasks and stop them before finishing the move.'
+    })
+
+    expect(pauseDataRootWriters).not.toHaveBeenCalled()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
   })
 
   it('registers every storage channel', () => {
@@ -535,9 +651,9 @@ describe('storage IPC handlers', () => {
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain(markerToken)
   })
 
-  it('commit-and-relaunch refuses a verified marker not staged by this process', async () => {
+  it('commit-and-relaunch refuses a recovered marker staged from another data root', async () => {
     initDataRoot(dataRoot)
-    await seedVerifiedMarker(target, dataRoot)
+    await seedVerifiedMarker(target, join(dataRoot, 'other'))
     const deps = fakeDeps()
     registerStorageIpcHandlers(deps)
 

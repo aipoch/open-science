@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpPromptRequest } from '../../shared/acp'
 import { codexFramework } from '../agent-framework/codex'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
+import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 
@@ -40,12 +41,15 @@ const contextTurn = (): TestContextTurn => {
   return handle
 }
 
-const setup = (): Fixture => {
+const setup = (
+  imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
+): Fixture => {
   const turn = contextTurn()
   const promptClose = vi.fn()
   const promptContent = {
     prepare: vi.fn(async () => ({
       content: 'provider-content',
+      historyImageCount: 0,
       turnInputs: { uploads: [], references: [] },
       close: promptClose
     }))
@@ -65,6 +69,7 @@ const setup = (): Fixture => {
   const registerTurnInputs = vi.fn(async () => undefined)
   const owner = new AcpPromptPreparationOwner({
     promptContent,
+    imageInputCompatibility,
     presentation: new AcpSessionPresentationPolicy(),
     contextUsage,
     selectBridgeSkills: vi.fn(async () => []),
@@ -212,6 +217,7 @@ describe('AcpPromptPreparationOwner', () => {
           resolveContent = () =>
             resolve({
               content: 'stale-provider-content',
+              historyImageCount: 0,
               turnInputs: { uploads: [], references: [] },
               close: fixture.promptClose
             })
@@ -230,6 +236,44 @@ describe('AcpPromptPreparationOwner', () => {
     expect(fixture.promptClose).toHaveBeenCalledTimes(1)
     expect(fixture.contextUsage.beginTurn).not.toHaveBeenCalled()
     expect(fixture.registerTurnInputs).not.toHaveBeenCalled()
+  })
+
+  it('relays prepared image content only for a text-only active backend', async () => {
+    const imageInputCompatibility = {
+      prepare: vi.fn(async () => 'validated visual evidence')
+    }
+    const fixture = setup(imageInputCompatibility)
+    fixture.promptContent.prepare.mockResolvedValueOnce({
+      content: [{ type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }],
+      historyImageCount: 1,
+      close: fixture.promptClose
+    })
+
+    const handle = await fixture.prepare({
+      backend: {
+        framework: codexFramework,
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'baked instructions' },
+        context: { window: 100_000, supportsImageInput: false },
+        adapter: {
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          codexHome: '/codex'
+        }
+      }
+    })
+
+    expect(handle.status).toBe('ready')
+    if (handle.status !== 'ready') throw new Error('expected a ready prompt')
+    expect(imageInputCompatibility.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        supportsImageInput: false,
+        historyImageCount: 1,
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    )
+    expect(handle.content).toBe('validated visual evidence')
   })
 
   it('fails and supersedes a preparation-owned Context turn when cancellation wins preflight', async () => {

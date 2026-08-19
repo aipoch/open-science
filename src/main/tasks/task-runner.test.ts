@@ -9,6 +9,7 @@ import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import type { Project } from '../../shared/projects'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
+  TASK_REVIEW_DISPOSAL_BUDGET_MS,
   TaskRunner,
   type TaskPreviewResourcePort,
   type TaskProjectPort,
@@ -738,6 +739,75 @@ describe('TaskRunner', () => {
     releaseReviewCleanup?.()
     await disposal
     expect(disposed).toBe(true)
+  })
+
+  it('bounds disposal when an automatic reviewer ignores abort', async () => {
+    vi.useFakeTimers()
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const review = vi.fn(
+      (...args: [PersistedChatSession, string, AbortSignal]) =>
+        new Promise<never>(() => {
+          args[2].addEventListener('abort', () => undefined, { once: true })
+          markReviewStarted?.()
+        })
+    )
+    const ids = ['hung-review-user', 'hung-review-run', 'hung-review-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => undefined
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-hung-review-dispose' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'hung-review-message-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-hung-review-dispose',
+            role: 'assistant',
+            text: 'Review never settles.'
+          })
+        }
+      },
+      reviewer: { review },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    try {
+      await runner.startRun({
+        project: project.id,
+        prompt: 'Produce a review that never settles.',
+        autoReviewEnabled: true
+      })
+      await reviewStarted
+      let disposed = false
+      void runner.dispose().then(() => {
+        disposed = true
+      })
+
+      expect(review.mock.calls[0]?.[2].aborted).toBe(true)
+      await vi.advanceTimersByTimeAsync(TASK_REVIEW_DISPOSAL_BUDGET_MS)
+      expect(disposed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('uses the dedicated policy mutation for an existing Session', async () => {

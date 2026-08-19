@@ -55,6 +55,7 @@ beforeEach(() => {
     resolvedPath: path
   }))
   ;(window as unknown as { api: unknown }).api = {
+    platform: 'darwin',
     localFs: {
       getRoots: vi.fn().mockResolvedValue({ home: HOME, machineName: 'Test Mac' }),
       listDrives: vi.fn().mockResolvedValue([
@@ -81,6 +82,11 @@ afterEach(() => {
 
 const addressInput = (): HTMLInputElement | null =>
   document.body.querySelector<HTMLInputElement>('[aria-label="Directory path"]')
+
+const zIndexFromClassName = (element: Element): number => {
+  const match = element.className.match(/(?:^|\s)z-\[(\d+)\](?:\s|$)/)
+  return match ? Number(match[1]) : 0
+}
 
 describe('LocalFileBrowser requestedPath', () => {
   it('lands in Home without a requested path', async () => {
@@ -134,6 +140,116 @@ describe('LocalFileBrowser requestedPath', () => {
     expect(listDir).toHaveBeenCalledWith(GRANTED)
     expect(listDir).not.toHaveBeenCalledWith(HOME)
     expect(addressInput()?.value).toBe(GRANTED)
+  })
+})
+
+describe('LocalFileBrowser sensitive paths', () => {
+  const renderEntries = async (entries: LocalDirListing['entries']): Promise<void> => {
+    listDir.mockImplementation(async (path: string): Promise<LocalDirListing> => ({
+      entries: path === HOME ? entries : [],
+      truncated: false,
+      resolvedPath: path
+    }))
+    await act(async () => {
+      root.render(<LocalFileBrowser />)
+    })
+    await flush()
+  }
+
+  const clickEntry = async (name: string): Promise<void> => {
+    const entryButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes(name)
+    )
+    expect(entryButton).toBeDefined()
+    await act(async () => {
+      entryButton?.click()
+    })
+  }
+
+  it('keeps sensitive-folder consent in the app and cancels without navigating', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await renderEntries([{ name: '.ssh', isDirectory: true, size: 0, mtimeMs: 0 }])
+
+    await clickEntry('.ssh')
+
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Open sensitive folder?')
+    expect(dialog?.textContent).toContain('may contain credentials or secrets')
+    expect(dialog?.textContent).toContain(`${HOME}/.ssh`)
+    expect(confirm).not.toHaveBeenCalled()
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="sensitive-local-path-cancel"]')
+        ?.click()
+    })
+
+    expect(listDir).not.toHaveBeenCalledWith(`${HOME}/.ssh`)
+  })
+
+  it('navigates to a sensitive folder only after confirmation', async () => {
+    await renderEntries([{ name: '.ssh', isDirectory: true, size: 0, mtimeMs: 0 }])
+    await clickEntry('.ssh')
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="sensitive-local-path-confirm"]')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    expect(listDir).toHaveBeenCalledWith(`${HOME}/.ssh`)
+  })
+
+  it('opens a sensitive file preview only after naming it in the confirmation', async () => {
+    await renderEntries([{ name: 'id_ed25519', isDirectory: false, size: 128, mtimeMs: 1 }])
+    await clickEntry('id_ed25519')
+
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Open sensitive file?')
+    expect(dialog?.textContent).toContain(`${HOME}/id_ed25519`)
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="sensitive-local-path-confirm"]')
+        ?.click()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([
+      expect.objectContaining({
+        name: 'id_ed25519',
+        path: `${HOME}/id_ed25519`,
+        source: 'local'
+      })
+    ])
+  })
+
+  it('stacks sensitive-path consent above an expanded Files preview', async () => {
+    listDir.mockImplementation(async (path: string): Promise<LocalDirListing> => ({
+      entries: path === HOME ? [{ name: '.ssh', isDirectory: true, size: 0, mtimeMs: 0 }] : [],
+      truncated: false,
+      resolvedPath: path
+    }))
+    await act(async () => {
+      root.render(
+        <section role="dialog" data-testid="expanded-files-preview" className="z-[56]">
+          <LocalFileBrowser />
+        </section>
+      )
+    })
+    await flush()
+
+    await clickEntry('.ssh')
+
+    const expandedPreview = container.querySelector('[data-testid="expanded-files-preview"]')
+    const overlay = document.body.querySelector('[data-testid="sensitive-local-path-overlay"]')
+    const dialog = document.body.querySelector('[data-testid="sensitive-local-path-dialog"]')
+    expect(expandedPreview).not.toBeNull()
+    expect(overlay).not.toBeNull()
+    expect(dialog).not.toBeNull()
+    expect(zIndexFromClassName(overlay!)).toBeGreaterThan(zIndexFromClassName(expandedPreview!))
+    expect(zIndexFromClassName(dialog!)).toBeGreaterThan(zIndexFromClassName(expandedPreview!))
   })
 })
 

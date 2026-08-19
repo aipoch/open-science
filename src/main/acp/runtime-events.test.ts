@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
 import { sanitizeToolActivity } from '../../shared/session-persistence'
 import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
+import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 
 describe('ACP runtime event normalization', () => {
   it('maps assistant text chunks into readable runtime events', () => {
@@ -282,6 +283,36 @@ describe('ACP runtime event normalization', () => {
       rawInput: { command: 'ls -la' },
       rawOutput: { stdout: 'total 8' }
     })
+  })
+
+  it('bounds large tool detail fields before they enter runtime snapshots', () => {
+    const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
+      toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tool-large-output',
+            status: 'in_progress',
+            content: [
+              { type: 'content', content: { type: 'text', text: 'a'.repeat(20_000) } },
+              { type: 'content', content: { type: 'text', text: 'b'.repeat(20_000) } }
+            ],
+            _meta: { terminal_output: { data: 'c'.repeat(20_000) } }
+          }
+        },
+        'event-large-output'
+      )
+    )
+
+    expect(event.toolContent).toEqual([
+      {
+        type: 'content',
+        content: { type: 'text', text: `${'a'.repeat(16_000)}\n…` }
+      }
+    ])
+    expect(event.terminalOutput).toBe(`${'c'.repeat(16_000)}\n…`)
+    expect(JSON.stringify(event.toolContent).length).toBeLessThanOrEqual(32_000)
   })
 
   it('projects ACP tool-result images without retaining bytes in runtime or Session JSON', () => {

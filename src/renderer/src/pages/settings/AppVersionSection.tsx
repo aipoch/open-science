@@ -20,6 +20,7 @@ const AppVersionSection = (): React.JSX.Element => {
   const version = appInfo?.version ?? status.current
   const isChecking = status.state === 'checking'
   const isDownloading = status.state === 'downloading'
+  const canCheck = !isChecking && !isDownloading
   const hasUpdate = status.state === 'available' || isDownloading || status.state === 'ready'
 
   const statusLine = ((): string => {
@@ -60,12 +61,7 @@ const AppVersionSection = (): React.JSX.Element => {
         controlClassName="w-auto justify-self-end"
       >
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void check()}
-            disabled={isChecking}
-          >
+          <Button type="button" variant="outline" onClick={() => void check()} disabled={!canCheck}>
             <RefreshCw
               className={isChecking ? 'size-4 animate-spin' : 'size-4'}
               aria-hidden="true"

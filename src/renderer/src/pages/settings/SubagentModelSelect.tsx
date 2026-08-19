@@ -13,7 +13,8 @@ import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings
 import {
   buildConfiguredModelCatalog,
   configuredModelKey,
-  parseConfiguredModelKey
+  parseConfiguredModelKey,
+  type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
 import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
 import {
@@ -23,7 +24,10 @@ import {
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsField, SettingsRow } from './SettingsLayout'
-import type { SubagentModelConfiguration } from '../../../../shared/settings'
+import {
+  isCodexSubscriptionProvider,
+  type SubagentModelConfiguration
+} from '../../../../shared/settings'
 
 const INHERIT_KEY = 'same-as-main-model'
 
@@ -34,6 +38,7 @@ type ModelPolicySelectProps = Readonly<{
   configuration: SubagentModelConfiguration
   pending: boolean
   setConfiguration: (configuration: SubagentModelConfiguration) => Promise<void>
+  entryFilter?: (entry: ConfiguredModelCatalogEntry) => boolean
 }>
 
 const ModelPolicySelect = ({
@@ -42,7 +47,8 @@ const ModelPolicySelect = ({
   inheritLabel,
   configuration,
   pending,
-  setConfiguration
+  setConfiguration,
+  entryFilter
 }: ModelPolicySelectProps): React.JSX.Element => {
   const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
@@ -59,13 +65,14 @@ const ModelPolicySelect = ({
     frameworkId,
     frameworkEndpoints
   })
+  const eligibleCatalog = entryFilter ? catalog.filter(entryFilter) : catalog
   const selectedKey =
     configuration.mode === 'inherit'
       ? INHERIT_KEY
       : configuredModelKey(configuration.providerId, configuration.model)
   const selectedEntry =
     configuration.mode === 'fixed'
-      ? catalog.find((entry) => entry.key === selectedKey && entry.selectable)
+      ? eligibleCatalog.find((entry) => entry.key === selectedKey && entry.selectable)
       : undefined
   const selectedProvider = selectedEntry
     ? providers.find((provider) => provider.id === selectedEntry.providerId)
@@ -87,7 +94,7 @@ const ModelPolicySelect = ({
   const groups = providers
     .map((provider) => ({
       provider,
-      entries: catalog.filter(
+      entries: eligibleCatalog.filter(
         (entry) => entry.providerId === provider.id && entry.selectable && entry.model
       )
     }))
@@ -107,7 +114,8 @@ const ModelPolicySelect = ({
             }
             const identity = parseConfiguredModelKey(key)
             const entry =
-              identity && catalog.find((candidate) => candidate.key === key && candidate.selectable)
+              identity &&
+              eligibleCatalog.find((candidate) => candidate.key === key && candidate.selectable)
             if (!entry || !identity || !entry.model) return
             const provider = providers.find((candidate) => candidate.id === identity.providerId)
             const profile = resolveProviderReasoningEffortProfile(provider, identity.model)
@@ -260,4 +268,34 @@ const ReviewerModelSelect = (): React.JSX.Element => {
   )
 }
 
-export { ReviewerModelSelect, SubagentModelSelect }
+const VisionModelSelect = (): React.JSX.Element => {
+  const { t } = useTranslation()
+  const configuration = useSettingsStore((state) => state.visionModel)
+  const setVisionModel = useSettingsStore((state) => state.setVisionModel)
+
+  return (
+    <ModelPolicySelect
+      modelAriaLabel={t('Vision model Model')}
+      reasoningEffortAriaLabel={t('Vision model Reasoning effort')}
+      inheritLabel={t('Not configured')}
+      configuration={configuration ? { mode: 'fixed', ...configuration } : { mode: 'inherit' }}
+      pending={useSettingsStore((state) => state.visionModelPending)}
+      entryFilter={(entry) =>
+        entry.supportsImageInput && !isCodexSubscriptionProvider(entry.providerType)
+      }
+      setConfiguration={(next) =>
+        setVisionModel(
+          next.mode === 'fixed'
+            ? {
+                providerId: next.providerId,
+                model: next.model,
+                reasoningEffort: next.reasoningEffort
+              }
+            : undefined
+        )
+      }
+    />
+  )
+}
+
+export { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect }

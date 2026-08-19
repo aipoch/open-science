@@ -30,7 +30,7 @@ const engine = (fetchImpl: typeof fetch): ParserEngine => new ParserEngine({ fet
 const calls = (fetchImpl: typeof fetch): unknown[][] =>
   (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls
 
-describe('protein_annotation / tool set', () => {
+describe('protein-annotation / tool set', () => {
   it('exposes exactly the 13 upstream tool ids and drops the old string_* ids', () => {
     expect(PROTEIN_ANNOTATION_TOOLS.map((t) => t.id).sort()).toEqual(
       [
@@ -52,11 +52,11 @@ describe('protein_annotation / tool set', () => {
     const ids = PROTEIN_ANNOTATION_TOOLS.map((t) => t.id)
     expect(ids).not.toContain('string_interaction_partners')
     expect(ids).not.toContain('string_network')
-    expect(PROTEIN_ANNOTATION_TOOLS.every((t) => t.connector === 'protein_annotation')).toBe(true)
+    expect(PROTEIN_ANNOTATION_TOOLS.every((t) => t.connector === 'protein-annotation')).toBe(true)
   })
 })
 
-describe('protein_annotation / InterPro', () => {
+describe('protein-annotation / InterPro', () => {
   it('get_domain_architecture walks pages, verifies count, and shapes a deterministic summary', async () => {
     const page2 =
       'https://www.ebi.ac.uk/interpro/api/entry/interpro/protein/uniprot/P04637/?page_size=200&cursor=x'
@@ -268,7 +268,7 @@ describe('protein_annotation / InterPro', () => {
   })
 })
 
-describe('protein_annotation / Human Protein Atlas', () => {
+describe('protein-annotation / Human Protein Atlas', () => {
   it('get_protein_atlas_gene resolves a symbol then groups the record into sections', async () => {
     const fetchImpl = mockFetch({
       '/api/search_download.php': {
@@ -323,7 +323,7 @@ describe('protein_annotation / Human Protein Atlas', () => {
   })
 })
 
-describe('protein_annotation / STRING', () => {
+describe('protein-annotation / STRING', () => {
   it('map_string_ids partitions input into mapped and unmapped by queryIndex', async () => {
     const fetchImpl = mockFetch({
       '/json/version': {
@@ -510,7 +510,7 @@ describe('protein_annotation / STRING', () => {
 })
 
 // Live self-tests against the real public endpoints. Off by default; run with LIVE_API=1.
-describe.skipIf(!process.env.LIVE_API)('protein_annotation / LIVE', () => {
+describe.skipIf(!process.env.LIVE_API)('protein-annotation / LIVE', () => {
   const live = new ParserEngine()
 
   it('get_domain_architecture P04637 returns InterPro entries with a verified count', async () => {

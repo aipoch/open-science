@@ -48,6 +48,12 @@ const ALL_PACKAGE_CODES = [
   'specialist.display-name-invalid',
   'specialist.description-invalid',
   'specialist.system-prompt-invalid',
+  'specialist.skillIds-invalid',
+  'specialist.skillIds-entry-invalid',
+  'specialist.skillIds-duplicate',
+  'specialist.connectorIds-invalid',
+  'specialist.connectorIds-entry-invalid',
+  'specialist.connectorIds-duplicate',
   'specialist.name-protected',
   'specialist.name-duplicate',
   'specialist.id-protected',
@@ -62,6 +68,10 @@ const ALL_PACKAGE_CODES = [
   'skill.version-invalid',
   'skill.executable-content-present',
   'skill.existing-conflict',
+  // Export preview (package/service.ts)
+  'specialist.export-unbundled-skills',
+  'specialist.export-version-unchanged',
+  'specialist.export-validation-failed',
   // Overwrite preview (package/service.ts)
   'specialist.overwrite-same-version',
   'specialist.overwrite-downgrade',
@@ -98,6 +108,20 @@ describe('specialistDiagnosticCopy', () => {
     expect(copy.title).toBe('Single file too large')
     expect(copy.body).toContain('31 MB')
     expect(copy.body).toContain('25 MB')
+  })
+
+  it.each([
+    ['specialist.skillIds-invalid', 'Skill list', 'Skill list must be an array'],
+    ['specialist.skillIds-entry-invalid', 'Invalid Skill name', 'non-empty strings'],
+    ['specialist.skillIds-duplicate', 'Duplicate Skill name', 'duplicate names'],
+    ['specialist.connectorIds-invalid', 'Connector list', 'Connector list must be an array'],
+    ['specialist.connectorIds-entry-invalid', 'Invalid Connector name', 'non-empty strings'],
+    ['specialist.connectorIds-duplicate', 'Duplicate Connector name', 'duplicate names']
+  ])('maps %s to actionable copy', (code, title, guidance) => {
+    expect(specialistDiagnosticCopy(diag(code))).toEqual({
+      title,
+      body: expect.stringContaining(guidance)
+    })
   })
 
   it('embeds file counts and depth levels verbatim', () => {

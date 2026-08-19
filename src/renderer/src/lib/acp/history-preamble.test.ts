@@ -362,23 +362,30 @@ describe('agent-aware history replay', () => {
   })
 
   it('keeps media-only Assistant output when an oversized turn is projected', () => {
+    const imageMessage = message({
+      role: 'agent',
+      content: '',
+      images: [{ id: 'result-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+    })
     const replay = buildWorkspaceHistoryReplay(
       [
         message({ role: 'user', content: 'original task' }),
         message({ role: 'agent', content: 'original answer' }),
         message({ role: 'user', content: 'keep the generated screenshot' }),
         message({ role: 'agent', content: 'working '.repeat(300) }),
-        message({
-          role: 'agent',
-          content: '',
-          images: [{ id: 'result-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
-        })
+        imageMessage
       ],
       { target: 'codex-bridge', budget: 920 }
     )!
 
     expect(replay.historyPreamble).toContain('**Assistant:** [media attached]')
-    expect(replay.historyImages).toEqual([expect.objectContaining({ data: 'AQID' })])
+    expect(replay.historyImages).toEqual([
+      expect.objectContaining({
+        data: 'AQID',
+        sourceMessageId: imageMessage.id,
+        sourceImageId: 'result-image'
+      })
+    ])
   })
 })
 

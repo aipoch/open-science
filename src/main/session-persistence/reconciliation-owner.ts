@@ -10,9 +10,10 @@ import {
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import { repairHistoricalArtifactAliases } from './artifact-alias-repair'
 import { hasLegacySessionUpload } from './legacy-upload'
+import { saveSessionWithRevision } from './save-session'
 
 type SessionReconciliationRepository = {
-  saveSession(session: PersistedChatSession): Promise<void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
 }
 
 type SessionReconciliationFileIndex = {
@@ -243,9 +244,13 @@ class SessionPersistenceReconciliationOwner {
               candidateIndex === index ? upgradedSession : candidate
             )
             result = { ...result, sessions }
-            await this.repository.saveSession(upgradedSession)
+            const persisted = await saveSessionWithRevision(this.repository, upgradedSession)
+            sessions = sessions.map((candidate, candidateIndex) =>
+              candidateIndex === index ? persisted : candidate
+            )
+            result = { ...result, sessions }
             if (input.allowDestructiveCleanup) {
-              await this.uploads.upgradeLegacySessionUploads(upgradedSession, {
+              await this.uploads.upgradeLegacySessionUploads(persisted, {
                 mode: 'reconcile'
               })
             }
@@ -286,13 +291,17 @@ class SessionPersistenceReconciliationOwner {
           advanceFilesRevision: attachedSession === session
         })
         if (recoveredSession !== session) {
+          // Capture immutable Message evidence before JSON so a failure leaves an attachment witness.
           sessions = sessions.map((candidate, candidateIndex) =>
             candidateIndex === index ? recoveredSession : candidate
           )
           result = { ...result, sessions }
-          // Capture immutable Message evidence before JSON so a failure leaves an attachment witness.
           await this.provenance?.captureFinalizedMessages(recoveredSession)
-          await this.repository.saveSession(recoveredSession)
+          const persisted = await saveSessionWithRevision(this.repository, recoveredSession)
+          sessions = sessions.map((candidate, candidateIndex) =>
+            candidateIndex === index ? persisted : candidate
+          )
+          result = { ...result, sessions }
         }
       }
       // Restore active owners before scan-order-dependent sync offers canonical rows elsewhere.

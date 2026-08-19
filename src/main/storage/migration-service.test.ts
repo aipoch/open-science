@@ -435,11 +435,37 @@ describe('classifyDataRoot', () => {
       error: 'A different folder named OpenScience already exists here. Choose another location.'
     })
   })
-  it('rejects a marker-bearing staging dir as invalid, even when it already holds data', async () => {
-    // A crashed/uncommitted copy carries a marker and may hold a partial data dir; it must never
-    // classify 'adopt' (bypassing the commit gate) — the user must finish or discard the move first.
+  it('classifies a verified marker-bearing staging dir as recoverable, never adoptable', async () => {
+    // A crashed/uncommitted copy carries a marker and may hold user data; recovery must still pass
+    // through the commit gate rather than silently adopting the snapshot.
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     await mkdir(join(target, 'artifacts'), { recursive: true })
+
+    const result = await classifyDataRoot(emptyParent, currentDataRoot)
+
+    expect(result).toMatchObject({ kind: 'recover', recoveryStatus: 'verified' })
+  })
+
+  it('classifies an interrupted copying marker as discard-only recovery', async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot, { status: 'copying' })
+
+    const result = await classifyDataRoot(emptyParent, currentDataRoot)
+
+    expect(result).toMatchObject({ kind: 'recover', recoveryStatus: 'copying' })
+  })
+
+  it('keeps a marker for another source invalid', async () => {
+    await seedVerifiedMarker(emptyParent, join(currentDataRoot, 'other'))
+
+    const result = await classifyDataRoot(emptyParent, currentDataRoot)
+
+    expect(result.kind).toBe('invalid')
+  })
+
+  it('keeps a corrupt marker invalid instead of offering destructive recovery', async () => {
+    const target = dataRootFor(emptyParent)
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, MIGRATION_MARKER_FILENAME), '{not-json')
 
     const result = await classifyDataRoot(emptyParent, currentDataRoot)
 
@@ -483,6 +509,18 @@ describe('validateNewDataRoot', () => {
     const result = await validateNewDataRoot(emptyParent, currentDataRoot)
 
     expect(result).toEqual({ ok: true })
+  })
+
+  it('rejects a recoverable marker as a new copy target', async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot)
+
+    const result = await validateNewDataRoot(emptyParent, currentDataRoot)
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        'This folder holds an unfinished data move. Finish or discard that move before using it here.'
+    })
   })
 
   it('is ok only for move - an OpenScience folder that already holds our data (adopt) is rejected', async () => {
@@ -1697,7 +1735,7 @@ describe('discardStagedCopy', () => {
     expect(existsSync(target)).toBe(true)
   })
 
-  it('refuses a mid-copy ("copying") marker so a dir being written is never deleted', async () => {
+  it('refuses a "copying" marker unless the caller confirms its owner process has exited', async () => {
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot, { status: 'copying' })
 
     const result = await discardStagedCopy(
@@ -1707,6 +1745,18 @@ describe('discardStagedCopy', () => {
 
     expect(result).toEqual({ ok: false, error: 'Refused: not a completed, matching staged copy.' })
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('discards an interrupted "copying" marker after its owner process has exited', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot, { status: 'copying' })
+
+    const result = await discardStagedCopy(
+      { currentDataRoot, expectedToken: 'tok-test', allowIncomplete: true },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(existsSync(target)).toBe(false)
   })
 
   it('refuses when the staged token does not match the session token', async () => {

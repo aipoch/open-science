@@ -92,6 +92,19 @@ type PlanIdentityCommand = Readonly<{
   expectedRevision: number
 }>
 
+type PlanStepStatusUpdate = Readonly<{
+  title: string
+  status: SessionPlanStepStatus
+  notes?: string
+}>
+
+type ActivePlanStepStatusCommand = Readonly<{
+  projectId: string
+  sessionId: string
+  authorizeUpdate: (projection: ActivePlanProjection) => void | Promise<void>
+}> &
+  PlanStepStatusUpdate
+
 type PlanDecisionCommitPrecondition = Readonly<{
   beforeDecisionCommit?: () => boolean
 }>
@@ -572,13 +585,38 @@ class PlanService {
   }
 
   async updateStepStatus(
-    input: PlanIdentityCommand &
-      Readonly<{ title: string; status: SessionPlanStepStatus; notes?: string }>
+    input: PlanIdentityCommand & PlanStepStatusUpdate
+  ): Promise<{ projection: ActivePlanProjection; changed: boolean }>
+  async updateStepStatus(
+    input: ActivePlanStepStatusCommand
+  ): Promise<{ projection: ActivePlanProjection; changed: boolean }>
+  async updateStepStatus(
+    input: (PlanIdentityCommand & PlanStepStatusUpdate) | ActivePlanStepStatusCommand
   ): Promise<{ projection: ActivePlanProjection; changed: boolean }> {
-    const { context, plan, document } = await this.loadActive(input, undefined, {
-      title: input.title,
-      status: input.status
-    })
+    let loaded: Awaited<ReturnType<PlanService['loadActive']>>
+    let identity: PlanIdentityCommand
+    if ('authorizeUpdate' in input) {
+      const current = await this.loadCurrent(input.projectId, input.sessionId)
+      if (!current) {
+        throw new PlanCommandError('no-active-plan', 'The Session has no active Plan.')
+      }
+      loaded = current
+      const { context, plan, document } = current
+      identity = {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: plan.artifactVersionId,
+        expectedRevision: context.revision
+      }
+      await input.authorizeUpdate(this.project(document, plan, context.revision, true))
+    } else {
+      identity = input
+      loaded = await this.loadActive(input, undefined, {
+        title: input.title,
+        status: input.status
+      })
+    }
+    const { plan, document } = loaded
     if (plan.approval !== 'approved') {
       throw new PlanCommandError('plan-not-approved', 'The Plan must be approved before execution.')
     }
@@ -588,7 +626,26 @@ class PlanService {
     const previous = runtimeStatusFor(plan, input.title)?.status
     const sameTerminal = previous === input.status && isTerminalStepStatus(input.status)
     if (sameTerminal) {
-      return { projection: this.project(document, plan, context.revision, true), changed: false }
+      const latestContext = await this.dependencies.readRuntimeContext(
+        input.projectId,
+        input.sessionId
+      )
+      const latestPlan = latestContext.plan
+      const sameAuthority =
+        latestPlan?.artifactId === plan.artifactId &&
+        latestPlan.artifactVersionId === plan.artifactVersionId &&
+        latestPlan.artifactChecksum === plan.artifactChecksum
+      if (
+        !sameAuthority ||
+        latestPlan.approval !== 'approved' ||
+        runtimeStatusFor(latestPlan, input.title)?.status !== input.status
+      ) {
+        throw new PlanCommandError('revision-conflict', 'The Plan revision changed concurrently.')
+      }
+      return {
+        projection: this.project(document, latestPlan, latestContext.revision, true),
+        changed: false
+      }
     }
     const startsStep = !previous && (input.status === 'in_progress' || input.status === 'skipped')
     const valid =
@@ -610,7 +667,7 @@ class PlanService {
     const settled = isPlanTerminalOutcome(document, updated.stepStatuses)
       ? withoutContinuation(updated)
       : updated
-    const next = await this.patch(input, settled, 'running')
+    const next = await this.patch(identity, settled, 'running')
     return { projection: this.project(document, settled, next.revision, true), changed: true }
   }
 
@@ -619,21 +676,14 @@ class PlanService {
     sessionId: string,
     options: Readonly<{ interactionIsLive?: boolean }> = {}
   ): Promise<ActivePlanProjection | null> {
-    const context = await this.dependencies.readRuntimeContext(projectId, sessionId)
-    if (!context.plan) return null
-    try {
-      const document = await this.readDocument(projectId, sessionId, context.plan)
-      return this.project(
-        document,
-        context.plan,
-        context.revision,
-        options.interactionIsLive ?? false
-      )
-    } catch (error) {
-      if (!(error instanceof PlanCommandError) || error.code !== 'artifact-unavailable') throw error
-      await this.dropUnavailableAuthority(projectId, sessionId, context)
-      return null
-    }
+    const current = await this.loadCurrent(projectId, sessionId)
+    if (!current) return null
+    return this.project(
+      current.document,
+      current.plan,
+      current.context.revision,
+      options.interactionIsLive ?? false
+    )
   }
 
   async authorizeContinuation(input: PlanIdentityCommand): Promise<ActivePlanProjection> {
@@ -685,6 +735,29 @@ class PlanService {
       context,
       plan,
       document: await this.readDocument(input.projectId, input.sessionId, plan)
+    }
+  }
+
+  private async loadCurrent(
+    projectId: string,
+    sessionId: string
+  ): Promise<{
+    context: SessionRuntimeContext
+    plan: SessionPlanRuntimeContext
+    document: PlanDocumentV1
+  } | null> {
+    const context = await this.dependencies.readRuntimeContext(projectId, sessionId)
+    if (!context.plan) return null
+    try {
+      return {
+        context,
+        plan: context.plan,
+        document: await this.readDocument(projectId, sessionId, context.plan)
+      }
+    } catch (error) {
+      if (!(error instanceof PlanCommandError) || error.code !== 'artifact-unavailable') throw error
+      await this.dropUnavailableAuthority(projectId, sessionId, context)
+      return null
     }
   }
 

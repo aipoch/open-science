@@ -56,6 +56,7 @@ const expectedConnectorChannels = [
 const expectedApprovalChannels = [
   'connectors:approval-respond',
   'connectors:approval-replay',
+  'connectors:approval-replay-pending',
   'skills:conversation-import-respond',
   'skills:conversation-import-replay-pending'
 ] as const
@@ -119,7 +120,11 @@ const createDependencies = (): Readonly<{
     dependencies: {
       skills: skills.port,
       connectors: connectors.port,
-      connectorApprovals: { getPending: vi.fn(() => null), respond: vi.fn() },
+      connectorApprovals: {
+        getPending: vi.fn(() => null),
+        replayPending: vi.fn(),
+        respond: vi.fn()
+      },
       skillImportApprovals: { respond: vi.fn(), replayPending: vi.fn() }
     },
     skillMethod: skills.method,
@@ -128,7 +133,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 24-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 25-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -162,7 +167,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(24)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(25)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -171,7 +176,7 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(24)
+    expect(integrationContracts).toHaveLength(25)
     expect(
       integrationContracts
         ?.filter(
@@ -475,6 +480,10 @@ describe('Settings integration application commands', () => {
       settingsIntegrationApplicationCommands.replayConnectorApproval,
       invocation(['connector-pending'] as const, remoteHuman)
     )
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.replayPendingConnectorApprovals,
+      invocation([] as const, remoteHuman)
+    )
 
     expect(respondConnector.mock.calls).toEqual([
       ['connector-local', 'once'],
@@ -482,6 +491,7 @@ describe('Settings integration application commands', () => {
     ])
     expect(respondSkill).toHaveBeenCalledWith({ id: 'skill-remote', items: [] })
     expect(getPendingConnector).toHaveBeenCalledWith('connector-pending')
+    expect(dependencies.connectorApprovals.replayPending).toHaveBeenCalledOnce()
 
     const deniedCallers = [
       createCallerContext({
@@ -507,6 +517,12 @@ describe('Settings integration application commands', () => {
         router.dispatcher.invoke(
           settingsIntegrationApplicationCommands.replayConnectorApproval,
           invocation(['blocked'] as const, callerContext)
+        )
+      ).rejects.toThrow('Only a current human caller can reopen connector approval requests.')
+      await expect(
+        router.dispatcher.invoke(
+          settingsIntegrationApplicationCommands.replayPendingConnectorApprovals,
+          invocation([] as const, callerContext)
         )
       ).rejects.toThrow('Only a current human caller can reopen connector approval requests.')
       await expect(
@@ -580,6 +596,11 @@ describe('Settings integration application commands', () => {
     const secondSkillResponse = skillImportApprovalBroker.request(approvalInfo('session-2'))
     expect(skillBroadcasts).toEqual(['skill-1', 'skill-2'])
     skillBroadcasts.length = 0
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.replayPendingConnectorApprovals,
+      invocation([] as const, human)
+    )
 
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.replayPendingSkillImportApprovals,

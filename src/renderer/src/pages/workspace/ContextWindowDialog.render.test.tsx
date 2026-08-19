@@ -3,11 +3,33 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { AcpContextUsage } from '../../../../shared/acp'
 import type { ChatSession } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ContextWindowDialog } from './ContextWindowDialog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const reconciledUsage = (used = 34_000): AcpContextUsage => ({
+  used,
+  size: 128_000,
+  breakdown: {
+    source: 'estimated',
+    tokenizer: 'o200k_base',
+    model: 'gpt-5.6-codex',
+    estimatedTokens: 33_000,
+    difference: used - 33_000,
+    status: 'reconciled',
+    categories: [
+      { key: 'system', tokens: 4_000, estimated: true },
+      { key: 'tools', tokens: 8_000, estimated: true },
+      { key: 'messages', tokens: 9_000, estimated: true },
+      { key: 'mcp', tokens: 5_000, estimated: true },
+      { key: 'skills', tokens: 2_000, estimated: true },
+      { key: 'other', tokens: 5_000, estimated: false }
+    ]
+  }
+})
 
 const session = (): ChatSession => ({
   id: 'session-1',
@@ -36,7 +58,7 @@ const session = (): ChatSession => ({
           timestamp: 200,
           runtimeSegmentId: 'runtime-2',
           termination: { kind: 'stop', stopReason: 'end_turn' },
-          contextWindow: { used: 34_000, size: 128_000 },
+          contextWindow: reconciledUsage(),
           modelStepUsage: {
             inputTokens: 2_000,
             cacheTokens: 32_500,
@@ -49,6 +71,21 @@ const session = (): ChatSession => ({
       ],
       createdAt: 1,
       updatedAt: 2
+    }
+  ],
+  activities: [
+    {
+      id: 'context-compaction:1',
+      kind: 'tool',
+      title: 'Context compacted',
+      promptMessageId: 'prompt-1',
+      status: 'completed',
+      eventIds: ['compact-start', 'compact-done'],
+      sortIndex: 3,
+      providerToolName: 'ContextCompaction',
+      toolKind: 'other',
+      createdAt: 210,
+      updatedAt: 220
     }
   ],
   conversationGraph: {
@@ -138,128 +175,116 @@ describe('ContextWindowDialog', () => {
     document.body.innerHTML = ''
   })
 
-  it('renders a flat trend without duplicate summary or pinned-detail cards', () => {
+  it('shows current composition, stacked run history, and stable latest-run details', () => {
     act(() => {
       root.render(<ContextWindowDialog open session={session()} onOpenChange={vi.fn()} />)
     })
 
     const dialog = document.body.querySelector('[role="dialog"]')
     const header = dialog?.querySelector('[data-slot="context-window-dialog-header"]')
-    const body = dialog?.querySelector('[data-slot="context-window-dialog-body"]')
     const description = dialog?.querySelector('#context-window-description')
-    expect(dialog?.textContent).toContain('Context window')
-    expect(dialog?.getAttribute('data-slot')).toBe('context-window-dialog')
-    expect(dialog?.textContent).toContain('CONTEXT PER RUN')
-    expect(dialog?.textContent).not.toContain('Hover a point for details.')
-    expect(header).not.toBeNull()
-    expect(header?.contains(description ?? null)).toBe(true)
-    expect(header?.parentElement).toBe(dialog)
-    expect(dialog?.classList.contains('p-0')).toBe(true)
-    expect(header?.className).toContain('border-b border-border-300/90 px-5 py-3.5')
-    expect(body?.className).toContain('p-5')
+    expect(dialog?.textContent).toContain('Current composition')
+    expect(dialog?.textContent).toContain('34K/ 128K tokens (27%)')
+    expect(dialog?.textContent).toContain('System prompt')
+    expect(dialog?.textContent).toContain('Tools and agents')
+    expect(dialog?.textContent).toContain('History')
     expect(dialog?.querySelectorAll('[data-slot="context-window-point"]')).toHaveLength(2)
-    expect(dialog?.textContent).toContain('Window used (actual)')
+    expect(
+      dialog?.querySelector('[data-slot="context-window-point-details"]')?.textContent
+    ).toContain('Run 2 · Message 1')
+    expect(header?.contains(description ?? null)).toBe(true)
+    expect(dialog?.classList.contains('p-0')).toBe(true)
     expect(
       dialog?.querySelector('[aria-label="Close context window"]')?.getAttribute('data-size')
     ).toBe('icon-sm')
-    expect(dialog?.textContent).not.toContain('Latest window used')
-    expect(dialog?.querySelector('[data-slot="context-window-point-details"]')).toBeNull()
-    expect(dialog?.textContent).not.toContain('Compression')
-    expect(dialog?.textContent).not.toContain('Summaries')
-    expect(
-      dialog?.querySelector('[data-slot="context-window-trend-chart"]')?.className
-    ).not.toContain('overflow-x-auto')
-  })
-
-  it('shows the point popover on hover and keeps interrupt state visible', () => {
-    act(() => {
-      root.render(<ContextWindowDialog open session={session()} onOpenChange={vi.fn()} />)
-    })
-    const firstPoint = document.body.querySelector<SVGGElement>(
-      '[data-slot="context-window-point"]'
+    expect(dialog?.querySelector('[data-slot="context-window-trend-chart"]')?.className).toContain(
+      'min-w-0'
     )
-
-    act(() => {
-      firstPoint?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
-    })
-
-    const tooltip = document.body.querySelector('[data-slot="context-window-chart-tooltip"]')
-    expect(tooltip?.textContent).toContain('Interrupted')
-    expect(tooltip?.textContent).toContain('Claude Code')
-    expect(tooltip?.textContent).toContain('claude-sonnet-4-5')
-    expect(tooltip?.textContent).toContain('Provider update')
     expect(
-      tooltip
-        ?.querySelector('[data-slot="context-window-point-title"]')
-        ?.classList.contains('whitespace-nowrap')
+      dialog
+        ?.querySelector('[data-slot="current-composition"] [data-slot="context-category-legend"]')
+        ?.className.includes('grid-flow-col')
     ).toBe(true)
+    expect(dialog?.querySelector('[role="group"]')?.className.includes('min-w-full')).toBe(true)
+    expect(
+      dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('justify-start')
+    ).toBe(true)
+    expect(
+      dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('gap-0.5')
+    ).toBe(true)
+    expect(dialog?.querySelector('[data-slot="context-window-bar"]')?.className).toContain('w-8')
   })
 
-  it('shows point details on focus without pinning them on click', () => {
+  it('uses the live session snapshot for current composition', () => {
+    act(() => {
+      root.render(
+        <ContextWindowDialog
+          open
+          session={session()}
+          contextUsage={reconciledUsage(48_000)}
+          onOpenChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(document.body.querySelector('[data-slot="current-composition"]')?.textContent).toContain(
+      '48K/ 128K tokens (38%)'
+    )
+    expect(
+      document.body.querySelector('[data-slot="context-window-point-details"]')?.textContent
+    ).toContain('34K / 128K')
+  })
+
+  it('previews on hover and pins a selected run on activation', () => {
     act(() => {
       root.render(<ContextWindowDialog open session={session()} onOpenChange={vi.fn()} />)
     })
-    const firstPoint = document.body.querySelector<SVGGElement>(
+    const points = document.body.querySelectorAll<HTMLButtonElement>(
       '[data-slot="context-window-point"]'
     )
 
     act(() => {
-      firstPoint?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      points[0]?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
     })
-    expect(document.body.querySelector('[data-slot="context-window-chart-tooltip"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[data-slot="context-window-point-details"]')?.textContent
+    ).toContain('Interrupted')
 
     act(() => {
-      firstPoint?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-      firstPoint?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      points[0]?.click()
+      points[0]?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }))
     })
-    expect(document.body.querySelector('[data-slot="context-window-chart-tooltip"]')).toBeNull()
+    expect(points[0]?.getAttribute('aria-pressed')).toBe('true')
+    expect(
+      document.body.querySelector('[data-slot="context-window-point-details"]')?.textContent
+    ).toContain('Run 1 · Message 1')
   })
 
-  it('shows the cache-read split without raw token details or duplicate dividers', () => {
+  it('keeps totals visible when an older run has no category breakdown', () => {
     act(() => {
       root.render(<ContextWindowDialog open session={session()} onOpenChange={vi.fn()} />)
     })
-    const points = document.body.querySelectorAll<SVGGElement>('[data-slot="context-window-point"]')
+    const firstPoint = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="context-window-point"]'
+    )
 
-    act(() => {
-      points[1]?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
-    })
+    act(() => firstPoint?.click())
 
-    const tooltip = document.body.querySelector('[data-slot="context-window-chart-tooltip"]')
-    expect(tooltip?.textContent).toContain('cache-read 94%')
-    expect(tooltip?.textContent).toContain('uncached 6%')
-    expect(tooltip?.textContent).not.toContain('Input')
-    expect(tooltip?.textContent).not.toContain('Cache')
-    expect(tooltip?.textContent).not.toContain('Output')
-    expect(
-      tooltip
-        ?.querySelector('[data-slot="context-window-point-metadata"]')
-        ?.classList.contains('border-t')
-    ).toBe(false)
-    expect(tooltip?.classList.contains('sm:bottom-3')).toBe(true)
-    expect(tooltip?.classList.contains('sm:bottom-auto')).toBe(false)
+    const detail = document.body.querySelector('[data-slot="context-window-point-details"]')
+    expect(detail?.textContent).toContain('31K / 128K')
+    expect(detail?.textContent).toContain('Category breakdown is unavailable for this run.')
   })
 
-  it('hides the cache split when the provider did not report a read breakdown', () => {
-    const compatible = session()
-    const completed = compatible.messages[0]?.contextWindowSamples?.[1]
-    if (!completed) throw new Error('expected completed context sample')
-    completed.modelStepUsage = { inputTokens: 2_000, cacheTokens: 32_000, outputTokens: 120 }
-    completed.contextWindow = { ...completed.contextWindow, used: 35_000 }
-
+  it('marks a completed compaction after its owning run', () => {
     act(() => {
-      root.render(<ContextWindowDialog open session={compatible} onOpenChange={vi.fn()} />)
-    })
-    const points = document.body.querySelectorAll<SVGGElement>('[data-slot="context-window-point"]')
-    act(() => {
-      points[1]?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      root.render(<ContextWindowDialog open session={session()} onOpenChange={vi.fn()} />)
     })
 
-    expect(document.body.textContent).not.toContain('cache-read')
-    expect(document.body.textContent).not.toContain('uncached')
+    const marker = document.body.querySelector('[data-slot="context-window-compaction-marker"]')
+    expect(marker?.getAttribute('aria-label')).toBe('Context compacted after run 2')
   })
 
-  it('recovers the cache split from a reconciled Codex sample written without the read fields', () => {
+  it('shows the recoverable Codex cache split in the selected details', () => {
     const compatible = session()
     const completed = compatible.messages[0]?.contextWindowSamples?.[1]
     if (!completed) throw new Error('expected completed context sample')
@@ -269,21 +294,29 @@ describe('ContextWindowDialog', () => {
     act(() => {
       root.render(<ContextWindowDialog open session={compatible} onOpenChange={vi.fn()} />)
     })
-    const points = document.body.querySelectorAll<SVGGElement>('[data-slot="context-window-point"]')
-    act(() => {
-      points[1]?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
-    })
 
-    expect(document.body.textContent).toContain('cache-read 51%')
-    expect(document.body.textContent).toContain('uncached 49%')
+    expect(
+      document.body.querySelector('[data-slot="context-window-point-details"]')?.textContent
+    ).toContain('cache-read 51% · uncached 49%')
+    expect(
+      document.body.querySelector('[data-slot="context-diagnostics-row"]')?.className
+    ).toContain('sm:flex-nowrap')
   })
 
-  it('renders an honest empty state for compatible sessions without samples', () => {
-    const emptySession = { ...session(), messages: [] }
+  it('renders an honest empty history state while preserving live composition', () => {
+    const emptySession = { ...session(), messages: [], activities: [] }
     act(() => {
-      root.render(<ContextWindowDialog open session={emptySession} onOpenChange={vi.fn()} />)
+      root.render(
+        <ContextWindowDialog
+          open
+          session={emptySession}
+          contextUsage={reconciledUsage()}
+          onOpenChange={vi.fn()}
+        />
+      )
     })
 
+    expect(document.body.textContent).toContain('Current composition')
     expect(document.body.textContent).toContain('No run history yet')
     expect(document.body.textContent).toContain('Older sessions remain compatible')
   })
@@ -311,13 +344,8 @@ describe('ContextWindowDialog', () => {
       root.render(<ContextWindowDialog open session={errored} onOpenChange={vi.fn()} />)
     })
 
-    const point = document.body.querySelector<SVGGElement>('[data-slot="context-window-point"]')
-    act(() => {
-      point?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
-    })
-
     expect(
-      document.body.querySelector('[data-slot="context-window-chart-tooltip"]')?.textContent
+      document.body.querySelector('[data-slot="context-window-point-details"]')?.textContent
     ).toContain('Error')
   })
 })

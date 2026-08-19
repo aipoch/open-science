@@ -4,6 +4,7 @@ import { applyDelete } from './specialist-privileged-ops'
 import type { AgentDeletedResult, AgentDeclinedResult } from './specialist-privileged-ops'
 import type { ApprovalResult } from '../../shared/agents-contract'
 import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistDeleteResult } from '../../shared/specialist-package'
 import type { ProfileService } from '../specialist/service'
 
 const profile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
@@ -27,6 +28,18 @@ const fakeDeclined = (operation: 'update' | 'delete' | 'switch'): ApprovalResult
   status: 'declined',
   operation
 })
+
+type SpecialistDeleteFailureCode = Extract<SpecialistDeleteResult, { status: 'failed' }>['code']
+
+const specialistDeleteFailureCodes = [
+  'stale-preview',
+  'revision-conflict',
+  'protected-skill',
+  'protected-target',
+  'recovery-failed',
+  'rollback-failed',
+  'commit-failed'
+] as const satisfies readonly SpecialistDeleteFailureCode[]
 
 type FakeService = {
   service: ProfileService
@@ -161,7 +174,38 @@ describe('applyDelete — approved delete', () => {
         currentName: 'DATA_ANALYST',
         reviewedRevision: 3
       })
-    ).rejects.toThrow(/host\.agents\.delete:.*I\/O error/)
+    ).rejects.toThrow('host.agents.delete: Internal operation failed.')
+  })
+
+  it.each(specialistDeleteFailureCodes)(
+    'preserves the typed delete failure code %s',
+    async (code) => {
+      const { service } = makeService({ initial: [profile()] })
+      await expect(
+        applyDelete({
+          profileService: service,
+          decide: async () => fakeApproved(),
+          currentName: 'DATA_ANALYST',
+          reviewedRevision: 3,
+          deleteSpecialist: async () => ({ status: 'failed', code })
+        })
+      ).rejects.toThrow(`host.agents.delete: ${code}`)
+    }
+  )
+
+  it('sanitizes an arbitrary delete dependency error', async () => {
+    const { service } = makeService({ initial: [profile()] })
+    await expect(
+      applyDelete({
+        profileService: service,
+        decide: async () => fakeApproved(),
+        currentName: 'DATA_ANALYST',
+        reviewedRevision: 3,
+        deleteSpecialist: async () => {
+          throw new Error('token=secret-token path=/Users/alice/project')
+        }
+      })
+    ).rejects.toThrow('host.agents.delete: Internal operation failed.')
   })
 
   it('fails closed with a sanitized error when revision drifted before approval', async () => {

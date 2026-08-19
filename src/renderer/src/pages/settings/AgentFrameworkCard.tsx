@@ -36,6 +36,7 @@ type AgentFrameworkCardProps = {
   notReadyHint: React.ReactNode
   active: boolean
   onSelect: () => void
+  radioTabIndex?: number
   // Selecting a broken runtime asks the panel to explain and offer repair; it never activates here.
   onRepairRequired?: () => void
   selectDisabled: boolean
@@ -86,6 +87,7 @@ const AgentFrameworkCard = ({
   notReadyHint,
   active,
   onSelect,
+  radioTabIndex,
   onRepairRequired,
   selectDisabled,
   uninstallCommand,
@@ -147,7 +149,7 @@ const AgentFrameworkCard = ({
             : undefined
       }
       aria-disabled={(ready || canRequestRepair) && selectDisabled ? true : undefined}
-      tabIndex={ready || canRequestRepair ? 0 : undefined}
+      tabIndex={ready ? radioTabIndex : canRequestRepair ? 0 : undefined}
       onClick={activateCard}
       onKeyDown={
         activateCard

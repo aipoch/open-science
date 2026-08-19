@@ -180,7 +180,31 @@ describe('session store', () => {
     expect(actionability.actions).toMatchObject({
       startTurn: { allowed: false, disabledReason: 'session-pending' },
       revise: { allowed: true },
-      branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
+      branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
+      startSideChat: { allowed: false, disabledReason: 'session-pending' },
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+    })
+  })
+
+  it('keeps a new Turn available while history replay is pending and blocks other Session actions', () => {
+    const actionability = projectSessionActionability({
+      id: 'session-replay',
+      projectId: 'project-1',
+      title: 'Replay pending',
+      cwd: '/workspace',
+      status: 'idle',
+      pendingHistoryReplay: { kind: 'all' },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    } as ChatSession)
+
+    expect(actionability.actions).toMatchObject({
+      startTurn: { allowed: true },
+      revise: { allowed: true },
+      branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
+      startSideChat: { allowed: false, disabledReason: 'session-pending' },
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
     })
   })
 
@@ -805,6 +829,66 @@ describe('session store', () => {
     })
 
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
+  })
+
+  it('keeps the active Plan projection when Permission advances the runtime revision', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-permission',
+        runtimeContext: {
+          ...source.runtimeContext!,
+          revision: 2,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run tests',
+              options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'b'.repeat(64),
+            createdAt: 3
+          }
+        },
+        updatedAt: 3
+      },
+      mode: 'runtime-context-authority'
+    })
+
+    const updated = useSessionStore.getState().sessions[0]
+    expect(updated.activePlanProjection).toBe(projection)
+    expect(updated.runtimeContext).toMatchObject({ revision: 2, permission: { state: 'pending' } })
   })
 
   it('does not replace newer local conversation state when a durable Plan authority arrives', () => {
@@ -4624,10 +4708,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
       'src/renderer/src/pages/workspace/preview-file-item.ts',
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
+      'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
+      'src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
@@ -4645,7 +4731,8 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-tool-activity-style.ts',
       'src/renderer/src/pages/workspace/workspace-web-search-details.ts',
       'src/renderer/src/stores/archive-undo-store.ts',
-      'src/renderer/src/stores/navigation-store.ts'
+      'src/renderer/src/stores/navigation-store.ts',
+      'src/renderer/src/stores/preview-workbench-store.ts'
     ])
   })
 
@@ -5272,6 +5359,30 @@ describe('branchInNewSession', () => {
       useSessionStore.getState().branchInNewSession({
         sourceSessionId: 'source-session',
         content: 'bypass the pending Plan'
+      })
+    ).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toEqual([sourceBefore])
+  })
+
+  it('refuses a source that still needs history replay', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'stable source'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'source-session'
+          ? { ...session, pendingHistoryReplay: { kind: 'all' as const } }
+          : session
+      )
+    }))
+    const sourceBefore = structuredClone(useSessionStore.getState().sessions[0])
+
+    expect(
+      useSessionStore.getState().branchInNewSession({
+        sourceSessionId: 'source-session',
+        content: 'must not nest an unreplayed Session'
       })
     ).toBeUndefined()
     expect(useSessionStore.getState().sessions).toEqual([sourceBefore])

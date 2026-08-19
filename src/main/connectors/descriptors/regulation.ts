@@ -45,30 +45,51 @@ const ENCODE_UA = 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
 const ENCODE_TIMEOUT_MS = 60_000
 const ENCODE_RETRIES = 3
 const ENCODE_RETRYABLE = new Set([429, 500, 502, 503, 504])
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted()
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve, reject) => {
+    const finish = (): void => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }
+    const abort = (): void => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(finish, ms)
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
 
-async function encodeFetchJson(url: string): Promise<unknown> {
+async function encodeFetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
+    signal?.throwIfAborted()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), ENCODE_TIMEOUT_MS)
+    const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
     let res: Response
     try {
       res = await netFetchStandard(url, {
         headers: { accept: 'application/json', 'user-agent': ENCODE_UA },
-        signal: controller.signal
+        signal: requestSignal
       })
     } catch (err) {
+      if (signal?.aborted) throw err
       if (attempt < ENCODE_RETRIES) {
-        await sleep(Math.min(400 * 2 ** attempt, 4000))
+        await sleep(Math.min(400 * 2 ** attempt, 4000), signal)
         continue
       }
       throw err
     } finally {
       clearTimeout(timer)
     }
-    if (res.ok) return res.json()
+    if (res.ok) {
+      signal?.throwIfAborted()
+      return res.json()
+    }
     if (attempt < ENCODE_RETRIES && ENCODE_RETRYABLE.has(res.status)) {
-      await sleep(Math.min(400 * 2 ** attempt, 4000))
+      await sleep(Math.min(400 * 2 ** attempt, 4000), signal)
       continue
     }
     throw new Error(`HTTP ${res.status} for ${url}`)
@@ -223,7 +244,8 @@ async function encodeSearchAll(
   filters: Record<string, unknown>,
   fields: string[],
   dateCutoff: string | undefined,
-  dateField: string
+  dateField: string,
+  signal?: AbortSignal
 ): Promise<{ total: number; rows: Record<string, unknown>[]; accessions: string[] }> {
   const rows: Record<string, unknown>[] = []
   const seen = new Set<unknown>()
@@ -233,7 +255,8 @@ async function encodeSearchAll(
     let doc: EncodeReport
     try {
       doc = (await encodeFetchJson(
-        encodeReportUrl(type, filters, fields, dateCutoff, dateField, offset)
+        encodeReportUrl(type, filters, fields, dateCutoff, dateField, offset),
+        signal
       )) as EncodeReport
     } catch (err) {
       // Documented zero-hit 404 on an empty search — surface as an empty, count-verified result.
@@ -426,7 +449,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       '`{ total (exact), returned, truncated, accessions: [every matching accession, sorted], experiments: [ report rows: accession, assay_title, assay_term_name, target.label, biosample_ontology.term_name, status, date_released, lab.title ] }`.',
     example:
       'const result = await host.mcp("regulation", "encode_search_experiments", {"target": "CTCF", "assay_title": "TF ChIP-seq", "max_rows": 50})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const filters = withExtraFilters(
         {
           status: a.status ?? 'released',
@@ -441,7 +464,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
         filters,
         EXPERIMENT_FIELDS,
         a.date_released_before ? String(a.date_released_before) : undefined,
-        'date_released'
+        'date_released',
+        ctx.signal
       )
       return encodeTruncate(out, 'experiments', Math.max(0, Number(a.max_rows ?? 100)))
     }
@@ -467,7 +491,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       '`{ total, returned, truncated, accessions: [...], biosamples: [ report rows: accession, biosample_ontology.term_name/classification, organism.scientific_name, status, lab.title, summary, date_created ] }`.',
     example:
       'const result = await host.mcp("regulation", "encode_search_biosamples", {"term_name": "K562", "classification": "cell line", "max_rows": 25})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const filters = withExtraFilters(
         {
           status: a.status ?? 'released',
@@ -482,7 +506,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
         filters,
         BIOSAMPLE_FIELDS,
         a.date_created_before ? String(a.date_created_before) : undefined,
-        'date_created'
+        'date_created',
+        ctx.signal
       )
       return encodeTruncate(out, 'biosamples', Math.max(0, Number(a.max_rows ?? 100)))
     }
@@ -508,7 +533,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       '`{ total, returned, truncated, accessions: [...], files: [ report rows: accession, file_format, output_type, assay_term_name, assembly, dataset, status, file_size, date_created ] }`.',
     example:
       'const result = await host.mcp("regulation", "encode_list_files", {"file_format": "bed", "assay_term_name": "ChIP-seq", "biosample_term_name": "K562", "extra_filters": {"output_type": "peaks", "assembly": "GRCh38"}, "max_rows": 50})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const filters = withExtraFilters(
         {
           status: a.status ?? 'released',
@@ -523,7 +548,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
         filters,
         FILE_FIELDS,
         a.date_created_before ? String(a.date_created_before) : undefined,
-        'date_created'
+        'date_created',
+        ctx.signal
       )
       return encodeTruncate(out, 'files', Math.max(0, Number(a.max_rows ?? 100)))
     }
@@ -543,9 +569,10 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       '`{ record_type: "experiment", accession, status, assay_term_name, assay_title, target_label, biosample_term_name, biosample_classification, biosample_summary, description, lab, award_project, date_released, date_submitted, assembly: [...], bio_replicate_count, tech_replicate_count, replication_type, dbxrefs: [...], doi, uuid }`.',
     example:
       'const result = await host.mcp("regulation", "encode_get_experiment", {"accession": "ENCSR000AKP"})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const raw = await encodeFetchJson(
-        `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`
+        `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`,
+        ctx.signal
       )
       return experimentRecord(asRecord(raw))
     }
@@ -565,9 +592,10 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       '`{ record_type: "file", accession, status, file_format, file_format_type, output_type, output_category, assay_term_name, assembly, dataset, biological_replicates: [...], file_size, md5sum, content_md5sum, run_type, read_length, lab, date_created, href, uuid }`.',
     example:
       'const result = await host.mcp("regulation", "encode_get_file", {"accession": "ENCFF002JUR"})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const raw = await encodeFetchJson(
-        `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`
+        `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`,
+        ctx.signal
       )
       return fileRecord(asRecord(raw))
     }
@@ -587,9 +615,10 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       '`{ record_type: "biosample", accession, status, term_name, classification, organism, donor, source, lab, summary, life_stage, age_display, sex, treatments: [...], genetic_modifications: [...], date_created, uuid }`.',
     example:
       'const result = await host.mcp("regulation", "encode_get_biosample", {"accession": "ENCBS013JZP"})',
-    run: async (_ctx, a) => {
+    run: async (ctx, a) => {
       const raw = await encodeFetchJson(
-        `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`
+        `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`,
+        ctx.signal
       )
       return biosampleRecord(asRecord(raw))
     }

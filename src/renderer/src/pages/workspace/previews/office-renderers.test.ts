@@ -559,16 +559,8 @@ describe('renderOfficeFile', () => {
     const style = document.head.querySelector<HTMLStyleElement>(
       'style[data-open-science-spreadsheet-status]'
     )
-    expect(onStatus).toHaveBeenCalledWith({
-      phase: 'parsing',
-      title: 'Parsing the Excel workbook',
-      description: 'Preparing worksheets, styles, and virtualized viewport data.'
-    })
-    expect(onStatus).toHaveBeenCalledWith({
-      phase: 'rendering',
-      title: 'Rendering the preview',
-      description: 'Building the document view.'
-    })
+    expect(onStatus).toHaveBeenCalledWith({ phase: 'parsing' })
+    expect(onStatus).toHaveBeenCalledWith({ phase: 'rendering' })
     expect(getComputedStyle(container.querySelector<HTMLElement>('.loading')!).display).toBe('none')
     expect(style?.textContent).toContain('.excel-wrapper .sheet-loading')
     expect(style?.textContent).toContain('box-shadow: none')

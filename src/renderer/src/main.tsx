@@ -12,6 +12,7 @@ import { startNetworkMonitor } from '@/stores/network-store'
 import { installRendererFailureDiagnostics } from './renderer-diagnostics'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { startLocalePreferenceSync } from '@/stores/locale-store'
 
 // Keep renderer JavaScript failures distinct from native renderer-process exits without relaying raw
 // messages, stacks, URLs, or application state across preload. The bridge is Electron-only; the Web
@@ -35,6 +36,7 @@ applyTheme(resolveInitialTheme())
 const initialLocale = resolveInitialLocale()
 initI18n(initialLocale)
 applyHtmlLang(initialLocale)
+startLocalePreferenceSync()
 
 // Start connectivity monitoring (online/offline events + the initial reachability probe)
 // before React renders so indicators and the Network panel read a live store from first paint.

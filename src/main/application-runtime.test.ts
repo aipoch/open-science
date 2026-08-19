@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS,
   composeApplicationRuntime,
   composeApplicationRuntimeWithAdapters,
   shutdownApplicationSurfaces,
@@ -275,6 +276,50 @@ describe('application runtime composition', () => {
 })
 
 describe('application surface shutdown', () => {
+  it('times out a hung surface and still attempts every later surface', async () => {
+    vi.useFakeTimers()
+    let outcome: Awaited<ReturnType<typeof shutdownApplicationSurfaces>> | undefined
+    const order: string[] = []
+    const disposeApplicationRuntime = vi.fn(() => {
+      order.push('application-runtime')
+    })
+    const shutdownRemoteAccess = vi.fn(() => {
+      order.push('remote-access')
+    })
+    const disposeIpcHandlers = vi.fn(() => {
+      order.push('ipc-handlers')
+    })
+
+    try {
+      void shutdownApplicationSurfaces({
+        disposeApplicationRuntime,
+        shutdownRemoteAccess,
+        disposeWebController: () => {
+          order.push('web-controller')
+          return new Promise<void>(() => undefined)
+        },
+        disposeIpcHandlers
+      }).then((result) => {
+        outcome = result
+      })
+
+      await vi.advanceTimersByTimeAsync(APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS)
+
+      expect(outcome).toBe('timeout')
+      expect(disposeApplicationRuntime).toHaveBeenCalledOnce()
+      expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
+      expect(disposeIpcHandlers).toHaveBeenCalledOnce()
+      expect(order).toEqual([
+        'web-controller',
+        'application-runtime',
+        'remote-access',
+        'ipc-handlers'
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps one ordered quit path from the composed backend through web surfaces', async () => {
     const order: string[] = []
 

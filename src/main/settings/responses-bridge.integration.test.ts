@@ -8,6 +8,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import { expect, it, vi } from 'vitest'
 
 import { CODEX_BRIDGE_MODEL, createCodexFramework } from '../agent-framework/codex'
+import { terminateProcessTree } from '../process-tree'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { ReviewerMcpServer, type SubmitFindingsHandler } from '../reviewer/mcp-server'
 import { ResponsesBridge } from './responses-bridge'
@@ -29,13 +30,16 @@ const responsesSse = (events: unknown[]): Response =>
   })
 
 const terminate = async (child: ChildProcessWithoutNullStreams): Promise<void> => {
-  if (child.exitCode !== null) return
-  child.kill('SIGTERM')
-  await Promise.race([
-    new Promise<void>((resolve) => child.once('exit', () => resolve())),
-    new Promise<void>((resolve) => setTimeout(resolve, 2_000))
-  ])
-  if (child.exitCode === null) child.kill('SIGKILL')
+  await terminateProcessTree(child)
+}
+
+const spawnAdapter = (cwd: string, env: NodeJS.ProcessEnv): ChildProcessWithoutNullStreams => {
+  if (!adapterPath) throw new Error('CODEX_ACP_PATH is required for the live contract')
+  return spawn(
+    adapterPath.endsWith('.js') ? process.execPath : adapterPath,
+    adapterPath.endsWith('.js') ? [adapterPath] : [],
+    { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] }
+  )
 }
 
 it.runIf(runLiveContract)(
@@ -138,14 +142,10 @@ it.runIf(runLiveContract)(
       await writeFile(file.path, file.content, 'utf8')
     }
 
-    const child = spawn(adapterPath!, [], {
-      cwd: workspace,
-      env: {
-        ...process.env,
-        ...modelConfig.env,
-        CODEX_PATH: nativeCodexPath!
-      },
-      stdio: ['pipe', 'pipe', 'pipe']
+    const child = spawnAdapter(workspace, {
+      ...process.env,
+      ...modelConfig.env,
+      CODEX_PATH: nativeCodexPath!
     })
     const stderr: string[] = []
     child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
@@ -210,14 +210,14 @@ it.runIf(runLiveContract)(
     } finally {
       await terminate(child)
       await proxy.close()
-      await rm(tempRoot, { recursive: true, force: true })
+      await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   },
   30_000
 )
 
 it.runIf(runLiveContract)(
-  'dispatches a bridged namespaced function through the real Codex MCP router',
+  'dispatches a bridged function and reports native compaction through the real Codex MCP router',
   async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'open-science-codex-mcp-bridge-'))
     const codexHome = join(tempRoot, 'codex-home')
@@ -337,30 +337,26 @@ it.runIf(runLiveContract)(
       upstreamFetch
     )
     const connection = await bridge.start()
-    const child = spawn(adapterPath!, [], {
-      cwd: workspace,
-      env: {
-        ...process.env,
-        CODEX_HOME: codexHome,
-        CODEX_PATH: nativeCodexPath!,
-        MODEL_PROVIDER: 'probe',
-        NO_BROWSER: '1',
-        CODEX_CONFIG: JSON.stringify({
-          model: CODEX_BRIDGE_MODEL,
-          model_context_window: 1_000_000,
-          model_auto_compact_token_limit: 950_000,
-          model_provider: 'probe',
-          model_providers: {
-            probe: {
-              name: 'Bridge MCP contract',
-              base_url: connection.baseUrl,
-              env_key: 'CODEX_API_KEY',
-              wire_api: 'responses'
-            }
+    const child = spawnAdapter(workspace, {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      CODEX_PATH: nativeCodexPath!,
+      MODEL_PROVIDER: 'probe',
+      NO_BROWSER: '1',
+      CODEX_CONFIG: JSON.stringify({
+        model: CODEX_BRIDGE_MODEL,
+        model_context_window: 1_000_000,
+        model_auto_compact_token_limit: 950_000,
+        model_provider: 'probe',
+        model_providers: {
+          probe: {
+            name: 'Bridge MCP contract',
+            base_url: connection.baseUrl,
+            env_key: 'CODEX_API_KEY',
+            wire_api: 'responses'
           }
-        })
-      },
-      stdio: ['pipe', 'pipe', 'pipe']
+        }
+      })
     })
     const stderr: string[] = []
     child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
@@ -408,23 +404,36 @@ it.runIf(runLiveContract)(
               ]
             })
             .withSession(async (session) => {
-              session.prompt('Call the echo tool once, then report success.')
-              const updates: acp.SessionNotification[] = []
-              for (;;) {
-                const update = await session.nextUpdate()
-                if (update.kind === 'stop')
-                  return {
-                    updates,
-                    response: update.response,
-                    stopReason: update.response.stopReason
+              const runPrompt = async (
+                prompt: string
+              ): Promise<{
+                updates: acp.SessionNotification[]
+                response: acp.PromptResponse
+                stopReason: acp.StopReason
+              }> => {
+                session.prompt(prompt)
+                const updates: acp.SessionNotification[] = []
+                for (;;) {
+                  const update = await session.nextUpdate()
+                  if (update.kind === 'stop') {
+                    return {
+                      updates,
+                      response: update.response,
+                      stopReason: update.response.stopReason
+                    }
                   }
-                updates.push(update.notification)
+                  updates.push(update.notification)
+                }
               }
+
+              const initial = await runPrompt('Call the echo tool once, then report success.')
+              const compact = await runPrompt('/compact')
+              return { initial, compact }
             })
         })
 
       const secondMessages = (chatRequests[1]?.messages ?? []) as Array<Record<string, unknown>>
-      expect(chatRequests).toHaveLength(2)
+      expect(chatRequests).toHaveLength(3)
       expect(secondMessages).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -434,9 +443,9 @@ it.runIf(runLiveContract)(
           })
         ])
       )
-      expect(JSON.stringify(result.updates)).toContain('mcp.probe-server.echo')
-      expect(JSON.stringify(result.updates)).toContain('MCP_BRIDGE_OK')
-      expect(result.updates).toEqual(
+      expect(JSON.stringify(result.initial.updates)).toContain('mcp.probe-server.echo')
+      expect(JSON.stringify(result.initial.updates)).toContain('MCP_BRIDGE_OK')
+      expect(result.initial.updates).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             update: expect.objectContaining({
@@ -446,18 +455,35 @@ it.runIf(runLiveContract)(
           })
         ])
       )
-      expect(result.response.usage).toMatchObject({
+      expect(result.initial.response.usage).toMatchObject({
         inputTokens: 15,
         cachedReadTokens: 0,
         outputTokens: 3
       })
-      expect(result.stopReason).toBe('end_turn')
+      expect(result.initial.stopReason).toBe('end_turn')
+      expect(
+        result.compact.updates
+          .map((notification) => notification.update)
+          .filter((update) => update._meta?.contextCompaction === true)
+      ).toMatchObject([
+        { sessionUpdate: 'tool_call', status: 'in_progress' },
+        { sessionUpdate: 'tool_call_update', status: 'completed' }
+      ])
+      expect(result.compact.updates.map((notification) => notification.update)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sessionUpdate: 'usage_update',
+            size: 950_000
+          })
+        ])
+      )
+      expect(result.compact.stopReason).toBe('end_turn')
     } catch (error) {
       throw new Error(`${String(error)}\n${stderr.join('')}`)
     } finally {
       await terminate(child)
       await bridge.close()
-      await rm(tempRoot, { recursive: true, force: true })
+      await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   },
   30_000
@@ -617,30 +643,26 @@ it.runIf(runLiveContract)(
       upstreamFetch
     )
     const connection = await bridge.start()
-    const child = spawn(adapterPath!, [], {
-      cwd: workspace,
-      env: {
-        ...process.env,
-        CODEX_HOME: codexHome,
-        CODEX_PATH: nativeCodexPath!,
-        MODEL_PROVIDER: 'probe',
-        NO_BROWSER: '1',
-        CODEX_CONFIG: JSON.stringify({
-          model: CODEX_BRIDGE_MODEL,
-          model_context_window: 1_000_000,
-          model_auto_compact_token_limit: 950_000,
-          model_provider: 'probe',
-          model_providers: {
-            probe: {
-              name: 'Bridge reviewer contract',
-              base_url: connection.baseUrl,
-              env_key: 'CODEX_API_KEY',
-              wire_api: 'responses'
-            }
+    const child = spawnAdapter(workspace, {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      CODEX_PATH: nativeCodexPath!,
+      MODEL_PROVIDER: 'probe',
+      NO_BROWSER: '1',
+      CODEX_CONFIG: JSON.stringify({
+        model: CODEX_BRIDGE_MODEL,
+        model_context_window: 1_000_000,
+        model_auto_compact_token_limit: 950_000,
+        model_provider: 'probe',
+        model_providers: {
+          probe: {
+            name: 'Bridge reviewer contract',
+            base_url: connection.baseUrl,
+            env_key: 'CODEX_API_KEY',
+            wire_api: 'responses'
           }
-        })
-      },
-      stdio: ['pipe', 'pipe', 'pipe']
+        }
+      })
     })
     const stderr: string[] = []
     child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
@@ -728,7 +750,7 @@ it.runIf(runLiveContract)(
       await terminate(child)
       await bridge.close()
       await reviewerMcp.stop()
-      await rm(tempRoot, { recursive: true, force: true })
+      await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   },
   30_000

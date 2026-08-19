@@ -349,6 +349,29 @@ describe('pull request change classification', () => {
     expect(plan.lanes).not.toContain('windows_path')
   })
 
+  it.each([
+    ['renderer view', 'src/renderer/src/components/Button.tsx'],
+    ['renderer locale catalog', 'src/renderer/src/locales/ja.json'],
+    ['shared contract', 'src/shared/acp.ts'],
+    ['main runtime', 'src/main/notebook/runtime-service.ts']
+  ])('selects the i18n catalog lane for a scanned %s change', (_label, path) => {
+    const plan = classifyChanges([{ path, status: 'modified' }])
+
+    expect(plan.lanes).toContain('i18n')
+    expect(plan.bundles).toContain('static')
+  })
+
+  it.each([
+    ['documentation', 'README.md'],
+    ['preload contract', 'src/preload/index.ts'],
+    ['CLI package', 'packages/open-science/index.mjs'],
+    ['ordinary workflow', '.github/workflows/release.yml']
+  ])('keeps the i18n catalog lane off a %s change', (_label, path) => {
+    const plan = classifyChanges([{ path, status: 'modified' }])
+
+    expect(plan.lanes).not.toContain('i18n')
+  })
+
   it('selects visual and accessibility consumers for a Renderer view change', () => {
     const plan = classifyChanges([
       { path: 'src/renderer/src/components/Button.tsx', status: 'modified' }

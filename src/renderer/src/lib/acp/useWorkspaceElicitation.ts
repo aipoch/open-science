@@ -7,7 +7,7 @@ import type {
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
-import { useSettingsStore } from '../../stores/settings-store'
+import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { resolveSessionHistoryReplayDescriptor } from './history-preamble'
 import {
   respondToWorkspaceElicitation,
@@ -44,7 +44,8 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
     previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
     specialistId?: AcpResumeSessionRequest['specialistId'],
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
-    providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken']
+    providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
+    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
   ) =>
     window.api.acp.resumeSession({
       sessionId,
@@ -55,7 +56,8 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
       previousBackendId,
       specialistId,
       providerSessionId,
-      providerContinuityToken
+      providerContinuityToken,
+      specialistBindingPending
     }),
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -71,6 +73,7 @@ const useWorkspaceElicitation = (): {
 } => {
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const visionRelayAvailable = useSettingsStore(selectVisionRelayAvailable)
 
   const respondToElicitation = useCallback(
     async (response: ElicitationResponse): Promise<void> => {
@@ -85,13 +88,13 @@ const useWorkspaceElicitation = (): {
         : undefined
 
       await respondToWorkspaceElicitation(await createWorkspaceElicitationRuntime(), response, {
-        supportsImageInput: provider?.supportsImageInput,
+        supportsImageInput: provider?.supportsImageInput === true || visionRelayAvailable,
         historyReplayDescriptor: session
           ? resolveSessionHistoryReplayDescriptor(session, providers, agentFrameworks)
           : undefined
       })
     },
-    [agentFrameworks, providers]
+    [agentFrameworks, providers, visionRelayAvailable]
   )
 
   return { respondToElicitation }

@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 
 import type { AcpSaveAsSkillRequest } from '../../../../shared/acp'
 import { useSessionStore } from '../../stores/session-store'
-import { useSettingsStore } from '../../stores/settings-store'
+import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
 import type { HistoryReplayDescriptor } from './history-preamble'
@@ -48,11 +48,12 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
             ? `${settings.agentFrameworkId}:${settings.activeProviderId}`
             : undefined,
           agentModel: settings.activeModel,
-          supportsImageInput: activeProvider?.supportsImageInput ?? false
+          supportsImageInput: activeProvider?.supportsImageInput === true,
+          supportsImageRelay: selectVisionRelayAvailable(settings)
         }
         const replayPolicy = {
           ...historyReplayDescriptor,
-          supportsImageInput: currentRuntime.supportsImageInput
+          supportsImageInput: currentRuntime.supportsImageInput || currentRuntime.supportsImageRelay
         }
         const prepared = await prepareExistingWorkspacePrompt(runtime, {
           sessionId: request.sessionId,
@@ -63,7 +64,8 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           selectedRuntime: {
             frameworkId: currentRuntime.frameworkId,
             backendId: currentRuntime.backendId,
-            supportsImageInput: currentRuntime.supportsImageInput
+            supportsImageInput: currentRuntime.supportsImageInput,
+            supportsImageRelay: currentRuntime.supportsImageRelay
           },
           replay: { descriptor: replayPolicy },
           drainRuntimeEvents
@@ -103,6 +105,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         await flushSessionPersistence()
         await window.api.acp.saveAsSkill({
           ...request,
+          ...(currentRuntime.supportsImageRelay ? { supportsImageRelay: true } : {}),
           promptMessageId: controlMessage.messageId
         })
         prepared.acceptPrompt(controlMessage.messageId)

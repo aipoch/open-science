@@ -198,6 +198,132 @@ describe('RemoteSessionPairingManager', () => {
     ).resolves.toBe('denied')
   })
 
+  it('keeps a trusted browser authorized when revocation cannot be persisted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    const manager = await RemoteSessionPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn()
+    })
+
+    const firstResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/'),
+      firstResponse.response,
+      new URL('https://home.example.ts.net/')
+    )
+    const pendingCookie = cookiePair(firstResponse.headers.get('set-cookie') as string)
+    await manager.approve(manager.pendingViews()[0].id, 'always')
+    const statusResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/__open_science_remote/pair/status', { cookie: pendingCookie }),
+      statusResponse.response,
+      new URL('https://home.example.ts.net/__open_science_remote/pair/status')
+    )
+    const sessionCookie = cookiePair((statusResponse.headers.get('set-cookie') as string[])[0])
+    const [trustedBrowser] = manager.trustedViews()
+
+    let rejectSave: ((error: Error) => void) | undefined
+    const saveFailure = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject
+    })
+    const save = vi.spyOn(repository, 'save').mockReturnValueOnce(saveFailure)
+    const revocation = manager.revoke(trustedBrowser.id)
+    void revocation.catch(() => undefined)
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+
+    await expect(
+      manager.webAccess.authorizeHttp(
+        request('/', { cookie: sessionCookie }),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+    ).resolves.toBe('handled')
+
+    rejectSave?.(new Error('disk full'))
+    await expect(revocation).rejects.toThrow('disk full')
+
+    expect(manager.trustedViews()).toHaveLength(1)
+    await expect(
+      manager.webAccess.authorizeHttp(
+        request('/', { cookie: sessionCookie }),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+
+    const restartedManager = await RemoteSessionPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn()
+    })
+    await expect(
+      restartedManager.webAccess.authorizeHttp(
+        request('/', { cookie: sessionCookie }),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+  })
+
+  it('serializes concurrent trusted-browser revocations without losing an update', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    await repository.save({
+      version: 4,
+      mode: 'remoteit-public',
+      trustedBrowsers: [
+        {
+          id: 'first-browser',
+          browser: 'Safari',
+          platform: 'macOS',
+          tokenHash: 'first-token',
+          createdAt: 1,
+          lastSeenAt: 1
+        },
+        {
+          id: 'second-browser',
+          browser: 'Chrome',
+          platform: 'Windows',
+          tokenHash: 'second-token',
+          createdAt: 2,
+          lastSeenAt: 2
+        }
+      ]
+    })
+    const manager = await RemoteSessionPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn()
+    })
+    let releaseFirstSave: (() => void) | undefined
+    const firstSaveGate = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve
+    })
+    const save = vi
+      .spyOn(repository, 'save')
+      .mockImplementationOnce(() => firstSaveGate)
+      .mockResolvedValue(undefined)
+
+    const firstRevocation = manager.revoke('first-browser')
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    const secondRevocation = manager.revoke('second-browser')
+    await Promise.resolve()
+
+    expect(save).toHaveBeenCalledOnce()
+    releaseFirstSave?.()
+    await Promise.all([firstRevocation, secondRevocation])
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(save.mock.calls[1][0].trustedBrowsers).toHaveLength(0)
+    expect(manager.trustedViews()).toHaveLength(0)
+  })
+
   it('rejects an invalid pairing decision without granting or persisting access', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)

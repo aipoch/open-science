@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SpecialistEditor } from './SpecialistEditor'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH } from '../../../../shared/specialist'
+import {
+  SPECIALIST_DESCRIPTION_MAX_LENGTH,
+  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH
+} from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -329,6 +332,152 @@ describe('SpecialistEditor', () => {
     )
   })
 
+  it('previews an ID from the name and saves a valid user override', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      root.render(<SpecialistEditor onCancel={vi.fn()} onSave={onSave} />)
+    })
+
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-name')!, {
+        target: { value: 'RNA-seq Reviewer' }
+      })
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === 'Advanced settings'
+        )!
+      )
+    })
+
+    const idInput = document.body.querySelector<HTMLInputElement>('#sp-specialist-id')!
+    expect(idInput.value).toBe('rna-seq-reviewer')
+
+    await act(async () => {
+      fireEvent.change(idInput, { target: { value: 'transcriptomics-reviewer' } })
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Create specialist')
+        ?.click()
+    })
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'transcriptomics-reviewer', name: 'RNA-seq Reviewer' })
+    )
+  })
+
+  it('leaves an untouched inferred ID for the main process to generate authoritatively', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      root.render(<SpecialistEditor onCancel={vi.fn()} onSave={onSave} />)
+    })
+
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-name')!, {
+        target: { value: 'RNA-seq Reviewer' }
+      })
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === 'Advanced settings'
+        )!
+      )
+    })
+
+    expect(document.body.querySelector<HTMLInputElement>('#sp-specialist-id')!.value).toBe(
+      'rna-seq-reviewer'
+    )
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Create specialist')
+        ?.click()
+    })
+
+    expect(onSave).toHaveBeenCalledOnce()
+    expect(onSave.mock.calls[0]?.[0]).not.toHaveProperty('id')
+  })
+
+  it('previews and saves a UUID when the name cannot produce a valid ID', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      root.render(<SpecialistEditor onCancel={vi.fn()} onSave={onSave} />)
+    })
+
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-name')!, {
+        target: { value: 'MCP Research' }
+      })
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === 'Advanced settings'
+        )!
+      )
+    })
+
+    const generatedId = document.body.querySelector<HTMLInputElement>('#sp-specialist-id')!.value
+    expect(generatedId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Create specialist')
+        ?.click()
+    })
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ id: generatedId, name: 'MCP Research' })
+    )
+  })
+
+  it('validates a user-provided ID while typing and blocks invalid creation', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      root.render(<SpecialistEditor onCancel={vi.fn()} onSave={onSave} />)
+    })
+
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-name')!, {
+        target: { value: 'RNA Reviewer' }
+      })
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === 'Advanced settings'
+        )!
+      )
+    })
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-specialist-id')!, {
+        target: { value: 'hello ee' }
+      })
+    })
+
+    const idInput = document.body.querySelector<HTMLInputElement>('#sp-specialist-id')!
+    expect(idInput.getAttribute('aria-invalid')).toBe('true')
+    expect(document.body.textContent).toContain(
+      'ID may only contain lowercase letters, numbers, and hyphens.'
+    )
+
+    await act(async () => {
+      fireEvent.change(idInput, { target: { value: 'hello-ee' } })
+    })
+
+    expect(idInput.getAttribute('aria-invalid')).toBeNull()
+    expect(document.body.textContent).not.toContain(
+      'ID may only contain lowercase letters, numbers, and hyphens.'
+    )
+
+    await act(async () => {
+      fireEvent.change(idInput, { target: { value: 'hello ee' } })
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Create specialist')
+        ?.click()
+    })
+
+    expect(onSave).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain(
+      'ID may only contain lowercase letters, numbers, and hyphens.'
+    )
+  })
+
   it('focuses the open capability search with Cmd/Ctrl+K', async () => {
     useSettingsStore.setState({
       skills: [
@@ -570,12 +719,14 @@ describe('SpecialistEditor', () => {
       root.render(<SpecialistEditor onCancel={vi.fn()} onSave={vi.fn()} />)
     })
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')!.maxLength).toBe(80)
-    expect(document.body.querySelector<HTMLInputElement>('#sp-description')!.maxLength).toBe(200)
+    expect(document.body.querySelector<HTMLInputElement>('#sp-description')!.maxLength).toBe(
+      SPECIALIST_DESCRIPTION_MAX_LENGTH
+    )
     expect(document.body.querySelector<HTMLTextAreaElement>('#sp-system-prompt')!.maxLength).toBe(
       SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH
     )
     expect(document.body.textContent).toContain('/ 80')
-    expect(document.body.textContent).toContain('/ 200')
+    expect(document.body.textContent).toContain(`/ ${SPECIALIST_DESCRIPTION_MAX_LENGTH}`)
     expect(document.body.textContent).toContain(
       `/ ${SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH.toLocaleString()}`
     )

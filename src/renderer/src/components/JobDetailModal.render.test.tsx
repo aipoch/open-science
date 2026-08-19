@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../shared/compute'
 import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
 // Mock radix Dialog to avoid portal / overlay complexity in jsdom
 vi.mock('radix-ui', () => {
@@ -127,6 +128,30 @@ describe('JobDetailModal — detail view', () => {
     expect(container.textContent).toContain('Run EDA analysis')
     expect(container.textContent).toContain('biowulf')
     expect(container.textContent).toContain('job-abc')
+  })
+
+  it('offers recovery for a background authentication failure', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const openSettingsToComputeAuthentication = vi.fn()
+    useSettingsStore.setState({ openSettingsToComputeAuthentication })
+    const job = makeJob({ last_poll_error: 'authentication_failed' })
+    useSessionJobStore.getState().applyUpdate(job)
+
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+    const manage = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Manage credentials'
+    )
+    act(() => manage?.click())
+
+    expect(openSettingsToComputeAuthentication).toHaveBeenCalledWith(
+      'ssh:biowulf',
+      'authentication_failed'
+    )
+    expect(container.querySelector('input[type="password"]')).toBeNull()
   })
 
   it('renders stdout tab content by default', async () => {

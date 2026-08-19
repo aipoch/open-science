@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronDown,
   CircleX,
@@ -16,7 +17,7 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import { AlertDialog, Collapsible } from 'radix-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -45,6 +46,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { useTagStore } from '@/stores/tag-store'
 import type { CreateSpecialistInput } from '../../../../shared/specialist'
 import type { SkillSource } from '../../../../shared/settings'
 import { specialistPackageReportFromPreview } from '../../../../shared/specialist-package'
@@ -53,8 +55,26 @@ import type {
   SpecialistDeleteResult
 } from '../../../../shared/specialist-package'
 import { SpecialistEditor } from './SpecialistEditor'
+import {
+  MarketplaceTabs,
+  SpecialistMarketplace,
+  type SpecialistMarketplaceView
+} from './SpecialistMarketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
+import { SettingsSegmentedControl } from './SettingsSegmentedControl'
 import { SpecialistAvatar } from './specialist-avatar'
+import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
+import {
+  skillConflictResolutionList,
+  specialistSkillConflicts,
+  type SkillConflictResolutionMap
+} from './specialist-skill-conflicts'
+import {
+  ResourceTagBadges,
+  ResourceTagMenu,
+  ResourceTagSummary,
+  TagFilter
+} from './ResourceTagControls'
 
 // Sub-view for the Specialists panel (parallels SkillsView).
 export type SpecialistsView =
@@ -64,6 +84,7 @@ export type SpecialistsView =
   | { kind: 'export'; id: string }
   | { kind: 'import' }
   | { kind: 'builtin'; id: string }
+  | SpecialistMarketplaceView
 
 type CategoryFilter = 'all' | 'custom' | 'builtin'
 
@@ -128,12 +149,21 @@ type SpecialistsPanelProps = {
   onNavigate: (view: SpecialistsView) => void
 }
 
-const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JSX.Element => {
+type InstalledSpecialistsView = Exclude<SpecialistsView, SpecialistMarketplaceView>
+
+const InstalledSpecialistsPanel = ({
+  view,
+  onNavigate
+}: {
+  view: InstalledSpecialistsView
+  onNavigate: (view: SpecialistsView) => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
 
   const items = useSpecialistStore((s) => s.items)
   const isLoaded = useSpecialistStore((s) => s.isLoaded)
   const loadError = useSpecialistStore((s) => s.loadError)
+  const integrity = useSpecialistStore((s) => s.integrity)
   const load = useSpecialistStore((s) => s.load)
   const setEnabled = useSpecialistStore((s) => s.setEnabled)
   const createSpecialist = useSpecialistStore((s) => s.create)
@@ -154,6 +184,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const projects = useProjectStore((s) => s.projects)
   const [filter, setFilter] = useState<CategoryFilter>('all')
   const [query, setQuery] = useState('')
+  const [tagFilter, setTagFilter] = useState('all')
+  const tagAssignments = useTagStore((state) => state.assignments)
   const [deletingItem, setDeletingItem] = useState<{
     id: string
     revision: number
@@ -161,12 +193,16 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     preview: SpecialistDeletePreview
   } | null>(null)
   const [deleteSkillIds, setDeleteSkillIds] = useState<Set<string>>(new Set())
+  const [deleteSkillsExpanded, setDeleteSkillsExpanded] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | undefined>()
   const [templateSaving, setTemplateSaving] = useState(false)
   const [templateSaved, setTemplateSaved] = useState(false)
   const [templateSaveError, setTemplateSaveError] = useState<string | undefined>()
   const [packageBusy, setPackageBusy] = useState(false)
   const [packageErrorCode, setPackageErrorCode] = useState<string | undefined>()
+  const [skillConflictResolutions, setSkillConflictResolutions] =
+    useState<SkillConflictResolutionMap>({})
   const [overwriteConfirmationOpen, setOverwriteConfirmationOpen] = useState(false)
   const [reportStatus, setReportStatus] = useState<string | undefined>()
   const [includedExportSkillIds, setIncludedExportSkillIds] = useState<string[]>([])
@@ -175,6 +211,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const [exportError, setExportError] = useState<string | undefined>()
   // Specialist currently exporting from the list row (direct export bypasses the chooser).
   const [exportingId, setExportingId] = useState<string | null>(null)
+  const catalogReadOnly = integrity.status === 'degraded'
 
   // Memoised so visibleCustomItems' memo can reference a stable value.
   const customItems = useMemo(() => items.filter((i) => i.kind === 'custom'), [items])
@@ -188,6 +225,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     const unsub = window.api.specialist.onCatalogChanged(() => void load())
     return unsub
   }, [load])
+
+  useEffect(() => {
+    if (
+      catalogReadOnly &&
+      (view.kind === 'create' || view.kind === 'edit' || view.kind === 'import')
+    ) {
+      onNavigate({ kind: 'list' })
+    }
+  }, [catalogReadOnly, onNavigate, view.kind])
 
   useEffect(() => {
     if (view.kind !== 'export') return
@@ -246,37 +292,63 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const visibleBuiltinItems = useMemo(() => {
     if (filter === 'custom') return []
     const term = query.trim().toLowerCase()
-    if (!term) return builtinItems
-    return builtinItems.filter(
+    const filtered =
+      tagFilter === 'all'
+        ? builtinItems
+        : builtinItems.filter((item) =>
+            tagAssignments.some(
+              (assignment) =>
+                assignment.tagId === tagFilter &&
+                assignment.resourceType === 'catalog.specialist' &&
+                assignment.resourceId === item.id
+            )
+          )
+    if (!term) return filtered
+    return filtered.filter(
       (item) =>
         (item.displayName ?? item.name).toLowerCase().includes(term) ||
         item.name.toLowerCase().includes(term) ||
         item.description.toLowerCase().includes(term)
     )
-  }, [builtinItems, filter, query])
+  }, [builtinItems, filter, query, tagAssignments, tagFilter])
   const visibleCustomItems = useMemo(() => {
     const term = query.trim().toLowerCase()
     if (filter === 'builtin') return []
-    if (!term) return customItems
-    return customItems.filter(
+    const filtered =
+      tagFilter === 'all'
+        ? customItems
+        : customItems.filter((item) =>
+            tagAssignments.some(
+              (assignment) =>
+                assignment.tagId === tagFilter &&
+                assignment.resourceType === 'catalog.specialist' &&
+                assignment.resourceId === item.id
+            )
+          )
+    if (!term) return filtered
+    return filtered.filter(
       (item) =>
         (item.displayName ?? item.name).toLowerCase().includes(term) ||
         item.name.toLowerCase().includes(term) ||
         item.description.toLowerCase().includes(term)
     )
-  }, [customItems, filter, query])
+  }, [customItems, filter, query, tagAssignments, tagFilter])
   const visibleReviewerItems = useMemo(() => {
-    if (filter === 'custom') return []
+    if (filter === 'custom' || tagFilter !== 'all') return []
     const term = query.trim().toLowerCase()
     if (!term || 'reviewer used by auto-review'.includes(term)) return reviewerItems
     return []
-  }, [filter, query, reviewerItems])
+  }, [filter, query, reviewerItems, tagFilter])
 
   // Built-in Skills are app-managed and never participate in Specialist deletion. Keep this
   // renderer-side filter as a defensive boundary even though the main-side preview omits them.
   const visibleDeleteSkills = deletingItem?.preview.skills.filter(
     (skill) => skill.source !== 'featured'
   )
+  const deletableDeleteSkills = visibleDeleteSkills?.filter((skill) => skill.deletable) ?? []
+  const allDeletableDeleteSkillsSelected =
+    deletableDeleteSkills.length > 0 &&
+    deletableDeleteSkills.every((skill) => deleteSkillIds.has(skill.id))
 
   // Resolves the valid last-opened project (or the newest-existing fallback) against the live catalog.
   // Undefined means zero projects and the entry is disabled with explanatory help text.
@@ -350,6 +422,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     return (
       <SpecialistEditor
         existingNames={customItems.map((item) => item.name)}
+        existingIds={items.map((item) => item.id)}
         initialInput={view.draft}
         onCancel={() => onNavigate({ kind: 'list' })}
         onSave={async (input: CreateSpecialistInput) => {
@@ -431,16 +504,19 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         ) : null}
         {exportPreview ? (
           <div className="flex flex-col gap-4">
-            {exportPreview.diagnostics.map((diagnostic) => (
-              <div
-                key={diagnostic.code}
-                role={diagnostic.severity === 'error' ? 'alert' : 'status'}
-                className="rounded-lg border border-border p-3 text-sm"
-              >
-                <strong>{diagnostic.code}</strong>
-                <p className="text-muted-foreground">{diagnostic.message}</p>
-              </div>
-            ))}
+            {exportPreview.diagnostics.map((diagnostic) => {
+              const copy = specialistDiagnosticCopy(diagnostic)
+              return (
+                <div
+                  key={diagnostic.code}
+                  role={diagnostic.severity === 'error' ? 'alert' : 'status'}
+                  className="rounded-lg border border-border p-3 text-sm"
+                >
+                  <strong>{t(copy.title)}</strong>
+                  <p className="text-muted-foreground">{t(copy.body)}</p>
+                </div>
+              )
+            })}
             <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
               {exportPreview.skills.map((skill) => {
                 const checked = includedExportSkillIds.includes(skill.id)
@@ -542,27 +618,35 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     const specialist = customItems.find((item) => item.kind === 'custom' && item.id === view.id)
     if (specialist && specialist.kind === 'custom') {
       return (
-        <SpecialistEditor
-          key={specialist.id}
-          editSpecialist={specialist}
-          existingNames={customItems.filter((item) => item.id !== view.id).map((item) => item.name)}
-          onCancel={() => onNavigate({ kind: 'list' })}
-          onSave={async () => onNavigate({ kind: 'list' })}
-          onSaveEdit={async (input) => {
-            await updateSpecialist(input)
-            onNavigate({ kind: 'list' })
-          }}
-          onReload={async () => {
-            // Load the fresh list and read the result from the store directly —
-            // not from the render closure, which captured the pre-load items.
-            await load()
-            const refreshed = useSpecialistStore
-              .getState()
-              .items.find((item) => item.kind === 'custom' && item.id === view.id)
-            if (refreshed && refreshed.kind === 'custom') return refreshed
-            return undefined
-          }}
-        />
+        <div>
+          <ResourceTagSummary
+            reference={{ resourceType: 'catalog.specialist', resourceId: specialist.id }}
+            className="px-5 pt-5"
+          />
+          <SpecialistEditor
+            key={specialist.id}
+            editSpecialist={specialist}
+            existingNames={customItems
+              .filter((item) => item.id !== view.id)
+              .map((item) => item.name)}
+            onCancel={() => onNavigate({ kind: 'list' })}
+            onSave={async () => onNavigate({ kind: 'list' })}
+            onSaveEdit={async (input) => {
+              await updateSpecialist(input)
+              onNavigate({ kind: 'list' })
+            }}
+            onReload={async () => {
+              // Load the fresh list and read the result from the store directly —
+              // not from the render closure, which captured the pre-load items.
+              await load()
+              const refreshed = useSpecialistStore
+                .getState()
+                .items.find((item) => item.kind === 'custom' && item.id === view.id)
+              if (refreshed && refreshed.kind === 'custom') return refreshed
+              return undefined
+            }}
+          />
+        </div>
       )
     }
     // Profile no longer exists (deleted/stale) — fall through to the list.
@@ -571,6 +655,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   if (view.kind === 'import') {
     const summary = packagePreview?.summary
     const blocking = packagePreview?.diagnostics.some((item) => item.severity === 'error') ?? false
+    const skillConflicts = specialistSkillConflicts(summary?.skills)
+    const conflictsResolved = skillConflicts.every(
+      (skill) => skillConflictResolutions[skill.id] !== undefined
+    )
+    const canInstallPackage = Boolean(packagePreview && !blocking && conflictsResolved)
+    const conflictResolutionList = skillConflictResolutionList(
+      skillConflicts,
+      skillConflictResolutions
+    )
     const diagnosticsBySeverity = packagePreview
       ? {
           error: packagePreview.diagnostics.filter((item) => item.severity === 'error'),
@@ -587,20 +680,28 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             </p>
             <h2 className="mt-1 text-xl font-semibold">
               {packagePreview
-                ? packagePreview.installable
+                ? canInstallPackage
                   ? t('Ready to continue')
-                  : t('Cannot continue')
+                  : skillConflicts.length > 0 && !blocking
+                    ? t('Resolve Skill conflicts')
+                    : t('Cannot continue')
                 : t('Import a Specialist package')}
               {packagePreview ? (
                 <span
                   role="status"
                   className={`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                    packagePreview.installable
+                    canInstallPackage
                       ? 'bg-success-000/10 text-success-000'
-                      : 'bg-danger-000/10 text-danger-000'
+                      : blocking
+                        ? 'bg-danger-000/10 text-danger-000'
+                        : 'bg-warning-100/10 text-warning-100'
                   }`}
                 >
-                  {packagePreview.installable ? t('✓ Installable') : t('× Not installable')}
+                  {canInstallPackage
+                    ? t('✓ Installable')
+                    : blocking
+                      ? t('× Not installable')
+                      : t('Action required')}
                 </span>
               ) : null}
             </h2>
@@ -644,6 +745,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 type="button"
                 disabled={packageBusy}
                 onClick={() => {
+                  setSkillConflictResolutions({})
                   setPackageBusy(true)
                   void selectPackage().finally(() => setPackageBusy(false))
                 }}
@@ -715,6 +817,17 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 </div>
               ) : null}
             </section>
+
+            <SpecialistSkillConflictChoices
+              conflicts={skillConflicts}
+              resolutions={skillConflictResolutions}
+              onChange={(skillId, resolution) =>
+                setSkillConflictResolutions((current) => ({
+                  ...current,
+                  [skillId]: resolution
+                }))
+              }
+            />
 
             {packagePreview.archive ? (
               <section className="rounded-xl border border-border p-4">
@@ -819,8 +932,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                   aria-hidden="true"
                                 />
                                 <div className="min-w-0">
-                                  <strong className="block">{copy.title}</strong>
-                                  <span className="block opacity-80">{copy.body}</span>
+                                  <strong className="block">{t(copy.title)}</strong>
+                                  <span className="block opacity-80">{t(copy.body)}</span>
                                   {diagnostic.path || diagnostic.relatedId ? (
                                     <span className="mt-0.5 block font-mono text-[10px] opacity-60">
                                       {diagnostic.path}
@@ -883,14 +996,14 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               </Button>
               <Button
                 type="button"
-                disabled={packageBusy || blocking || !packagePreview.installable}
+                disabled={packageBusy || !canInstallPackage}
                 onClick={() => {
                   if (packagePreview.overwrite) {
                     setOverwriteConfirmationOpen(true)
                     return
                   }
                   setPackageBusy(true)
-                  void installPackage(false)
+                  void installPackage({ skillConflictResolutions: conflictResolutionList })
                     .then(async (result) => {
                       if (result.status === 'installed') {
                         // Bundled Skills were just installed on disk; refresh the Skill catalog so the
@@ -1008,7 +1121,10 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         disabled={packageBusy}
                         onClick={() => {
                           setPackageBusy(true)
-                          void installPackage(true)
+                          void installPackage({
+                            confirmOverwrite: true,
+                            skillConflictResolutions: conflictResolutionList
+                          })
                             .then(async (result) => {
                               if (result.status === 'installed') {
                                 // Bundled Skills were just installed on disk; refresh the Skill catalog
@@ -1061,6 +1177,10 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               </p>
             </div>
           </div>
+          <ResourceTagSummary
+            reference={{ resourceType: 'catalog.specialist', resourceId: specialist.id }}
+            className="mt-4"
+          />
           <p className="mt-4 text-sm text-foreground">{specialist.description}</p>
           <div className="mt-5 rounded-lg border border-border bg-muted/30 p-3">
             <p className="text-sm font-medium text-foreground">{t('Read-only')}</p>
@@ -1088,40 +1208,41 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
 
   return (
     <div className="p-5">
+      <div className="mb-5">
+        <MarketplaceTabs
+          active="installed"
+          installedCount={items.length}
+          onNavigate={onNavigate}
+          t={t}
+        />
+      </div>
       {/* Toolbar */}
-      <div className="mb-4 flex items-center gap-2">
-        <div
-          className="flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
-          role="tablist"
-          aria-label={t('Filter specialists by category')}
-        >
-          {(['all', 'custom', 'builtin'] as const).map((key) => {
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <SettingsSegmentedControl
+          value={filter}
+          options={(['all', 'custom', 'builtin'] as const).map((key) => {
             const count =
               key === 'all'
                 ? items.length
                 : key === 'custom'
                   ? customItems.length
                   : builtinItems.length + reviewerItems.length
-            const active = filter === key
-            return (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setFilter(key)}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors motion-reduce:transition-none ${
-                  active
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {getFilterLabel(key, t)}
-                <span className="tabular-nums text-muted-foreground">({count})</span>
-              </button>
-            )
+            return {
+              value: key,
+              label: (
+                <>
+                  {getFilterLabel(key, t)}
+                  <span className="ml-1 tabular-nums text-muted-foreground">({count})</span>
+                </>
+              )
+            }
           })}
-        </div>
+          onValueChange={setFilter}
+          ariaLabel={t('Filter specialists by category')}
+          semantics="tab"
+          columnWidth="6.5rem"
+        />
+        <TagFilter resourceType="catalog.specialist" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search specialists')}
           placeholder={t('Search specialists…')}
@@ -1137,7 +1258,11 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
+            <DropdownMenuItem
+              className="gap-2.5"
+              disabled={catalogReadOnly}
+              onSelect={() => onNavigate({ kind: 'create' })}
+            >
               <Pencil className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
                 <span>{t('Write from scratch')}</span>
@@ -1177,7 +1302,11 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               </>
             ) : null}
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
+            <DropdownMenuItem
+              className="gap-2.5"
+              disabled={catalogReadOnly}
+              onSelect={() => onNavigate({ kind: 'import' })}
+            >
               <Upload className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
                 <span>{t('Import ZIP')}</span>
@@ -1211,6 +1340,36 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         </div>
       ) : null}
 
+      {catalogReadOnly ? (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2 text-sm"
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="font-medium">{t('Some Specialist data could not be read.')}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t('No Specialist changes will be saved until the data is repaired.')}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+              {t('Retry')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void window.api.storage.revealAppStorage()}
+            >
+              {t('Open data folder')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {!isLoaded && !loadError ? (
         <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
       ) : isLoaded ? (
@@ -1236,6 +1395,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         {/* Click the row body to open the editor (prefilled) */}
                         <button
                           type="button"
+                          disabled={catalogReadOnly}
                           onClick={() => onNavigate({ kind: 'edit', id: item.id })}
                           aria-label={
                             item.setupPending
@@ -1244,7 +1404,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                 })
                               : t('Edit {{name}}', { name: item.displayName ?? item.name })
                           }
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                         >
                           {/* Avatar */}
                           <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
@@ -1259,36 +1419,108 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                 {item.description}
                               </span>
                             ) : null}
-                            <span className="block text-[11px] text-muted-foreground">
-                              {item.setupPending
-                                ? t('Setup incomplete · Continue setup')
-                                : item.capabilityMode === 'full'
-                                  ? t('Full access')
-                                  : t('Selected capabilities')}
-                              {!item.setupPending && item.origin === 'imported'
-                                ? ` · ${t('Imported · Original version {{version}} · {{state}}', {
-                                    version: item.packageVersion ?? '0.1.0',
-                                    state: item.modifiedSinceImport
-                                      ? t('Modified after import')
-                                      : t('Unchanged since import')
-                                  })}`
-                                : ''}
+                            <span
+                              className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
+                              data-specialist-metadata-group={item.id}
+                            >
+                              <Badge
+                                variant="outline"
+                                className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground"
+                                data-specialist-metadata="capabilities"
+                              >
+                                {item.setupPending
+                                  ? t('Setup incomplete')
+                                  : item.capabilityMode === 'full'
+                                    ? t('Full access')
+                                    : t('Selected capabilities')}
+                              </Badge>
+                              {!item.setupPending && item.origin === 'imported' ? (
+                                <>
+                                  <Badge
+                                    variant="secondary"
+                                    className="h-5 px-1.5 text-[11px] font-normal"
+                                    data-specialist-metadata="source"
+                                  >
+                                    {item.marketplaceProvenance
+                                      ? t('Marketplace')
+                                      : t('Imported ZIP')}
+                                  </Badge>
+                                  {item.marketplaceProvenance?.publisher ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
+                                      data-specialist-metadata="publisher"
+                                      title={t('By {{publisher}}', {
+                                        publisher: item.marketplaceProvenance.publisher
+                                      })}
+                                    >
+                                      <span className="truncate">
+                                        {t('By {{publisher}}', {
+                                          publisher: item.marketplaceProvenance.publisher
+                                        })}
+                                      </span>
+                                    </Badge>
+                                  ) : null}
+                                  <Badge
+                                    variant="outline"
+                                    className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
+                                    data-specialist-metadata="version"
+                                  >
+                                    {t('Version {{version}}', {
+                                      version: item.packageVersion ?? '0.1.0'
+                                    })}
+                                  </Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      item.modifiedSinceImport
+                                        ? 'h-5 border-warning-100 bg-warning-100/60 px-1.5 text-[11px] font-normal text-warning-900'
+                                        : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
+                                    }
+                                    data-specialist-metadata="local-status"
+                                  >
+                                    {item.modifiedSinceImport
+                                      ? t('Modified locally')
+                                      : t('Unchanged locally')}
+                                  </Badge>
+                                </>
+                              ) : null}
+                              <ResourceTagBadges
+                                reference={{
+                                  resourceType: 'catalog.specialist',
+                                  resourceId: item.id
+                                }}
+                              />
                             </span>
                           </div>
                         </button>
 
-                        {/* Enabled toggle */}
-                        <SettingsToggle
-                          enabled={item.enabled}
-                          disabled={item.setupPending}
-                          aria-label={
-                            item.setupPending
-                              ? t('Complete setup before enabling {{name}}', {
-                                  name: item.displayName ?? item.name
-                                })
-                              : t('Toggle {{name}}', { name: item.displayName ?? item.name })
-                          }
-                          onToggle={() => void setEnabled(item.id, !item.enabled)}
+                        {item.setupPending ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={catalogReadOnly}
+                            aria-label={t('Continue setup for {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                          >
+                            {t('Continue setup')}
+                          </Button>
+                        ) : (
+                          <SettingsToggle
+                            enabled={item.enabled}
+                            disabled={catalogReadOnly}
+                            aria-label={t('Toggle {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            onToggle={() => void setEnabled(item.id, !item.enabled)}
+                          />
+                        )}
+                        <ResourceTagMenu
+                          reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                         />
                         <DropdownMenu>
                           <TooltipProvider delayDuration={200}>
@@ -1324,6 +1556,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
                               className="gap-2 text-xs"
+                              disabled={catalogReadOnly}
                               onSelect={() =>
                                 void duplicateSpecialist(item.id).then((draft) =>
                                   onNavigate({ kind: 'create', draft })
@@ -1340,9 +1573,12 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2 text-xs text-destructive"
+                              disabled={catalogReadOnly}
                               onSelect={() => {
                                 setDeleteError(undefined)
                                 setDeleteSkillIds(new Set())
+                                setDeleteSkillsExpanded(false)
+                                setDeleteBusy(false)
                                 void previewSpecialistDelete(item.id)
                                   .then((preview) =>
                                     setDeletingItem({
@@ -1403,11 +1639,25 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         <span className="block truncate text-xs text-muted-foreground">
                           {item.description}
                         </span>
-                        <span className="block text-[11px] text-muted-foreground">
-                          {t('Built-in · Version {{version}}', { version: item.version })}
-                        </span>
+                        <div
+                          className="mt-0.5 flex min-w-0 items-center gap-2"
+                          data-specialist-metadata-group={item.id}
+                        >
+                          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                            {t('Built-in · Version {{version}}', { version: item.version })}
+                          </span>
+                          <ResourceTagBadges
+                            reference={{
+                              resourceType: 'catalog.specialist',
+                              resourceId: item.id
+                            }}
+                          />
+                        </div>
                       </div>
                     </button>
+                    <ResourceTagMenu
+                      reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
+                    />
                   </li>
                 ))}
                 {visibleReviewerItems.map(() => (
@@ -1440,11 +1690,20 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
       ) : null}
 
       {/* Delete confirmation dialog */}
+      {/*
+       * Hallmark · component: destructive disclosure · genre: modern-minimal · theme: project tokens
+       * states: default · hover · focus · active · disabled · loading · error · success (quiet close)
+       * contrast: semantic foreground / muted / destructive tokens
+       * pre-emit critique: P5 H5 E5 S5 R5 V4 · hierarchy: title→impact→optional cleanup→action
+       * structure: destructive-disclosure · motion: transform/opacity only · slop: pass
+       */}
       <AlertDialog.Root
         open={deletingItem !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && !deleteBusy) {
             setDeletingItem(null)
+            setDeleteSkillIds(new Set())
+            setDeleteSkillsExpanded(false)
             setDeleteError(undefined)
           }
         }}
@@ -1452,7 +1711,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] max-h-[85vh] p-0')}
+            className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] max-h-[85vh] p-0')}
           >
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
@@ -1467,6 +1726,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   size="icon-sm"
                   aria-label={t('Close')}
                   className={dialogCloseButtonClassName}
+                  disabled={deleteBusy}
                 >
                   <X className="size-4" aria-hidden="true" />
                 </Button>
@@ -1479,72 +1739,151 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   'This permanently deletes the Specialist. Conversations using it will no longer be able to use it.'
                 )}
               </AlertDialog.Description>
-              <div className="mt-4">
-                <p className="text-sm font-medium text-foreground">
-                  <Trans
-                    i18nKey="Skills you can also delete <muted>(optional)</muted>"
-                    components={{ muted: <span className="font-normal text-muted-foreground" /> }}
-                  />
-                </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t(
-                    'Only Skills used exclusively by this Specialist can be deleted. Other linked Skills will be kept automatically.'
-                  )}
-                </p>
-              </div>
-              <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-border px-3">
-                {visibleDeleteSkills?.length ? (
-                  visibleDeleteSkills.map((skill) => {
-                    const reasonText =
-                      skill.reasons
-                        .map((reason) =>
-                          reason.code === 'standalone'
-                            ? t('Already exists independently and will be kept.')
-                            : reason.code === 'shared-owner'
-                              ? t('Also owned by another Specialist and will be kept.')
-                              : reason.code === 'referenced'
-                                ? t('Used by another Specialist and will be kept.')
-                                : t('Managed by the app and will be kept.')
-                        )
-                        .join(' ') ||
-                      t('Used only by this Specialist. Select to permanently delete it.')
-                    return (
-                      <label
-                        key={skill.id}
-                        className="flex items-start gap-3 border-b border-border py-3 last:border-b-0"
+              {visibleDeleteSkills?.length ? (
+                <Collapsible.Root
+                  open={deleteSkillsExpanded}
+                  onOpenChange={setDeleteSkillsExpanded}
+                  className="mt-4 overflow-hidden rounded-lg border border-border"
+                >
+                  <div className="flex items-center gap-2 p-2">
+                    <Collapsible.Trigger asChild>
+                      <button
+                        type="button"
+                        aria-controls="specialist-delete-skills"
+                        className="group flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-muted/80 disabled:pointer-events-none disabled:opacity-50"
+                        disabled={deleteBusy}
                       >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 size-4"
-                          disabled={!skill.deletable}
-                          checked={deleteSkillIds.has(skill.id)}
-                          onChange={(event) =>
-                            setDeleteSkillIds((current) => {
-                              const next = new Set(current)
-                              if (event.target.checked) next.add(skill.id)
-                              else next.delete(skill.id)
-                              return next
-                            })
-                          }
+                        <ChevronDown
+                          className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${deleteSkillsExpanded ? '' : '-rotate-90'}`}
+                          aria-hidden="true"
                         />
                         <span className="min-w-0">
-                          <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
-                            <span>{skill.displayName}</span>
-                            <Badge variant="outline" className="text-[11px] font-normal">
-                              {getSkillSourceLabel(skill.source, t)}
-                            </Badge>
+                          <span className="block truncate text-sm font-medium text-foreground">
+                            <Trans
+                              i18nKey="Skills you can also delete <muted>(optional)</muted>"
+                              components={{
+                                muted: <span className="font-normal text-muted-foreground" />
+                              }}
+                            />
                           </span>
-                          <span className="block text-xs text-muted-foreground">{reasonText}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {t(
+                              'Only Skills used exclusively by this Specialist can be deleted. Other linked Skills will be kept automatically.'
+                            )}
+                          </span>
                         </span>
-                      </label>
-                    )
-                  })
-                ) : (
-                  <p className="py-3 text-xs text-muted-foreground">
-                    {t('No additional Skills will be deleted.')}
-                  </p>
-                )}
-              </div>
+                      </button>
+                    </Collapsible.Trigger>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 shrink-0 px-3 transition-[color,background-color,border-color,transform] aria-pressed:border-primary/30 aria-pressed:bg-primary/10 aria-pressed:text-primary"
+                      aria-pressed={allDeletableDeleteSkillsSelected}
+                      disabled={deleteBusy || deletableDeleteSkills.length === 0}
+                      onClick={() =>
+                        setDeleteSkillIds(
+                          allDeletableDeleteSkillsSelected
+                            ? new Set()
+                            : new Set(deletableDeleteSkills.map((skill) => skill.id))
+                        )
+                      }
+                    >
+                      {allDeletableDeleteSkillsSelected ? (
+                        <Check data-icon="inline-start" aria-hidden="true" />
+                      ) : null}
+                      {t(allDeletableDeleteSkillsSelected ? 'Clear selection' : 'Select all')}
+                    </Button>
+                  </div>
+                  <Collapsible.Content id="specialist-delete-skills">
+                    <div className="max-h-64 divide-y divide-border overflow-y-auto border-t border-border px-3">
+                      {visibleDeleteSkills.map((skill) => {
+                        const reasonText =
+                          skill.reasons
+                            .map((reason) =>
+                              reason.code === 'standalone'
+                                ? t('Already exists independently and will be kept.')
+                                : reason.code === 'shared-owner'
+                                  ? t('Also owned by another Specialist and will be kept.')
+                                  : reason.code === 'referenced'
+                                    ? t('Used by another Specialist and will be kept.')
+                                    : t('Managed by the app and will be kept.')
+                            )
+                            .join(' ') ||
+                          t('Used only by this Specialist. Select to permanently delete it.')
+                        const checkbox = (
+                          <input
+                            type="checkbox"
+                            className="size-4 shrink-0 cursor-pointer accent-primary outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={deleteBusy || !skill.deletable}
+                            checked={deleteSkillIds.has(skill.id)}
+                            onChange={(event) =>
+                              setDeleteSkillIds((current) => {
+                                const next = new Set(current)
+                                if (event.target.checked) next.add(skill.id)
+                                else next.delete(skill.id)
+                                return next
+                              })
+                            }
+                          />
+                        )
+                        return (
+                          <label
+                            key={skill.id}
+                            className={`flex min-w-0 items-start gap-3 py-3 ${skill.deletable && !deleteBusy ? 'cursor-pointer' : ''}`}
+                          >
+                            {skill.deletable ? (
+                              <span className="mt-0.5 inline-flex">{checkbox}</span>
+                            ) : (
+                              <TooltipProvider delayDuration={200}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span
+                                      data-slot="specialist-delete-disabled-skill"
+                                      tabIndex={0}
+                                      aria-disabled="true"
+                                      aria-label={reasonText}
+                                      className="mt-0.5 inline-flex size-4 shrink-0 cursor-not-allowed rounded-[3px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                                    >
+                                      {checkbox}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs leading-relaxed">
+                                    {reasonText}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                            <span className="min-w-0 flex-1">
+                              <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+                                <span className="min-w-0 flex-1 truncate" title={skill.displayName}>
+                                  {skill.displayName}
+                                </span>
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 text-[11px] font-normal"
+                                >
+                                  {getSkillSourceLabel(skill.source, t)}
+                                </Badge>
+                              </span>
+                              <span
+                                className="block truncate text-xs text-muted-foreground"
+                                title={reasonText}
+                              >
+                                {reasonText}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </Collapsible.Content>
+                </Collapsible.Root>
+              ) : (
+                <p className="mt-4 rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground">
+                  {t('No additional Skills will be deleted.')}
+                </p>
+              )}
               {deleteError ? (
                 <p
                   role="alert"
@@ -1557,17 +1896,25 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
 
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  disabled={deleteBusy}
+                >
                   {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               <Button
                 type="button"
                 variant="destructive"
+                disabled={deleteBusy}
                 onClick={() => {
-                  if (!deletingItem) return
+                  if (!deletingItem || deleteBusy) return
                   const item = deletingItem
                   void (async () => {
+                    setDeleteBusy(true)
+                    setDeleteError(undefined)
                     try {
                       const result: SpecialistDeleteResult = await deleteSpecialist(
                         item.id,
@@ -1576,8 +1923,10 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                       )
                       if (result.status === 'deleted') {
                         await useSettingsStore.getState().loadSkills()
+                        setDeleteBusy(false)
                         setDeletingItem(null)
                         setDeleteSkillIds(new Set())
+                        setDeleteSkillsExpanded(false)
                         setDeleteError(undefined)
                       } else {
                         const messages: Record<typeof result.code, string> = {
@@ -1603,11 +1952,16 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                           ? err.message
                           : 'This specialist changed — review and try again.'
                       )
+                    } finally {
+                      setDeleteBusy(false)
                     }
                   })()
                 }}
               >
-                {t('Delete Specialist')}
+                {deleteBusy ? (
+                  <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />
+                ) : null}
+                {t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
               </Button>
             </div>
           </AlertDialog.Content>
@@ -1616,5 +1970,14 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     </div>
   )
 }
+
+const SpecialistsPanel = (props: SpecialistsPanelProps): React.JSX.Element =>
+  props.view.kind === 'marketplace' ||
+  props.view.kind === 'marketplace-sources' ||
+  props.view.kind === 'marketplace-release' ? (
+    <SpecialistMarketplace view={props.view} onNavigate={props.onNavigate} />
+  ) : (
+    <InstalledSpecialistsPanel view={props.view} onNavigate={props.onNavigate} />
+  )
 
 export { SpecialistsPanel }

@@ -13,7 +13,10 @@ import {
   RESUME_TIMED_OUT_MESSAGE,
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_WORKSPACE_MISSING_MESSAGE,
-  isReportableRunFailure
+  VISION_EVIDENCE_INVALID_MESSAGE,
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
+  isReportableRunFailure,
+  visionRunFailureMessage
 } from './run-error-classification'
 
 // This module is only the SECONDARY, text-based tier: it recognizes the app's OWN crafted strings so
@@ -80,6 +83,23 @@ describe('isReportableRunFailure (text tier)', () => {
   it('recognizes a request-size overflow (its own recovery path) as expected', () => {
     expect(isReportableRunFailure('Request too large (max 32MB)')).toBe(false)
     expect(isReportableRunFailure('maximum context length exceeded')).toBe(false)
+  })
+
+  it('recognizes app-owned Vision failures through the Electron invoke wrapper', () => {
+    const wrapped = `Error invoking remote method 'acp:send-prompt': Error: ${VISION_EVIDENCE_INVALID_MESSAGE}`
+
+    expect(visionRunFailureMessage(wrapped)).toBe(VISION_EVIDENCE_INVALID_MESSAGE)
+    expect(isReportableRunFailure(wrapped)).toBe(false)
+  })
+
+  it('maps the persisted legacy Vision configuration error to the current recovery message', () => {
+    const legacy =
+      'Configure a Vision model in Settings > Model before sending images to this model.'
+    const wrapped = `Error invoking remote method 'acp:send-prompt': Error: ${legacy}`
+
+    expect(visionRunFailureMessage(legacy)).toBe(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
+    expect(visionRunFailureMessage(wrapped)).toBe(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
+    expect(isReportableRunFailure(legacy)).toBe(false)
   })
 
   it('recognizes the provider resource-not-found message built by describePromptError', () => {

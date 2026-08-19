@@ -8,6 +8,7 @@ import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
   type ProjectDeletedEvent,
   type SessionDeletedEvent,
   type SessionUpsertEvent
@@ -739,6 +740,83 @@ describe('useLifecycleSync', () => {
       'Run the verification',
       'Preparing the command.'
     ])
+  })
+
+  it('applies a Main-owned runtime revision without replacing live chat state', async () => {
+    useSessionStore.getState().hydrateSessions([{ ...session, revision: 2 }])
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Keep this live prompt'
+    })
+    const durableBeforeOutput = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: prompt?.messageId,
+      content: 'Keep this live output.'
+    })
+    const replyTimestamp = durableBeforeOutput.updatedAt + 1
+    const mainAppendedReply = {
+      id: 'main-appended-reply',
+      role: 'user' as const,
+      content: 'Keep this Main-owned reply',
+      status: 'complete' as const,
+      eventIds: [],
+      responseToMessageId: prompt?.messageId,
+      createdAt: replyTimestamp,
+      updatedAt: replyTimestamp
+    }
+    if (!durableBeforeOutput.conversationGraph) throw new Error('Expected a durable graph.')
+    const durableWithReply = {
+      ...durableBeforeOutput,
+      messages: [...durableBeforeOutput.messages, mainAppendedReply],
+      conversationGraph: synchronizeActiveConversationMessages(
+        durableBeforeOutput.conversationGraph,
+        [...durableBeforeOutput.messages, mainAppendedReply],
+        replyTimestamp
+      )
+    }
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...durableWithReply,
+          revision: 3,
+          status: 'waiting-plan-approval',
+          updatedAt: replyTimestamp,
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            plan: {
+              artifactId: 'plan-1',
+              artifactVersionId: 'plan-version-1',
+              artifactChecksum: 'a'.repeat(64),
+              approval: 'pending',
+              stepStatuses: {}
+            }
+          }
+        }
+      })
+    })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected).toMatchObject({
+      revision: 3,
+      status: 'waiting-plan-approval',
+      runtimeContext: { revision: 1, plan: { approval: 'pending' } }
+    })
+    expect(projected.messages.map((message) => message.content)).toEqual([
+      'Keep this live prompt',
+      'Keep this live output.',
+      'Keep this Main-owned reply'
+    ])
+    expect(projected.conversationGraph?.messages.map((message) => message.content)).toEqual([
+      'Keep this live prompt',
+      'Keep this Main-owned reply'
+    ])
+    expect(projected.activeRun?.promptMessageId).toBe(prompt?.messageId)
   })
 
   it('applies a Main-owned continuation prompt before projecting later artifact events', async () => {

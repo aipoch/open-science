@@ -40,6 +40,8 @@ describe('BuiltinSpecialistRegistry', () => {
         name: 'Fixture Specialist',
         description: 'A valid adapter fixture.',
         systemPrompt: 'Fixture prompt that must stay out of previews and diagnostics.',
+        skillIds: [],
+        connectorIds: [],
         enabled: true,
         capabilityMode: 'selected',
         fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
@@ -57,9 +59,9 @@ describe('BuiltinSpecialistRegistry', () => {
       JSON.stringify({
         name: 'Fixture Specialist',
         description: 'A valid adapter fixture.',
-        systemPrompt: 'Fixture prompt that must stay out of previews and diagnostics.',
-        skillIds: ['literature-review'],
-        connectorIds: ['reference-library']
+        system_prompt: 'Fixture prompt that must stay out of previews and diagnostics.',
+        skill_ids: ['literature-review'],
+        connector_ids: ['reference-library']
       }),
       'utf8'
     )

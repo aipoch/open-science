@@ -50,6 +50,24 @@ const setVisualState = async (
   await setViewport(page, width)
 }
 
+// MessageScroller only leaves follow-output on reader input (wheel, touch, or
+// movement keys). Assigning scrollTop is treated as autoscroll and snaps back
+// to the end, which is ~500px under the narrow Files overlay.
+const pinConversationToStart = async (page: Page): Promise<void> => {
+  const conversationViewport = page.locator('[data-slot="message-scroller-viewport"]')
+  await expect
+    .poll(async () => {
+      await conversationViewport.evaluate((element) => {
+        element.dispatchEvent(
+          new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true })
+        )
+        element.scrollTo({ top: 0 })
+      })
+      return conversationViewport.evaluate((element) => element.scrollTop)
+    })
+    .toBe(0)
+}
+
 const expectStableScreenshot = async (
   page: Page,
   name: string,
@@ -286,11 +304,7 @@ test('keeps representative conversation, project, and recovery states visually s
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
   await setVisualState(page, { theme: 'Light', width: 767 })
-  const conversationViewport = page.locator('[data-slot="message-scroller-viewport"]')
-  await conversationViewport.evaluate((element) => {
-    element.scrollTop = 0
-  })
-  await expect.poll(() => conversationViewport.evaluate((element) => element.scrollTop)).toBe(0)
+  await pinConversationToStart(page)
   await expectStableScreenshot(page, 'files-narrow-light.png')
 
   await setViewport(page, 1280)

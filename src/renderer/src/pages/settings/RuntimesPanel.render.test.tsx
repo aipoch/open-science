@@ -175,6 +175,78 @@ describe('RuntimesPanel', () => {
     expect(recheck?.parentElement?.className).toContain('ml-auto')
   })
 
+  it('disables Recheck until the initial registry load settles', async () => {
+    let resolveInitial:
+      ((value: { python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }) => void) | undefined
+    listEnvironments.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveInitial = resolve
+        })
+    )
+    await render()
+
+    const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => /recheck/i.test(button.textContent ?? '')
+    )
+    expect(recheck?.disabled).toBe(true)
+    await click(recheck ?? null)
+    expect(listEnvironments).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveInitial?.({ python: pythonEnvs, r: rEnvs })
+    })
+    expect(recheck?.disabled).toBe(false)
+  })
+
+  it('shows discovery failures instead of rendering an empty registry and recovers on Recheck', async () => {
+    listEnvironments.mockRejectedValueOnce(new Error('runtime discovery unavailable'))
+    await render()
+
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
+      'runtime discovery unavailable'
+    )
+    expect(container.textContent).not.toContain('Detecting runtimes…')
+    expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(0)
+
+    const recheck = Array.from(container.querySelectorAll('button')).find((button) =>
+      /recheck/i.test(button.textContent ?? '')
+    )
+    await click(recheck ?? null)
+
+    expect(container.querySelector('[data-testid="runtimes-error"]')).toBeNull()
+    expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(4)
+  })
+
+  it('does not infer default enablement when persisted enablement cannot be loaded', async () => {
+    getEnablement.mockRejectedValueOnce(new Error('runtime enablement unavailable'))
+    await render()
+
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
+      'runtime enablement unavailable'
+    )
+    expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(0)
+    expect(container.querySelector('[aria-label="Enable Python 3.12 (managed)"]')).toBeNull()
+  })
+
+  it('keeps the last complete registry snapshot when Recheck fails', async () => {
+    await render()
+    expect(container.querySelector('[data-testid="runtime-packages-count"]')?.textContent).toBe('2')
+    listEnvironments.mockRejectedValueOnce(new Error('runtime recheck unavailable'))
+
+    const recheck = Array.from(container.querySelectorAll('button')).find((button) =>
+      /recheck/i.test(button.textContent ?? '')
+    )
+    await click(recheck ?? null)
+
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
+      'runtime recheck unavailable'
+    )
+    expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(4)
+    expect(container.textContent).toContain('System Python')
+    expect(container.querySelector('[data-testid="runtime-packages-count"]')?.textContent).toBe('2')
+  })
+
   it('renders a card per detected env with version and interpreter path', async () => {
     await render()
     const text = container.textContent ?? ''
@@ -238,6 +310,20 @@ describe('RuntimesPanel', () => {
     await click(managedToggle)
     expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
       'Cannot disable the last enabled runtime'
+    )
+  })
+
+  it('does not disable an enabled runtime when its live usage cannot be checked', async () => {
+    describeUsage.mockRejectedValueOnce(new Error('usage query unavailable'))
+    await render()
+    const managedToggle = container.querySelector('[aria-label="Enable Python 3.12 (managed)"]')
+
+    await click(managedToggle)
+
+    expect(setEnvironmentEnabled).not.toHaveBeenCalled()
+    expect(managedToggle?.getAttribute('data-state')).toBe('checked')
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
+      'Could not check whether that runtime is in use, so it was not disabled.'
     )
   })
 

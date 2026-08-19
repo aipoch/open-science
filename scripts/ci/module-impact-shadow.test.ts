@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { classifyChanges } from './classify-pr-changes.mjs'
@@ -8,6 +11,10 @@ import {
   runModuleImpactShadowCli
 } from './module-impact-shadow.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
+
+const changeImpactManifest = JSON.parse(
+  readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8')
+) as { laneOrder: string[] }
 
 const manifestOnlyGraph = {
   status: 'unavailable-manifest-only',
@@ -99,8 +106,23 @@ describe('module impact shadow', () => {
 
     expect(report.authoritative.mode).toBe(authoritativeMode)
     expect(report.shadow.mode).toBe('full')
-    expect(report.comparison.requiredLanes).toHaveLength(18)
+    expect(report.comparison.requiredLanes).toHaveLength(changeImpactManifest.laneOrder.length)
     expect(report.comparison.coverage).toBe(authoritativeMode === 'full' ? 'covered' : 'gap')
+  })
+
+  it('owns locale catalog edits as a selective i18n module instead of an unknown full plan', () => {
+    const report = reportFor([{ path: 'src/renderer/src/locales/ja.json', status: 'modified' }])
+
+    expect(report.authoritative.mode).toBe('selective')
+    expect(report.shadow).toMatchObject({
+      mode: 'selective',
+      modules: ['i18n_catalog']
+    })
+    expect(report.shadow.testFiles).toEqual(['src/renderer/src/i18n/resources.test.ts'])
+    expect(report.comparison.requiredLanes).toContain('i18n')
+    expect(report.comparison.selectedLanes).toContain('i18n')
+    expect(report.comparison.missingLanes).toEqual([])
+    expect(report.comparison.coverage).toBe('covered')
   })
 
   it('keeps slash-based macOS and Linux fixtures portable and handles no diff', () => {

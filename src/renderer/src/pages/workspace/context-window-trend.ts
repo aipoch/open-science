@@ -1,8 +1,11 @@
-import type { AcpContextWindowSample } from '../../../../shared/acp'
+import {
+  ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
+  type AcpContextWindowSample
+} from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { ChatSession } from '@/stores/session-store'
 
-type ContextWindowTrendSession = Pick<ChatSession, 'conversationGraph' | 'messages'>
+type ContextWindowTrendSession = Pick<ChatSession, 'activities' | 'conversationGraph' | 'messages'>
 
 export type ContextWindowTrendPoint = Readonly<{
   runNumber: number
@@ -12,6 +15,7 @@ export type ContextWindowTrendPoint = Readonly<{
   sample: AcpContextWindowSample
   runtime?: PersistedRuntimeSegment
   agentName?: string
+  compactedAfter: boolean
 }>
 
 const latestCompletedSample = (
@@ -69,11 +73,32 @@ export const selectContextWindowTrendPoints = (
     })
   })
 
-  return unsorted
+  const points = unsorted
     .sort(
       (left, right) =>
         left.sample.timestamp - right.sample.timestamp ||
         left.sample.id.localeCompare(right.sample.id)
     )
     .map((point, index) => ({ ...point, runNumber: index + 1 }))
+
+  const compactedPromptIds = new Set(
+    session.activities
+      ?.filter(
+        (activity) =>
+          activity.providerToolName === ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME &&
+          activity.status === 'completed' &&
+          activity.title === 'Context compacted' &&
+          activity.promptMessageId
+      )
+      .map((activity) => activity.promptMessageId as string) ?? []
+  )
+  const lastPointByPromptId = new Map<string, number>()
+  points.forEach((point, index) => lastPointByPromptId.set(point.promptMessageId, index))
+
+  return points.map((point, index) => ({
+    ...point,
+    compactedAfter:
+      compactedPromptIds.has(point.promptMessageId) &&
+      lastPointByPromptId.get(point.promptMessageId) === index
+  }))
 }

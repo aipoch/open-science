@@ -37,7 +37,9 @@ type Workflow = {
     push?: { branches?: string[]; tags?: string[] }
     schedule?: Array<{ cron: string }>
     workflow_run?: { workflows?: string[]; types?: string[] }
-    workflow_call?: unknown
+    workflow_call?: {
+      inputs?: Record<string, { default?: unknown; description?: string; type?: string }>
+    }
     workflow_dispatch?: unknown
   }
 }
@@ -119,7 +121,8 @@ describe('post-merge Windows validation', () => {
     expect(prepareMacSigning.run).toContain('-k "$keychain_password"')
     expect(prepareMacSigning.run).toContain("grep -q 'Developer ID Application:'")
     expect(packageStep.env).toEqual({
-      CSC_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}'
+      CSC_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}',
+      NODE_OPTIONS: '--max-old-space-size=8192'
     })
     expect(packageStep.run).toContain(
       'if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then'
@@ -143,6 +146,54 @@ describe('post-merge Windows validation', () => {
     expect(packageStep.run).not.toContain('publisherName')
   })
 
+  it('provides an isolated Windows-only SignPath dry-run', () => {
+    const build = readWorkflow('build.yml')
+    const inputs = build.on?.workflow_call?.inputs
+    const workflow = readWorkflow('signpath-test.yml')
+    const sign = workflow.jobs['sign-installer']
+    const uploadUnsigned = findStep(sign, 'Upload raw installer for SignPath')
+    const submit = findStep(sign, 'Submit SignPath test signing request')
+    const verify = findStep(sign, 'Verify Authenticode signature was added')
+    const uploadSigned = findStep(sign, 'Upload signed installer')
+
+    expect(inputs?.platform_name).toMatchObject({ type: 'string', default: '' })
+    expect(workflow.on).toEqual({ workflow_dispatch: null })
+    expect(workflow).toMatchObject({ permissions: { actions: 'read', contents: 'read' } })
+    expect(workflow.jobs.build).toMatchObject({
+      uses: './.github/workflows/build.yml',
+      with: { platform_name: 'windows-x64', skip_verify: true }
+    })
+    expect(sign).toMatchObject({ needs: 'build', 'runs-on': 'windows-latest' })
+    expect(findStep(sign, 'Select unsigned NSIS installer').run).toContain('*-win-x64-setup.exe')
+    expect(uploadUnsigned).toMatchObject({
+      id: 'upload-unsigned-installer',
+      uses: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+      with: expect.objectContaining({ archive: false, 'if-no-files-found': 'error' })
+    })
+    expect(submit).toMatchObject({
+      uses: 'signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627',
+      with: expect.objectContaining({
+        'api-token': '${{ secrets.SIGNPATH_API_TOKEN }}',
+        'organization-id': '${{ vars.SIGNPATH_ORGANIZATION_ID }}',
+        'project-slug': 'open-science',
+        'signing-policy-slug': 'test-signing',
+        'artifact-configuration-slug': 'windows-installer',
+        'github-artifact-id': '${{ steps.upload-unsigned-installer.outputs.artifact-id }}',
+        'skip-decompress': true,
+        'wait-for-completion': true
+      })
+    })
+    expect(verify.run).toContain('Get-AuthenticodeSignature')
+    expect(verify.run).toContain("$acceptableStatuses = @('Valid', 'NotTrusted')")
+    expect(verify.run).toContain('$signature.Status.ToString() -notin $acceptableStatuses')
+    expect(uploadSigned.with).toMatchObject({
+      name: 'signpath-test-windows-x64',
+      'retention-days': 7,
+      'if-no-files-found': 'error'
+    })
+    expect(workflow.jobs).not.toHaveProperty('publish')
+  })
+
   it('separates immutable builds from blocking package smoke and advisory regressions', () => {
     const setup = readWorkflow('build.yml').jobs.setup.steps?.find(({ id }) => id === 'set')
     const build = readWorkflow('build.yml').jobs.build
@@ -164,8 +215,13 @@ describe('post-merge Windows validation', () => {
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
     const refreshedMacosEvidence = findStep(notarize, 'Refresh macOS certification evidence')
 
+    expect(setup.env).toEqual({ PLATFORM_NAME: '${{ inputs.platform_name }}' })
     expect(setup.run).toContain('"name":"macos-arm64","os":"macos-26"')
     expect(setup.run).toContain('"name":"macos-x64","os":"macos-26-intel"')
+    expect(setup.run).toContain(
+      'include=$(jq -c --arg name "$PLATFORM_NAME" \'[.[] | select(.name == $name)]\' <<<"$include")'
+    )
+    expect(setup.run).toContain("unknown platform_name '$PLATFORM_NAME'")
     expect(build.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
       "${{ matrix.platform == 'mac' && '12.0' || '' }}"
     )
@@ -261,6 +317,7 @@ describe('post-merge Windows validation', () => {
     expect(nightly.jobs.build.uses).toBe('./.github/workflows/build.yml')
     expect(nightly.jobs['package-smoke']).toMatchObject({
       needs: 'build',
+      if: "inputs.dry_run != 'macos-x64'",
       uses: './.github/workflows/package-smoke.yml'
     })
     expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
@@ -291,6 +348,7 @@ describe('post-merge Windows validation', () => {
 
     expect(verifyTypecheck.run).toBe('npm run typecheck')
     expect(verifyTypecheck.env).toEqual({ NODE_OPTIONS: '--max-old-space-size=4096' })
+    expect(build.env).toMatchObject({ NODE_OPTIONS: '--max-old-space-size=8192' })
     expect(commands).toContain('npm run build:e2e')
     expect(commands).toContain('npm run build:web')
     expect(commands).not.toContain('npm run build')
@@ -522,6 +580,7 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
       'notarize-mac.yml',
       'package-smoke.yml',
       'release.yml',
+      'signpath-test.yml',
       'mirror-to-website.yml',
       'windows-upgrade-smoke.yml'
     ]) {

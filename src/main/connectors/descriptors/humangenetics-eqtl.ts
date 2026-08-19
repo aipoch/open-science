@@ -106,7 +106,7 @@ function leanAssociation(r: EqtlAssociation): Record<string, unknown> {
 export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
   {
     id: 'eqtl_list_datasets',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'List eQTL Catalogue datasets (one dataset = one study x tissue/cell type x quantification method). Args: study_label (exact study name, e.g. GTEx, Alasoo_2018, BLUEPRINT); tissue_label (exact tissue/cell-type label, e.g. liver, macrophage, LCL — lowercase in the catalogue); quant_method (ge=gene expression, exon, tx, txrev, microarray, leafcutter, aptamer=plasma protein; for conventional gene-level eQTLs use ge); max_records (cap default 1000; the full unfiltered catalogue is ~760 datasets). Returns {filters, returned, truncated, datasets} sorted by dataset_id; each {dataset_id (QTD...), study_id (QTS...), study_label, sample_group, tissue_id, tissue_label, condition_label, quant_method, sample_size}. The API publishes no total count; truncated=false proves the listing is complete.',
     input: {
@@ -121,7 +121,7 @@ export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
     returns:
       '{filters (applied filter object), returned, truncated (returned == cap; a short page proves the listing complete), datasets:[{dataset_id, study_id, study_label, sample_group, tissue_id, tissue_label, condition_label, quant_method, sample_size}]} sorted by dataset_id.',
     example:
-      'const result = await host.mcp("human_genetics", "eqtl_list_datasets", {"study_label": "Alasoo_2018", "quant_method": "ge"})',
+      'const result = await host.mcp("human-genetics", "eqtl_list_datasets", {"study_label": "Alasoo_2018", "quant_method": "ge"})',
     run: async (ctx, a) => {
       const maxRecords = clampInt(a.max_records, 1000, 1, MAX_SIZE)
       const filters: Record<string, string> = {}
@@ -149,7 +149,7 @@ export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'eqtl_associations',
-    connector: 'human_genetics',
+    connector: 'human-genetics',
     description:
       'Molecular-QTL association rows from one eQTL Catalogue dataset, filtered by gene, variant or region. Args: dataset_id (QTD accession from eqtl_list_datasets, e.g. QTD000266); gene_id (unversioned Ensembl gene ID e.g. ENSG00000130203 APOE; at least one of gene_id/rsid/variant/pos is required); rsid (dbSNP rsID); variant (eQTL Catalogue variant string chr19_44908822_C_T, chr-prefixed underscore GRCh38); pos (genomic window chromosome:start-end GRCh38 no chr prefix, e.g. 19:44900000-44920000); nlog10p_min (significance floor: only rows with -log10(p) >= this, applied upstream); max_records (cap default 1000 = one page). Returns {dataset_id, filters, returned, truncated, associations}; each row {molecular_trait_id, gene_id, variant, rsid, chromosome, position, ref, alt, type, beta, se, pvalue, nlog10p, maf, ac, an, r2, median_tpm}. Rows cover ONLY the cis window the dataset tested (±1 Mb of each gene); empty means "not tested / not present". No total count is published: truncated=false proves exhaustion, truncated=true means the cap was hit.',
     input: {
@@ -169,7 +169,7 @@ export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
     returns:
       '{dataset_id, filters (applied filter object incl. nlog10p_min), returned, truncated (returned == cap), associations:[{molecular_trait_id, gene_id, variant, rsid, chromosome, position, ref, alt, type, beta, se, pvalue, nlog10p, maf, ac, an, r2, median_tpm}]}.',
     example:
-      'const result = await host.mcp("human_genetics", "eqtl_associations", {"dataset_id": "QTD000266", "gene_id": "ENSG00000130203", "nlog10p_min": 2})',
+      'const result = await host.mcp("human-genetics", "eqtl_associations", {"dataset_id": "QTD000266", "gene_id": "ENSG00000130203", "nlog10p_min": 2})',
     run: async (ctx, a) => {
       const datasetId = String(a.dataset_id)
       const geneId = a.gene_id != null && String(a.gene_id) !== '' ? String(a.gene_id) : undefined

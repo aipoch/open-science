@@ -108,6 +108,12 @@ type PendingSessionDrain = {
   resolve: () => void
 }
 
+type PendingResumeReconciliation = {
+  runtime: AcpRuntime
+  response: AcpCreateSessionResponse
+  specialistId: string | undefined
+}
+
 type RootAdmissionLease = {
   release: () => void
 }
@@ -149,9 +155,14 @@ class AcpRuntimeCoordinator {
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
   private promptDispatchAdmissionGuard?: PromptAdmissionGuard
+  private sessionResumeObserver?: (
+    request: AcpResumeSessionRequest,
+    response: AcpCreateSessionResponse
+  ) => Promise<void>
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
+  private readonly pendingResumeReconciliations = new Map<string, PendingResumeReconciliation>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
   // The latest user-originated prompt is retained only long enough to construct an app-owned
   // continuation for an approved handoff. The continuation keeps its provenance context but never
@@ -468,6 +479,21 @@ class AcpRuntimeCoordinator {
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     const owner = this.findRuntimeForSession(request.sessionId)
+    const pendingReconciliation = this.pendingResumeReconciliations.get(request.sessionId)
+    if (
+      pendingReconciliation &&
+      pendingReconciliation.runtime === owner &&
+      request.specialistBindingPending === true &&
+      request.specialistId === pendingReconciliation.specialistId
+    ) {
+      await this.sessionResumeObserver?.(request, pendingReconciliation.response)
+      if (this.pendingResumeReconciliations.get(request.sessionId) === pendingReconciliation) {
+        this.pendingResumeReconciliations.delete(request.sessionId)
+      }
+      await this.delegatedWork?.wakeMessages?.(pendingReconciliation.response.sessionId)
+      return pendingReconciliation.response
+    }
+    if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime()
     const transfersOwnership = runtime !== owner
 
@@ -523,6 +549,18 @@ class AcpRuntimeCoordinator {
     this.sessionConnectionStatuses.set(response.sessionId, runtime.getSnapshot().status)
     this.lastRuntime = runtime
     if (transfersOwnership) this.callbacks.onStateChanged?.(this.getSnapshot())
+    try {
+      await this.sessionResumeObserver?.(request, response)
+    } catch (error) {
+      if (request.specialistBindingPending === true) {
+        this.pendingResumeReconciliations.set(request.sessionId, {
+          runtime,
+          response,
+          specialistId: request.specialistId
+        })
+      }
+      throw error
+    }
     await this.delegatedWork?.wakeMessages?.(response.sessionId)
     return response
   }
@@ -653,8 +691,47 @@ class AcpRuntimeCoordinator {
     this.promptDispatchAdmissionGuard = guard
   }
 
+  setSessionResumeObserver(
+    observer: (
+      request: AcpResumeSessionRequest,
+      response: AcpCreateSessionResponse
+    ) => Promise<void>
+  ): void {
+    this.sessionResumeObserver = observer
+  }
+
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
     return this.sendObservedPrompt(request)
+  }
+
+  // Interactive prompt dispatch is an admission RPC, while the authoritative turn lifecycle is
+  // streamed through runtime state/events. Settle the RPC as soon as the provider accepts the
+  // prompt so a long-running turn (or its terminal maintenance) does not retain an Electron reply
+  // channel until completion.
+  startPrompt(request: AcpPromptRequest): Promise<void> {
+    let settled = false
+    let resolve!: () => void
+    let reject!: (error: unknown) => void
+    const accepted = new Promise<void>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
+    const settleAccepted = (): void => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    const settleRejected = (error: unknown): void => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
+
+    void this.sendPromptObserved(request, settleAccepted).then(
+      () => settleRejected(new Error('ACP prompt ended before provider acceptance.')),
+      settleRejected
+    )
+    return accepted
   }
 
   sendApplicationPrompt(
@@ -958,6 +1035,7 @@ class AcpRuntimeCoordinator {
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
     this.invalidateSessionTurn(request.sessionId)
     this.activePromptRequests.delete(request.sessionId)
+    this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)
     const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
     await this.delegatedWork?.deleteSession(request.sessionId)
@@ -1152,14 +1230,17 @@ class AcpRuntimeCoordinator {
             ? { previousFrameworkId: session.previousFrameworkId }
             : {}),
           ...(session.previousBackendId ? { previousBackendId: session.previousBackendId } : {}),
+          ...(session.specialistId ? { specialistId: session.specialistId } : {}),
+          ...(session.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
           ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
           ...(session.providerContinuityToken
             ? { providerContinuityToken: session.providerContinuityToken }
             : {})
         }
-        resumeInFlight = runtime.resumeSession(resumeRequest).then((response) => {
+        resumeInFlight = runtime.resumeSession(resumeRequest).then(async (response) => {
           this.sessionRuntimes.set(response.sessionId, runtime)
           this.lastRuntime = runtime
+          await this.sessionResumeObserver?.(resumeRequest, response)
           return Boolean(response.contextReset)
         })
       }
@@ -1177,6 +1258,7 @@ class AcpRuntimeCoordinator {
       sendPrompt: async (request) => {
         this.assertPromptAdmissionOpen()
         const contextReset = await ensureActivitySession(request.sessionId)
+        await this.promptAdmissionGuard?.(request.sessionId)
         const historyPreamble = options.session?.historyPreamble
         return this.dispatchPrompt(
           contextReset
@@ -1196,6 +1278,7 @@ class AcpRuntimeCoordinator {
         this.linearizeRootAdmission(request.sessionId, async () => {
           this.assertPromptAdmissionOpen()
           const contextReset = await ensureActivitySession(request.sessionId)
+          await this.promptAdmissionGuard?.(request.sessionId)
           const historyPreamble = options.session?.historyPreamble
           return this.dispatchPrompt(
             contextReset
@@ -1440,6 +1523,7 @@ class AcpRuntimeCoordinator {
       if (owner !== runtime || attached.has(sessionId)) continue
 
       this.sessionRuntimes.delete(sessionId)
+      this.pendingResumeReconciliations.delete(sessionId)
       if (snapshot.status === 'closed' || snapshot.status === 'error') {
         this.sessionConnectionStatuses.set(sessionId, snapshot.status)
       } else {
@@ -1473,6 +1557,9 @@ class AcpRuntimeCoordinator {
     }
     for (const [sessionId, incoming] of this.pendingSessionAdoptions) {
       if (incoming === runtime) this.pendingSessionAdoptions.delete(sessionId)
+    }
+    for (const [sessionId, pending] of this.pendingResumeReconciliations) {
+      if (pending.runtime === runtime) this.pendingResumeReconciliations.delete(sessionId)
     }
     for (const [sessionId, pending] of this.pendingSessionDrains) {
       if (pending.runtime !== runtime) continue
@@ -1612,6 +1699,7 @@ class AcpRuntimeCoordinator {
     this.retiredRuntimes.clear()
     this.sessionRuntimes.clear()
     this.pendingSessionAdoptions.clear()
+    this.pendingResumeReconciliations.clear()
     for (const pending of this.pendingSessionDrains.values()) pending.resolve()
     this.pendingSessionDrains.clear()
     this.sessionConnectionStatuses.clear()

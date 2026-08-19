@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 import type { ExportNotebookAllResult } from '../../shared/notebook'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 export type SaveIpynbAllTarget = {
   kernel: 'python' | 'r'
@@ -130,7 +131,8 @@ const targetFor = (filePath: string, targets: SaveIpynbAllTarget[]): SaveIpynbAl
 
 export const saveIpynbAll = async (
   files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>,
-  deps?: SaveIpynbAllDeps
+  deps?: SaveIpynbAllDeps,
+  translate: NativeTranslator = englishNativeTranslator
 ): Promise<ExportNotebookAllResult> => {
   if (files.length === 0) return { saved: false }
 
@@ -161,7 +163,7 @@ export const saveIpynbAll = async (
     } satisfies SaveIpynbAllDeps)
 
   const { canceled, filePaths } = await resolvedDeps.electron.dialog.showOpenDialog({
-    title: 'Export notebooks by kernel',
+    title: translate('Export notebooks by kernel'),
     defaultPath: resolvedDeps.electron.app.getPath('downloads'),
     properties: ['openDirectory', 'createDirectory']
   })
@@ -175,10 +177,15 @@ export const saveIpynbAll = async (
     const listing = conflicts.map((c) => c.name).join(', ')
     const { response } = await resolvedDeps.electron.dialog.showMessageBox({
       type: 'question',
-      title: 'Overwrite existing notebooks?',
-      message: `${conflicts.length} notebook${conflicts.length === 1 ? '' : 's'} already exist in the chosen directory.`,
+      title: translate('Overwrite existing notebooks?'),
+      message: translate(
+        conflicts.length === 1
+          ? '{{count}} notebook already exists in the chosen directory.'
+          : '{{count}} notebooks already exist in the chosen directory.',
+        { count: conflicts.length }
+      ),
       detail: listing,
-      buttons: ['Overwrite', 'Cancel'],
+      buttons: [translate('Overwrite'), translate('Cancel')],
       defaultId: 1,
       cancelId: 1
     })

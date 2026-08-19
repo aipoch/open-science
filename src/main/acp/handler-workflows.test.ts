@@ -6,7 +6,9 @@ import {
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
 import {
+  createSessionFile,
   materializeSessionConversationGraph,
+  normalizeSessionFile,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
@@ -79,8 +81,9 @@ const createHarness = (
   saveAsSkillAdmission?: Parameters<typeof createAcpHandlerWorkflows>[5]
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
+  startPrompt: ReturnType<typeof vi.fn>
   startContinuation: ReturnType<typeof vi.fn>
-  startContinuationWhen: ReturnType<typeof vi.fn>
+  startContinuationWhenDispatchAdmitted: ReturnType<typeof vi.fn>
   hasLiveSession: ReturnType<typeof vi.fn>
   captureSessionBackend: ReturnType<typeof vi.fn>
   session: PersistedChatSession
@@ -95,6 +98,7 @@ const createHarness = (
   const session = createSession()
   mutate?.(session)
   prepareControlTurn(session)
+  const startPrompt = vi.fn(async (request: unknown) => void request)
   const startContinuation = vi.fn(async (request: unknown) => void request)
   const hasLiveSession = vi.fn(() => true)
   const captureSessionBackend = vi.fn(
@@ -112,20 +116,22 @@ const createHarness = (
       }) as never
   )
   const snapshot = { status: 'connected' } as never
-  const startContinuationWhen = vi.fn(async (request: unknown, validate: () => Promise<void>) => {
-    await validate()
-    return startContinuation(request)
-  })
+  const startContinuationWhenDispatchAdmitted = vi.fn(
+    async (request: unknown, validate: () => Promise<void>) => {
+      await validate()
+      return startContinuation(request)
+    }
+  )
   const workflows = createAcpHandlerWorkflows(
     {
       getSnapshot: () => snapshot,
       hasLiveSession,
       captureSessionBackend,
       resumeSession: vi.fn(),
-      sendPrompt: vi.fn(),
+      startPrompt,
       getLatestUserPrompt: vi.fn(),
       startContinuation,
-      startContinuationWhen
+      startContinuationWhenDispatchAdmitted
     },
     { create: vi.fn() } as never,
     taskNotifications,
@@ -137,8 +143,9 @@ const createHarness = (
   const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
   return {
     workflows,
+    startPrompt,
     startContinuation,
-    startContinuationWhen,
+    startContinuationWhenDispatchAdmitted,
     hasLiveSession,
     captureSessionBackend,
     session,
@@ -152,7 +159,44 @@ const createHarness = (
   }
 }
 
+describe('ACP send prompt workflow', () => {
+  it('returns the current snapshot after provider admission', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.workflows.sendPrompt({ sessionId: 'session-1', text: 'Research this.' })
+    ).resolves.toEqual({ status: 'connected' })
+
+    expect(harness.startPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Research this.'
+    })
+  })
+
+  it('rolls back notification tracking when provider admission fails', async () => {
+    const trackPrompt = vi.fn(() => ({ token: 9 }))
+    const untrackPrompt = vi.fn()
+    const harness = createHarness(undefined, undefined, { trackPrompt, untrackPrompt })
+    const failure = new Error('Provider rejected prompt admission')
+    harness.startPrompt.mockRejectedValueOnce(failure)
+
+    await expect(
+      harness.workflows.sendPrompt({ sessionId: 'session-1', text: 'Research this.' })
+    ).rejects.toBe(failure)
+
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 9 })
+  })
+})
+
 describe('ACP Save as skill workflow', () => {
+  it('dispatches through the Session admission already held by the workflow', async () => {
+    const harness = createHarness()
+
+    await harness.workflows.saveAsSkill(harness.request)
+
+    expect(harness.startContinuationWhenDispatchAdmitted).toHaveBeenCalledOnce()
+  })
+
   it('holds archive admission until the hidden turn is accepted', async () => {
     let admissionActive = false
     const admitted = vi.fn()
@@ -209,6 +253,36 @@ describe('ACP Save as skill workflow', () => {
       })
     )
     expect(request).not.toHaveProperty('forcedSkillIds')
+  })
+
+  it('retains history images for a text-only model when the Vision relay is available', async () => {
+    const harness = createHarness((session) => {
+      const images = [
+        {
+          id: 'history-image',
+          mimeType: 'image/png' as const,
+          data: Buffer.from('history-image').toString('base64'),
+          byteLength: Buffer.byteLength('history-image')
+        }
+      ]
+      session.messages[0].images = images
+      session.conversationGraph!.messages[0].images = structuredClone(images)
+    })
+    harness.captureSessionBackend.mockReturnValue({
+      framework: { id: 'claude-code' },
+      modelRoute: 'claude-anthropic',
+      context: { window: 100_000, supportsImageInput: false }
+    })
+
+    await harness.workflows.saveAsSkill({ ...harness.request, supportsImageRelay: true })
+
+    expect(harness.startContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeFallback: expect.objectContaining({
+          historyImages: [expect.objectContaining({ mimeType: 'image/png', byteLength: 13 })]
+        })
+      })
+    )
   })
 
   it('rejects at provider admission while Side chat owns the parent Session', async () => {
@@ -321,10 +395,69 @@ describe('ACP Save as skill workflow', () => {
     )
   })
 
-  it('rejects pending full replay without a fresh durable Runtime Segment', async () => {
+  it.each<readonly [string, AgentFrameworkId, AgentModelRoute]>([
+    ['Claude Code', 'claude-code', 'claude-anthropic'],
+    ['OpenCode', 'opencode', 'opencode-openai'],
+    ['Codex Responses', 'codex', 'codex-responses'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ])(
+    'accepts pending context-reset replay after the prepared control is normalized on read for %s',
+    async (_name, frameworkId, modelRoute) => {
+      const harness = createHarness((session) => {
+        session.agentFrameworkId = frameworkId
+        session.pendingHistoryReplay = { kind: 'all' }
+        session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+          id: 'runtime-segment-after-context-reset',
+          frameworkId,
+          startedAt: 3,
+          forceNew: true
+        })
+      })
+      const normalized = normalizeSessionFile(createSessionFile(harness.session))
+      expect(normalized).toMatchObject({
+        status: 'error',
+        pendingHistoryReplay: { kind: 'all' },
+        resumeRecovery: {
+          kind: 'resume-required',
+          promptMessageId: harness.request.promptMessageId
+        }
+      })
+      const normalizedFrame = normalized?.conversationGraph?.frames.find(
+        ({ id }) => id === normalized.conversationGraph?.activeFrameId
+      )
+      const normalizedMessages =
+        normalized?.conversationGraph && normalizedFrame
+          ? resolveMessageBranchPath(normalized.conversationGraph, normalizedFrame.activeBranchId)
+          : []
+      expect(normalizedMessages.slice(-2).map(({ runtimeSegmentId }) => runtimeSegmentId)).toEqual([
+        expect.not.stringMatching('runtime-segment-after-context-reset'),
+        'runtime-segment-after-context-reset'
+      ])
+      Object.assign(harness.session, normalized)
+      harness.captureSessionBackend.mockReturnValue({
+        framework: { id: frameworkId },
+        modelRoute,
+        context: { window: 100_000, supportsImageInput: true }
+      } as never)
+
+      await harness.workflows.saveAsSkill(harness.request)
+
+      expect(harness.startContinuation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contextReset: true,
+          provenanceContext: expect.objectContaining({
+            runtimeSegmentId: 'runtime-segment-after-context-reset'
+          })
+        })
+      )
+    }
+  )
+
+  it('rejects normalized pending full replay without a fresh durable Runtime Segment', async () => {
     const harness = createHarness((session) => {
       session.pendingHistoryReplay = { kind: 'all' }
     })
+    Object.assign(harness.session, normalizeSessionFile(createSessionFile(harness.session)))
 
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'requires a prepared Session'
@@ -332,7 +465,7 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it('rejects pending interrupted-turn replay after a context reset', async () => {
+  it('rejects normalized pending interrupted-turn replay after a context reset', async () => {
     const harness = createHarness((session) => {
       session.pendingHistoryReplay = { kind: 'before-message', messageId: 'prompt-1' }
       session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
@@ -342,6 +475,7 @@ describe('ACP Save as skill workflow', () => {
         forceNew: true
       })
     })
+    Object.assign(harness.session, normalizeSessionFile(createSessionFile(harness.session)))
 
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'requires a prepared Session'
@@ -351,7 +485,7 @@ describe('ACP Save as skill workflow', () => {
 
   it('rejects when the prepared control changes before runtime admission', async () => {
     const harness = createHarness()
-    harness.startContinuationWhen.mockImplementationOnce(
+    harness.startContinuationWhenDispatchAdmitted.mockImplementationOnce(
       async (_request: unknown, validate: () => Promise<void>) => {
         harness.session.activeRun = { promptMessageId: 'newer-prompt', startedAt: 4 }
         await validate()

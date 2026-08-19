@@ -32,7 +32,7 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn().mockResolvedValue(undefined),
-      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     const handlers = createProjectHandlers(repository, deletionCoordinator)
 
@@ -51,14 +51,46 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
-      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     const handlers = createProjectHandlers(repository, deletionCoordinator)
 
     await handlers.list()
 
-    expect(deletionCoordinator.recoverPendingDeletions).toHaveBeenCalledOnce()
+    expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith([])
     expect(repository.list).toHaveBeenCalledOnce()
+  })
+
+  it('keeps unrelated Project CRUD available when another deletion tail fails', async () => {
+    const deletionFailure = new Error('project-1 tail cleanup unavailable')
+    const unrelatedProject = { ...project, id: 'project-2' }
+    const repository = {
+      list: vi.fn().mockResolvedValue([unrelatedProject]),
+      get: vi.fn().mockResolvedValue(unrelatedProject),
+      create: vi.fn().mockResolvedValue(unrelatedProject),
+      update: vi.fn().mockResolvedValue(unrelatedProject)
+    }
+    const deletionCoordinator = {
+      deleteProject: vi.fn(),
+      waitForProjectOperations: vi.fn(async (projectIds: readonly string[]) => {
+        if (projectIds.includes('project-1')) throw deletionFailure
+      })
+    }
+    const handlers = createProjectHandlers(repository, deletionCoordinator)
+
+    await expect(handlers.list()).resolves.toEqual([unrelatedProject])
+    await expect(handlers.get('project-2')).resolves.toBe(unrelatedProject)
+    await expect(handlers.create({ name: 'Other Project' })).resolves.toBe(unrelatedProject)
+    await expect(
+      handlers.update({ id: 'project-2', name: 'Renamed', expectedUpdatedAt: 2 })
+    ).resolves.toBe(unrelatedProject)
+    await expect(handlers.get('project-1')).rejects.toBe(deletionFailure)
+
+    expect(repository.list).toHaveBeenCalledOnce()
+    expect(repository.get).toHaveBeenCalledOnce()
+    expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith([])
+    expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith(['project-2'])
+    expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith(['project-1'])
   })
 
   it('recovers durable deletions before every project read or mutation', async () => {
@@ -80,7 +112,7 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
-      recoverPendingDeletions: vi.fn(async () => {
+      waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
     }
@@ -102,7 +134,7 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
-      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     const handlers = createProjectHandlers(repository, deletionCoordinator)
 

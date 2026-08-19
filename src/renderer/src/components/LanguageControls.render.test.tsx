@@ -57,7 +57,7 @@ describe('LanguageSelect', () => {
 
     // Language names are never translated — a reader stranded in the wrong language must still be
     // able to recognize their own.
-    expect(options).toEqual(['System', 'English', '简体中文', '繁體中文'])
+    expect(options).toEqual(['System', 'English', '简体中文', '繁體中文', '日本語'])
   })
 
   it('switches the interface language and persists the choice', () => {
@@ -85,6 +85,22 @@ describe('LanguageSelect', () => {
     })
 
     expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('界面语言')
+  })
+
+  it('switches to Japanese copy from the language picker', () => {
+    render(<LanguageSelect />)
+    openRadixMenu(container.querySelector('button'))
+
+    const japanese = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
+      option.textContent?.includes('日本語')
+    )
+    clickRadixMenuItem(japanese as HTMLElement)
+
+    expect(useLocaleStore.getState().preference).toBe('ja')
+    expect(useLocaleStore.getState().locale).toBe('ja')
+    expect(i18next.language).toBe('ja')
+    expect(document.documentElement.lang).toBe('ja')
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('表示言語')
   })
 })
 

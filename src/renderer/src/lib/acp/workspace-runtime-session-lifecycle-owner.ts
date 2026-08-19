@@ -105,7 +105,8 @@ const ensureWorkspaceSessionReady = async (
     session.agentBackendId,
     session.specialistId,
     session.providerSessionId,
-    session.providerContinuityToken
+    session.providerContinuityToken,
+    session.specialistBindingPending
   )
   useSessionStore.getState().markResumed(
     session.id,
@@ -227,7 +228,8 @@ const resumeInterruptedWorkspaceSession = async (
       session.agentBackendId,
       session.specialistId,
       session.providerSessionId,
-      session.providerContinuityToken
+      session.providerContinuityToken,
+      session.specialistBindingPending
     )
     // Ownership transfer is complete in the coordinator, but accepted events from the previous
     // runtime generation can still be queued in the renderer. Drain them before starting the

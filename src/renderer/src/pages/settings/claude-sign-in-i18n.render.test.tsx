@@ -89,7 +89,7 @@ describe('ClaudeIsolatedSignInModal copy', () => {
     expect(document.body.textContent).toContain('Opening your browser to sign in…')
 
     switchTo('zh-Hans')
-    expect(document.body.textContent).toContain('粘贴 setup-token 输出的 token')
+    expect(document.body.textContent).toContain('粘贴 setup-token 输出的令牌')
     expect(document.body.textContent).toContain('正在打开浏览器登录…')
   })
 })

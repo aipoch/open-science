@@ -9,7 +9,7 @@ import {
   Plus,
   Trash2
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { SkillSource } from '../../../../shared/settings'
@@ -22,8 +22,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useTagStore } from '@/stores/tag-store'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { SkillDetailView } from './SkillDetailView'
 import { SkillEditor, SkillEditLoader } from './SkillEditor'
@@ -31,8 +33,26 @@ import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
 import { SkillBulkManageView } from './SkillBulkManageView'
-import { SettingsIconAction, SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import {
+  SettingsIconAction,
+  SettingsLoadNotice,
+  SettingsRow,
+  SettingsSection,
+  SettingsToggle
+} from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
+import {
+  resourceScope,
+  specialistsOwningSkill,
+  specialistsUsingSkill,
+  type ResourceScope
+} from './specialist-resource-scope'
+import {
+  ResourceTagBadges,
+  ResourceTagMenu,
+  ResourceTagSummary,
+  TagFilter
+} from './ResourceTagControls'
 
 // The skills panel sub-view, driven by the settings navigation history so each is a breadcrumb page.
 export type SkillsView =
@@ -46,8 +66,9 @@ export type SkillsView =
   | { kind: 'upload' }
 
 type SourceFilter = 'all' | SkillSource
+type ScopeFilter = 'all' | 'main' | 'specialist-only' | 'shared'
 
-const skillExportErrorMessage = (error: unknown): string => {
+const skillOperationErrorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
   return message.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
 }
@@ -61,6 +82,20 @@ const FILTER_LABEL_KEYS = {
   imported: 'Imported',
   personal: 'Personal'
 } as const satisfies Record<SourceFilter, string>
+
+const SCOPE_FILTER_LABEL_KEYS = {
+  all: 'All scopes',
+  main: 'Main',
+  'specialist-only': 'Specialist only',
+  shared: 'Shared with Main'
+} as const satisfies Record<ScopeFilter, string>
+
+const SCOPE_LABEL_KEYS = {
+  'main-only': 'Main only',
+  'specialist-only': 'Specialist only',
+  shared: 'Shared with Main',
+  'not-in-use': 'Not in use'
+} as const satisfies Record<ResourceScope, string>
 
 const SOURCE_GROUPS = [
   {
@@ -103,15 +138,24 @@ const SkillsPanel = ({
   const setConversationSkillImportEnabled = useSettingsStore(
     (state) => state.setConversationSkillImportEnabled
   )
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const projects = useProjectStore((state) => state.projects)
   const [filter, setFilter] = useState<SourceFilter>('all')
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
+  const [specialistFilter, setSpecialistFilter] = useState('all')
+  const [tagFilter, setTagFilter] = useState('all')
+  const tagAssignments = useTagStore((state) => state.assignments)
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
-  const [deleteError, setDeleteError] = useState<string | undefined>()
+  const [deleteError, setDeleteError] = useState<{ id: string; message: string } | undefined>()
   const [exportError, setExportError] = useState<string | undefined>()
   const [exportStatus, setExportStatus] = useState<{ id: string; message: string } | undefined>()
   const [exportingId, setExportingId] = useState<string | undefined>()
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [toggleError, setToggleError] = useState<string | undefined>()
+  const loadRequestRef = useRef(0)
   const canExportSkills = typeof window.api?.settings?.exportSkill === 'function'
   const chatProjectId = useMemo(
     () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
@@ -134,30 +178,113 @@ const SkillsPanel = ({
       if (result.saved) setExportStatus({ id, message: t('Exported {{name}}.', { name }) })
     } catch (error) {
       // Main-process failures arrive already worded; only the fallback is ours to translate.
-      setExportError(skillExportErrorMessage(error) || t('Could not export this Skill.'))
+      setExportError(skillOperationErrorMessage(error) || t('Could not export this Skill.'))
     } finally {
       setExportingId(undefined)
     }
   }
 
+  const loadCatalog = async (): Promise<void> => {
+    const requestId = ++loadRequestRef.current
+    setCatalogState('loading')
+    try {
+      await loadSkills()
+      if (loadRequestRef.current === requestId) setCatalogState('ready')
+    } catch {
+      if (loadRequestRef.current === requestId) setCatalogState('error')
+    }
+  }
+
+  const retryCatalog = (): void => {
+    void loadCatalog()
+  }
+
   useEffect(() => {
-    void loadSkills()
+    const requestId = ++loadRequestRef.current
+    void loadSkills().then(
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('ready')
+      },
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('error')
+      }
+    )
+    return () => {
+      loadRequestRef.current += 1
+    }
   }, [loadSkills])
+
+  useEffect(() => {
+    void loadSpecialists()
+  }, [loadSpecialists])
+
+  const specialistOptions = useMemo(
+    () =>
+      specialistItems
+        .flatMap((item) =>
+          item.kind === 'reviewer'
+            ? []
+            : [{ id: item.id, name: item.displayName?.trim() || item.name }]
+        )
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [specialistItems]
+  )
 
   const visible = useMemo(() => {
     const term = query.trim().toLowerCase()
-    return skills.filter((skill) => {
-      if (filter !== 'all' && skill.source !== filter) return false
-      if (!term) return true
-      return (
-        skill.displayName.toLowerCase().includes(term) ||
-        skill.name.toLowerCase().includes(term) ||
-        skill.description.toLowerCase().includes(term)
+    return skills.flatMap((skill) => {
+      if (filter !== 'all' && skill.source !== filter) return []
+      const usages = specialistsUsingSkill(specialistItems, skill.id)
+      const owners = specialistsOwningSkill(specialistItems, skill.id)
+      const scope = resourceScope(skill.enabled, usages)
+      if (scopeFilter === 'main' && !skill.enabled) return []
+      if (scopeFilter === 'specialist-only' && scope !== 'specialist-only') return []
+      if (scopeFilter === 'shared' && scope !== 'shared') return []
+      if (specialistFilter !== 'all' && !usages.some((usage) => usage.id === specialistFilter)) {
+        return []
+      }
+      if (
+        tagFilter !== 'all' &&
+        !tagAssignments.some(
+          (assignment) =>
+            assignment.tagId === tagFilter &&
+            assignment.resourceType === 'catalog.skill' &&
+            assignment.resourceId === skill.id
+        )
+      ) {
+        return []
+      }
+      if (
+        term &&
+        !(
+          skill.displayName.toLowerCase().includes(term) ||
+          skill.name.toLowerCase().includes(term) ||
+          skill.description.toLowerCase().includes(term)
+        )
       )
+        return []
+      return [{ skill, usages, owners, scope }]
     })
-  }, [skills, filter, query])
+  }, [
+    filter,
+    query,
+    scopeFilter,
+    skills,
+    specialistFilter,
+    specialistItems,
+    tagAssignments,
+    tagFilter
+  ])
   if (view.kind === 'detail') {
-    return <SkillDetailView skillId={view.id} />
+    return (
+      <div>
+        <ResourceTagSummary
+          reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
+          className="px-5 pt-5"
+        />
+        <SkillDetailView key={view.id} skillId={view.id} />
+      </div>
+    )
   }
   if (view.kind === 'create') {
     return (
@@ -178,7 +305,15 @@ const SkillsPanel = ({
     )
   }
   if (view.kind === 'edit') {
-    return <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
+    return (
+      <div>
+        <ResourceTagSummary
+          reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
+          className="px-5 pt-5"
+        />
+        <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
+      </div>
+    )
   }
   if (view.kind === 'import') {
     return <SkillImportView onImported={() => undefined} />
@@ -205,6 +340,28 @@ const SkillsPanel = ({
   }
 
   const groups = SOURCE_GROUPS.filter((group) => filter === 'all' || filter === group.source)
+
+  const toggleSkill = async (id: string, enabled: boolean): Promise<void> => {
+    setToggleError(undefined)
+    try {
+      await setSkillEnabled(id, enabled)
+    } catch {
+      setToggleError(t('Could not save this setting. The previous value was restored.'))
+    }
+  }
+
+  if (skills.length === 0 && catalogState !== 'ready') {
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={catalogState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Skills…')}
+          errorMessage={t('Open Science could not load Skills.')}
+          onRetry={retryCatalog}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="p-5">
@@ -238,7 +395,7 @@ const SkillsPanel = ({
         </SettingsRow>
       </SettingsSection>
 
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
           <SelectTrigger aria-label={t('Filter skills by source')} className="w-36">
             <span>{t(FILTER_LABEL_KEYS[filter])}</span>
@@ -250,6 +407,38 @@ const SkillsPanel = ({
             <SelectItem value="personal">{t('Personal')}</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={scopeFilter} onValueChange={(value) => setScopeFilter(value as ScopeFilter)}>
+          <SelectTrigger aria-label={t('Filter Skills by scope')} className="w-40">
+            <span>{t(SCOPE_FILTER_LABEL_KEYS[scopeFilter])}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(SCOPE_FILTER_LABEL_KEYS) as ScopeFilter[]).map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(SCOPE_FILTER_LABEL_KEYS[value])}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {specialistOptions.length > 0 ? (
+          <Select value={specialistFilter} onValueChange={setSpecialistFilter}>
+            <SelectTrigger aria-label={t('Filter Skills by Specialist')} className="w-48">
+              <span>
+                {specialistFilter === 'all'
+                  ? t('All Specialists')
+                  : specialistOptions.find((item) => item.id === specialistFilter)?.name}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('All Specialists')}</SelectItem>
+              {specialistOptions.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+        <TagFilter resourceType="catalog.skill" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search skills')}
           placeholder={t('Search skills…')}
@@ -323,15 +512,6 @@ const SkillsPanel = ({
         </DropdownMenu>
       </div>
 
-      {deleteError ? (
-        <p
-          role="alert"
-          className="mb-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-        >
-          {deleteError}
-        </p>
-      ) : null}
-
       {exportError ? (
         <p
           role="alert"
@@ -341,9 +521,28 @@ const SkillsPanel = ({
         </p>
       ) : null}
 
+      {toggleError ? (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+        >
+          {toggleError}
+        </p>
+      ) : null}
+
+      {catalogState === 'error' && skills.length > 0 ? (
+        <SettingsLoadNotice
+          state="error"
+          loadingLabel={t('Loading Skills…')}
+          errorMessage={t('Open Science could not load Skills.')}
+          onRetry={retryCatalog}
+          className="mb-3"
+        />
+      ) : null}
+
       <div className="flex flex-col gap-4">
         {groups.map((group) => {
-          const rows = visible.filter((skill) => skill.source === group.source)
+          const rows = visible.filter(({ skill }) => skill.source === group.source)
           const expanded = !collapsed[group.source]
 
           return (
@@ -371,70 +570,138 @@ const SkillsPanel = ({
               {expanded ? (
                 rows.length > 0 ? (
                   <ul className="mt-2 flex flex-col divide-y divide-border">
-                    {rows.map((skill) => (
-                      <li
-                        key={skill.id}
-                        data-slot="settings-list-row"
-                        className="flex min-h-14 items-center gap-2 py-2.5"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <span className="block truncate text-sm text-foreground">
-                            {skill.displayName}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {skill.description}
-                          </span>
-                        </button>
-                        {exportStatus?.id === skill.id ? (
-                          <span role="status" className="shrink-0 text-xs text-muted-foreground">
-                            {exportStatus.message}
-                          </span>
-                        ) : null}
-                        {skill.source !== 'featured' && canExportSkills ? (
-                          <SettingsIconAction
-                            label={t('Export {{name}}', { name: skill.displayName })}
-                            icon={Download}
-                            disabled={exportingId !== undefined}
-                            onClick={() => void exportSkill(skill.id, skill.displayName)}
-                          />
-                        ) : null}
-                        {skill.source === 'personal' ? (
-                          <SettingsIconAction
-                            label={t('Edit {{name}}', { name: skill.displayName })}
-                            icon={Pencil}
-                            onClick={() => onNavigate({ kind: 'edit', id: skill.id })}
-                          />
-                        ) : null}
-                        {skill.source !== 'featured' ? (
-                          <SettingsIconAction
-                            label={t('Delete {{name}}', { name: skill.displayName })}
-                            icon={Trash2}
-                            onClick={() => {
-                              setDeleteError(undefined)
-                              void deleteSkill(skill.id).catch((error) =>
-                                setDeleteError(
-                                  error instanceof Error
-                                    ? error.message
-                                    : t('This Skill is protected and cannot be deleted.')
-                                )
+                    {rows.map(({ skill, usages, owners, scope }) => {
+                      const usageLabel =
+                        usages.length === 1
+                          ? usages[0].name
+                          : usages.length === 2
+                            ? t('{{name}} + 1 Specialist', { name: usages[0].name })
+                            : usages.length > 2
+                              ? t('Used by {{count}} Specialists', { count: usages.length })
+                              : undefined
+                      const deleteBlockedReason =
+                        owners.length === 1
+                          ? t(
+                              'Owned by {{name}}. Delete this Skill when deleting that Specialist.',
+                              { name: owners[0].name }
+                            )
+                          : owners.length > 1
+                            ? t(
+                                'Owned by {{count}} Specialists. Delete this Skill when deleting its final owner.',
+                                { count: owners.length }
                               )
-                            }}
-                            danger
-                          />
-                        ) : null}
-                        <SettingsToggle
-                          enabled={skill.enabled}
-                          aria-label={t('Toggle {{name}}', { name: skill.displayName })}
-                          onToggle={() =>
-                            void setSkillEnabled(skill.id, !skill.enabled).catch(() => undefined)
-                          }
-                        />
-                      </li>
-                    ))}
+                            : usages.length === 1
+                              ? t(
+                                  'Used by {{name}}. Remove this Skill from that Specialist before deleting it.',
+                                  { name: usages[0].name }
+                                )
+                              : usages.length > 1
+                                ? t(
+                                    'Used by {{count}} Specialists. Remove this Skill from them before deleting it.',
+                                    { count: usages.length }
+                                  )
+                                : undefined
+                      return (
+                        <li
+                          key={skill.id}
+                          data-slot="settings-list-row"
+                          className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <span className="block truncate text-sm text-foreground">
+                              {skill.displayName}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {skill.description}
+                            </span>
+                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                              <span className="min-w-0 truncate text-xs text-muted-foreground">
+                                {usageLabel ? `${usageLabel} · ` : ''}
+                                {t(SCOPE_LABEL_KEYS[scope])}
+                              </span>
+                              <ResourceTagBadges
+                                reference={{
+                                  resourceType: 'catalog.skill',
+                                  resourceId: skill.id
+                                }}
+                              />
+                            </div>
+                          </button>
+                          {exportStatus?.id === skill.id ? (
+                            <span role="status" className="shrink-0 text-xs text-muted-foreground">
+                              {exportStatus.message}
+                            </span>
+                          ) : null}
+                          {skill.source !== 'featured' && canExportSkills ? (
+                            <SettingsIconAction
+                              label={t('Export {{name}}', { name: skill.displayName })}
+                              icon={Download}
+                              disabled={exportingId !== undefined}
+                              onClick={() => void exportSkill(skill.id, skill.displayName)}
+                            />
+                          ) : null}
+                          {skill.source === 'personal' ? (
+                            <SettingsIconAction
+                              label={t('Edit {{name}}', { name: skill.displayName })}
+                              icon={Pencil}
+                              onClick={() => onNavigate({ kind: 'edit', id: skill.id })}
+                            />
+                          ) : null}
+                          {skill.source !== 'featured' ? (
+                            <SettingsIconAction
+                              label={t('Delete {{name}}', { name: skill.displayName })}
+                              icon={Trash2}
+                              tooltip={deleteBlockedReason}
+                              aria-disabled={deleteBlockedReason ? true : undefined}
+                              className={
+                                deleteBlockedReason
+                                  ? 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground'
+                                  : undefined
+                              }
+                              onClick={
+                                deleteBlockedReason
+                                  ? undefined
+                                  : () => {
+                                      setDeleteError(undefined)
+                                      void deleteSkill(skill.id).catch((error) =>
+                                        setDeleteError({
+                                          id: skill.id,
+                                          message:
+                                            skillOperationErrorMessage(error) ||
+                                            t('This Skill is protected and cannot be deleted.')
+                                        })
+                                      )
+                                    }
+                              }
+                              danger
+                            />
+                          ) : null}
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
+                            <ResourceTagMenu
+                              reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
+                            />
+                            <SettingsToggle
+                              enabled={skill.enabled}
+                              aria-label={t('Toggle {{name}}', { name: skill.displayName })}
+                              onToggle={() => void toggleSkill(skill.id, !skill.enabled)}
+                            />
+                          </div>
+                          {deleteError?.id === skill.id ? (
+                            <p
+                              role="alert"
+                              className="basis-full rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+                            >
+                              {deleteError.message}
+                            </p>
+                          ) : null}
+                        </li>
+                      )
+                    })}
                   </ul>
                 ) : (
                   <p className="mt-2 py-2 text-xs text-muted-foreground">

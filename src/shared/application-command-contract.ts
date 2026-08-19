@@ -2,7 +2,8 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'invalid-command-arguments',
   'invalid-command-result',
   'command-unavailable',
-  'command-failed'
+  'command-failed',
+  'session-revision-conflict'
 ] as const
 
 export type ApplicationCommandErrorCode = (typeof APPLICATION_COMMAND_ERROR_CODES)[number]
@@ -23,6 +24,13 @@ export type ApplicationCommandContract<Args extends readonly unknown[], Result> 
   args: RuntimeCodec<Args>
   result: RuntimeCodec<Result>
 }>
+
+// Domain modules compose runtime-validated command contracts with this helper so arg/result codecs
+// stay colocated with the shared domain types they parse.
+export const defineApplicationCommandContract = <Args extends readonly unknown[], Result>(
+  args: ApplicationCommandContract<Args, Result>['args'],
+  result: ApplicationCommandContract<Args, Result>['result']
+): ApplicationCommandContract<Args, Result> => Object.freeze({ args, result })
 
 export type ApplicationCommandErrorEnvelope = Readonly<{
   code: ApplicationCommandErrorCode

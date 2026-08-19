@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
+import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
 import { ComputeHostProfileOwner, parseProbeOutput } from './compute-host-profile-owner'
 import type { ComputeHostRepository } from './repository'
-import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
+import type { SshRunner } from './ssh-runner'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,17 +29,22 @@ const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   ...overrides
 })
 
-// A fake target returned by the real resolveSshTarget helper — tests bypass that step by mocking the
-// entire runner (which already has the target baked in).
-const fakeTarget: ResolvedSshTarget = {
-  sshBinary: '/usr/bin/ssh',
-  host: 'biowulf.nih.gov',
-  extraArgs: ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
-}
-
-// Minimal fake runner — always resolves with a success result by default.
-const makeFakeRunner = (result: Awaited<ReturnType<SshRunner['run']>>): SshRunner => ({
-  run: vi.fn(() => Promise.resolve(result))
+// Public Broker-seam fake — transport resolution and authentication selection stay outside these
+// application-owner tests.
+const makeFakeRunner = (
+  result: Awaited<ReturnType<SshRunner['run']>>
+): ComputeConnectionBrokerAcquirer => ({
+  acquire: vi.fn(async () => ({
+    run: vi.fn(async () => result),
+    upload: vi.fn(async () => undefined),
+    download: vi.fn(async () => ({
+      exitCode: 0,
+      stderr: '',
+      timedOut: false,
+      bytesWritten: 0,
+      exceeded: false
+    }))
+  }))
 })
 
 // Minimal repository double.
@@ -155,19 +161,40 @@ describe('parseProbeOutput', () => {
 })
 
 // ---------------------------------------------------------------------------
-// ComputeHostProfileOwner.probe — integration with fake SshRunner
+// ComputeHostProfileOwner.probe — integration through the public Broker seam
 // ---------------------------------------------------------------------------
 
-// We use vi.mock for resolveSshTarget so the tests don't spawn ssh.
-vi.mock('./ssh-runner', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('./ssh-runner')>()
-  return {
-    ...orig,
-    resolveSshTarget: vi.fn(() => Promise.resolve(fakeTarget))
-  }
-})
-
 describe('ComputeHostProfileOwner.probe', () => {
+  it('binds Probe persistence to the authentication revision it observed', async () => {
+    const observedHost = sampleHost({
+      authentication: {
+        mode: 'password',
+        credentialStatus: 'configured',
+        revision: 7,
+        lastVerifiedAt: undefined
+      }
+    })
+    const { repo, updateProbeResult } = makeRepo(observedHost)
+    const service = new ComputeHostProfileOwner(
+      makeFakeRunner({
+        exitCode: 0,
+        stdout: SLURM_STDOUT,
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }),
+      repo
+    )
+
+    await service.probe(observedHost.providerId)
+
+    expect(updateProbeResult).toHaveBeenCalledWith(
+      observedHost.providerId,
+      expect.objectContaining({ authenticationRevision: 7 }),
+      'scheduler_cluster'
+    )
+  })
+
   it('returns ok:true and persists probeResult + shape on a successful probe', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
@@ -181,6 +208,10 @@ describe('ComputeHostProfileOwner.probe', () => {
 
     const result = await service.probe('ssh:biowulf')
 
+    expect(runner.acquire).toHaveBeenCalledWith('ssh:biowulf', {
+      intent: 'probe',
+      interactive: true
+    })
     expect(result.ok).toBe(true)
     expect(result.exitCode).toBe(0)
     expect(result.cpus).toBe(64)
@@ -209,7 +240,8 @@ describe('ComputeHostProfileOwner.probe', () => {
 
     expect(result.ok).toBe(false)
     expect(result.exitCode).toBe(255)
-    expect(result.errorTail).toContain('Connection refused')
+    expect(result.errorTail).toBe('The Compute Host could not be reached.')
+    expect(result.authenticationCode).toBe('host_unreachable')
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: false }),
@@ -237,6 +269,179 @@ describe('ComputeHostProfileOwner.probe', () => {
       expect.objectContaining({ ok: false }),
       'direct_ssh'
     )
+  })
+
+  it('persists a safe failed Probe when password authentication is rejected during execution', async () => {
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => ({
+        run: vi.fn(async () => {
+          throw new ComputeConnectionError('authentication_failed')
+        }),
+        upload: vi.fn(),
+        download: vi.fn()
+      }))
+    }
+    const previousSuccess = sampleHost({
+      probeResult: {
+        ok: true,
+        probedAt: new Date(0).toISOString(),
+        exitCode: 0,
+        errorTail: null
+      }
+    })
+    const { repo, updateProbeResult } = makeRepo(previousSuccess)
+
+    const result = await new ComputeHostProfileOwner(broker, repo).probe('ssh:biowulf')
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorTail: 'Authentication failed. Verify the username and password.',
+      authenticationCode: 'authentication_failed'
+    })
+    expect(updateProbeResult).toHaveBeenCalledWith(
+      'ssh:biowulf',
+      expect.objectContaining({ ok: false, authenticationCode: 'authentication_failed' }),
+      'direct_ssh'
+    )
+  })
+
+  it('preserves the bounded network retry on the same Broker lease', async () => {
+    vi.useFakeTimers()
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 255,
+        stdout: '',
+        stderr: 'ssh: connect to host cluster: No route to host',
+        truncated: false,
+        timedOut: false
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: SLURM_STDOUT,
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => ({
+        run,
+        upload: vi.fn(async () => undefined),
+        download: vi.fn(async () => ({
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 0,
+          exceeded: false
+        }))
+      }))
+    }
+    const { repo } = makeRepo()
+    const service = new ComputeHostProfileOwner(broker, repo)
+
+    const probing = service.probe('ssh:biowulf')
+    await vi.advanceTimersByTimeAsync(3000)
+
+    await expect(probing).resolves.toMatchObject({ ok: true })
+    expect(broker.acquire).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('propagates cancellation without persisting a failed Probe result', async () => {
+    const controller = new AbortController()
+    const run = vi.fn(async () => {
+      controller.signal.throwIfAborted()
+      return {
+        exitCode: 0,
+        stdout: SLURM_STDOUT,
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }
+    })
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => ({
+        run,
+        upload: vi.fn(async () => undefined),
+        download: vi.fn(async () => ({
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 0,
+          exceeded: false
+        }))
+      }))
+    }
+    const { repo, updateProbeResult } = makeRepo()
+    const service = new ComputeHostProfileOwner(broker, repo)
+    controller.abort()
+
+    await expect(service.probe('ssh:biowulf', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    expect(broker.acquire).toHaveBeenCalledWith('ssh:biowulf', {
+      intent: 'probe',
+      interactive: true,
+      signal: controller.signal
+    })
+    expect(updateProbeResult).not.toHaveBeenCalled()
+  })
+
+  it('re-throws an acquire-time AbortError without persisting a failed Probe result', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => {
+        throw controller.signal.reason
+      })
+    }
+    const { repo, updateProbeResult } = makeRepo()
+    const service = new ComputeHostProfileOwner(broker, repo)
+
+    await expect(service.probe('ssh:biowulf', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    expect(updateProbeResult).not.toHaveBeenCalled()
+  })
+
+  it('cancels the retry backoff without a second SSH attempt or failed Probe persistence', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const run = vi.fn(async () => ({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'ssh: connect to host cluster: Network is unreachable',
+      truncated: false,
+      timedOut: false
+    }))
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => ({
+        run,
+        upload: vi.fn(async () => undefined),
+        download: vi.fn(async () => ({
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 0,
+          exceeded: false
+        }))
+      }))
+    }
+    const { repo, updateProbeResult } = makeRepo()
+    const service = new ComputeHostProfileOwner(broker, repo)
+
+    const probing = service.probe('ssh:biowulf', controller.signal)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledOnce()
+    controller.abort()
+    const cancellation = expect(probing).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.advanceTimersByTimeAsync(3000)
+
+    await cancellation
+    expect(run).toHaveBeenCalledOnce()
+    expect(updateProbeResult).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 
   it('probes ok but detectedScheduler=none → shape=direct_ssh', async () => {

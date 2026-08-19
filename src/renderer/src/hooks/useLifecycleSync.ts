@@ -5,6 +5,7 @@ import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
   type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -129,6 +130,18 @@ const useLifecycleSync = ({
               source,
               session,
               mode: 'replace-persisted-if-current'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId === MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'runtime-context-authority'
             })
           } else {
             store.upsertPersistedSession(session)

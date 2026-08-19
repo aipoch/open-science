@@ -17,6 +17,7 @@ import {
   materializeSessionConversationGraph,
   sanitizeActivityGroup,
   sanitizePlanHistoryProjections,
+  sessionRevision,
   sanitizeToolActivity,
   type PersistedActiveRun,
   type PersistedActivityGroup,
@@ -37,15 +38,15 @@ import {
 import {
   mergeDelegatedWorkAuthorityProjection,
   mergeNewerPersistedSessionByIdentity,
-  mergePersistedRuntimeIdentityProjection
+  mergePersistedRuntimeIdentityProjection,
+  mergeRuntimeConversationAuthority,
+  retainRuntimePlanProjection
 } from './session-store-persistence-merge'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
 export type ChatMessageStatus = PersistedMessageStatus
-export type ChatMessage = PersistedChatMessage & {
-  sortIndex?: number
-}
+export type ChatMessage = PersistedChatMessage & { sortIndex?: number }
 export type ActiveRun = PersistedActiveRun
 export type ToolActivityStatus = ToolCallStatus
 export type ToolActivity = {
@@ -118,6 +119,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'merge-upload-identities'
     | 'replace-persisted-if-current'
     | 'permission-authority'
+    | 'runtime-context-authority'
     | 'enabled-compute-hosts-authority'
     | 'delegated-authority'
 }
@@ -132,7 +134,14 @@ export type SessionPersistenceActions = {
   applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
 }
 
-const externallyHydratedSessions = new WeakSet<ChatSession>()
+const externallyHydratedSessionAuthorities = new WeakMap<ChatSession, PersistedChatSession>()
+
+const markExternallyHydratedSession = (
+  session: ChatSession,
+  authority: PersistedChatSession
+): void => {
+  externallyHydratedSessionAuthorities.set(session, structuredClone(authority))
+}
 
 // Builds the empty in-memory state used by the app and isolated tests.
 export const createInitialSessionState = (): SessionStoreData => ({
@@ -398,7 +407,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
-      if (existing && existing.updatedAt >= session.updatedAt) {
+      const incomingSessionRevision = sessionRevision(session)
+      const existingSessionRevision = existing ? sessionRevision(existing) : -1
+      if (
+        existing &&
+        (existingSessionRevision > incomingSessionRevision ||
+          (existingSessionRevision === incomingSessionRevision &&
+            existing.updatedAt >= session.updatedAt))
+      ) {
         const incomingRuntimeRevision = session.runtimeContext?.revision ?? -1
         const existingRuntimeRevision = existing.runtimeContext?.revision ?? -1
         const runtimeAdvanced = incomingRuntimeRevision > existingRuntimeRevision
@@ -448,7 +464,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               }
             : {})
         }
-        externallyHydratedSessions.add(projected)
+        markExternallyHydratedSession(projected, session)
         return {
           sessions: state.sessions.map((candidate) =>
             candidate.id === session.id ? projected : candidate
@@ -457,7 +473,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       const incomingProjection =
-        existing && session.updatedAt > existing.updatedAt
+        existing &&
+        (incomingSessionRevision > existingSessionRevision ||
+          (incomingSessionRevision === existingSessionRevision &&
+            session.updatedAt > existing.updatedAt))
           ? mergeNewerPersistedSessionByIdentity(existing, session)
           : session
       const hydratedSession = existing
@@ -478,7 +497,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         ...retainedPlanHistory,
         ...currentPlanProjection
       }
-      externallyHydratedSessions.add(hydratedWithTransientState)
+      markExternallyHydratedSession(hydratedWithTransientState, session)
       const nextSessions = [
         hydratedWithTransientState,
         ...state.sessions.filter((candidate) => candidate.id !== session.id)
@@ -496,12 +515,13 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (mode === 'enabled-compute-hosts-authority') {
         const projected: ChatSession = {
           ...current,
+          revision: Math.max(sessionRevision(current), sessionRevision(session)),
           enabledComputeHosts: session.enabledComputeHosts
             ? [...session.enabledComputeHosts]
             : undefined,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
-        externallyHydratedSessions.add(projected)
+        markExternallyHydratedSession(projected, session)
         return {
           sessions: state.sessions.map((candidate) =>
             candidate.id === session.id ? projected : candidate
@@ -516,9 +536,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           currentRevision !== undefined &&
           incomingRevision !== undefined &&
           incomingRevision < currentRevision
-        ) {
+        )
           return state
-        }
 
         const permissionPending = session.runtimeContext?.permission?.state === 'pending'
         const interactionState = {
@@ -531,12 +550,59 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         )
         const projected: ChatSession = {
           ...current,
+          revision: Math.max(sessionRevision(current), sessionRevision(session)),
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
-        externallyHydratedSessions.add(projected)
+        markExternallyHydratedSession(projected, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        } as Partial<State>
+      }
+
+      if (mode === 'runtime-context-authority') {
+        const currentRevision = current.runtimeContext?.revision
+        const incomingRevision = session.runtimeContext?.revision
+        if (
+          currentRevision !== undefined &&
+          incomingRevision !== undefined &&
+          incomingRevision < currentRevision
+        ) {
+          return state
+        }
+
+        const interactionState = {
+          ...inferSessionInteractionState(current),
+          permission: session.runtimeContext?.permission?.state === 'pending',
+          plan: session.runtimeContext?.plan?.approval === 'pending'
+        }
+        const status = current.compacting
+          ? current.status
+          : resolveSessionInteractionStatus(
+              { ...current, runtimeContext: session.runtimeContext },
+              interactionState
+            )
+        const activePlanProjection = matchesPersistedPlanProjection(
+          current.activePlanProjection,
+          session
+        )
+          ? current.activePlanProjection
+          : retainRuntimePlanProjection(current, session)
+        const projected: ChatSession = {
+          ...current,
+          ...mergeRuntimeConversationAuthority(current, session),
+          revision: Math.max(sessionRevision(current), sessionRevision(session)),
+          status,
+          interactionState,
+          runtimeContext: session.runtimeContext,
+          activePlanProjection,
+          updatedAt: Math.max(current.updatedAt, session.updatedAt)
+        }
+        markExternallyHydratedSession(projected, session)
         return {
           sessions: state.sessions.map((candidate) =>
             candidate.id === session.id ? projected : candidate
@@ -546,8 +612,12 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
 
       if (mode === 'delegated-authority') {
         const authority = mergeDelegatedWorkAuthorityProjection(current, session)
-        const projected: ChatSession = { ...current, ...authority }
-        externallyHydratedSessions.add(projected)
+        const projected: ChatSession = {
+          ...current,
+          ...authority,
+          revision: Math.max(sessionRevision(current), sessionRevision(session))
+        }
+        markExternallyHydratedSession(projected, session)
         return {
           sessions: state.sessions.map((candidate) =>
             candidate.id === session.id ? projected : candidate
@@ -572,7 +642,13 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
             )
           : undefined
         const authorityProjected = projectDurablePlanAuthority(current, session)
-        if (!flat.changed && !graph?.changed && authorityProjected === current) return state
+        if (
+          !flat.changed &&
+          !graph?.changed &&
+          authorityProjected === current &&
+          sessionRevision(session) <= sessionRevision(current)
+        )
+          return state
         projected =
           flat.changed || graph?.changed
             ? projectDurablePlanAuthority(withTransientSessionState(session, current), session)
@@ -603,10 +679,20 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
             : {})
         }
         projected = projectDurablePlanAuthority(merged, session)
-        if (!flat.changed && !graph?.changed && projected === merged) return state
+        if (
+          !flat.changed &&
+          !graph?.changed &&
+          projected === merged &&
+          sessionRevision(session) <= sessionRevision(current)
+        )
+          return state
       }
 
-      externallyHydratedSessions.add(projected)
+      projected = {
+        ...projected,
+        revision: Math.max(sessionRevision(projected), sessionRevision(session))
+      }
+      markExternallyHydratedSession(projected, session)
       return {
         sessions: state.sessions.map((candidate) =>
           candidate.id === session.id ? projected : candidate
@@ -617,4 +703,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
 })
 
 export const isExternallyHydratedSession = (session: ChatSession): boolean =>
-  externallyHydratedSessions.has(session)
+  externallyHydratedSessionAuthorities.has(session)
+
+export const getExternallyHydratedSessionAuthority = (
+  session: ChatSession
+): PersistedChatSession | undefined => externallyHydratedSessionAuthorities.get(session)

@@ -58,6 +58,7 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   historyReplayDescriptor?: HistoryReplayDescriptor
   forceHistoryReplay?: boolean
   supportsImageInput?: boolean
+  supportsImageRelay?: boolean
   truncateFromMessageId?: string
   allowCompactionRecovery?: boolean
   requireExistingSession?: boolean
@@ -78,6 +79,7 @@ type ResendEditedMessageInput = {
 }
 type ResendEditedWorkspaceMessageOptions = WorkspaceCommandLifecycle & {
   supportsImageInput?: boolean
+  supportsImageRelay?: boolean
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
   agentModel?: string
@@ -156,7 +158,9 @@ const replayHistory = (
     messages,
     input.historyReplayDescriptor ?? { target: resolveHistoryReplayTarget(input.agentFrameworkId) },
     projectId,
-    input.supportsImageInput
+    input.supportsImageInput === true || input.supportsImageRelay === true
+      ? true
+      : input.supportsImageInput
   )
 
 const promptContext = (
@@ -486,7 +490,8 @@ const sendWorkspaceMessage = async (
       selectedRuntime: {
         frameworkId: input.agentFrameworkId,
         backendId: input.agentBackendId,
-        supportsImageInput: input.supportsImageInput
+        supportsImageInput: input.supportsImageInput,
+        supportsImageRelay: input.supportsImageRelay
       },
       replay: {
         descriptor: input.historyReplayDescriptor,
@@ -610,7 +615,8 @@ const resendEditedWorkspaceMessage = async (
         agentModel: options.agentModel,
         historyReplayDescriptor: options.historyReplayDescriptor,
         truncateFromMessageId: input.messageId,
-        supportsImageInput: options.supportsImageInput
+        supportsImageInput: options.supportsImageInput,
+        supportsImageRelay: options.supportsImageRelay
       },
       options
     )

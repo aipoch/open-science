@@ -246,6 +246,201 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('aborts a native Responses stream after the configured idle period', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    let failUpstream: ((reason?: unknown) => void) | undefined
+    const upstreamRequested = Promise.withResolvers<void>()
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamSignal = init?.signal ?? undefined
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'data: {"type":"response.output_text.delta","delta":"working"}\n\n'
+              )
+            )
+            failUpstream = (reason) => controller.error(reason)
+            upstreamSignal?.addEventListener(
+              'abort',
+              () => failUpstream?.(upstreamSignal?.reason),
+              {
+                once: true
+              }
+            )
+          }
+        })
+        upstreamRequested.resolve()
+        return new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
+      fetchImpl,
+      { streamIdleTimeoutMs: 25 }
+    )
+    const connection = await proxy.start()
+
+    try {
+      const responsePromise = fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'deepseek-v4-pro', input: 'analyze', stream: true })
+      })
+      await upstreamRequested.promise
+      const response = await responsePromise
+      const body = response.text()
+
+      const outcome = await Promise.race([
+        body.then(
+          () => 'completed',
+          (error: unknown) => error
+        ),
+        new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 500))
+      ])
+
+      expect(outcome).toBeInstanceOf(Error)
+      expect(upstreamSignal?.aborted).toBe(true)
+      expect(logSpies.warn.mock.calls).toContainEqual([
+        'native Responses compatibility request failed',
+        expect.objectContaining({
+          phase: 'forward-response',
+          outcome: 'error',
+          errorCategory: 'timeout'
+        })
+      ])
+    } finally {
+      failUpstream?.()
+      await proxy.close()
+    }
+  })
+
+  it('keeps a native Responses stream open while upstream events continue', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    let upstreamController: ReadableStreamDefaultController<Uint8Array> | undefined
+    const encoder = new TextEncoder()
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamSignal = init?.signal ?? undefined
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              upstreamController = controller
+              controller.enqueue(encoder.encode('data: {"type":"response.created"}\n\n'))
+              upstreamSignal?.addEventListener(
+                'abort',
+                () => controller.error(upstreamSignal?.reason),
+                { once: true }
+              )
+            }
+          }),
+          { status: 200, headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
+      fetchImpl,
+      { streamIdleTimeoutMs: 200 }
+    )
+    const connection = await proxy.start()
+    let eventIndex = 0
+    let interval: ReturnType<typeof setInterval> | undefined
+    let completion: ReturnType<typeof setTimeout> | undefined
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'deepseek-v4-pro', input: 'analyze', stream: true })
+      })
+      interval = setInterval(() => {
+        eventIndex += 1
+        upstreamController?.enqueue(
+          encoder.encode(`data: {"type":"response.output_text.delta","delta":"${eventIndex}"}\n\n`)
+        )
+      }, 20)
+      completion = setTimeout(() => {
+        if (interval) clearInterval(interval)
+        upstreamController?.close()
+      }, 300)
+
+      const body = await response.text()
+
+      expect(body).toContain('response.output_text.delta')
+      expect(upstreamSignal?.aborted).toBe(false)
+    } finally {
+      if (interval) clearInterval(interval)
+      if (completion) clearTimeout(completion)
+      await proxy.close()
+    }
+  })
+
+  it('aborts a native Responses request when upstream headers do not arrive in time', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+        new Promise<Response>((_resolve, reject) => {
+          upstreamSignal = init?.signal ?? undefined
+          upstreamSignal?.addEventListener(
+            'abort',
+            () => reject(upstreamSignal?.reason ?? new Error('aborted')),
+            { once: true }
+          )
+        })
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
+      fetchImpl,
+      { responseHeaderTimeoutMs: 25 }
+    )
+    const connection = await proxy.start()
+
+    try {
+      const outcome = await Promise.race([
+        fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ model: 'deepseek-v4-pro', input: 'analyze', stream: true })
+        }),
+        new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 500))
+      ])
+
+      expect(outcome).toBeInstanceOf(Response)
+      const response = outcome as Response
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: {
+          type: 'invalid_request_error',
+          message: 'Native Responses compatibility request failed'
+        }
+      })
+      expect(upstreamSignal?.aborted).toBe(true)
+      expect(logSpies.warn.mock.calls).toContainEqual([
+        'native Responses compatibility request failed',
+        expect.objectContaining({
+          phase: 'upstream-fetch',
+          outcome: 'error',
+          errorCategory: 'timeout'
+        })
+      ])
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('selects matching Skills through the native Responses endpoint', async () => {
     const fetchImpl = vi.fn(
       async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -679,6 +874,8 @@ describe('native Responses compatibility', () => {
 
   it('logs a privacy-safe lifecycle that distinguishes an upstream 502', async () => {
     const privatePrompt = 'private medical prompt'
+    const privateInstructions = 'private medical instructions'
+    const privateToolName = 'private_medical_tool'
     const privateUpstreamDetail = 'private gateway diagnostic'
     const proxy = new NativeResponsesCompatibilityProxy(
       {
@@ -701,7 +898,19 @@ describe('native Responses compatibility', () => {
           authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
-        body: JSON.stringify({ model: 'deepseek-v4-flash', input: privatePrompt })
+        body: JSON.stringify({
+          model: 'deepseek-v4-flash',
+          prompt_cache_key: 'private-cache-key',
+          instructions: privateInstructions,
+          input: [{ type: 'message', role: 'user', content: privatePrompt }],
+          tools: [
+            {
+              type: 'function',
+              name: privateToolName,
+              parameters: { type: 'object' }
+            }
+          ]
+        })
       })
       expect(response.status).toBe(502)
       await response.text()
@@ -715,7 +924,18 @@ describe('native Responses compatibility', () => {
       const completed = logSpies.info.mock.calls.find(
         ([message]) => message === 'native Responses compatibility request completed'
       )
-      expect(received?.[1]).toMatchObject({ requestId: expect.any(String) })
+      expect(received?.[1]).toMatchObject({
+        requestId: expect.any(String),
+        requestBytes: expect.any(Number),
+        inputBytes: expect.any(Number),
+        inputItemCount: 1,
+        instructionTextBytes: expect.any(Number),
+        toolDefinitionCount: 1,
+        promptCacheKeyPresent: true
+      })
+      expect(received?.[1]?.requestBytes).toBeGreaterThan(0)
+      expect(received?.[1]?.inputBytes).toBeGreaterThan(0)
+      expect(received?.[1]?.instructionTextBytes).toBeGreaterThan(0)
       expect(upstream?.[1]).toMatchObject({
         requestId: received?.[1]?.requestId,
         status: 502,
@@ -729,6 +949,9 @@ describe('native Responses compatibility', () => {
       })
       const serialized = JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
       expect(serialized).not.toContain(privatePrompt)
+      expect(serialized).not.toContain(privateInstructions)
+      expect(serialized).not.toContain(privateToolName)
+      expect(serialized).not.toContain('private-cache-key')
       expect(serialized).not.toContain(privateUpstreamDetail)
       expect(serialized).not.toContain('private-api-key')
       expect(serialized).not.toContain(connection.token)

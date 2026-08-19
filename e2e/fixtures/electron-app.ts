@@ -12,6 +12,7 @@ const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs'
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 const E2E_LOCALE_ARGUMENT = '--lang=en-US'
+const E2E_SETTINGS = `${JSON.stringify({ localePreference: 'en' }, null, 2)}\n`
 type E2eWindowMode = 'hidden' | 'normal'
 
 const electronLaunchTarget = (
@@ -274,6 +275,7 @@ class ElectronAppHarness implements ElectronApp {
     )
     try {
       await mkdir(harness.roots.storageRoot, { recursive: true })
+      await writeFile(join(harness.roots.storageRoot, 'settings.json'), E2E_SETTINGS, 'utf8')
       await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)

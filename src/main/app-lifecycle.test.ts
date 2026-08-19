@@ -123,7 +123,9 @@ type Harness = {
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
-  flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
+  flushSessionPersistence: (
+    timeoutMs?: number
+  ) => Promise<RendererSessionPersistenceFlushOutcome | void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
   getMainWindow: () => import('electron').BrowserWindow | undefined
@@ -142,6 +144,7 @@ const setup = (
       | 'log'
       | 'flushLogs'
       | 'logFlushTimeoutMs'
+      | 'rendererFlushTimeoutMs'
       | 'shutdownTrigger'
       | 'isMigrationInProgress'
       | 'platform'
@@ -195,6 +198,7 @@ const setup = (
     log: overrides.log,
     flushLogs: overrides.flushLogs,
     logFlushTimeoutMs: overrides.logFlushTimeoutMs,
+    rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
     shutdownTrigger: overrides.shutdownTrigger,
     isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
     quit,
@@ -433,17 +437,18 @@ describe('installAppLifecycle', () => {
     app.emit('before-quit')
     await flush()
 
-    expect(calls).toEqual(['prepare', 'flush', 'shutdown'])
+    expect(calls).toEqual(['flush', 'prepare', 'flush', 'shutdown'])
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('records a degraded renderer persistence flush and drains terminal logs before exit', async () => {
+  it('bounds both renderer persistence attempts and drains terminal logs before exit', async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     const flushLogs = vi.fn(async () => undefined)
+    const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
     const { app, closeOpts } = setup({
       log,
       flushLogs,
-      flushSessionPersistence: vi.fn(async () => 'timeout' as const)
+      flushSessionPersistence
     })
     closeOpts[0].requestQuit()
 
@@ -462,6 +467,7 @@ describe('installAppLifecycle', () => {
       })
     )
     expect(flushLogs).toHaveBeenCalledOnce()
+    expect(flushSessionPersistence.mock.calls).toEqual([[2_500], [2_500]])
     expect(flushLogs.mock.invocationCallOrder[0]).toBeLessThan(app.exit.mock.invocationCallOrder[0])
   })
 
@@ -527,6 +533,44 @@ describe('installAppLifecycle', () => {
         backendTeardownResult: 'degraded'
       })
     )
+  })
+
+  it('keeps the app open when the renderer reports an unresolved Session revision conflict', async () => {
+    const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
+    const { app, closeOpts, prepareForQuit, shutdownBackends, tray, windows } = setup({
+      flushSessionPersistence
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalledOnce()
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(tray?.destroy).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+    expect(windows[0].visible).toBe(true)
+    expect(windows[0].focused).toBe(true)
+  })
+
+  it('finishes quit from the durable preflight snapshot when the terminal flush conflicts', async () => {
+    const flushSessionPersistence = vi
+      .fn()
+      .mockResolvedValueOnce('completed' as const)
+      .mockResolvedValueOnce('conflict' as const)
+    const { app, closeOpts, prepareForQuit, shutdownBackends } = setup({
+      flushSessionPersistence
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
   })
 
   it('quits on window-all-closed only when non-darwin and no tray host', () => {

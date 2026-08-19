@@ -13,6 +13,7 @@ import {
   type ExportConversationResult
 } from '../../shared/conversation-export'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 type ConversationExportPrintWindow = {
   loadFile(path: string): Promise<void>
@@ -37,6 +38,7 @@ type ConversationExportDependencies = {
   getDownloadsPath(): string
   getTempPath(): string
   now(): number
+  translate: NativeTranslator
 }
 
 type ConversationExportRequiredDependencies = Pick<
@@ -93,7 +95,8 @@ const defaultDependencies: ConversationExportDefaultDependencies = {
   createPrintWindow: createDefaultPrintWindow,
   getDownloadsPath: () => app.getPath('downloads'),
   getTempPath: () => app.getPath('temp'),
-  now: Date.now
+  now: Date.now,
+  translate: englishNativeTranslator
 }
 
 const createConversationExportService = (
@@ -124,12 +127,12 @@ const createConversationExportService = (
         `${sanitizeExportFilename(document.title)}.${extension}`
       )
       const dialogResult = await deps.showSaveDialog(parentWindow, {
-        title: 'Export conversation',
+        title: deps.translate('Export conversation'),
         defaultPath,
         filters: [
           request.format === 'markdown'
-            ? { name: 'Markdown', extensions: ['md'] }
-            : { name: 'PDF', extensions: ['pdf'] }
+            ? { name: deps.translate('Markdown'), extensions: ['md'] }
+            : { name: deps.translate('PDF'), extensions: ['pdf'] }
         ]
       })
 

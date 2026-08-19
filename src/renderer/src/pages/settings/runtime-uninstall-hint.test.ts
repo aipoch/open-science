@@ -62,7 +62,7 @@ describe('uninstallDisabledHint', () => {
     expect(unmanaged).toContain('npm rm -g codex')
 
     expect(uninstallDisabledHint('Claude', 'x', { ...base, active: true }, zh)).toContain(
-      '当前使用中的 Agent 框架'
+      '当前使用中的智能体框架'
     )
     expect(uninstallDisabledHint('Codex', 'x', { ...base, promptInFlight: true }, zh)).toBe(
       '有任务正在运行 —— 请等它结束后再卸载。'

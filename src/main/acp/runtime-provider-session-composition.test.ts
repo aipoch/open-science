@@ -10,6 +10,27 @@ import {
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 describe('ACP Runtime Provider Session composition', () => {
+  it('uses a five-minute default resume inactivity budget', () => {
+    const options = { appVersion: 'test', defaultCwd: '/workspace' }
+    const base = composeAcpRuntimeBaseOwners(options)
+    const session = composeAcpRuntimeSessionOwners(options, base)
+    const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
+      connect: vi.fn(async () => session.publication.getSnapshot()),
+      disconnect: vi.fn(async () => session.publication.getSnapshot()),
+      openAgentConnection: vi.fn(async () => {
+        throw new Error('not called during composition')
+      })
+    })
+    const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle, {
+      clearUserChoiceProvenanceForSession: vi.fn()
+    })
+    const dependencies = (
+      owners.providerSessionResumer as unknown as { deps: { resumeTimeoutMs: number } }
+    ).deps
+
+    expect(dependencies.resumeTimeoutMs).toBe(5 * 60_000)
+  })
+
   it('builds a fresh frozen graph without invoking host operations', async () => {
     const options = { appVersion: 'test', defaultCwd: '/workspace' }
     const create = (): {

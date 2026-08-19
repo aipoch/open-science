@@ -68,9 +68,9 @@ describe('AgentHomeImportView copy', () => {
 
     // zh has no singular/plural distinction — one _other form covers both counts.
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('找到 1 個 Skill')
+    expect(container.textContent).toContain('找到 1 個技能')
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('找到 1 个 Skill')
+    expect(container.textContent).toContain('找到 1 个技能')
   })
 
   it('uses the plural form for counts above one', async () => {
@@ -82,7 +82,7 @@ describe('AgentHomeImportView copy', () => {
     expect(container.textContent).toContain('2 skills found')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('找到 2 个 Skill')
+    expect(container.textContent).toContain('找到 2 个技能')
   })
 
   it('swaps whole scan sentences instead of splicing the second path in', async () => {

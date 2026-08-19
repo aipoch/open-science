@@ -28,4 +28,26 @@ describe('notification inbox deletion runtime', () => {
     expect(invalidateSessions).toHaveBeenCalledWith(['session-1', 'session-2'])
     expect(onSessionsDeleted).toHaveBeenCalledWith(['session-1', 'session-2'])
   })
+
+  it('reconciles derived evidence only from a complete authoritative Session catalog', async () => {
+    let handlers: SessionDeletionHandlers | undefined
+    const onSessionsReconciled = vi.fn(async () => undefined)
+    bindNotificationInboxDeletionRuntime({
+      inbox: {
+        invalidateSessions: vi.fn(async () => undefined),
+        markSessionsRead: vi.fn(async () => undefined),
+        reconcileSessionCatalog: vi.fn(async () => undefined)
+      },
+      sessionPersistenceCoordinator: {
+        setSessionDeletionHandlers: (next) => {
+          handlers = next
+        }
+      },
+      onSessionsReconciled
+    })
+
+    await handlers?.reconcile(['session-1'], [])
+
+    expect(onSessionsReconciled).toHaveBeenCalledWith(['session-1'])
+  })
 })

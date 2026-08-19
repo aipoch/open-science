@@ -1,11 +1,14 @@
 import { ScrollText } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { SkillDetailView as SkillDetail } from '../../../../shared/settings'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SettingsToggle } from './SettingsLayout'
+import { useSpecialistStore } from '@/stores/specialist-store'
+import { ResourceAvailability } from './ResourceAvailability'
+import { SettingsLoadNotice } from './SettingsLayout'
+import { specialistsUsingSkill } from './specialist-resource-scope'
 
 type SkillDetailViewProps = {
   skillId: string
@@ -46,17 +49,51 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const { t } = useTranslation()
   const skill = useSettingsStore((state) => state.skills.find((item) => item.id === skillId))
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
   const [detail, setDetail] = useState<SkillDetail | null>(null)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [operationError, setOperationError] = useState<string | undefined>()
+  const loadRequestRef = useRef(0)
+
+  const loadDetail = async (): Promise<void> => {
+    const requestId = ++loadRequestRef.current
+    setDetail(null)
+    setLoadState('loading')
+    try {
+      const result = await window.api.settings.getSkillDetail(skillId)
+      if (loadRequestRef.current !== requestId) return
+      setDetail(result)
+      setLoadState('ready')
+    } catch {
+      if (loadRequestRef.current === requestId) setLoadState('error')
+    }
+  }
+
+  const retryLoad = (): void => {
+    void loadDetail()
+  }
 
   useEffect(() => {
-    let active = true
-    void window.api.settings.getSkillDetail(skillId).then((result) => {
-      if (active) setDetail(result)
-    })
+    const requestId = ++loadRequestRef.current
+    void window.api.settings.getSkillDetail(skillId).then(
+      (result) => {
+        if (loadRequestRef.current !== requestId) return
+        setDetail(result)
+        setLoadState('ready')
+      },
+      () => {
+        if (loadRequestRef.current === requestId) setLoadState('error')
+      }
+    )
     return () => {
-      active = false
+      loadRequestRef.current += 1
     }
   }, [skillId])
+
+  useEffect(() => {
+    void loadSpecialists()
+  }, [loadSpecialists])
 
   const enabled = skill?.enabled ?? detail?.enabled ?? false
   const name = skill?.name ?? detail?.name ?? ''
@@ -78,11 +115,34 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const genericMetadata = Object.entries(detail?.metadata ?? {}).filter(
     ([key]) => !DEDICATED_METADATA_KEYS.has(key.toLowerCase())
   )
+  const usages = specialistsUsingSkill(specialistItems, skillId)
+
+  const toggleSkill = async (): Promise<void> => {
+    setOperationError(undefined)
+    try {
+      await setSkillEnabled(skillId, !enabled)
+    } catch {
+      setOperationError(t('Could not save this setting. The previous value was restored.'))
+    }
+  }
+
+  if (!detail) {
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={loadState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Skill…')}
+          errorMessage={t('Open Science could not load this Skill.')}
+          onRetry={retryLoad}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="p-5">
-      {/* Header: icon + name + Featured badge + toggle, then updated + description below. */}
-      <div className="flex items-start justify-between gap-3">
+      {/* Header: icon + name + source badge, then updated + description below. */}
+      <div className="flex items-start gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <ScrollText className="size-6 shrink-0 text-primary" aria-hidden="true" />
           <div className="flex min-w-0 items-center gap-2">
@@ -92,17 +152,28 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
             </span>
           </div>
         </div>
-        <SettingsToggle
-          enabled={enabled}
-          aria-label={t('Toggle {{name}}', { name })}
-          onToggle={() => void setSkillEnabled(skillId, !enabled).catch(() => undefined)}
-        />
       </div>
 
       {updated ? <p className="mt-1 text-xs text-muted-foreground">{updated}</p> : null}
       {description ? (
         <p className="mt-2 text-sm text-muted-foreground [text-wrap:pretty]">{description}</p>
       ) : null}
+
+      {operationError ? (
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+        >
+          {operationError}
+        </p>
+      ) : null}
+
+      <ResourceAvailability
+        mainEnabled={enabled}
+        mainToggleLabel={t('Toggle {{name}}', { name })}
+        usages={usages}
+        onToggleMain={() => void toggleSkill()}
+      />
 
       {/* Files: the rendered SKILL.md body. */}
       <section className="mt-6 border-t border-border pt-4">

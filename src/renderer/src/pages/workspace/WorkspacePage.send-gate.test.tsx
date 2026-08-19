@@ -636,6 +636,55 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.revise).toBe(false)
   })
 
+  it('blocks follow-on Session actions until a pending history replay is sent', async () => {
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          pendingHistoryReplay: { kind: 'all' },
+          messages: [
+            {
+              id: 'user-1',
+              role: 'user',
+              content: 'Inspect the data',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            },
+            {
+              id: 'agent-1',
+              role: 'agent',
+              content: 'The analysis is complete.',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('continue from this branch'))
+    })
+
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.availability.branch).toBe(false)
+    expect(conversationProps.workflows.review.disabled).toBe(true)
+    expect(conversationProps.workflows.saveAsSkill.disabled).toBe(true)
+    expect(conversationProps.contextWindow.canCompact).toBe(false)
+    expect(conversationProps.contextWindow.compactDisabledReason).toBe(
+      'Send a message to reconnect this session before compacting.'
+    )
+    expect(conversationProps.agentControls.canChange).toBe(false)
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+    expect(conversationProps.view.sideChatDisabledReason).toBe(
+      'Resolve the current Session operation first.'
+    )
+  })
+
   it('allows manual compaction only for an idle session, not an unresolved error', async () => {
     await renderPage()
 

@@ -140,11 +140,25 @@ describe('database JSON constraints migration', () => {
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
       adoptedLegacy: false,
-      applied: [MIGRATION_ID, '0009_managed_file_version_foundation'],
+      applied: [
+        MIGRATION_ID,
+        '0009_managed_file_version_foundation',
+        '0009_vision_evidence',
+        '0010_compute_password_auth',
+        '0011_cross_resource_tags'
+      ],
       from: '0007_notification_attention_metadata',
-      to: '0009_managed_file_version_foundation'
+      to: '0011_cross_resource_tags'
     })
-    await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
+    await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(
+      access(`${databasePath}.before-0011_cross_resource_tags.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0010_compute_password_auth.backup`)
+    ).resolves.toBeUndefined()
 
     await expect(
       client.$queryRaw<Array<{ scope: string; reviewerLog: string }>>`

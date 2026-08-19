@@ -186,12 +186,12 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['getStatus', 'cli:get-status'], ['install', 'cli:install', LOCAL], ['uninstall', 'cli:uninstall', LOCAL],
   ]),
   group('compute', 'compute', [
-    ['onApprovalRequest', 'compute:approval-request', EVENT], ['onJobUpdated', 'compute:job-updated', EVENT], ['bookmarksGet', 'compute:bookmarks:get'],
-    ['bookmarksSet', 'compute:bookmarks:set'], ['concurrencySet', 'compute:concurrency:set'], ['create', 'compute:create'], ['delete', 'compute:delete'],
+    ['onApprovalRequest', 'compute:approval-request', EVENT], ['onApprovalSettled', 'compute:approval-settled', EVENT], ['onJobUpdated', 'compute:job-updated', EVENT], ['bookmarksGet', 'compute:bookmarks:get'],
+    ['bookmarksSet', 'compute:bookmarks:set'], ['changeAuthentication', 'compute:change-authentication', LOCAL], ['concurrencySet', 'compute:concurrency:set'], ['create', 'compute:create'], ['createPassword', 'compute:create-password', LOCAL], ['delete', 'compute:delete'], ['deletionStatus', 'compute:deletion-status'],
     ['detailsGet', 'compute:details:get'], ['detailsSave', 'compute:details:save'], ['download', 'compute:download', LOCAL],
     ['enabledHostsGet', 'compute:enabled-hosts:get'], ['enabledHostsSet', 'compute:enabled-hosts:set'], ['get', 'compute:get'],
     ['jobsList', 'compute:jobs:list'], ['jobsMarkConsumed', 'compute:jobs:mark-consumed'], ['jobsPendingNotification', 'compute:jobs:pending-notification'],
-    ['list', 'compute:list'], ['listDir', 'compute:list-dir'], ['probe', 'compute:probe'], ['replayApproval', 'compute:approval-replay'], ['respondApproval', 'compute:approval-respond'],
+    ['list', 'compute:list'], ['listDir', 'compute:list-dir'], ['passwordCapability', 'compute:password-capability', LOCAL], ['probe', 'compute:probe'], ['replayApproval', 'compute:approval-replay'], ['replayPendingApprovals', 'compute:approval-replay-pending'], ['resetPassword', 'compute:reset-password', LOCAL], ['respondApproval', 'compute:approval-respond'],
     ['revealInFolder', 'compute:reveal-in-folder', LOCAL], ['scratchSet', 'compute:scratch:set'], ['sshConfigAliases', 'compute:ssh-config-aliases'],
   ]),
   group('database-startup', 'databaseStartup', [
@@ -210,8 +210,8 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('lifecycle', 'lifecycle', [
     ['getClientId', 'lifecycle:client-id'],
   ]),
-  group('managed-file-versions', 'managedFileVersions', [
-    ['getCapability', 'managed-file-versions:get-capability', DELEGATED_NATIVE], ['inspect', 'managed-file-versions:inspect', ELECTRON], ['diffText', 'managed-file-versions:diff-text', ELECTRON], ['cancelDiff', 'managed-file-versions:cancel-diff', ELECTRON], ['saveTextEdit', 'managed-file-versions:save-text-edit', ELECTRON],
+  group('locale', 'locale', [
+    ['initialize', 'locale:initialize', ELECTRON], ['onChanged', 'locale:changed', ELECTRON_EVENT], ['setPreference', 'locale:set-preference', ELECTRON],
   ]),
   group('local-fs', 'localFs', [
     ['getRoots', 'local-fs:get-roots', LOCAL], ['grantRoot', 'local-fs:grant-root', LOCAL], ['listDir', 'local-fs:list-dir', LOCAL],
@@ -220,6 +220,9 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   ]),
   group('logs', 'logs', [
     ['getPath', 'logs:get-path'], ['openFile', 'logs:open-file', LOCAL], ['revealInFolder', 'logs:reveal-in-folder', LOCAL],
+  ]),
+  group('managed-file-versions', 'managedFileVersions', [
+    ['getCapability', 'managed-file-versions:get-capability', DELEGATED_NATIVE], ['inspect', 'managed-file-versions:inspect', ELECTRON], ['diffText', 'managed-file-versions:diff-text', ELECTRON], ['cancelDiff', 'managed-file-versions:cancel-diff', ELECTRON], ['saveTextEdit', 'managed-file-versions:save-text-edit', ELECTRON],
   ]),
   group('network', 'network', [
     ['getInfo', 'network:get-info', ELECTRON], ['checkConnectivity', 'network:check-connectivity', ELECTRON],
@@ -269,6 +272,11 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['onCreated', 'project:created', EVENT], ['onDeleted', 'project:deleted', EVENT], ['onUpdated', 'project:updated', EVENT], ['create', 'projects:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['delete', 'projects:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['get', 'projects:get', WEB, undefined, undefined, RUNTIME_VALIDATED], ['list', 'projects:list', WEB, undefined, undefined, RUNTIME_VALIDATED], ['updateArchive', 'projects:update-archive', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'projects:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
   ]),
+  group('tags', 'tags', [
+    ['onChanged', 'tags:changed', EVENT], ['create', 'tags:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['delete', 'tags:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['setAssignment', 'tags:set-assignment', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['snapshot', 'tags:snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'tags:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
+  ]),
   group('remote-access', 'remoteAccess', [
     ['onChanged', 'remote-access:changed', EVENT], ['approve', 'remote-access:approve'], ['detect', 'remote-access:detect'],
     ['disable', 'remote-access:disable'], ['getSnapshot', 'remote-access:get-snapshot'], ['reject', 'remote-access:reject'],
@@ -280,37 +288,34 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['abortFixLoop', 'reviewer:abort-fix-loop'], ['getForSession', 'reviewer:get-for-session'], ['run', 'reviewer:run'],
   ]),
   group('runtime', 'runtime', [
-    ['describeUsage', 'runtime:describe-usage', WEB, RUNTIME_LANGUAGE_ENV, POSITIONAL],
-    ['getEnablement', 'runtime:get-enablement', WEB, RUNTIME_LANGUAGE, POSITIONAL], ['listEnvironments', 'runtime:list-environments'],
-    ['listPackageCounts', 'runtime:list-package-counts', WEB, RUNTIME_LANGUAGE, POSITIONAL],
-    ['listPackages', 'runtime:list-packages', WEB, RUNTIME_LANGUAGE_ENV, POSITIONAL], ['pickInterpreter', 'runtime:pick-interpreter', LOCAL],
-    ['registerInterpreter', 'runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER, POSITIONAL],
+    ['describeUsage', 'runtime:describe-usage', WEB, RUNTIME_LANGUAGE_ENV],
+    ['getEnablement', 'runtime:get-enablement', WEB, RUNTIME_LANGUAGE], ['listEnvironments', 'runtime:list-environments'],
+    ['listPackageCounts', 'runtime:list-package-counts', WEB, RUNTIME_LANGUAGE],
+    ['listPackages', 'runtime:list-packages', WEB, RUNTIME_LANGUAGE_ENV], ['pickInterpreter', 'runtime:pick-interpreter', LOCAL],
+    ['registerInterpreter', 'runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER],
     [
       'setEnvironmentEnabled',
       'runtime:set-environment-enabled',
       LOCAL,
-      RUNTIME_ENABLEMENT,
-      POSITIONAL
+      RUNTIME_ENABLEMENT
     ],
     [
       'setInstallAuthorized',
       'runtime:set-install-authorized',
       LOCAL,
-      RUNTIME_INSTALL_AUTH,
-      POSITIONAL
+      RUNTIME_INSTALL_AUTH
     ],
-    ['setSelection', 'runtime:set-selection', LOCAL, RUNTIME_SELECTION, POSITIONAL], ['survey', 'runtime:survey'],
+    ['setSelection', 'runtime:set-selection', LOCAL, RUNTIME_SELECTION], ['survey', 'runtime:survey'],
     [
       'unregisterInterpreter',
       'runtime:unregister-interpreter',
       LOCAL,
-      RUNTIME_INTERPRETER,
-      POSITIONAL
+      RUNTIME_INTERPRETER
     ],
   ]),
   group('sessions', 'sessions', [
     ['exportConversation', 'sessions:export-conversation', MAPPED_ELECTRON], ['onCreated', 'session:created', EVENT], ['onDeleted', 'session:deleted', EVENT],
-    ['onFlushRequest', 'sessions:flush-request', ELECTRON_EVENT], ['onUpdated', 'session:updated', EVENT], ['deleteSession', 'sessions:delete-session'],
+    ['onFlushRequest', 'sessions:flush-request', ELECTRON_EVENT], ['onUpdated', 'session:updated', EVENT], ['deleteSession', 'sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['loadAll', 'sessions:load-all'], ['loadOne', 'sessions:load-one'], ['saveManifest', 'sessions:save-manifest'],
     ['saveSession', 'sessions:save-session', WEB, SESSION_SAVE, SESSION_SAVE_JSON], ['updateArchive', 'sessions:update-archive'], ['sendFlushResponse', 'sessions:flush-response', SEND],
   ]),
@@ -332,13 +337,13 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['loginIsolatedCodex', 'settings:login-isolated-codex', LOCAL], ['loginSharedClaude', 'settings:login-shared-claude', LOCAL],
     ['logoutIsolatedClaude', 'settings:logout-isolated-claude', LOCAL], ['logoutIsolatedCodex', 'settings:logout-isolated-codex', LOCAL],
     ['logoutSharedClaude', 'settings:logout-shared-claude', LOCAL], ['markOnboardingComplete', 'settings:mark-onboarding-complete'],
-    ['onConnectorApprovalRequest', 'connectors:approval-request', EVENT], ['onConnectorRuntimeChanged', 'settings:connector-runtime-changed', EVENT], ['onInstallLog', 'settings:install-log', EVENT],
+    ['onConnectorApprovalRequest', 'connectors:approval-request', EVENT], ['onConnectorApprovalSettled', 'connectors:approval-settled', EVENT], ['onConnectorRuntimeChanged', 'settings:connector-runtime-changed', EVENT], ['onInstallLog', 'settings:install-log', EVENT],
     ['onSkillCatalogChanged', 'skills:catalog-changed', EVENT],
     ['onSkillImportApprovalRequest', 'skills:conversation-import-request', EVENT],
     ['onSkillImportApprovalSettled', 'skills:conversation-import-settled', EVENT], ['previewAgentHomeSkill', 'settings:preview-agent-home-skill'], ['previewCustomServerTemplateExport', 'settings:preview-custom-server-template-export', ELECTRON],
     ['previewGitHubSkill', 'settings:preview-github-skill'], ['previewSkillZip', 'settings:preview-skill-zip'],
     ['refreshProviderModels', 'settings:refresh-provider-models'], ['removeCustomServer', 'settings:remove-custom-server'], ['removeGitHubToken', 'settings:remove-github-token', LOCAL],
-    ['replayConnectorApproval', 'connectors:approval-replay'], ['replayPendingSkillImportApprovals', 'skills:conversation-import-replay-pending'], ['respondConnectorApproval', 'connectors:approval-respond'],
+    ['replayConnectorApproval', 'connectors:approval-replay'], ['replayPendingConnectorApprovals', 'connectors:approval-replay-pending'], ['replayPendingSkillImportApprovals', 'skills:conversation-import-replay-pending'], ['respondConnectorApproval', 'connectors:approval-respond'],
     ['respondSkillImportApproval', 'skills:conversation-import-respond'], ['saveGitHubToken', 'settings:save-github-token', LOCAL], ['scanRepoSkills', 'settings:scan-repo-skills'], ['selectCustomServerTemplate', 'settings:select-custom-server-template', ELECTRON],
     ['setActiveProvider', 'settings:set-active-provider'], ['setAgentFramework', 'settings:set-agent-framework'],
     ['setAppIconVariant', 'settings:set-app-icon-variant', LOCAL], ['setClosePreference', 'settings:set-close-preference', LOCAL],
@@ -349,7 +354,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['setNcbiCredentials', 'settings:set-ncbi-credentials'], ['setNotificationsEnabled', 'settings:set-notifications-enabled', LOCAL],
     ['setPackageMirror', 'settings:set-package-mirror', LOCAL], ['setProjectFilesFilter', 'settings:set-project-files-filter', LOCAL],
     ['setNetworkProxy', 'settings:set-network-proxy', LOCAL],
-    ['setReasoningEffort', 'settings:set-reasoning-effort'], ['setReviewerModel', 'settings:set-reviewer-model'], ['setSubagentModel', 'settings:set-subagent-model'],
+    ['setReasoningEffort', 'settings:set-reasoning-effort'], ['setReviewerModel', 'settings:set-reviewer-model'], ['setSubagentModel', 'settings:set-subagent-model'], ['setVisionModel', 'settings:set-vision-model'],
     ['setSkillEnabled', 'settings:set-skill-enabled'], ['setSkillsEnabled', 'settings:set-skills-enabled'], ['setToolPermission', 'settings:set-tool-permission'],
     ['uninstallClaude', 'settings:uninstall-claude', LOCAL], ['uninstallCodex', 'settings:uninstall-codex', LOCAL],
     ['uninstallOpencode', 'settings:uninstall-opencode', LOCAL], ['updateCustomServer', 'settings:update-custom-server'],
@@ -360,11 +365,13 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['cancel', 'side-chat:cancel', ELECTRON], ['close', 'side-chat:close', ELECTRON], ['list', 'side-chat:list', ELECTRON], ['send', 'side-chat:send', ELECTRON], ['start', 'side-chat:start', ELECTRON],
   ]),
   group('specialist', 'specialist', [
-    ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['cancelPackage', 'specialist:package-cancel', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],
+    ['addMarketplaceSource', 'specialist:marketplace-source-add', ELECTRON], ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['cancelMarketplaceCandidate', 'specialist:marketplace-candidate-cancel', ELECTRON], ['cancelPackage', 'specialist:package-cancel', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],
     ['duplicate', 'specialist:duplicate', ELECTRON], ['exportContributionTemplate', 'specialist:export-contribution-template', ELECTRON], ['exportSpecialist', 'specialist:export-save', ELECTRON],
-    ['getHandoffEvents', 'specialist:get-handoff-events', ELECTRON], ['installPackage', 'specialist:package-install', ELECTRON], ['list', 'specialist:list', ELECTRON],
+    ['getHandoffEvents', 'specialist:get-handoff-events', ELECTRON], ['getMarketplaceRelease', 'specialist:marketplace-release-get', ELECTRON], ['inspectGitHubMarketplaceSource', 'specialist:marketplace-source-inspect-github', ELECTRON],
+    ['installMarketplace', 'specialist:marketplace-install', ELECTRON], ['installPackage', 'specialist:package-install', ELECTRON], ['list', 'specialist:list', ELECTRON], ['listMarketplace', 'specialist:marketplace-list', ELECTRON],
     ['onCatalogChanged', 'specialist:catalog-changed', ELECTRON_EVENT], ['onHandoffLifecycleEvent', 'specialist:handoff-lifecycle-changed', ELECTRON_EVENT],
-    ['onPendingSwitch', 'specialist:pending-switch', ELECTRON_EVENT], ['previewDelete', 'specialist:delete-preview', ELECTRON], ['previewExport', 'specialist:export-preview', ELECTRON],
+    ['onMarketplaceDownloadProgress', 'specialist:marketplace-download-progress', ELECTRON_EVENT], ['onPendingSwitch', 'specialist:pending-switch', ELECTRON_EVENT], ['prepareMarketplaceInstall', 'specialist:marketplace-install-prepare', ELECTRON], ['previewDelete', 'specialist:delete-preview', ELECTRON], ['previewExport', 'specialist:export-preview', ELECTRON],
+    ['removeMarketplaceSource', 'specialist:marketplace-source-remove', ELECTRON],
     ['resolveSessionSpecialist', 'specialist:resolve-session-specialist', ELECTRON],
     ['retryHandoff', 'specialist:retry-handoff', ELECTRON], ['setEnabled', 'specialist:set-enabled', ELECTRON],
     ['savePackageReport', 'specialist:package-report-save', ELECTRON], ['selectPackage', 'specialist:package-select', ELECTRON],

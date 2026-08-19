@@ -29,9 +29,13 @@ import {
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
+import { TagRepository } from './tags/repository'
+import { TagResourceCatalog } from './tags/resource-catalog'
+import { TagService } from './tags/service'
 import {
   LIFECYCLE_CHANNELS,
-  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
+  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
 
 import { createAcpRuntime } from './acp/runtime-composition'
@@ -41,6 +45,8 @@ import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
+import { ImageInputCompatibilityOwner } from './acp/image-input-compatibility-owner'
+import { VisionEvidenceRepository } from './acp/vision-evidence-repository'
 import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
@@ -161,6 +167,7 @@ import {
 import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
 import {
+  canReconcileSessionAbsences,
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlersWithAttributionAuthority,
@@ -190,7 +197,10 @@ import { createPermissionGrantRegistry } from './permission-grants/registry'
 import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
 import { registerPermissionGrantIpcAdapter } from './permission-grants/ipc'
 import { createPermissionGrantProjectionController } from './permission-grants/projection-controller'
-import { reconcilePermissionGrantOwners } from './permission-grants/reconciliation'
+import {
+  reconcilePendingCustomServerDeletions,
+  reconcilePermissionGrantOwners
+} from './permission-grants/reconciliation'
 import {
   SessionPersistenceCoordinator,
   type ComputeJobDeletionParticipant
@@ -208,6 +218,7 @@ import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
+import type { SettingsDocumentStore } from './settings/document-store'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
@@ -222,6 +233,9 @@ import { SpecialistRepository } from './specialist/repository'
 import { BuiltinSpecialistRegistry } from './specialist/builtin-registry'
 import { composeBuiltinSkillCatalog } from './specialist/package/builtin-skill-catalog'
 import { SpecialistPackageService } from './specialist/package/service'
+import { OFFICIAL_MARKETPLACE_SOURCE } from './specialist/marketplace/official-source'
+import { MarketplaceRepository } from './specialist/marketplace/repository'
+import { MarketplaceService } from './specialist/marketplace/service'
 import {
   saveSpecialistExport,
   saveSpecialistPackageReport,
@@ -261,6 +275,10 @@ import {
   resolveContributionTemplateReadmePath
 } from './specialist/package/contribution-template'
 import { SessionBindingService } from './specialist/session-binding'
+import {
+  SessionSpecialistReconfiguration,
+  type PersistedSessionSpecialistBinding
+} from './specialist/session-reconfiguration'
 import { SPECIALIST_IPC } from '../shared/specialist'
 import {
   CONNECTOR_TEMPLATE_MAX_BYTES,
@@ -299,11 +317,16 @@ import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 
 const permissionGrantsLog = createLogger('permission-grants')
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
+  // Startup and the application runtime share one settings.json transaction owner. Tests and
+  // non-desktop compositions may omit it and receive the existing default store.
+  settingsStore?: SettingsDocumentStore
+  translate?: NativeTranslator
   managedPreviewProtocol: PreviewProtocolRegistrar
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
   // disabled there by contract, not just incidentally via Notification.isSupported().
@@ -362,8 +385,10 @@ const previewArgs = (args: Record<string, unknown>): string => {
 const createApplicationModules = async (
   {
     mainEntryPath,
+    settingsStore,
     managedPreviewProtocol,
     headless = false,
+    translate = englishNativeTranslator,
     onAppIconVariantChanged,
     listAppIconPreviews
   }: IpcRegistrationOptions,
@@ -393,7 +418,11 @@ const createApplicationModules = async (
     createApplicationEventModule
   )
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
-  const settingsRepository = new SettingsRepository(resolveStorageRoot())
+  const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
+  const settingsRepository = new SettingsRepository(
+    settingsStore ?? resolveStorageRoot(),
+    (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
+  )
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
   })
@@ -457,7 +486,10 @@ const createApplicationModules = async (
       void observer.notifyCatalogChanged()
       return
     }
-    void runtimeRef.current?.requestSkillsReload()
+    if (runtimeRef.current) {
+      broadcastToRenderers('skills:catalog-changed', undefined)
+      void runtimeRef.current.requestSkillsReload()
+    }
   }
   const sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined } = {
     current: undefined
@@ -710,7 +742,14 @@ const createApplicationModules = async (
     },
     undefined,
     computeJobDeletionPort,
-    (session) => {
+    (session, owner) => {
+      if (owner === 'runtime-context') {
+        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+          session,
+          originClientId: MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
+        })
+        return
+      }
       delegatedActivity.recordSession(session)
       broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
         session,
@@ -830,13 +869,20 @@ const createApplicationModules = async (
     notificationInbox.markSessionsRead(sessionIds)
   )
   const sessionEnabledComputeHostsOwnerRef: { current?: SessionEnabledComputeHostsOwner } = {}
+  const visionEvidenceRepository = new VisionEvidenceRepository(() =>
+    getProjectDbClient(configRoot)
+  )
   bindNotificationInboxDeletionRuntime({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
-      await sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds)
-      await (sideChatOwnerRef.current?.invalidateParents(sessionIds) ?? Promise.resolve())
-    }
+      await Promise.all([
+        sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
+        sideChatOwnerRef.current?.invalidateParents(sessionIds),
+        visionEvidenceRepository.deleteSessions(sessionIds)
+      ])
+    },
+    onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds)
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
@@ -867,7 +913,7 @@ const createApplicationModules = async (
         ...result,
         sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
           result.sessions,
-          result.diagnostics?.isComplete === true
+          canReconcileSessionAbsences(result)
         )
       }
     },
@@ -879,7 +925,7 @@ const createApplicationModules = async (
       await projectDeletionCoordinator.recoverPendingDeletions()
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
-      const durableSession = created
+      let durableSession = created
         ? await (() => {
             if (!sessionEnabledComputeHostsOwnerRef.current) {
               throw new Error('Session enabled Compute Host ownership is not initialized.')
@@ -892,13 +938,16 @@ const createApplicationModules = async (
       // Flush any approved host.agents.switch binding stashed while this session was not yet durable,
       // so the approved target survives a restart before the next message (the in-memory binding
       // alone does not persist across restart).
-      if (pendingSpecialistBindings.has(durableSession.id)) {
-        const specialistId = pendingSpecialistBindings.take(durableSession.id)
-        await sessionPersistenceCoordinator.saveSessionSpecialistBinding(
-          durableSession,
-          specialistId
-        )
-      }
+      durableSession = await pendingSpecialistBindings.flush(
+        durableSession.id,
+        durableSession,
+        (binding) =>
+          sessionPersistenceCoordinator.saveSessionSpecialistBinding(
+            durableSession,
+            binding.specialistId,
+            binding.specialistBindingPending
+          )
+      )
       return { created, session: durableSession }
     },
     setDelegationPolicy: async (projectId, sessionId, policy) => {
@@ -957,6 +1006,7 @@ const createApplicationModules = async (
       micromambaRunner,
       locale: app.getLocale(),
       appVersion: app.getVersion(),
+      translate,
       events: applicationEvents,
       disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator
@@ -975,7 +1025,6 @@ const createApplicationModules = async (
   const specialistRepository = new SpecialistRepository(resolveStorageRoot())
   const appVersion = app.getVersion()
   const specialistSkills = await settingsService.listSpecialistSkillCatalog()
-  const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
   const packageSkills = await specialistPackageSkillAdapter.snapshot()
   const builtinRegistry = new BuiltinSpecialistRegistry({
     appVersion,
@@ -988,6 +1037,7 @@ const createApplicationModules = async (
         builtin: skill.source === 'featured',
         displayName: skill.displayName,
         source: skill.source,
+        mainEnabled: skill.mainEnabled,
         ...(packageSkill ?? {})
       }
     }),
@@ -997,6 +1047,26 @@ const createApplicationModules = async (
   })
   const profileService = new ProfileService(specialistRepository, builtinRegistry)
   await profileService.ensureBuiltinCatalogReady()
+  const tagService = new TagService(
+    new TagRepository(() => getProjectDbClient(configRoot)),
+    new TagResourceCatalog({
+      listSkills: () => settingsService.listSkills(),
+      listConnectors: () => settingsService.listConnectors(),
+      listSpecialists: async () =>
+        (await profileService.listForSettings()).filter(({ kind }) => kind !== 'reviewer')
+    }),
+    applicationEvents
+  )
+  const tagCleanupLog = createLogger('tags:cleanup')
+  const removeResourceTags = async (
+    resources: Parameters<TagService['removeResources']>[0]
+  ): Promise<void> => {
+    try {
+      await tagService.removeResources(resources)
+    } catch (error) {
+      tagCleanupLog.warn('resource deletion Tag cleanup failed', { error, resources })
+    }
+  }
   const specialistPackageService = new SpecialistPackageService({
     storageDir: resolveStorageRoot(),
     repository: specialistRepository,
@@ -1019,6 +1089,7 @@ const createApplicationModules = async (
             builtin: skill.source === 'featured',
             displayName: skill.displayName,
             source: skill.source,
+            mainEnabled: skill.mainEnabled,
             ...(packageSkill ?? {})
           }
         }),
@@ -1054,17 +1125,103 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    onResourcesDeleted: (specialistId, skillIds) =>
+      removeResourceTags([
+        { resourceType: 'catalog.specialist', resourceId: specialistId },
+        ...skillIds.map((resourceId) => ({
+          resourceType: 'catalog.skill' as const,
+          resourceId
+        }))
+      ]),
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
       void runtime.requestSkillsReload()
     }
   })
+  const marketplaceService = new MarketplaceService({
+    repository: new MarketplaceRepository(resolveStorageRoot()),
+    packages: specialistPackageService,
+    fetch: netFetchStandard,
+    officialSource: OFFICIAL_MARKETPLACE_SOURCE,
+    getDisabledSkillIds: async () =>
+      (await settingsRepository.getSettings()).disabledSkillIds ?? [],
+    getInstalledSpecialists: async () =>
+      (await profileService.list()).map((profile) => ({
+        id: profile.id,
+        ...(profile.origin ? { origin: profile.origin } : {}),
+        ...(profile.importBaseline?.archiveDigest
+          ? { archiveDigest: profile.importBaseline.archiveDigest }
+          : {})
+      })),
+    setSkillsMainEnabled: async (ids, enabled) => {
+      await settingsRepository.setSkillsEnabled([...new Set(ids)], enabled)
+      // Startup recovery runs before the ACP runtime exists, so its initial catalog reads the
+      // restored settings directly. Later recovery must refresh the already-live catalog.
+      requestSkillCatalogRefresh()
+    }
+  })
+  try {
+    await marketplaceService.recover()
+  } catch (error) {
+    createLogger('specialist:marketplace').error(
+      'Marketplace install recovery incomplete; Marketplace remains fail-closed',
+      diagnosticErrorFields(error)
+    )
+  }
   settingsService.setSkillDeletionGuard((skillId) =>
     specialistPackageService.assertSkillDeletionAllowed(skillId)
   )
   // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
   const sessionBindingService = new SessionBindingService(profileService)
+  const specialistPersistLog = createLogger('specialist:persist')
+  const loadSessionSpecialistBinding = async (
+    sessionId: string
+  ): Promise<PersistedSessionSpecialistBinding | undefined> => {
+    const session = (await sessionRepository.loadAll()).sessions.find(
+      (candidate) => candidate.id === sessionId
+    )
+    return session
+      ? {
+          specialistId: session.specialistId,
+          specialistBindingPending: session.specialistBindingPending
+        }
+      : undefined
+  }
+  const persistSessionSpecialistBinding = async (
+    sessionId: string,
+    specialistId: string | undefined,
+    pending: boolean
+  ): Promise<void> => {
+    const allSessions = await sessionRepository.loadAll()
+    const session = allSessions.sessions.find((candidate) => candidate.id === sessionId)
+    if (!session) {
+      // Fresh unsent drafts are not durable yet. Carry both the desired ID and pending marker into
+      // their first save; the marker can also be cleared here when runtime applies before that save.
+      pendingSpecialistBindings.stash(sessionId, specialistId, pending)
+      specialistPersistLog.debug('session not yet durable; stashed Specialist binding state', {
+        sessionId,
+        specialistId,
+        pending
+      })
+      return
+    }
+    pendingSpecialistBindings.take(sessionId)
+    await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId, pending)
+  }
+  const sessionSpecialistReconfiguration = new SessionSpecialistReconfiguration({
+    sessionBinding: sessionBindingService,
+    loadBinding: loadSessionSpecialistBinding,
+    persistBinding: persistSessionSpecialistBinding,
+    discardPendingBinding: (sessionId) => {
+      pendingSpecialistBindings.take(sessionId)
+    },
+    applyRuntime: async (sessionId, specialistId) => {
+      const runtime = runtimeRef.current
+      if (!runtime) throw new Error('Agent runtime is not initialized.')
+      return runtime.switchSpecialist(sessionId, specialistId)
+    }
+  })
   // Compose the interceptor before ACP because Notebook construction precedes runtime construction.
   // Startup registers the complete production adapter below before any IPC surface becomes callable.
   const completionGateRuntimeRegistry = new CompletionGateRuntimeRegistry()
@@ -1185,13 +1342,20 @@ const createApplicationModules = async (
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
   const approvalBroker = new ApprovalBroker({
     generateId: () => randomUUID(),
-    onSettled: (id, state) => void taskNotifications.settleAuthorization('connector', id, state),
+    onSettled: (id, state) => {
+      try {
+        broadcastToRenderers('connectors:approval-settled', id)
+      } finally {
+        void taskNotifications.settleAuthorization('connector', id, state)
+      }
+    },
     broadcast: buildConnectorApprovalBroadcast({
       broadcastToRenderers,
       taskNotifications,
       onNotificationError: (error) =>
         notificationsLog.warn('connector approval notification failed', errorLogFields(error))
-    })
+    }),
+    replay: (request) => broadcastToRenderers('connectors:approval-request', request)
   })
   // The late-bound app runtime also serves connector tools that attach a generated file to the current
   // turn. It is created below because it depends on the connector service.
@@ -1236,14 +1400,17 @@ const createApplicationModules = async (
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
     permissionGrantRegistry,
-    requestApproval: ({ connector, method, args, sessionId, availableScopes }) =>
-      approvalBroker.request({
-        connector,
-        method,
-        argsPreview: previewArgs(args),
-        ...(sessionId ? { sessionId } : {}),
-        availableScopes
-      }),
+    requestApproval: ({ connector, method, args, sessionId, availableScopes }, signal) =>
+      approvalBroker.request(
+        {
+          connector,
+          method,
+          argsPreview: previewArgs(args),
+          ...(sessionId ? { sessionId } : {}),
+          availableScopes
+        },
+        signal
+      ),
     resolveSpecialistProfile: async (specialistId) => {
       try {
         return await profileService.resolveRunnableById(specialistId)
@@ -1298,6 +1465,7 @@ const createApplicationModules = async (
   surfaceAdapters = beforeAcpAdapters
   const {
     computeService,
+    connectionBroker,
     jobDeletionOwner,
     jobRepository,
     hostRepository,
@@ -1346,6 +1514,7 @@ const createApplicationModules = async (
   await modules.add(
     {
       computeService,
+      connectionBroker,
       jobDeletionOwner,
       hostRepository,
       jobRepository,
@@ -1416,27 +1585,8 @@ const createApplicationModules = async (
     // ProfileService already broadcasts specialist:catalog-changed on update/delete; this refreshes the
     // RUNTIME capability resolution (mirrors the Settings IPC path's onProfilesChanged callback).
     invalidateCatalog: () => void runtime.requestSkillsReload(),
-    persistSessionSpecialist: async (sessionId, specialistId) => {
-      const allSessions = await sessionRepository.loadAll()
-      const session = allSessions.sessions.find((s) => s.id === sessionId)
-      if (!session) {
-        // The calling session is a fresh unsent draft that is not yet on disk. Stash the approved
-        // binding so the save path flushes it on first persist — otherwise an app restart before the
-        // first save would silently lose the approved switch (only the in-memory binding survives).
-        pendingSpecialistBindings.stash(sessionId, specialistId)
-        specialistPersistLog.debug(
-          'session not yet durable; stashed specialist binding for first save',
-          {
-            sessionId,
-            specialistId
-          }
-        )
-        return
-      }
-      // The session is already durable: this write is authoritative, so drop any stale stash.
-      pendingSpecialistBindings.take(sessionId)
-      await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
-    }
+    persistSessionSpecialist: (sessionId, specialistId) =>
+      sessionSpecialistReconfiguration.commitDesired(sessionId, specialistId)
   })
   const notebookRpcServerRef: { current?: NotebookLocalRpcServer } = {}
   const requireNotebookRpcServer = (): NotebookLocalRpcServer => {
@@ -1646,6 +1796,9 @@ const createApplicationModules = async (
                       : {}),
                     ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
                     ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
+                    ...(latest.specialistBindingPending === true
+                      ? { specialistBindingPending: true }
+                      : {}),
                     ...(latest.providerSessionId
                       ? { providerSessionId: latest.providerSessionId }
                       : {}),
@@ -1669,6 +1822,7 @@ const createApplicationModules = async (
       settingsService.publishHostSkill(name, sourcePath, overwrite),
     deletePublished: async (id) => {
       await settingsService.deleteSkill({ id })
+      await removeResourceTags([{ resourceType: 'catalog.skill', resourceId: id }])
     }
   }
   const hostSkillsService = new HostSkillsService({
@@ -1810,6 +1964,32 @@ const createApplicationModules = async (
     .catch((error) =>
       hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
     )
+  const visionInferenceRunner = new RestrictedInferenceRunner({
+    appVersion: app.getVersion(),
+    configRoot,
+    profileNamespace: 'vision-evidence',
+    resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
+  })
+  void visionInferenceRunner
+    .sweepStaleProfiles()
+    .catch((error) =>
+      hostLlmLog.error('stale Vision model profile cleanup failed', diagnosticErrorFields(error))
+    )
+  const imageInputCompatibility = await modules.add(
+    new ImageInputCompatibilityOwner({
+      captureTarget: () => settingsService.admitVisionModel(),
+      runner: visionInferenceRunner,
+      evidenceRepository: visionEvidenceRepository
+    }),
+    (owner) => ({
+      name: 'image-input-compatibility',
+      capability: owner,
+      dispose: () => {
+        owner.clear()
+        return visionInferenceRunner.shutdown()
+      }
+    })
+  )
   notebookRpcServerRef.current = notebookRpcServer
   // Register ownership before ACP construction. Reverse disposal therefore drains ACP + Notebook
   // through the coordinator first, then releases the local bridge without creating a second runtime
@@ -1835,6 +2015,7 @@ const createApplicationModules = async (
     ipcMainHandle('connectors:approval-replay', (_event, id: unknown) =>
       typeof id === 'string' ? approvalBroker.getPending(id) : null
     )
+    ipcMainHandle('connectors:approval-replay-pending', () => approvalBroker.replayPending())
     ipcMainHandle(
       'skills:conversation-import-respond',
       (_event, response: ConversationSkillImportApprovalResponse) => {
@@ -1846,8 +2027,24 @@ const createApplicationModules = async (
     })
   })
 
+  const recoverPendingCustomServerDeletions = async (): Promise<void> => {
+    const pendingCustomServerDeletionIds =
+      (await settingsRepository.getSettings()).connectors?.pendingCustomServerDeletionIds ?? []
+    await reconcilePendingCustomServerDeletions(permissionGrantRegistry, {
+      pendingCustomServerDeletionIds,
+      completeCustomServerDeletion: (serverId) =>
+        settingsRepository.completeCustomServerDeletion(serverId)
+    })
+  }
   const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
-    connectorRuntimeSettings.refresh(),
+    recoverPendingCustomServerDeletions()
+      .catch((error) =>
+        permissionGrantsLog.error(
+          'pending Connector permission cleanup failed',
+          errorLogFields(error)
+        )
+      )
+      .then(() => connectorRuntimeSettings.refresh()),
     {
       // If custom MCP discovery outlives the startup barrier, the first agent may already have
       // materialized the old connector docs. Rotate it once the late refresh settles so the next
@@ -1856,9 +2053,9 @@ const createApplicationModules = async (
     }
   )
 
-  // Repair soft-owner grants left behind if the app stopped between deleting a Connector/ComputeHost
-  // and pruning its authority. A failed/timeout Connector refresh leaves that owner class untouched;
-  // app-owned MCP catalog ids are non-UUID and are never guessed to be stale.
+  // Repair legacy UUID Connector grants and ComputeHost grants left behind without a deletion
+  // journal. A failed/timeout Connector refresh leaves that owner class untouched; app-owned MCP
+  // catalog ids are non-UUID and are never guessed to be stale.
   void initialConnectorSkillsReady
     .then(async () => {
       const hosts = await hostRepository.list()
@@ -1905,7 +2102,8 @@ const createApplicationModules = async (
           : resolveManagedFilePath(source, request),
       resolveSessionArtifactFilePath,
       openManagedFileVersion: (source, request) =>
-        managedFileVersionService.openResolved({ source, ...request })
+        managedFileVersionService.openResolved({ source, ...request }),
+      translate
     })
     registerLogsIpcHandlers(logsCommandOwner)
     registerGithubIpcHandlers({}, githubCommandOwner)
@@ -1952,7 +2150,8 @@ const createApplicationModules = async (
       profileService,
       sessionPersistenceCoordinator,
       delegatedWork: delegatedWork.root,
-      sideChatRelays: mainPromptSideChatRelay
+      sideChatRelays: mainPromptSideChatRelay,
+      imageInputCompatibility
     },
     (options) => {
       const runtime = createAcpRuntime(options)
@@ -1969,6 +2168,10 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  runtime.setSessionResumeObserver(async (request) => {
+    if (request.specialistBindingPending !== true) return
+    await sessionSpecialistReconfiguration.completeResume(request.sessionId, request.specialistId)
+  })
   const userSkillCatalogObserver = await modules.add(
     {
       storageRoot: configRoot,
@@ -2103,6 +2306,10 @@ const createApplicationModules = async (
   // visibility, so an archived Project/Session cannot restart work through another surface.
   runtime.setPromptAdmissionGuard(async (sessionId) => {
     await archiveCoordinator.assertSessionAvailableById(sessionId)
+    await sessionSpecialistReconfiguration.assertUserPromptReady(sessionId)
+    if (!(await completionHandoffLifecycle.canStartUserPrompt(sessionId))) {
+      throw new Error('The approved Specialist handoff must finish or be cancelled before sending.')
+    }
     if (sideChatRuntime.hasForParent(sessionId)) {
       throw new Error('Close Side chat before sending a message to Main.')
     }
@@ -2168,13 +2375,31 @@ const createApplicationModules = async (
     // completion through the wrong continuation path.
     completionGateRuntimeRegistry.register(
       createCodexCompletionGateRuntime({
-        runtime,
+        runtime: {
+          isSessionUsingFramework: (sessionId, frameworkId) =>
+            runtime.isSessionUsingFramework(sessionId, frameworkId),
+          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          waitForPromptRelease: (sessionId) => runtime.waitForPromptRelease(sessionId),
+          switchSpecialist: (sessionId, specialistId) =>
+            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+          continueApprovedHandoff: (sessionId, text) =>
+            runtime.continueApprovedHandoff(sessionId, text)
+        },
         resolveApprovedSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId)
       })
     )
     completionGateRuntimeRegistry.register(
       createOpenCodeImmediateHandoffRuntime({
-        runtime,
+        runtime: {
+          getSessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
+          capturePromptForHandoff: (sessionId) => runtime.capturePromptForHandoff(sessionId),
+          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          waitForPromptOwnershipRelease: (sessionId) =>
+            runtime.waitForPromptOwnershipRelease(sessionId),
+          switchSpecialist: (sessionId, specialistId) =>
+            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+          startContinuation: (request) => runtime.startContinuation(request)
+        },
         resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
         reportHandoffFailure: async (failure) =>
           runtime.reportApprovedHandoffFailure(failure.sessionId)
@@ -2182,7 +2407,14 @@ const createApplicationModules = async (
     )
     completionGateRuntimeRegistry.register(
       createProductionAppHandoffRuntime({
-        runtime,
+        runtime: {
+          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          waitForPromptOwnershipRelease: (sessionId) =>
+            runtime.waitForPromptOwnershipRelease(sessionId),
+          switchSpecialist: (sessionId, specialistId) =>
+            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+          sendAppContinuation: (request) => runtime.sendAppContinuation(request)
+        },
         sessionBinding: sessionBindingService
       })
     )
@@ -2221,7 +2453,7 @@ const createApplicationModules = async (
     },
     discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
     switchSpecialist: (sessionId, specialistId) =>
-      runtime.switchSpecialist(sessionId, specialistId),
+      sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
     createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
     sendAppContinuation: (request) => runtime.sendAppContinuation(request),
     reportHandoffFailure: async (_error, _handoff, context) => {
@@ -2263,6 +2495,7 @@ const createApplicationModules = async (
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
   const updateStrategy = createUpdateStrategy(process.platform, {
+    translate,
     installGate: createDelegatedSafeInstallGate(
       () => getActiveDelegatedSessions().length > 0,
       () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
@@ -2343,7 +2576,9 @@ const createApplicationModules = async (
     },
     skills: {
       requestSkillsReload: () => void runtime.requestSkillsReload(),
-      notifySkillCatalogChanged: requestSkillCatalogRefresh
+      notifySkillCatalogChanged: requestSkillCatalogRefresh,
+      removeTagsForSkill: (resourceId) =>
+        removeResourceTags([{ resourceType: 'catalog.skill', resourceId }])
     },
     connectors: {
       invalidatePermissionProjection: () => permissionGrantProjection.invalidateProjection(),
@@ -2354,6 +2589,8 @@ const createApplicationModules = async (
       requestSkillsReload: () => void runtime.requestSkillsReload(),
       pruneCustomServerPermissions: (serverId) =>
         permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
+      removeTagsForConnector: (resourceId) =>
+        removeResourceTags([{ resourceType: 'catalog.connector', resourceId }]),
       beginCustomServerSecurityChange: (serverId) =>
         connectorService.beginCustomServerSecurityChange(serverId),
       clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId),
@@ -2369,9 +2606,9 @@ const createApplicationModules = async (
       connectorTemplateFiles: {
         select: async () => {
           const selected = await dialog.showOpenDialog({
-            title: 'Import Connector configuration',
+            title: translate('Import Connector configuration'),
             properties: ['openFile'],
-            filters: [{ name: 'Connector configuration', extensions: ['json'] }]
+            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
           })
           const filePath = selected.filePaths[0]
           if (selected.canceled || !filePath) return { cancelled: true as const }
@@ -2386,9 +2623,9 @@ const createApplicationModules = async (
         },
         save: async (suggestedFileName, contents, sender) => {
           const selected = await showSettingsSaveDialog(sender, {
-            title: 'Export Connector configuration',
+            title: translate('Export Connector configuration'),
             defaultPath: suggestedFileName,
-            filters: [{ name: 'Connector configuration', extensions: ['json'] }]
+            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
           })
           if (selected.canceled || !selected.filePath) return false
           await writeFile(selected.filePath, contents, 'utf8')
@@ -2402,7 +2639,8 @@ const createApplicationModules = async (
               showSaveDialog: (options) => showSettingsSaveDialog(sender, options),
               writeFile: (filePath, bytes) => writeFile(filePath, bytes)
             },
-            archive
+            archive,
+            translate
           )
       }
     })
@@ -2417,49 +2655,25 @@ const createApplicationModules = async (
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
   sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
     await originalDeleteSession(projectId, sessionId)
-    sessionBindingService.clearSession(sessionId)
+    sessionSpecialistReconfiguration.clearSession(sessionId)
   }
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
     reviewRepository,
     messageAttributionAuthority
   )
-  const specialistPersistLog = createLogger('specialist:persist')
   declareElectronAdapter('specialist', () =>
     registerSpecialistIpcHandlers(
       profileService,
       sessionBindingService,
-      // Persist only the specialist UUID to the durable session file — never a profile snapshot.
-      // Read the current session file, patch specialistId, and save so the binding survives restarts.
-      // Reading all sessions to locate the target is intentional: sessionId alone is not sufficient to
-      // open the file (it lives under sessions/<projectId>/<sessionId>.json), and this operation is
-      // infrequent enough that the scan cost is acceptable.
-      async (sessionId, specialistId) => {
-        const allSessions = await sessionRepository.loadAll()
-        const session = allSessions.sessions.find((s) => s.id === sessionId)
-        if (!session) {
-          // The session has not yet been persisted (created but not saved). The specialistId will be
-          // written when the renderer calls sessions:save-session for the first time.
-          specialistPersistLog.debug(
-            'session not yet durable; specialistId will be written on first save',
-            {
-              sessionId,
-              specialistId
-            }
-          )
-          return
-        }
-        await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
-      },
-      // Apply the switch to the live agent runtime. The closure is invoked per-request, so a
-      // late-bound reference is unnecessary.
-      (sessionId, specialistId) => runtime.switchSpecialist(sessionId, specialistId),
+      sessionSpecialistReconfiguration,
       // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
       // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
       // specialist whitelist in the session _meta.
       () => void runtime.requestSkillsReload(),
       createContributionTemplateExporter({
         appVersion: app.getVersion(),
+        translate,
         showSaveDialog: (options) => dialog.showSaveDialog(options),
         readReadme: () => readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
         writeFile: (filePath, bytes) => writeFile(filePath, bytes)
@@ -2467,18 +2681,22 @@ const createApplicationModules = async (
       {
         service: specialistPackageService,
         selectArchive: () =>
-          selectSpecialistArchive({
-            showOpenDialog: (options) => dialog.showOpenDialog(options),
-            readFile,
-            getFileSize: async (filePath) => (await stat(filePath)).size
-          }),
+          selectSpecialistArchive(
+            {
+              showOpenDialog: (options) => dialog.showOpenDialog(options),
+              readFile,
+              getFileSize: async (filePath) => (await stat(filePath)).size
+            },
+            translate
+          ),
         saveReport: (report) =>
           saveSpecialistPackageReport(
             {
               showSaveDialog: (options) => dialog.showSaveDialog(options),
               writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf8')
             },
-            report
+            report,
+            translate
           ),
         saveExport: (archive) =>
           saveSpecialistExport(
@@ -2486,9 +2704,11 @@ const createApplicationModules = async (
               showSaveDialog: (options) => dialog.showSaveDialog(options),
               writeFile: (filePath, bytes) => writeFile(filePath, bytes)
             },
-            archive
+            archive,
+            translate
           )
-      }
+      },
+      marketplaceService
     )
   )
   // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the
@@ -2760,6 +2980,7 @@ const createApplicationModules = async (
     )
   )
   const conversationExportService = createConversationExportService({
+    translate,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
     isSessionActive: (projectId, sessionId) =>
       runtime
@@ -2900,6 +3121,7 @@ const createApplicationModules = async (
       events: applicationEvents
     },
     permissionGrants: permissionGrantProjection,
+    tags: tagService,
     dataContent: {
       artifacts: artifactHandlers,
       electron: {

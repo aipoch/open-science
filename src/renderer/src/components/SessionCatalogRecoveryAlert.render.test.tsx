@@ -62,6 +62,24 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
   })
 
+  it('requires an app update without offering a destructive repair for future Session files', () => {
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{ kind: 'unsupported-version', affectedFileCount: 1 }}
+          onRetry={vi.fn()}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Open Science update required')
+    expect(container.textContent).toContain(
+      'A saved conversation requires a newer version of Open Science'
+    )
+    expect(container.textContent).toContain('files stay unchanged')
+    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+  })
+
   it('keeps unfinished Project deletion recovery distinct from index repair', () => {
     act(() =>
       root.render(

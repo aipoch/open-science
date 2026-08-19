@@ -40,7 +40,7 @@ const run = (
   fetchImpl: typeof fetch
 ): Promise<unknown> => new ParserEngine({ fetchImpl, retries: 0 }).call(tool(id), args, {})
 
-describe('cancer_models / list_studies', () => {
+describe('cancer-models / list_studies', () => {
   it('fetches all matching studies, filters by cancer_type_id, and sorts by study_id', async () => {
     const fetchImpl = vi.fn(
       router([
@@ -121,7 +121,7 @@ describe('cancer_models / list_studies', () => {
   })
 })
 
-describe('cancer_models / get_study', () => {
+describe('cancer-models / get_study', () => {
   it('assembles metadata, true collection counts, and sorted profiles', async () => {
     const fetchImpl = vi.fn(
       router([
@@ -193,7 +193,7 @@ describe('cancer_models / get_study', () => {
   })
 })
 
-describe('cancer_models / mutations_in_gene', () => {
+describe('cancer-models / mutations_in_gene', () => {
   const genePlusProfiles = (mutations: unknown[]): Array<[string, unknown]> => [
     ['/genes/IDH1', { entrezGeneId: 3417, hugoGeneSymbol: 'IDH1' }],
     [
@@ -289,7 +289,7 @@ describe('cancer_models / mutations_in_gene', () => {
   })
 })
 
-describe('cancer_models / mutation_frequency', () => {
+describe('cancer-models / mutation_frequency', () => {
   it('computes frequency per study and buckets unknown / no-data ids, ranked by frequency', async () => {
     const fetchImpl = vi.fn(
       router([
@@ -364,7 +364,7 @@ describe('cancer_models / mutation_frequency', () => {
   })
 })
 
-describe('cancer_models / cna_in_gene', () => {
+describe('cancer-models / cna_in_gene', () => {
   const baseRoutes = (cnaRows: unknown[]): Array<[string, unknown]> => [
     ['/genes/CDKN2A', { entrezGeneId: 1029, hugoGeneSymbol: 'CDKN2A' }],
     [
@@ -458,7 +458,7 @@ describe('cancer_models / cna_in_gene', () => {
   })
 })
 
-describe('cancer_models / clinical_attributes', () => {
+describe('cancer-models / clinical_attributes', () => {
   it('summarizes survival endpoints and levels, sorted by attribute id', async () => {
     const fetchImpl = vi.fn(
       router([
@@ -536,7 +536,7 @@ describe('cancer_models / clinical_attributes', () => {
 
 // Live integration tests against the real cBioPortal API. Opt-in via LIVE_API=1 to keep the default
 // suite offline and to respect upstream rate limits (each block hits the network a handful of times).
-describe.skipIf(!process.env.LIVE_API)('cancer_models / LIVE cBioPortal', () => {
+describe.skipIf(!process.env.LIVE_API)('cancer-models / LIVE cBioPortal', () => {
   const live = (id: string, args: Record<string, unknown>): Promise<unknown> =>
     new ParserEngine().call(tool(id), args, {})
 

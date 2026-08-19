@@ -3,7 +3,9 @@
   "version": "8.8.8",
   "name": false,
   "description": [],
-  "systemPrompt": { "secret": "must-not-leak" },
+  "system_prompt": { "secret": "must-not-leak" },
+  "skill_ids": [],
+  "connector_ids": [],
   "enabled": "yes",
   "capabilityMode": "all"
 }

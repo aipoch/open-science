@@ -4,13 +4,14 @@ import { createReadStream, realpathSync } from 'node:fs'
 import { basename, resolve, sep, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
+import { terminateProcessTree } from '../process-tree'
 import { condaActivatedPath } from './runtime-paths'
 
 const execFileAsync = promisify(execFile)
 
-// Marker on the error thrown when a child could NOT be confirmed stopped after a recording failure. The
-// caller must then RETAIN the crash-recovery evidence (sidecar + journal) rather than clearing it, since
-// a live worker may still be writing the prefix. See killAndConfirmExit / runMicromamba.
+// Marker on the error thrown when a child tree could NOT be confirmed stopped after cancellation,
+// timeout, or a recording failure. The caller must then RETAIN the crash-recovery evidence (sidecar +
+// journal) rather than clearing it, since a live worker may still be writing the prefix.
 export const CHILD_UNCONFIRMED = 'RUNTIME_CHILD_UNCONFIRMED'
 export const isChildUnconfirmedError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes(CHILD_UNCONFIRMED)
@@ -48,42 +49,19 @@ export const micromambaDiagnosticText = (error: unknown): string => {
     .join('\n')
 }
 
-// Kills a child and resolves ONLY once it has actually exited, escalating SIGTERM -> SIGKILL. Resolves
-// true when exit is confirmed, false when it can't be confirmed within the deadline (SIGTERM can be
-// ignored/delayed and kill() can return false, so a single kill() is not proof of exit). The caller
-// decides what an unconfirmed exit means (here: retain recovery evidence, fail closed).
-export const killAndConfirmExit = (child: ChildProcess, deadlineMs = 5000): Promise<boolean> =>
-  new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      resolve(true)
-      return
-    }
-    let done = false
-    const finish = (confirmed: boolean): void => {
-      if (done) return
-      done = true
-      clearTimeout(escalate)
-      clearTimeout(giveUp)
-      resolve(confirmed)
-    }
-    child.once('exit', () => finish(true))
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      // Already gone or un-signalable; the exit listener / timeout below still resolves.
-    }
-    const escalate = setTimeout(
-      () => {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // Best-effort escalation.
-        }
-      },
-      Math.floor(deadlineMs / 2)
-    )
-    const giveUp = setTimeout(() => finish(false), deadlineMs)
-  })
+// Kills the whole child process tree and resolves true ONLY when the shared cross-platform reaper can
+// confirm it is gone. The caller decides what an unconfirmed teardown means (here: retain recovery
+// evidence and fail closed so no second writer can race the surviving tree).
+export const killAndConfirmExit = (
+  child: ChildProcess,
+  terminateTree: typeof terminateProcessTree = terminateProcessTree
+): Promise<boolean> => {
+  // Once the root has exited, its descendants may already be reparented and the original PID may be
+  // reused. We can no longer enumerate that tree safely, so fail closed instead of probing/killing by a
+  // stale PID or claiming the descendants are gone.
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(false)
+  return terminateTree(child).then(({ reaped }) => reaped)
+}
 
 // Merges extra vars over the current process env for a subprocess (used to inject the CA-bundle vars
 // so an online provision behind an enterprise TLS proxy verifies HTTPS). Undefined → inherit as-is.
@@ -247,6 +225,7 @@ export const runMicromamba = (
     let timedOut = false
     let cancelled = false
     let settled = false
+    let termination: Promise<boolean> | undefined
     const startedAt = Date.now()
     const appendTail = (current: string, chunk: unknown): string =>
       `${current}${String(chunk)}`.slice(-maxTail)
@@ -257,20 +236,38 @@ export const runMicromamba = (
       stderr = appendTail(stderr, chunk)
     })
 
-    const timeout = setTimeout(() => {
-      timedOut = true
-      child.kill()
-    }, timeoutMs)
-    const onAbort = (): void => {
-      cancelled = true
-      child.kill()
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-
     const cleanup = (): void => {
       clearTimeout(timeout)
       signal?.removeEventListener('abort', onAbort)
     }
+    const rejectUnconfirmed = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      const reason = cancelled ? 'cancellation' : timedOut ? 'timeout' : 'PID recording failure'
+      reject(
+        new Error(
+          `${CHILD_UNCONFIRMED}: the micromamba process tree could not be confirmed stopped after ` +
+            `${reason}; leaving the operation for recovery to block.`
+        )
+      )
+    }
+    const terminateTree = (): Promise<boolean> => {
+      termination ??= killAndConfirmExit(child)
+      void termination.then((confirmed) => {
+        if (!confirmed) rejectUnconfirmed()
+      })
+      return termination
+    }
+    const timeout = setTimeout(() => {
+      timedOut = true
+      void terminateTree()
+    }, timeoutMs)
+    const onAbort = (): void => {
+      cancelled = true
+      void terminateTree()
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
     // Full tails go into the error's structured `data` for the logs; the user-facing message gets only
     // this short excerpt. micromamba writes its package plan (thousands of pinned specs) to stdout, so
     // embedding the raw tails in the message floods the provisioning banner — prefer the stderr reason,
@@ -283,7 +280,7 @@ export const runMicromamba = (
     }
 
     // Record the spawned PID for crash-recovery supervision. If recording FAILS, fail closed: kill the
-    // child and only settle once it is CONFIRMED gone — the close handler then rejects with
+    // whole tree and only settle once it is CONFIRMED gone — the close handler then rejects with
     // recordingError. If it can't be confirmed, reject with the CHILD_UNCONFIRMED marker so the caller
     // RETAINS the recovery evidence (a worker may still be writing) instead of clearing it.
     let recordingError: Error | undefined
@@ -296,29 +293,29 @@ export const runMicromamba = (
             error instanceof Error ? error.message : String(error)
           }`
         )
-        void killAndConfirmExit(child).then((confirmed) => {
-          if (!confirmed && !settled) {
-            settled = true
-            cleanup()
-            reject(
-              new Error(
-                `${CHILD_UNCONFIRMED}: recording failed and the runtime worker could not be confirmed ` +
-                  'stopped; leaving the operation for recovery to block.'
-              )
-            )
-          }
-          // If confirmed, the close handler below rejects with recordingError.
-        })
+        void terminateTree()
+        // If confirmed, the close handler below rejects with recordingError. If not, terminateTree's
+        // shared rejection path retains the operation for recovery.
       }
     }
 
-    child.once('error', (error) => {
+    child.once('error', async (error) => {
+      if (settled) return
+      if (termination && !(await termination)) {
+        rejectUnconfirmed()
+        return
+      }
       if (settled) return
       settled = true
       cleanup()
       reject(new Error(`micromamba failed to start (${argv.join(' ')}): ${error.message}`))
     })
-    child.once('close', (code, closeSignal) => {
+    child.once('close', async (code, closeSignal) => {
+      if (settled) return
+      if (termination && !(await termination)) {
+        rejectUnconfirmed()
+        return
+      }
       if (settled) return
       settled = true
       cleanup()

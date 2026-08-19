@@ -23,7 +23,11 @@ vi.mock('@/hooks/useMediaQuery', () => ({
 }))
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenu: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenu: ({ children, open }: PropsWithChildren<{ open?: boolean }>): React.JSX.Element => (
+    <div data-testid="agent-controls-menu" data-open={String(open ?? false)}>
+      {children}
+    </div>
+  ),
   DropdownMenuContent: ({ children }: PropsWithChildren): React.JSX.Element => (
     <div>{children}</div>
   ),
@@ -196,6 +200,29 @@ const findButton = (label: string): HTMLButtonElement => {
 }
 
 describe('ComposerAgentControlsMenu', () => {
+  it('opens when the composer requests Specialist selection', () => {
+    const props = {
+      profile: 'ask' as const,
+      autoReviewEnabled: false,
+      onProfileChange: vi.fn(),
+      onAutoReviewChange: vi.fn()
+    }
+
+    act(() => {
+      root.render(<ComposerAgentControlsMenu {...props} openRequest={0} />)
+    })
+    expect(
+      container.querySelector('[data-testid="agent-controls-menu"]')?.getAttribute('data-open')
+    ).toBe('false')
+
+    act(() => {
+      root.render(<ComposerAgentControlsMenu {...props} openRequest={1} />)
+    })
+    expect(
+      container.querySelector('[data-testid="agent-controls-menu"]')?.getAttribute('data-open')
+    ).toBe('true')
+  })
+
   it('changes Ask and Auto directly without a risk dialog', () => {
     const onProfileChange = vi.fn()
 

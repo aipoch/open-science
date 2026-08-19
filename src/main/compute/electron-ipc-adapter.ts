@@ -1,6 +1,9 @@
 import type {
+  ChangeComputeHostAuthenticationRequest,
   ComputeApprovalDecision,
   CreateComputeHostRequest,
+  CreatePasswordComputeHostRequest,
+  ResetPasswordComputeHostRequest,
   DeleteComputeHostRequest,
   DetailsAuthor
 } from '../../shared/compute'
@@ -29,6 +32,21 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   ipcMainHandle('compute:get', (_event, providerId: string) => handlers.get(providerId))
   ipcMainHandle('compute:create', (_event, request: CreateComputeHostRequest) =>
     handlers.create(request)
+  )
+  ipcMainHandle('compute:create-password', (_event, request: CreatePasswordComputeHostRequest) =>
+    handlers.createPassword(request)
+  )
+  ipcMainHandle('compute:reset-password', (_event, request: ResetPasswordComputeHostRequest) =>
+    handlers.resetPassword(request)
+  )
+  ipcMainHandle(
+    'compute:change-authentication',
+    (_event, request: ChangeComputeHostAuthenticationRequest) =>
+      handlers.changeAuthentication(request)
+  )
+  ipcMainHandle('compute:password-capability', () => handlers.passwordCapability())
+  ipcMainHandle('compute:deletion-status', (_event, request: DeleteComputeHostRequest) =>
+    handlers.deletionStatus(request.providerId)
   )
   ipcMainHandle('compute:delete', async (_event, request: DeleteComputeHostRequest) => {
     await handlers.delete(request.providerId)
@@ -100,6 +118,7 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   ipcMainHandle('compute:approval-replay', (_event, id: unknown) =>
     typeof id === 'string' ? handlers.approvalReplay(id) : null
   )
+  ipcMainHandle('compute:approval-replay-pending', () => handlers.approvalReplayPending())
   // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
   ipcMainHandle(
     COMPUTE_JOBS_LIST_CHANNEL,

@@ -63,7 +63,8 @@ const useAcpRuntime = (): {
     previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
     specialistId?: AcpResumeSessionRequest['specialistId'],
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
-    providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken']
+    providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
+    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
   ) => Promise<AcpCreateSessionResponse>
   continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
   resetSessionContext: (
@@ -258,7 +259,8 @@ const useAcpRuntime = (): {
       previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
       specialistId?: AcpResumeSessionRequest['specialistId'],
       providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
-      providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken']
+      providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
+      specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.resumeSession({
@@ -270,7 +272,8 @@ const useAcpRuntime = (): {
           previousBackendId,
           specialistId,
           providerSessionId,
-          providerContinuityToken
+          providerContinuityToken,
+          specialistBindingPending
         })
       ),
     [runValueAction]

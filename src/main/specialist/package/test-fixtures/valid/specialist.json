@@ -1,5 +1,7 @@
 {
   "name": "Fixture Specialist",
   "description": "A valid adapter fixture.",
-  "systemPrompt": "Fixture prompt that must stay out of previews and diagnostics."
+  "system_prompt": "Fixture prompt that must stay out of previews and diagnostics.",
+  "skill_ids": [],
+  "connector_ids": []
 }

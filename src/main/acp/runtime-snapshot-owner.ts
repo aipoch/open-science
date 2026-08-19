@@ -1,11 +1,12 @@
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
+import { capToolDetailText, sanitizeToolContent } from '../../shared/tool-detail-sanitizer'
 
-const MAX_EVENTS = 500
+const ACP_RUNTIME_EVENT_RETENTION_LIMIT = 500
 // Amortized eviction: trim only after a full cap of slack accumulates, so steady-state appends are
 // a plain push instead of an O(n) array rebuild per event. Reads always go through the last
-// MAX_EVENTS window, keeping the observable retention bound exact.
-const EVENT_TRIM_THRESHOLD = MAX_EVENTS * 2
+// ACP_RUNTIME_EVENT_RETENTION_LIMIT window, keeping the observable retention bound exact.
+const EVENT_TRIM_THRESHOLD = ACP_RUNTIME_EVENT_RETENTION_LIMIT * 2
 
 type RuntimeSnapshotFields = Pick<AcpStateSnapshot, 'status' | 'cwd' | 'error' | 'events'>
 type RuntimeSnapshotProjection = Omit<AcpStateSnapshot, keyof RuntimeSnapshotFields>
@@ -59,6 +60,11 @@ class AcpRuntimeSnapshotOwner {
     let image = event.image
     let raw = event.raw
     let text = event.text
+    const toolContent = sanitizeToolContent(event.toolContent) as
+      AcpRuntimeEvent['toolContent'] | undefined
+    const terminalOutput = event.terminalOutput
+      ? capToolDetailText(event.terminalOutput)
+      : undefined
     if (image && event.sessionId) {
       const retainedBytes = this.retainedWindow()
         .filter((candidate) => candidate.sessionId === event.sessionId)
@@ -83,6 +89,8 @@ class AcpRuntimeSnapshotOwner {
       level: event.level ?? 'info',
       text,
       image,
+      toolContent,
+      terminalOutput,
       promptMessageId: event.promptMessageId,
       raw
     }
@@ -92,16 +100,16 @@ class AcpRuntimeSnapshotOwner {
     // gets a defensive clone so later caller mutation cannot rewrite history.
     this.retainedEvents.push(Object.isFrozen(event) ? runtimeEvent : cloneEvent(runtimeEvent))
     if (this.retainedEvents.length > EVENT_TRIM_THRESHOLD) {
-      this.retainedEvents = this.retainedEvents.slice(-MAX_EVENTS)
+      this.retainedEvents = this.retainedEvents.slice(-ACP_RUNTIME_EVENT_RETENTION_LIMIT)
     }
     return runtimeEvent
   }
 
   // The retained array may carry up to a cap of trim slack; every reader sees exactly the last
-  // MAX_EVENTS entries, in append order.
+  // ACP_RUNTIME_EVENT_RETENTION_LIMIT entries, in append order.
   private retainedWindow(): AcpRuntimeEvent[] {
-    return this.retainedEvents.length > MAX_EVENTS
-      ? this.retainedEvents.slice(-MAX_EVENTS)
+    return this.retainedEvents.length > ACP_RUNTIME_EVENT_RETENTION_LIMIT
+      ? this.retainedEvents.slice(-ACP_RUNTIME_EVENT_RETENTION_LIMIT)
       : this.retainedEvents
   }
 
@@ -116,5 +124,5 @@ class AcpRuntimeSnapshotOwner {
   }
 }
 
-export { AcpRuntimeSnapshotOwner }
+export { ACP_RUNTIME_EVENT_RETENTION_LIMIT, AcpRuntimeSnapshotOwner }
 export type { RuntimeEventInput, RuntimeSnapshotFields, RuntimeSnapshotProjection }

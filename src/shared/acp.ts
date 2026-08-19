@@ -48,6 +48,13 @@ export type AcpMessageImage = {
   byteLength: number
 }
 
+// Replay-only identity. These optional locators are derived from persisted Session messages and
+// never become part of provider image content or the durable Session JSON shape.
+export type AcpReplayMessageImage = AcpMessageImage & {
+  sourceMessageId?: string
+  sourceImageId?: string
+}
+
 export type ElicitationResponse = BaseElicitationResponse & {
   delegatedQuestion?: Readonly<{
     projectId: string
@@ -61,7 +68,7 @@ export type ElicitationResponse = BaseElicitationResponse & {
   historyReplay?: {
     historyPreamble?: string
     historyAttachments?: UploadedAttachment[]
-    historyImages?: AcpMessageImage[]
+    historyImages?: AcpReplayMessageImage[]
   }
 }
 
@@ -675,9 +682,9 @@ export type AcpCreateSessionRequest = {
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
   projectId?: string
   permissionProfile?: PermissionProfileId
-  // Immutable Specialist UUID to bind on first turn. Main process resolves the latest Profile at
+  // Immutable Specialist ID to bind on first turn. Main process resolves the latest Profile at
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
-  // stable UUID. Absent or undefined means no specialist; use Main Agent.
+  // stable ID. Absent or undefined means no specialist; use Main Agent.
   specialistId?: string
 }
 
@@ -708,6 +715,9 @@ export type AcpResumeSessionRequest = {
   previousBackendId?: string
   // Durable session binding, supplied on restore so session/resume reissues the Specialist whitelist.
   specialistId?: string
+  // True when disk holds a desired Specialist that the prior runtime never confirmed. A restored
+  // resume must adopt fresh provider context with that target before Main clears the durable marker.
+  specialistBindingPending?: true
 }
 
 export type AcpContinueInterruptedTurnRequest = {
@@ -734,6 +744,9 @@ export type AcpSaveAsSkillRequest = {
   sessionId: string
   agentFrameId: string
   messageBranchId: string
+  // Renderer capability hint only. Main still captures and validates the configured Vision target
+  // before any retained history image can reach the active text-only model.
+  supportsImageRelay?: boolean
   // Durable hidden control Message created on the active Branch before dispatch.
   promptMessageId: string
 }
@@ -787,7 +800,7 @@ export type AcpPromptRequest = {
   // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
-  historyImages?: AcpMessageImage[]
+  historyImages?: AcpReplayMessageImage[]
   // Transient prompt-boundary signal: the provider context was replaced, so live application state
   // must be handed off even when there are no replayable transcript turns. Never persisted.
   contextReset?: boolean
@@ -796,7 +809,7 @@ export type AcpPromptRequest = {
   resumeFallback?: {
     historyPreamble?: string
     historyAttachments?: UploadedAttachment[]
-    historyImages?: AcpMessageImage[]
+    historyImages?: AcpReplayMessageImage[]
   }
 }
 

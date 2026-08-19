@@ -192,11 +192,18 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
   ...overrides
 })
 
-const renderScroller = async (session: ChatSession): Promise<string> => {
+const renderScroller = async (
+  session: ChatSession,
+  props: { isResumingSession?: boolean } = {}
+): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
   return renderToStaticMarkup(
-    <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+    <WorkspaceMessageScroller
+      activeSession={session}
+      isResumingSession={props.isResumingSession}
+      onSendEditedMessage={vi.fn()}
+    />
   )
 }
 
@@ -224,6 +231,29 @@ describe('WorkspaceMessageScroller Run Marks render', () => {
       })
     )
     expect(twoRuns).toContain('data-item-count="3"')
+  })
+})
+
+describe('WorkspaceMessageScroller empty conversation banner', () => {
+  it('shows the banner for a new conversation with no messages', async () => {
+    const html = await renderScroller(createSession({}))
+
+    expect(html).toContain('data-testid="empty-conversation-banner"')
+    expect(html).toContain('What will you research in Open Science?')
+  })
+
+  it('hides the banner once the conversation has messages', async () => {
+    const html = await renderScroller(
+      createSession({ messages: [createMessage({ id: 'prompt-1', content: 'First prompt' })] })
+    )
+
+    expect(html).not.toContain('data-testid="empty-conversation-banner"')
+  })
+
+  it('hides the banner while a session is resuming', async () => {
+    const html = await renderScroller(createSession({}), { isResumingSession: true })
+
+    expect(html).not.toContain('data-testid="empty-conversation-banner"')
   })
 })
 

@@ -1,10 +1,10 @@
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { SpecialistRepository } from './repository'
+import { SpecialistDocumentDegradedError, SpecialistRepository } from './repository'
 import { sanitizeSpecialist } from './repository'
 import type { StoredSpecialist } from './types'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
@@ -158,6 +158,25 @@ describe('SpecialistRepository.getAll', () => {
     expect(firstRead.specialists[0].importBaseline).toBeUndefined()
     expect(secondRead).toEqual(firstRead)
   })
+
+  it('returns healthy records with safe diagnostics when one record is malformed', async () => {
+    const valid = makeSpecialist({ id: 'valid-specialist' })
+    const malformed = { ...makeSpecialist({ id: 'malformed-specialist' }), name: undefined }
+    await writeFile(
+      join(tmpDir, 'specialists.json'),
+      JSON.stringify({ version: 2, specialists: [valid, malformed] }, null, 2),
+      'utf8'
+    )
+
+    const snapshot = await new SpecialistRepository(tmpDir).getAllWithIntegrity()
+
+    expect(snapshot.document.specialists.map((item) => item.id)).toEqual(['valid-specialist'])
+    expect(snapshot.integrity).toEqual({
+      status: 'degraded',
+      issues: [{ code: 'record-invalid', recordIndex: 1 }]
+    })
+    expect(JSON.stringify(snapshot.integrity)).not.toContain('malformed-specialist')
+  })
 })
 
 describe('SpecialistRepository.insert', () => {
@@ -293,6 +312,80 @@ describe('SpecialistRepository — data-loss guard', () => {
     expect(doc.specialists.map((s) => s.id)).toContain(sp1.id)
     expect(doc.specialists.map((s) => s.id)).toContain(sp2.id)
   })
+
+  it('an unrelated mutation must not erase a malformed individual record from disk', async () => {
+    const valid = makeSpecialist({ id: 'valid-specialist' })
+    const malformed = { ...makeSpecialist({ id: 'malformed-specialist' }), name: undefined }
+    const filePath = join(tmpDir, 'specialists.json')
+    const original = JSON.stringify({ version: 2, specialists: [valid, malformed] }, null, 2)
+    await writeFile(filePath, original, 'utf8')
+
+    await expect(new SpecialistRepository(tmpDir).insert(makeSpecialist())).rejects.toBeInstanceOf(
+      SpecialistDocumentDegradedError
+    )
+
+    expect(await readFile(filePath, 'utf8')).toBe(original)
+  })
+
+  it.each(['not-a-number', 0, -1, 1.5])(
+    'blocks writes when revision %j would be normalized or retained as invalid',
+    async (revision) => {
+      const filePath = join(tmpDir, 'specialists.json')
+      const original = JSON.stringify(
+        { version: 2, specialists: [{ ...makeSpecialist(), revision }] },
+        null,
+        2
+      )
+      await writeFile(filePath, original, 'utf8')
+      const repo = new SpecialistRepository(tmpDir)
+
+      expect((await repo.getAllWithIntegrity()).integrity).toMatchObject({
+        status: 'degraded',
+        issues: [{ code: 'record-sanitized', recordIndex: 0 }]
+      })
+      await expect(repo.insert(makeSpecialist())).rejects.toBeInstanceOf(
+        SpecialistDocumentDegradedError
+      )
+      expect(await readFile(filePath, 'utf8')).toBe(original)
+    }
+  )
+
+  it.each(['update', 'setEnabled', 'delete', 'replaceAll', 'replaceAllIfUnchanged'] as const)(
+    'blocks %s when any record would be lost',
+    async (operation) => {
+      const valid = makeSpecialist({ id: 'valid-specialist', revision: 1 })
+      const raw = JSON.stringify(
+        {
+          version: 2,
+          specialists: [valid, { ...makeSpecialist(), unexpectedFutureField: true }]
+        },
+        null,
+        2
+      )
+      const filePath = join(tmpDir, 'specialists.json')
+      await writeFile(filePath, raw, 'utf8')
+      const repo = new SpecialistRepository(tmpDir)
+      const expected = await repo.getAll()
+      const replacement = {
+        ...expected,
+        specialists: [...expected.specialists, makeSpecialist()]
+      }
+
+      const run =
+        operation === 'update'
+          ? repo.update(valid.id, { description: 'changed' }, valid.revision)
+          : operation === 'setEnabled'
+            ? repo.setEnabled(valid.id, false)
+            : operation === 'delete'
+              ? repo.delete(valid.id, valid.revision)
+              : operation === 'replaceAll'
+                ? repo.replaceAll(replacement)
+                : repo.replaceAllIfUnchanged(expected, replacement)
+
+      await expect(run).rejects.toBeInstanceOf(SpecialistDocumentDegradedError)
+      expect(await readFile(filePath, 'utf8')).toBe(raw)
+    }
+  )
 })
 
 describe('SpecialistRepository — old schema detection', () => {
@@ -305,5 +398,9 @@ describe('SpecialistRepository — old schema detection', () => {
     const repo = new SpecialistRepository(tmpDir)
     const doc = await repo.getAll()
     expect(doc.specialists).toHaveLength(0)
+    expect((await repo.getAllWithIntegrity()).integrity).toMatchObject({
+      status: 'degraded',
+      issues: [{ code: 'legacy-schema-unsupported' }]
+    })
   })
 })

@@ -308,7 +308,7 @@ function sectionLabelRecord(r: LabelRecord, sections: string[]): Record<string, 
 export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
   {
     id: 'search_drug_applications',
-    connector: 'drug_regulatory',
+    connector: 'drug-regulatory',
     description:
       'Search Drugs@FDA applications (NDA/ANDA/BLA) by any combination of exact-phrase filters (brand, generic, active_ingredient, sponsor, marketing_status, dosage_form, route, pharm_class). generic and pharm_class query the harmonized openfda block (absent on older applications, so silently skipped there). A broad search returns the first max_records with the true total and truncated=true; to page beyond ~26,000 records, narrow with submission_date_from/to.',
     input: {
@@ -356,7 +356,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ total (API meta count), n_returned, truncated, last_updated, records: [ { application_number, sponsor_name, products: [...], submissions: [...], openfda_generic_name, openfda_pharm_class_epc, openfda_pharm_class_moa, openfda_pharm_class_cs, openfda_pharm_class_pe, openfda_substance_name, openfda_route, openfda_manufacturer_name, openfda_product_type } ] }`. `truncated` is true when fewer than `total` records were returned.',
     example:
-      'const result = await host.mcp("drug_regulatory", "search_drug_applications", {"generic": "ATORVASTATIN CALCIUM", "marketing_status": "Prescription", "max_records": 25})',
+      'const result = await host.mcp("drug-regulatory", "search_drug_applications", {"generic": "ATORVASTATIN CALCIUM", "marketing_status": "Prescription", "max_records": 25})',
     run: async (ctx, a) => {
       const expr = appSearchExpr(a)
       const maxRecords = Math.max(1, Number(a.max_records ?? 50))
@@ -378,7 +378,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_drug_application',
-    connector: 'drug_regulatory',
+    connector: 'drug-regulatory',
     description:
       'Fetch one Drugs@FDA application by its number (e.g. "NDA020702", "ANDA076543", "BLA125514"). Returns the full record — sponsor, products (brand, active ingredients + strengths, dosage form, route, marketing status, TE code), complete submissions history, and harmonized openfda fields when present.',
     input: {
@@ -390,7 +390,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ application_number, found (bool), record }`. `record` is the full Drugs@FDA application object (sponsor_name, products, submissions, openfda); it is null and `found` false when the number does not exist.',
     example:
-      'const result = await host.mcp("drug_regulatory", "get_drug_application", {"application_number": "NDA020702"})',
+      'const result = await host.mcp("drug-regulatory", "get_drug_application", {"application_number": "NDA020702"})',
     run: async (ctx, a) => {
       const num = String(a.application_number)
       const url = `${APPLICATIONS}?search=${enc(`application_number:${phrase(num)}`)}&limit=1`
@@ -407,7 +407,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'count_drug_applications',
-    connector: 'drug_regulatory',
+    connector: 'drug-regulatory',
     description:
       'Aggregate Drugs@FDA bucket counts over one field, optionally narrowed by the same filters as search_drug_applications. count_field accepts friendly names (sponsor_name, application_number, dosage_form, route, marketing_status, te_code, pharm_class_epc/moa/cs/pe) or a raw openFDA field path (append .exact yourself for analyzed fields).',
     input: {
@@ -459,7 +459,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ count_field, api_field (resolved openFDA path), n_buckets, bucket_sum, buckets: [ { term, count } ] }` — buckets are descending by count.',
     example:
-      'const result = await host.mcp("drug_regulatory", "count_drug_applications", {"count_field": "marketing_status"})',
+      'const result = await host.mcp("drug-regulatory", "count_drug_applications", {"count_field": "marketing_status"})',
     run: async (ctx, a) => {
       const countField = String(a.count_field)
       const apiField = COUNT_FIELDS[countField] ?? countField
@@ -476,13 +476,13 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_drug_statistics',
-    connector: 'drug_regulatory',
+    connector: 'drug-regulatory',
     description:
       'Corpus-level Drugs@FDA statistics in one call — total applications, marketing-status split, top dosage forms and routes (with distinct counts), and top sponsors by application count.',
     input: { type: 'object', properties: {} },
     returns:
       '`{ total_applications, last_updated, marketing_status: [ { term, count } ], dosage_form_top (top 25), dosage_form_distinct, route_top (top 25), route_distinct, sponsor_top (top 25 by application count) }`.',
-    example: 'const result = await host.mcp("drug_regulatory", "get_drug_statistics", {})',
+    example: 'const result = await host.mcp("drug-regulatory", "get_drug_statistics", {})',
     run: async (ctx) => {
       // Base query only for the total count and last-updated stamp (count queries omit results.total).
       const base = (await ctx.fetchJson(`${APPLICATIONS}?limit=1`)) as OpenFdaResults<Application>
@@ -504,7 +504,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'list_pharmacologic_classes',
-    connector: 'drug_regulatory',
+    connector: 'drug-regulatory',
     description:
       'Enumerate pharmacologic classes with their application counts, counted over the harmonized openfda.pharm_class_<type> block. Counts reflect only applications carrying that block.',
     input: {
@@ -523,7 +523,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ class_type, n_classes, classes: [ { term, count } ] }` — classes descending by count.',
     example:
-      'const result = await host.mcp("drug_regulatory", "list_pharmacologic_classes", {"class_type": "epc", "max_buckets": 50})',
+      'const result = await host.mcp("drug-regulatory", "list_pharmacologic_classes", {"class_type": "epc", "max_buckets": 50})',
     url: (a) => {
       const max = Math.min(Math.max(1, Number(a.max_buckets ?? 100)), MAX_BUCKETS)
       return `${APPLICATIONS}?count=${enc(`openfda.pharm_class_${classType(a.class_type)}.exact`)}&limit=${max}`
@@ -538,7 +538,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'get_generic_equivalents',
-    connector: 'drug_regulatory',
+    connector: 'drug-regulatory',
     description:
       'Find generic equivalents of a brand drug: resolve the brand to its reference application(s), extract the exact active-ingredient name set(s), then return every Drugs@FDA application with a product whose active-ingredient set matches (including TE codes and marketing status).',
     input: {
@@ -550,7 +550,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ brand, reference_applications: [appnums], active_ingredient_sets: [[names]], equivalents: [ full application records ] }`.',
     example:
-      'const result = await host.mcp("drug_regulatory", "get_generic_equivalents", {"brand": "Lipitor"})',
+      'const result = await host.mcp("drug-regulatory", "get_generic_equivalents", {"brand": "Lipitor"})',
     run: async (ctx, a) => {
       const brand = String(a.brand)
       // Step 1: resolve the brand to its applications and their distinct active-ingredient sets.
@@ -611,7 +611,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
   },
   {
     id: 'search_drug_labels',
-    connector: 'drug_regulatory',
+    connector: 'drug-regulatory',
     description:
       'Retrieve FDA drug product labels (SPL) by ingredient/name/route with targeted section extraction. Filters (active_ingredient, generic_name, brand_name, route, product_type) hit the openfda label block; set exact to query the non-analyzed .exact variants. Pass sections to extract raw openFDA label sections instead of the default structured record. raw_search is mutually exclusive with the mapped filters.',
     input: {
@@ -648,7 +648,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       'Default: `{ search, total (API count), n_returned, truncated, records: [ { identification: { set_id, spl_version, effective_time, brand_name, generic_name, substance_name, manufacturer, route, product_type, application_number }, has_boxed_warning, warning_sections: [str], indications_and_usage } ] }`. When `sections` is given, each record is `{ set_id, brand_name, generic_name, sections: { <name>: text } }`.',
     example:
-      'const result = await host.mcp("drug_regulatory", "search_drug_labels", {"brand_name": "Tylenol", "max_records": 5})',
+      'const result = await host.mcp("drug-regulatory", "search_drug_labels", {"brand_name": "Tylenol", "max_records": 5})',
     run: async (ctx, a) => {
       const expr = labelSearchExpr(a)
       const maxRecords = Math.max(1, Number(a.max_records ?? 25))

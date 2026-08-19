@@ -306,6 +306,45 @@ describe('PlanService', () => {
     ).rejects.toMatchObject({ code: 'approval-already-decided' })
   })
 
+  it('rejects an authorized step update when the Plan revision changes before commit', async () => {
+    const { service, context, setContext, dependencies } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      executionId: 'execution-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const approved = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'approved'
+    })
+    vi.mocked(dependencies.readRuntimeContext).mockClear()
+    vi.mocked(dependencies.readArtifactVersion).mockClear()
+    vi.mocked(dependencies.patchRuntimeContext).mockClear()
+
+    await expect(
+      service.updateStepStatus({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        title: 'Analyze the data',
+        status: 'in_progress',
+        authorizeUpdate: (projection) => {
+          expect(projection.revision).toBe(approved.projection.revision)
+          setContext({ ...context(), revision: context().revision + 1 })
+        }
+      })
+    ).rejects.toMatchObject({ code: 'revision-conflict' })
+
+    expect(dependencies.readRuntimeContext).toHaveBeenCalledOnce()
+    expect(dependencies.readArtifactVersion).toHaveBeenCalledOnce()
+    expect(dependencies.patchRuntimeContext).toHaveBeenCalledOnce()
+    expect(context().plan?.stepStatuses).toEqual({})
+  })
+
   it('does not persist a Plan decision when its commit precondition is revoked', async () => {
     const { service, context, dependencies } = setup()
     const generated = await service.generate({

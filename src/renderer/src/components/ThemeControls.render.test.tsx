@@ -53,4 +53,31 @@ describe('ThemeSegmentedControl', () => {
     expect(useThemeStore.getState().preference).toBe('dark')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
+
+  it('uses one Tab stop and selects the next theme with ArrowRight', async () => {
+    await act(async () => {
+      root.render(<ThemeSegmentedControl />)
+    })
+
+    const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    const group = container.querySelector<HTMLElement>('[role="radiogroup"]')
+    expect(group?.tabIndex).toBe(0)
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([-1, -1, -1])
+
+    await act(async () => {
+      group?.focus()
+    })
+    expect(document.activeElement).toBe(radios[1])
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([-1, 0, -1])
+
+    await act(async () => {
+      radios[1].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(useThemeStore.getState().preference).toBe('dark')
+    expect(document.activeElement).toBe(radios[2])
+  })
 })

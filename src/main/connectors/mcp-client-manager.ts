@@ -51,10 +51,43 @@ export class McpToolCallError extends Error {
 type McpClientManagerDeps = {
   createClient?: (
     config: CustomMcpServerConfig,
-    authProvider?: PersistentOAuthClientProvider
+    authProvider?: PersistentOAuthClientProvider,
+    signal?: AbortSignal
   ) => Promise<Client>
   openExternal?: (url: string) => Promise<void> | void
   saveOAuthState?: (serverId: string, state: StoredCustomMcpOAuthState) => Promise<void>
+}
+
+type ConnectionAttempt = {
+  controller: AbortController
+  promise: Promise<Client>
+  waiters: number
+  settled: boolean
+}
+
+function waitForConnection(promise: Promise<Client>, signal?: AbortSignal): Promise<Client> {
+  if (!signal) return promise
+  signal.throwIfAborted()
+
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', abort)
+    const abort = (): void => {
+      cleanup()
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then(
+      (client) => {
+        cleanup()
+        resolve(client)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      }
+    )
+    if (signal.aborted) abort()
+  })
 }
 
 // Pure factory: picks the transport for a custom server config. Exported so callers/tests can
@@ -101,11 +134,12 @@ export function buildTransport(
 // Default factory: build the transport for the server's configured type and connect an MCP client.
 async function defaultCreateClient(
   config: CustomMcpServerConfig,
-  authProvider?: PersistentOAuthClientProvider
+  authProvider?: PersistentOAuthClientProvider,
+  signal?: AbortSignal
 ): Promise<Client> {
   const transport = buildTransport(config, authProvider)
   const client = new Client({ name: 'open-science', version: '0.0.0' })
-  await client.connect(transport)
+  await client.connect(transport, signal ? { signal } : undefined)
   return client
 }
 
@@ -115,10 +149,11 @@ async function defaultCreateClient(
 export class McpClientManager {
   private readonly createClient: (
     config: CustomMcpServerConfig,
-    authProvider?: PersistentOAuthClientProvider
+    authProvider?: PersistentOAuthClientProvider,
+    signal?: AbortSignal
   ) => Promise<Client>
   private readonly clients = new Map<string, Client>()
-  private readonly connecting = new Map<string, Promise<Client>>()
+  private readonly connecting = new Map<string, ConnectionAttempt>()
   private readonly authenticationCancels = new Map<string, () => Promise<void>>()
   private readonly generations = new Map<string, number>()
   private readonly callbackServer = new OAuthCallbackServer()
@@ -138,30 +173,45 @@ export class McpClientManager {
     this.saveOAuthState = deps?.saveOAuthState
   }
 
-  async listTools(config: CustomMcpServerConfig): Promise<McpClientManagerTool[]> {
-    const client = await this.connect(config)
-    const { tools } = await client.listTools()
+  async listTools(
+    config: CustomMcpServerConfig,
+    signal?: AbortSignal
+  ): Promise<McpClientManagerTool[]> {
+    signal?.throwIfAborted()
+    const client = await this.connect(config, signal)
+    signal?.throwIfAborted()
+    const { tools } = signal
+      ? await client.listTools(undefined, { signal })
+      : await client.listTools()
     return tools
   }
 
   async call(
     config: CustomMcpServerConfig,
     method: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<unknown> {
-    const client = await this.connect(config)
-    const result = await client.callTool({ name: method, arguments: args })
+    signal?.throwIfAborted()
+    const client = await this.connect(config, signal)
+    signal?.throwIfAborted()
+    const input = { name: method, arguments: args }
+    const result = signal
+      ? await client.callTool(input, undefined, { signal })
+      : await client.callTool(input)
     return unwrapToolResult(result)
   }
 
   async close(id: string): Promise<void> {
     this.generations.set(id, this.generation(id) + 1)
+    const attempt = this.connecting.get(id)
+    this.connecting.delete(id)
+    attempt?.controller.abort()
     const cancelAuthentication = this.authenticationCancels.get(id)
     this.authenticationCancels.delete(id)
     await cancelAuthentication?.()
     const client = this.clients.get(id)
     this.clients.delete(id)
-    this.connecting.delete(id)
     if (client) await client.close()
   }
 
@@ -257,40 +307,67 @@ export class McpClientManager {
     }
   }
 
-  // Lazily connects, caching the client by server id and deduping concurrent connect calls.
-  private async connect(config: CustomMcpServerConfig): Promise<Client> {
+  // Lazily connects, caching the client by server id and deduping concurrent connect calls. Each
+  // caller can stop waiting independently; the underlying connection is cancelled only once no
+  // callers remain, so one disconnected RPC cannot interrupt another caller sharing the attempt.
+  private async connect(config: CustomMcpServerConfig, signal?: AbortSignal): Promise<Client> {
+    signal?.throwIfAborted()
     const cached = this.clients.get(config.id)
     if (cached) return cached
 
-    const inFlight = this.connecting.get(config.id)
-    if (inFlight) return inFlight
+    let attempt = this.connecting.get(config.id)
+    if (!attempt) {
+      const generation = this.generation(config.id)
+      const controller = new AbortController()
+      const promise = this.createClientWithOAuth(config, generation, controller.signal)
+        .then(async (client) => {
+          if (generation !== this.generation(config.id)) {
+            await client.close().catch(() => undefined)
+            throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+          }
+          if (controller.signal.aborted) {
+            await client.close().catch(() => undefined)
+            controller.signal.throwIfAborted()
+          }
+          this.clients.set(config.id, client)
+          return client
+        })
+        .finally(() => {
+          const current = this.connecting.get(config.id)
+          if (current?.promise === promise) {
+            current.settled = true
+            this.connecting.delete(config.id)
+          }
+        })
+      const entry: ConnectionAttempt = { controller, promise, waiters: 0, settled: false }
+      this.connecting.set(config.id, entry)
+      attempt = entry
+    }
 
-    const generation = this.generation(config.id)
-    const connectPromise = this.createClientWithOAuth(config, generation)
-      .then(async (client) => {
-        if (generation !== this.generation(config.id)) {
-          await client.close().catch(() => undefined)
-          throw new Error(`custom MCP server "${config.name}" connection was superseded`)
-        }
-        this.clients.set(config.id, client)
-        return client
-      })
-      .finally(() => {
-        if (this.connecting.get(config.id) === connectPromise) {
+    attempt.waiters += 1
+    try {
+      return await waitForConnection(attempt.promise, signal)
+    } finally {
+      attempt.waiters -= 1
+      if (attempt.waiters === 0 && !attempt.settled) {
+        if (this.connecting.get(config.id) === attempt) {
           this.connecting.delete(config.id)
         }
-      })
-    this.connecting.set(config.id, connectPromise)
-    return connectPromise
+        attempt.controller.abort(signal?.reason)
+      }
+    }
   }
 
   private async createClientWithOAuth(
     config: CustomMcpServerConfig,
-    generation: number
+    generation: number,
+    signal: AbortSignal
   ): Promise<Client> {
-    if (!config.oauth) return this.createClient(config)
+    signal.throwIfAborted()
+    if (!config.oauth) return this.createClient(config, undefined, signal)
     const redirectUrl = await this.callbackServer.ensureStarted()
-    return this.createClient(config, this.oauthProvider(config, redirectUrl, generation))
+    signal.throwIfAborted()
+    return this.createClient(config, this.oauthProvider(config, redirectUrl, generation), signal)
   }
 
   private oauthProvider(

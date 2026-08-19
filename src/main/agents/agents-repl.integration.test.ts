@@ -15,7 +15,7 @@ import {
   type KernelLoopResponse
 } from '../notebook/kernel-protocol'
 import { AgentsService, type AgentsCatalogSource, type AgentsReadOp } from './agents-service'
-import { createProfileService } from '../specialist/service'
+import { createProfileService, type ProfileService } from '../specialist/service'
 import type { StoredConnectors } from '../settings/types'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.integration.test.ts
@@ -357,6 +357,33 @@ gate('host.agents repl integration', () => {
       // The error must not leak any internal secret string from another profile.
       expect(r.result).not.toMatch(/apikey/)
     } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('redacts dependency error details before they reach the Agent sandbox', async () => {
+    const originalService = agentsService
+    agentsService = new AgentsService({
+      profileService: {
+        list: async () => {
+          throw new Error(
+            'request failed: token=secret-token path=/Users/alice/project params={"prompt":"private"} HOME=/Users/alice'
+          )
+        }
+      } as unknown as ProfileService,
+      catalog: stubCatalog
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: token
+    })
+    try {
+      const response = await send(
+        "try { await host.agents.list(); return 'ok' } catch (error) { return error.message }"
+      )
+      expect(response.result).toBe('host.agents.list: Internal operation failed.')
+    } finally {
+      agentsService = originalService
       child.kill()
     }
   }, 60_000)

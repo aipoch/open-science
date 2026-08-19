@@ -30,8 +30,19 @@ import {
 } from '../../../../../shared/session-plan/contract'
 
 import { planConfidenceLabelKey } from './plan-confidence-label'
+import type { PlanDocumentProjection } from './plan-file-projection'
 
 type PlanSurfaceProps = Readonly<{ projection: ActivePlanProjection; stale?: boolean }>
+
+// Notice strip shared by every Plan preview surface: stale, pending, continuation, and snapshot
+// notices all render with the same chrome directly above the document body.
+const PlanNoticeBanner = ({
+  children
+}: Readonly<{ children: React.ReactNode }>): React.JSX.Element => (
+  <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
+    {children}
+  </div>
+)
 
 type RestoredPlanResponder = Readonly<{
   sessionId: string
@@ -314,6 +325,8 @@ const PlanProgressChip = ({
 type PlanPreviewSurfaceProps = PlanSurfaceProps &
   Readonly<{
     isFullScreen?: boolean
+    // Real on-disk artifact filename, offered as selectable text so users can copy it.
+    planFilename?: string
     onDownload?: () => Promise<void>
     onRespond?: (decision: 'approved' | 'rejected') => Promise<void>
     onToggleFullScreen?: () => void
@@ -327,10 +340,128 @@ const validatedPreviewDocument = (value: unknown): PlanDocumentV1 | null => {
   }
 }
 
+// The document-only core of the Plan preview: title, phases with step states, desired outputs, and
+// feasibility. Extracted from PlanPreviewSurface so the JSON file preview can embed the same
+// rendering without the in-chat surface's header and approval banners. An invalid document renders
+// nothing; the embedding surface owns that error presentation.
+const PlanDocumentBody = ({
+  projection
+}: Readonly<{ projection: PlanDocumentProjection }>): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  const planDocument = validatedPreviewDocument(projection.document)
+  if (!planDocument) return <></>
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="px-8 py-8">
+        <h1 className="text-[22px] font-semibold">{planDocument.task_summary}</h1>
+        {/* One sentence, one key. It used to be assembled from three pieces — a spelled-out
+            count, a hand-picked 'phase'/'phases', and a bare tail — which pins English word
+            order and leaves the tail untranslatable. The count is now a number so i18next
+            selects the plural form, and zh, having one plural category, needs a single entry. */}
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t(
+            'Complete {{count}} phases in order. Delegations within a phase may run in parallel.',
+            {
+              count: planDocument.phases.length,
+              defaultValue_one:
+                'Complete {{count}} phase in order. Delegations within a phase may run in parallel.'
+            }
+          )}
+        </p>
+        {planDocument.phases.map((phase, phaseIndex) => (
+          <section key={`${phaseIndex}:${phase.name}`} className="mt-7 border-t border-border pt-6">
+            <div className="text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
+              {t('PHASE {{number}}', { number: phaseIndex + 1 })}
+            </div>
+            <h2 className="mt-1 text-lg font-medium">{phase.name}</h2>
+            {phase.delegations.map((delegation, delegationIndex) => (
+              <div
+                key={`${delegationIndex}:${delegation.name}`}
+                className="relative mt-4 border-l border-border pl-5"
+              >
+                <span
+                  aria-hidden="true"
+                  className="absolute left-[-4px] top-2 size-[7px] rounded-full bg-foreground"
+                />
+                <div className="flex items-baseline gap-2">
+                  <span className="font-medium">{delegation.name}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {phase.delegations.length === 1 ? t('primary agent') : t('runs in parallel')}
+                  </span>
+                </div>
+                {delegation.steps.map((step) => {
+                  const runtime = Object.hasOwn(projection.stepStatuses, step.title)
+                    ? projection.stepStatuses[step.title]
+                    : undefined
+                  const projectedState = Object.hasOwn(projection.stepStates, step.title)
+                    ? projection.stepStates[step.title]
+                    : undefined
+                  const state = projectedState ?? {
+                    status: runtime?.status ?? ('not_started' as const),
+                    ...(runtime?.notes ? { notes: runtime.notes } : {})
+                  }
+                  const presentation = STEP_STATUS_PRESENTATION[state.status]
+                  return (
+                    <div key={step.title} className="mt-3 grid grid-cols-[18px_1fr] gap-2">
+                      <span
+                        aria-label={t('{{step}} status: {{status}}', {
+                          step: step.title,
+                          status: stepStatusLabel(state.status, t)
+                        })}
+                        className={`mt-0.5 grid size-4 place-items-center rounded border text-[10px] ${presentation.className}`}
+                      >
+                        {presentation.mark}
+                      </span>
+                      <div>
+                        <div className="text-sm font-medium">{step.title}</div>
+                        <div className="text-xs text-muted-foreground">{step.description}</div>
+                        {state.notes &&
+                        (state.status === 'blocked' || state.status === 'skipped') ? (
+                          <div className="mt-1.5 rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground">
+                            {state.notes}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </section>
+        ))}
+        <section className="mt-7 border-t border-border pt-6">
+          <h2 className="text-sm font-medium">{t('Desired outputs')}</h2>
+          {planDocument.desired_outputs.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+              {planDocument.desired_outputs.map((output) => (
+                <li key={output}>{output}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t('No desired outputs specified.')}
+            </p>
+          )}
+        </section>
+        <div className="mt-7 rounded-lg bg-muted p-4">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">
+            <Info className="size-3 shrink-0" aria-hidden="true" />
+            {t('SCOPE & FEASIBILITY')} ·{' '}
+            {t(planConfidenceLabelKey(planDocument.feasibility.confidence))}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{planDocument.feasibility.rationale}</p>
+        </div>
+      </div>
+    </ScrollArea>
+  )
+}
+
 const PlanPreviewSurface = ({
   projection,
   stale = false,
   isFullScreen = false,
+  planFilename,
   onDownload,
   onRespond,
   onToggleFullScreen
@@ -374,9 +505,16 @@ const PlanPreviewSurface = ({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg-10 text-foreground" aria-busy={decisionBusy}>
+      {/* Mirrors the artifact preview header: the real artifact filename as selectable text,
+          separated from the content by the header border. Never a fabricated name — the
+          Artifact Version id is not the on-disk file name. Falls back to the document label
+          when the artifact entry has not been loaded. */}
       <header className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
-        <span className="truncate text-xs text-muted-foreground">
-          plan-{projection.artifactVersionId}.json
+        <span
+          className="min-w-0 flex-1 select-text truncate text-[12px] font-medium text-text-000"
+          title={planFilename}
+        >
+          {planFilename ?? t('Session Plan')}
         </span>
         <div className="flex items-center gap-1">
           <Button
@@ -438,134 +576,26 @@ const PlanPreviewSurface = ({
         </div>
       </header>
       {stale ? (
-        <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
+        <PlanNoticeBanner>
           {t('⚠ This plan has been replaced by another plan and is no longer current.')}
-        </div>
+        </PlanNoticeBanner>
       ) : null}
       {!stale && projection.approval === 'pending' && !onRespond ? (
-        <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
+        <PlanNoticeBanner>
           {t(
             'This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.'
           )}
-        </div>
+        </PlanNoticeBanner>
       ) : null}
       {!stale && projection.requiresExplicitContinuation ? (
-        <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
+        <PlanNoticeBanner>
           {projection.approval === 'approved' && projection.continuationState === 'interrupted'
             ? t('Plan approved, but execution was interrupted. Send a message to continue.')
             : t('Plan execution is not active. Send a message to continue this approved Plan.')}
-        </div>
+        </PlanNoticeBanner>
       ) : null}
       {planDocument ? (
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="px-8 py-8">
-            <h1 className="text-[22px] font-semibold">{planDocument.task_summary}</h1>
-            {/* One sentence, one key. It used to be assembled from three pieces — a spelled-out
-                count, a hand-picked 'phase'/'phases', and a bare tail — which pins English word
-                order and leaves the tail untranslatable. The count is now a number so i18next
-                selects the plural form, and zh, having one plural category, needs a single entry. */}
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t(
-                'Complete {{count}} phases in order. Delegations within a phase may run in parallel.',
-                {
-                  count: planDocument.phases.length,
-                  defaultValue_one:
-                    'Complete {{count}} phase in order. Delegations within a phase may run in parallel.'
-                }
-              )}
-            </p>
-            {planDocument.phases.map((phase, phaseIndex) => (
-              <section
-                key={`${phaseIndex}:${phase.name}`}
-                className="mt-7 border-t border-border pt-6"
-              >
-                <div className="text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
-                  {t('PHASE {{number}}', { number: phaseIndex + 1 })}
-                </div>
-                <h2 className="mt-1 text-lg font-medium">{phase.name}</h2>
-                {phase.delegations.map((delegation, delegationIndex) => (
-                  <div
-                    key={`${delegationIndex}:${delegation.name}`}
-                    className="relative mt-4 border-l border-border pl-5"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="absolute left-[-4px] top-2 size-[7px] rounded-full bg-foreground"
-                    />
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-medium">{delegation.name}</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {phase.delegations.length === 1
-                          ? t('primary agent')
-                          : t('runs in parallel')}
-                      </span>
-                    </div>
-                    {delegation.steps.map((step) => {
-                      const runtime = Object.hasOwn(projection.stepStatuses, step.title)
-                        ? projection.stepStatuses[step.title]
-                        : undefined
-                      const projectedState = Object.hasOwn(projection.stepStates, step.title)
-                        ? projection.stepStates[step.title]
-                        : undefined
-                      const state = projectedState ?? {
-                        status: runtime?.status ?? ('not_started' as const),
-                        ...(runtime?.notes ? { notes: runtime.notes } : {})
-                      }
-                      const presentation = STEP_STATUS_PRESENTATION[state.status]
-                      return (
-                        <div key={step.title} className="mt-3 grid grid-cols-[18px_1fr] gap-2">
-                          <span
-                            aria-label={t('{{step}} status: {{status}}', {
-                              step: step.title,
-                              status: stepStatusLabel(state.status, t)
-                            })}
-                            className={`mt-0.5 grid size-4 place-items-center rounded border text-[10px] ${presentation.className}`}
-                          >
-                            {presentation.mark}
-                          </span>
-                          <div>
-                            <div className="text-sm font-medium">{step.title}</div>
-                            <div className="text-xs text-muted-foreground">{step.description}</div>
-                            {state.notes &&
-                            (state.status === 'blocked' || state.status === 'skipped') ? (
-                              <div className="mt-1.5 rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground">
-                                {state.notes}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))}
-              </section>
-            ))}
-            <section className="mt-7 border-t border-border pt-6">
-              <h2 className="text-sm font-medium">{t('Desired outputs')}</h2>
-              {planDocument.desired_outputs.length > 0 ? (
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
-                  {planDocument.desired_outputs.map((output) => (
-                    <li key={output}>{output}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {t('No desired outputs specified.')}
-                </p>
-              )}
-            </section>
-            <div className="mt-7 rounded-lg bg-muted p-4">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">
-                <Info className="size-3 shrink-0" aria-hidden="true" />
-                {t('SCOPE & FEASIBILITY')} ·{' '}
-                {t(planConfidenceLabelKey(planDocument.feasibility.confidence))}
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {planDocument.feasibility.rationale}
-              </p>
-            </div>
-          </div>
-        </ScrollArea>
+        <PlanDocumentBody projection={projection} />
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center p-8">
           <div
@@ -580,5 +610,11 @@ const PlanPreviewSurface = ({
   )
 }
 
-export { PlanPreviewSurface, PlanProgressChip, WorkspacePlanCard }
+export {
+  PlanDocumentBody,
+  PlanNoticeBanner,
+  PlanPreviewSurface,
+  PlanProgressChip,
+  WorkspacePlanCard
+}
 export type { RestoredPlanResponder }

@@ -1,13 +1,12 @@
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
   resolveProviderEffectiveModel,
   resolveProviderReasoningEffortProfile
 } from '../../../../shared/provider-reasoning-effort'
 import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
+import { SettingsSegmentedControl } from './SettingsSegmentedControl'
 
 // Segmented effort selector: the highlight block slides to the picked level. Fixed-width segments
 // keep the thumb math exact. Mirrored on ToolPermissionControl's radiogroup pattern. The new level
@@ -31,9 +30,6 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
     { value: undefined, label: t('Default'), intent: 'default' as const },
     ...control.options
   ]
-  // The slide is a click affordance: enable it only after the user interacts, so the thumb never
-  // sweeps across on first paint when the persisted level loads.
-  const [interactive, setInteractive] = useState(false)
   const selectedIndex = Math.max(
     0,
     options.findIndex((option) =>
@@ -44,41 +40,12 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
   )
 
   return (
-    <div
-      role="radiogroup"
-      aria-label={t('Reasoning effort')}
-      className="relative grid w-fit rounded-lg bg-muted p-0.5"
-      style={{ gridTemplateColumns: `repeat(${options.length}, 4rem)` }}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          'absolute inset-y-0.5 left-0.5 w-16 rounded-md bg-card shadow-sm',
-          interactive && 'transition-transform duration-150 motion-reduce:transition-none'
-        )}
-        style={{ transform: `translateX(${selectedIndex * 100}%)` }}
-      />
-      {options.map((option) => (
-        <button
-          key={option.intent}
-          type="button"
-          role="radio"
-          aria-checked={options[selectedIndex] === option}
-          onClick={() => {
-            setInteractive(true)
-            void setReasoningEffort(option.intent)
-          }}
-          className={cn(
-            'relative z-10 flex h-7 w-16 items-center justify-center rounded-md text-xs font-medium transition-colors motion-reduce:transition-none',
-            options[selectedIndex] === option
-              ? 'text-foreground'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <SettingsSegmentedControl
+      value={options[selectedIndex].intent}
+      options={options.map((option) => ({ value: option.intent, label: option.label }))}
+      onValueChange={(intent) => void setReasoningEffort(intent)}
+      ariaLabel={t('Reasoning effort')}
+    />
   )
 }
 

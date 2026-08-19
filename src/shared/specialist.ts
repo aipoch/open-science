@@ -1,6 +1,8 @@
 // Shared types and validation for Personal Specialist Profiles.
 // All mutation rules live here so Settings, SDK, and runtime share one contract.
 
+import { RESOURCE_ID_MAX_LENGTH, inferResourceId, validateResourceId } from './resource-id'
+
 // IPC channel names shared between main, preload, and renderer.
 export const SPECIALIST_IPC = {
   LIST: 'specialist:list',
@@ -84,13 +86,20 @@ export type SetSessionSpecialistRequest = {
   specialistId: string | undefined
 }
 
-// Response for SET_SESSION_SPECIALIST. `contextReset` is true when the live agent session was
-// replaced so the new specialist identity could take effect (Claude bakes identity into session
-// _meta at creation, so a switch requires a fresh session). When true, the renderer must replay the
-// conversation history into the next prompt so the new specialist retains continuity.
-export type SetSessionSpecialistResponse = {
-  contextReset: boolean
-}
+// Response for SET_SESSION_SPECIALIST. Persistence is committed before runtime application, so a
+// post-commit runtime/clear failure is reported as an explicit pending state and is never presented
+// as a rollback. While pending, Main rejects new user prompts and the renderer keeps drafts queued.
+export type SetSessionSpecialistResponse =
+  | {
+      status: 'applied'
+      // True when the live agent session was replaced. The renderer must replay the active Branch
+      // history into the next prompt so the new Specialist retains continuity.
+      contextReset: boolean
+    }
+  | {
+      status: 'pending'
+      reason: 'runtime-application-failed' | 'pending-state-clear-failed'
+    }
 
 export type ResolveSessionSpecialistRequest = {
   sessionId: string
@@ -140,6 +149,10 @@ export type EffectiveSpecialistSkills =
       frameworkNames: string[]
       missingSkillIds: string[]
     }
+
+export type SpecialistMarketplaceProvenance = {
+  publisher: string
+}
 
 // Resolve against the live catalog; callers must not snapshot catalog contents into a profile or
 // session. Full access includes future entries by construction, while selected is an explicit list.
@@ -214,6 +227,10 @@ export type SpecialistProfileView = {
   origin?: 'local' | 'imported'
   // Derived from the current portable profile and importBaseline; never persisted.
   modifiedSinceImport?: boolean
+  // Derived from exact Marketplace provenance plus the current import archive digest; never
+  // persisted with the Specialist profile. Absent for manual imports and historical provenance
+  // that cannot prove it still describes the installed package.
+  marketplaceProvenance?: SpecialistMarketplaceProvenance
   ownedSkillIds?: string[]
   importBaseline?: {
     importedAt: string
@@ -241,10 +258,34 @@ export type BuiltinSpecialistEntry = {
 export type SpecialistListItem =
   ({ kind: 'custom' } & SpecialistProfileView) | BuiltinSpecialistEntry | ReviewerEntry
 
+export type SpecialistDocumentIntegrityIssue = Readonly<{
+  code:
+    | 'document-invalid'
+    | 'version-unsupported'
+    | 'legacy-schema-unsupported'
+    | 'record-invalid'
+    | 'record-sanitized'
+  // Position only; never return the malformed record because it may contain system instructions or
+  // unexpected sensitive fields.
+  recordIndex?: number
+}>
+
+export type SpecialistDocumentIntegrity =
+  | Readonly<{ status: 'ok' }>
+  | Readonly<{
+      status: 'degraded'
+      issues: readonly SpecialistDocumentIntegrityIssue[]
+    }>
+
+export type SpecialistCatalogSnapshot = Readonly<{
+  items: SpecialistListItem[]
+  integrity: SpecialistDocumentIntegrity
+}>
+
 // Resolution of a session's specialist binding at send time (requires SpecialistProfileView above).
 // 'main'        — no binding, main agent is used.
 // 'bound'       — a valid enabled profile was found.
-// 'unavailable' — the bound UUID is unknown, disabled, or corrupt (send must be blocked).
+// 'unavailable' — the bound Specialist ID is unknown, disabled, or corrupt (send must be blocked).
 export type SessionSpecialistResolution =
   | { kind: 'main' }
   | { kind: 'bound'; profile: SpecialistProfileView }
@@ -252,6 +293,9 @@ export type SessionSpecialistResolution =
 
 // Input for creating a new specialist.
 export type CreateSpecialistInput = {
+  // Optional immutable public ID. Omission lets the main process infer one from `name` and fall back
+  // to a UUID when the inferred value is unsafe or already used.
+  id?: string
   name: string
   displayName?: string
   description?: string
@@ -299,7 +343,7 @@ export type DuplicateSpecialistRequest = { id: string }
 
 // Validation error for a single field.
 export type SpecialistFieldError = {
-  field: 'name' | 'description' | 'systemPrompt' | 'packageVersion'
+  field: 'id' | 'name' | 'description' | 'systemPrompt' | 'packageVersion'
   message: string
 }
 
@@ -311,8 +355,12 @@ export type SpecialistFieldError = {
 // the three never drift apart.
 export const SPECIALIST_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DISPLAY_NAME_MAX_LENGTH = 80
-export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 200
+export const SPECIALIST_ID_MAX_LENGTH = RESOURCE_ID_MAX_LENGTH
+export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 1000
 export const SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH = 32_768
+
+export const validateSpecialistId = validateResourceId
+export const inferSpecialistId = inferResourceId
 
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -395,9 +443,18 @@ export const validateSpecialistSystemPrompt = (systemPrompt: string): string | u
 export const validateCreateSpecialistInput = (
   input: CreateSpecialistInput,
   existingNames: string[],
-  existingIds?: Map<string, string>
+  existingIds?: Map<string, string>,
+  usedSpecialistIds: readonly string[] = []
 ): SpecialistFieldError[] => {
   const errors: SpecialistFieldError[] = []
+
+  if (input.id !== undefined) {
+    const idError = validateSpecialistId(input.id)
+    if (idError) errors.push({ field: 'id', message: idError })
+    else if (usedSpecialistIds.includes(input.id)) {
+      errors.push({ field: 'id', message: 'ID is already in use.' })
+    }
+  }
 
   const nameError = validateSpecialistName(input.name, existingNames, undefined, existingIds)
   if (nameError) errors.push({ field: 'name', message: nameError })

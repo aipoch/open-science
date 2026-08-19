@@ -17,6 +17,8 @@ export type ApprovalInfo = {
 type ApprovalBrokerDeps = {
   // Pushes a pending request to the renderer(s) that show the approval card.
   broadcast: (request: ConnectorApprovalRequest) => void
+  // Reprojects an existing request without repeating first-delivery side effects such as notifications.
+  replay?: (request: ConnectorApprovalRequest) => void
   // Injectable so tests are deterministic; defaults to crypto.randomUUID in the factory below.
   generateId: () => string
   // How long a request waits before it is auto-denied (a connector call must never block forever).
@@ -25,7 +27,7 @@ type ApprovalBrokerDeps = {
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
   now?: () => number
-  onSettled?: (id: string, state: 'resolved' | 'rejected' | 'expired') => void
+  onSettled?: (id: string, state: 'resolved' | 'rejected' | 'expired' | 'cancelled') => void
 }
 
 type PendingApproval = {
@@ -34,6 +36,8 @@ type PendingApproval = {
   timer?: ReturnType<typeof setTimeout>
   remainingMs: number
   timerStartedAt?: number
+  signal?: AbortSignal
+  abortListener?: () => void
 }
 
 // Bridges the main-process connector gate to the renderer approval card: it holds a connector call
@@ -55,13 +59,22 @@ export class ApprovalBroker {
   }
 
   // Broadcasts an approval request and resolves once the renderer responds (or the timeout denies it).
-  request(info: ApprovalInfo): Promise<ApprovalDecision> {
+  request(info: ApprovalInfo, signal?: AbortSignal): Promise<ApprovalDecision> {
+    signal?.throwIfAborted()
     const id = this.deps.generateId()
     const request = { id, ...info, availableScopes: info.availableScopes ?? ['once'] }
 
     return new Promise<ApprovalDecision>((resolve) => {
-      const entry: PendingApproval = { request, resolve, remainingMs: this.timeoutMs }
+      const entry: PendingApproval = { request, resolve, remainingMs: this.timeoutMs, signal }
       this.pending.set(id, entry)
+      if (signal) {
+        entry.abortListener = () => this.settle(id, 'deny', 'cancelled')
+        signal.addEventListener('abort', entry.abortListener, { once: true })
+        if (signal.aborted) {
+          entry.abortListener()
+          return
+        }
+      }
       this.schedule(id, entry)
       this.deps.broadcast(request)
     })
@@ -69,6 +82,11 @@ export class ApprovalBroker {
 
   getPending(id: string): ConnectorApprovalRequest | null {
     return this.pending.get(id)?.request ?? null
+  }
+
+  replayPending(): void {
+    const replay = this.deps.replay ?? this.deps.broadcast
+    for (const entry of this.pending.values()) replay(entry.request)
   }
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored (already settled).
@@ -112,13 +130,20 @@ export class ApprovalBroker {
   private settle(
     id: string,
     decision: ApprovalDecision,
-    state: 'resolved' | 'rejected' | 'expired'
+    state: 'resolved' | 'rejected' | 'expired' | 'cancelled'
   ): void {
     const entry = this.pending.get(id)
     if (!entry) return
     if (entry.timer !== undefined) this.clearTimer(entry.timer)
+    if (entry.signal && entry.abortListener) {
+      entry.signal.removeEventListener('abort', entry.abortListener)
+    }
     this.pending.delete(id)
     entry.resolve(decision)
-    this.deps.onSettled?.(id, state)
+    try {
+      this.deps.onSettled?.(id, state)
+    } catch {
+      // Renderer/event projection cannot roll back the broker decision or keep the call parked.
+    }
   }
 }

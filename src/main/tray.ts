@@ -1,9 +1,11 @@
 import { Menu, Tray, nativeImage, screen, type NativeImage } from 'electron'
 
 import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../shared/settings'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import { createLogger } from './logger'
 
 const logger = createLogger('tray')
+const trayMenuRefreshers = new WeakMap<Tray, () => void>()
 
 // Builds a NativeImage for one app-icon variant, or undefined when the asset is missing/unreadable,
 // so callers fall back instead of blanking the tray.
@@ -101,6 +103,7 @@ const createAppTray = (opts: {
   headless?: boolean
   onOpenWeb?: () => void | Promise<void>
   onCopyWebUrl?: () => void | Promise<void>
+  translate?: NativeTranslator
 }): Tray | undefined => {
   try {
     // macOS gets a monochrome template glyph that follows the menu-bar appearance; other platforms use
@@ -120,21 +123,28 @@ const createAppTray = (opts: {
     const tray = new Tray(icon)
 
     const headlessWeb = opts.headless && opts.onOpenWeb && opts.onCopyWebUrl
-    const menu = Menu.buildFromTemplate(
-      headlessWeb
-        ? [
-            { label: 'Open Web UI', click: () => void opts.onOpenWeb!() },
-            { label: 'Copy URL', click: () => void opts.onCopyWebUrl!() },
-            { type: 'separator' },
-            { label: 'Quit', click: () => opts.onQuit() }
-          ]
-        : [
-            { label: 'Show', click: () => opts.onShow() },
-            { label: 'Hide', click: () => opts.onHide() },
-            { type: 'separator' },
-            { label: 'Quit', click: () => opts.onQuit() }
-          ]
-    )
+    const translate = opts.translate ?? englishNativeTranslator
+    let menu: ReturnType<typeof Menu.buildFromTemplate>
+    const rebuildMenu = (): void => {
+      menu = Menu.buildFromTemplate(
+        headlessWeb
+          ? [
+              { label: translate('Open Web UI'), click: () => void opts.onOpenWeb!() },
+              { label: translate('Copy URL'), click: () => void opts.onCopyWebUrl!() },
+              { type: 'separator' },
+              { label: translate('Quit'), click: () => opts.onQuit() }
+            ]
+          : [
+              { label: translate('Show'), click: () => opts.onShow() },
+              { label: translate('Hide'), click: () => opts.onHide() },
+              { type: 'separator' },
+              { label: translate('Quit'), click: () => opts.onQuit() }
+            ]
+      )
+      if (!(process.platform === 'win32' && headlessWeb)) tray.setContextMenu(menu)
+    }
+    rebuildMenu()
+    trayMenuRefreshers.set(tray, rebuildMenu)
 
     tray.setToolTip(headlessWeb ? 'Open Science (Web)' : 'Open Science')
 
@@ -155,7 +165,6 @@ const createAppTray = (opts: {
       tray.on('click', primaryAction)
       tray.on('double-click', primaryAction)
     } else {
-      tray.setContextMenu(menu)
       tray.on('click', primaryAction)
     }
 
@@ -167,4 +176,9 @@ const createAppTray = (opts: {
   }
 }
 
-export { createAppTray, setTrayIconVariant }
+const refreshAppTrayLocale = (tray: Tray | undefined): void => {
+  if (!tray || tray.isDestroyed()) return
+  trayMenuRefreshers.get(tray)?.()
+}
+
+export { createAppTray, refreshAppTrayLocale, setTrayIconVariant }

@@ -108,12 +108,12 @@ describe('runtime certification workflow', () => {
 
     expect(dispatch.inputs?.dry_run).toMatchObject({
       default: 'full',
-      options: ['full', 'runtime-source']
+      options: ['full', 'runtime-source', 'macos-x64']
     })
     expect(nightly.jobs.build.if).toContain("inputs.dry_run != 'runtime-source'")
     expect(runtime).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_build == 'true'",
+      if: "needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64'",
       uses: './.github/workflows/runtime-certification.yml',
       with: { allow_failure: "${{ github.event_name != 'workflow_dispatch' }}" }
     })

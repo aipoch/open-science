@@ -7,6 +7,7 @@ import type { ConnectorDetailView as ConnectorDetail } from '../../../../shared/
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -67,6 +68,29 @@ beforeEach(() => {
     status: 'idle',
     error: undefined
   })
+  useSpecialistStore.setState({
+    items: [
+      {
+        kind: 'custom',
+        id: 'genomics-reviewer',
+        name: 'GENOMICS_REVIEWER',
+        displayName: 'Genomics Reviewer',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: {
+          skillIds: [],
+          connectorIds: ['ensembl'],
+          connectorTools: []
+        },
+        revision: 1
+      }
+    ],
+    isLoaded: true,
+    load: vi.fn().mockResolvedValue(undefined)
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -102,6 +126,9 @@ describe('ConnectorDetailView', () => {
     await render()
 
     expect(document.body.textContent).toContain('Ensembl')
+    expect(document.body.textContent).toContain('Availability')
+    expect(document.body.textContent).toContain('Shared with Main')
+    expect(document.body.textContent).toContain('Genomics Reviewer')
     expect(document.body.textContent).toContain('lookup_gene')
     expect(document.body.textContent).toContain('list_species')
 
@@ -150,6 +177,61 @@ describe('ConnectorDetailView', () => {
 
     act(() => switches[1]?.click())
     expect(useSettingsStore.getState().setConnectorAutoAllow).toHaveBeenCalledWith('ensembl', true)
+  })
+
+  it('shows a loading status before the Connector detail settles', () => {
+    ;(window.api.settings.getConnectorDetail as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise(() => undefined)
+    )
+
+    act(() => {
+      root.render(<ConnectorDetailView id="ensembl" />)
+    })
+
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
+      'Loading Connector…'
+    )
+  })
+
+  it('shows a retryable error when Connector detail loading fails', async () => {
+    const getConnectorDetail = window.api.settings.getConnectorDetail as ReturnType<typeof vi.fn>
+    getConnectorDetail
+      .mockRejectedValueOnce(new Error('detail unavailable'))
+      .mockResolvedValueOnce(detail)
+
+    await act(async () => {
+      root.render(<ConnectorDetailView id="ensembl" />)
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Open Science could not load this Connector.'
+    )
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => {
+      retry?.click()
+      await Promise.resolve()
+    })
+    expect(getConnectorDetail).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('lookup_gene')
+  })
+
+  it('reports a rejected Connector policy change after rollback', async () => {
+    useSettingsStore.setState({
+      setConnectorEnabled: vi.fn().mockRejectedValue(new Error('write failed'))
+    })
+    await render()
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save this setting. The previous value was restored.'
+    )
   })
 
   it('tracks live store state so the header toggle flips both directions', async () => {

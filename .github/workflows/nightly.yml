@@ -15,6 +15,7 @@ on:
         options:
           - full
           - runtime-source
+          - macos-x64
 
 # Build and publication preparation run without write access. Only the separate workflow_run
 # publisher receives contents:write, and it never checks out or executes the triggering revision.
@@ -53,19 +54,24 @@ jobs:
     secrets: inherit
     with:
       nightly: true
+      # A manual `macos-x64` dispatch runs only the Intel packaging job (the heap-sensitive Vite
+      # renderer build) and skips verify. Smoke, certification, and publish stay skipped below.
+      skip_verify: ${{ inputs.dry_run == 'macos-x64' }}
+      platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || '' }}
 
   # Scheduled coverage remains advisory during burn-in and is deliberately absent from prepare.needs.
   # A manual `runtime-source` dispatch runs this exact reusable job as a blocking focused dry-run while
   # build/package/publish preparation stay skipped.
   runtime-certification:
     needs: plan
-    if: needs.plan.outputs.should_build == 'true'
+    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64'
     uses: ./.github/workflows/runtime-certification.yml
     with:
       allow_failure: ${{ github.event_name != 'workflow_dispatch' }}
 
   package-smoke:
     needs: build
+    if: inputs.dry_run != 'macos-x64'
     uses: ./.github/workflows/package-smoke.yml
 
   # Run advisory desktop behavior checks inside the same read-only Nightly run. Failures remain

@@ -130,6 +130,10 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     this.mutationOwner = mutationOwner
   }
 
+  runMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.mutationOwner.runExclusive(operation)
+  }
+
   async beginMutation(
     transactionId: string,
     _specialistId: string,
@@ -159,6 +163,15 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
               (current.standalone === false || current.ownerIds.length > 0)) ||
             (skill.disposition === 'reuse-owned' &&
               (current.standalone !== false || current.ownerIds.length === 0))
+          ) {
+            throw new Error(`Skill ${skill.id} changed after preview.`)
+          }
+        }
+        if (skill.disposition === 'replace-existing' || skill.disposition === 'reuse-existing') {
+          if (
+            !current ||
+            current.version !== skill.conflict?.installedVersion ||
+            current.contentHash !== skill.conflict.installedContentHash
           ) {
             throw new Error(`Skill ${skill.id} changed after preview.`)
           }
@@ -361,7 +374,8 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           id: localId,
           version: skill.version,
           contentHash: skill.contentHash,
-          standalone: existing?.standalone ?? false,
+          standalone:
+            skill.disposition === 'replace-existing' ? false : (existing?.standalone ?? false),
           ownerIds
         }
         await writeFile(
@@ -582,7 +596,8 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         .filter((candidate) => SAFE_DIRECTORY_NAME.test(candidate))
         .sort()) {
         const directory = join(root, entry)
-        if ((await readMetadata(directory))?.id === id) return directory
+        const metadata = await readMetadata(directory)
+        if (metadata?.id === id || (!metadata && `${source}-${entry}` === id)) return directory
       }
     }
     return undefined

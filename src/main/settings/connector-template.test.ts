@@ -1,19 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
+import {
+  buildConnectorTemplateExport,
+  parseConnectorTemplate,
+  type ConnectorTemplateSource
+} from './connector-template'
 
 describe('Connector configuration templates', () => {
   it('parses a credential-free stdio template', () => {
     const preview = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-research',
-        displayName: 'Example Research',
+        display_name: 'Example Research',
         transport: 'stdio',
         command: 'npx',
         args: ['-y', '@example/research-mcp'],
-        requiredSecrets: { environment: ['API_TOKEN'] }
+        required_secrets: { environment: ['API_TOKEN'] }
       })
     )
 
@@ -36,13 +40,13 @@ describe('Connector configuration templates', () => {
   it('parses a remote OAuth template without requiring client-specific fields', () => {
     const preview = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-remote',
-        displayName: 'example-remote',
+        display_name: 'example-remote',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp',
-        oauth: { authorizationServerUrl: 'https://auth.example.test', scopes: ['openid'] }
+        oauth: { authorization_server_url: 'https://auth.example.test', scopes: ['openid'] }
       })
     )
 
@@ -56,10 +60,10 @@ describe('Connector configuration templates', () => {
   it('requires an explicit stable name separate from the display name', () => {
     const valid = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-oauth-e2e',
-        displayName: 'Example OAuth E2E',
+        display_name: 'Example OAuth E2E',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp',
         oauth: {}
@@ -72,15 +76,39 @@ describe('Connector configuration templates', () => {
 
     const invalid = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'Example OAuth E2E',
-        displayName: 'Example OAuth E2E',
+        display_name: 'Example OAuth E2E',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp'
       })
     )
     expect(invalid.diagnostics.map((item) => item.code)).toContain('connector-template.name')
+  })
+
+  it('rejects legacy camelCase field names', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'open-science.connector',
+        name: 'legacy-template',
+        displayName: 'Legacy Template',
+        transport: 'stdio',
+        command: 'legacy-mcp'
+      })
+    )
+
+    expect(preview.ready).toBe(false)
+    expect(preview.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'connector-template.unknown-field',
+          path: 'schemaVersion'
+        }),
+        expect.objectContaining({ code: 'connector-template.unknown-field', path: 'displayName' })
+      ])
+    )
   })
 
   it.each([
@@ -91,10 +119,10 @@ describe('Connector configuration templates', () => {
   ])('rejects secret-bearing or unknown fields', (extra, message) => {
     const preview = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-server',
-        displayName: 'example-server',
+        display_name: 'example-server',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp',
         ...extra
@@ -108,10 +136,10 @@ describe('Connector configuration templates', () => {
   it('rejects credential query fields without blocking ordinary field names', () => {
     const credential = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-secret-query',
-        displayName: 'example-secret-query',
+        display_name: 'example-secret-query',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp?token_key=secret'
       })
@@ -122,10 +150,10 @@ describe('Connector configuration templates', () => {
 
     const ordinary = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-ordinary-query',
-        displayName: 'example-ordinary-query',
+        display_name: 'example-ordinary-query',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp?monkey=capuchin&postcode=100000'
       })
@@ -136,10 +164,10 @@ describe('Connector configuration templates', () => {
   it('accepts local paths with portability warnings', () => {
     const local = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-server',
-        displayName: 'example-server',
+        display_name: 'example-server',
         transport: 'stdio',
         command: 'node',
         args: ['/Users/example/bin/server.mjs', '--stdio']
@@ -156,10 +184,10 @@ describe('Connector configuration templates', () => {
 
     const localCommand = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-command',
-        displayName: 'example-command',
+        display_name: 'example-command',
         transport: 'stdio',
         command: '/opt/example/bin/server'
       })
@@ -177,14 +205,14 @@ describe('Connector configuration templates', () => {
   it('rejects conflicting OAuth headers and installed names', () => {
     const oauthHeaders = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-remote',
-        displayName: 'example-remote',
+        display_name: 'example-remote',
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
         oauth: { scopes: ['openid'] },
-        requiredSecrets: { headers: ['Authorization'] }
+        required_secrets: { headers: ['Authorization'] }
       })
     )
     expect(oauthHeaders.diagnostics.map((item) => item.code)).toContain(
@@ -193,13 +221,13 @@ describe('Connector configuration templates', () => {
 
     const remoteEnvironment = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-remote',
-        displayName: 'example-remote',
+        display_name: 'example-remote',
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
-        requiredSecrets: { environment: ['API_TOKEN'] }
+        required_secrets: { environment: ['API_TOKEN'] }
       })
     )
     expect(remoteEnvironment.diagnostics.map((item) => item.code)).toContain(
@@ -208,10 +236,10 @@ describe('Connector configuration templates', () => {
 
     const duplicate = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'example-server',
-        displayName: 'Another display label',
+        display_name: 'Another display label',
         transport: 'stdio',
         command: 'example-mcp'
       }),
@@ -223,10 +251,10 @@ describe('Connector configuration templates', () => {
 
     const reusedDisplayName = parseConnectorTemplate(
       JSON.stringify({
-        schemaVersion: 1,
+        schema_version: 1,
         kind: 'open-science.connector',
         name: 'different-route',
-        displayName: 'example-server',
+        display_name: 'example-server',
         transport: 'stdio',
         command: 'example-mcp'
       }),
@@ -236,7 +264,7 @@ describe('Connector configuration templates', () => {
   })
 
   it('exports only secret names and produces a stable digest', () => {
-    const result = buildConnectorTemplateExport({
+    const source: ConnectorTemplateSource = {
       id: 'local-id',
       name: 'example-server',
       displayName: 'Example Server',
@@ -244,7 +272,8 @@ describe('Connector configuration templates', () => {
       command: 'npx',
       args: ['-y', '@example/mcp'],
       environmentNames: ['API_TOKEN']
-    })
+    }
+    const result = buildConnectorTemplateExport(source)
 
     expect(result.preview).toMatchObject({
       ready: true,
@@ -252,8 +281,74 @@ describe('Connector configuration templates', () => {
       suggestedFileName: 'open-science-connector-example-server.json'
     })
     expect(result.preview.digest).toMatch(/^[a-f0-9]{64}$/)
-    expect(result.contents).toContain('"environment": [')
+    expect(buildConnectorTemplateExport(source).preview.digest).toBe(result.preview.digest)
+    expect(
+      buildConnectorTemplateExport({ ...source, description: 'Changed' }).preview.digest
+    ).not.toBe(result.preview.digest)
+    expect(JSON.parse(result.contents!)).toEqual({
+      schema_version: 1,
+      kind: 'open-science.connector',
+      name: 'example-server',
+      display_name: 'Example Server',
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@example/mcp'],
+      required_secrets: { environment: ['API_TOKEN'] }
+    })
     expect(result.contents).not.toContain('local-id')
-    expect(result.contents).not.toContain('secret')
+  })
+
+  it('invalidates an export preview when the process-local cache resets', async () => {
+    const source: ConnectorTemplateSource = {
+      id: 'local-id',
+      name: 'example-server',
+      displayName: 'Example Server',
+      transport: 'stdio',
+      command: 'npx'
+    }
+    const digest = buildConnectorTemplateExport(source).preview.digest
+
+    vi.resetModules()
+    const freshModule = await import('./connector-template')
+
+    expect(freshModule.buildConnectorTemplateExport(source).preview.digest).not.toBe(digest)
+  })
+
+  it('bounds the process-local export preview cache', () => {
+    const source: ConnectorTemplateSource = {
+      id: 'local-id',
+      name: 'example-server',
+      displayName: 'Example Server',
+      transport: 'stdio',
+      command: 'npx'
+    }
+    const digest = buildConnectorTemplateExport(source).preview.digest
+
+    for (let index = 0; index < 64; index += 1) {
+      buildConnectorTemplateExport({ ...source, description: `Preview ${index}` })
+    }
+
+    expect(buildConnectorTemplateExport(source).preview.digest).not.toBe(digest)
+  })
+
+  it('exports OAuth field names in snake_case', () => {
+    const result = buildConnectorTemplateExport({
+      id: 'remote-id',
+      name: 'example-remote',
+      displayName: 'Example Remote',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/mcp',
+      oauth: {
+        clientMetadataUrl: 'https://client.example.test/metadata',
+        authorizationServerUrl: 'https://auth.example.test',
+        scopes: ['openid']
+      }
+    })
+
+    expect(JSON.parse(result.contents!).oauth).toEqual({
+      client_metadata_url: 'https://client.example.test/metadata',
+      authorization_server_url: 'https://auth.example.test',
+      scopes: ['openid']
+    })
   })
 })

@@ -1,6 +1,41 @@
 {
   "constraints": [
     {
+      "tableName": "Tag",
+      "name": "Tag_shape_check",
+      "expression": "((\"systemKey\" IS NOT NULL AND \"name\" IS NULL AND \"nameKey\" IS NULL AND \"iconKey\" IS NULL AND \"colorKey\" IS NULL) OR (\"systemKey\" IS NULL AND \"name\" IS NOT NULL AND \"nameKey\" IS NOT NULL AND \"iconKey\" IS NOT NULL AND \"colorKey\" IS NOT NULL))"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_systemKey_check",
+      "expression": "\"systemKey\" IS NULL OR \"systemKey\" = 'favorite'"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_name_check",
+      "expression": "\"name\" IS NULL OR (length(trim(\"name\")) BETWEEN 1 AND 64)"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_nameKey_check",
+      "expression": "\"nameKey\" IS NULL OR (length(\"nameKey\") BETWEEN 1 AND 64)"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_iconKey_check",
+      "expression": "\"iconKey\" IS NULL OR \"iconKey\" IN ('tag', 'star', 'bookmark', 'flask-conical', 'book-open', 'database', 'code-2', 'bot')"
+    },
+    {
+      "tableName": "Tag",
+      "name": "Tag_colorKey_check",
+      "expression": "\"colorKey\" IS NULL OR \"colorKey\" IN ('gray', 'red', 'orange', 'amber', 'green', 'blue', 'purple', 'pink')"
+    },
+    {
+      "tableName": "TagAssignment",
+      "name": "TagAssignment_resourceId_check",
+      "expression": "length(trim(\"resourceId\")) BETWEEN 1 AND 256"
+    },
+    {
       "tableName": "NotificationInboxItem",
       "name": "NotificationInboxItem_source_check",
       "expression": "\"source\" IS NULL OR \"source\" IN ('agent-tool', 'agent-question', 'agent-runtime', 'connector', 'compute', 'skill-import', 'session-plan')"
@@ -283,7 +318,7 @@
     {
       "tableName": "ComputeJob",
       "name": "ComputeJob_errorCode_check",
-      "expression": "\"errorCode\" IS NULL OR \"errorCode\" IN ('approval_denied', 'host_unreachable', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')"
+      "expression": "\"errorCode\" IS NULL OR \"errorCode\" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')"
     },
     {
       "tableName": "ComputeJob",
@@ -342,6 +377,16 @@
     },
     {
       "tableName": "ComputeHost",
+      "name": "ComputeHost_authenticationMode_check",
+      "expression": "\"authenticationMode\" IN ('ssh_config', 'password')"
+    },
+    {
+      "tableName": "ComputeHost",
+      "name": "ComputeHost_authenticationRevision_check",
+      "expression": "\"authenticationRevision\" >= 1"
+    },
+    {
+      "tableName": "ComputeHost",
       "name": "ComputeHost_shape_check",
       "expression": "\"shape\" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')"
     },
@@ -379,6 +424,51 @@
       "tableName": "ComputeHost",
       "name": "ComputeHost_probeResultJson_check",
       "expression": "\"probeResult\" IS NULL OR (json_valid(\"probeResult\") AND json_type(\"probeResult\") = 'object')"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_sourceKind_check",
+      "expression": "\"sourceKind\" IN ('upload-version', 'message-image')"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_sourceIdentity_check",
+      "expression": "((\"sourceKind\" = 'upload-version' AND \"uploadVersionId\" IS NOT NULL AND \"sourceMessageId\" IS NULL AND \"sourceImageId\" IS NULL) OR (\"sourceKind\" = 'message-image' AND \"uploadVersionId\" IS NULL AND \"sourceMessageId\" IS NOT NULL AND \"sourceImageId\" IS NOT NULL))"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_schemaVersion_check",
+      "expression": "\"evidenceSchemaVersion\" >= 1"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_imageChecksum_check",
+      "expression": "length(\"imageChecksum\") = 64 AND \"imageChecksum\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_extractorFingerprint_check",
+      "expression": "length(\"extractorFingerprint\") = 64 AND \"extractorFingerprint\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_evidenceChecksum_check",
+      "expression": "length(\"evidenceChecksum\") = 64 AND \"evidenceChecksum\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_evidenceJson_check",
+      "expression": "json_valid(\"evidenceJson\") AND json_type(\"evidenceJson\") = 'object'"
+    },
+    {
+      "tableName": "ComputeAuthOperation",
+      "name": "ComputeAuthOperation_resultRevision_check",
+      "expression": "\"resultRevision\" >= 1"
+    },
+    {
+      "tableName": "ComputeAuthOperation",
+      "name": "ComputeAuthOperation_operationKind_check",
+      "expression": "\"operationKind\" IN ('create_password', 'reset_password', 'change_authentication')"
     },
     {
       "tableName": "GrantedLocalRoot",

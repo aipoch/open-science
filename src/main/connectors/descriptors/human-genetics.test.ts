@@ -25,8 +25,8 @@ describe('human-genetics / aggregate', () => {
     expect(HUMAN_GENETICS_TOOLS.map((t) => t.id)).toEqual(EXPECTED_IDS)
   })
 
-  it('registers every tool under the human_genetics connector with unique ids', () => {
-    expect(HUMAN_GENETICS_TOOLS.every((t) => t.connector === 'human_genetics')).toBe(true)
+  it('registers every tool under the human-genetics connector with unique ids', () => {
+    expect(HUMAN_GENETICS_TOOLS.every((t) => t.connector === 'human-genetics')).toBe(true)
     expect(new Set(HUMAN_GENETICS_TOOLS.map((t) => t.id)).size).toBe(HUMAN_GENETICS_TOOLS.length)
   })
 

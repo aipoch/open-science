@@ -61,6 +61,17 @@ const respondToRestoredPlan = vi.fn()
 const getPlanProjection = vi.fn()
 const saveBlobFile = vi.fn()
 
+// Single source for the artifact metadata matching pendingProjection's version identity.
+const planArtifactFilename = 'plan-cedc6ffa.json'
+const sessionPlanArtifacts = [
+  {
+    id: pendingProjection.artifactId,
+    versionId: pendingProjection.artifactVersionId,
+    name: planArtifactFilename,
+    path: `/artifacts/${planArtifactFilename}`
+  }
+]
+
 beforeEach(() => {
   sideChatState.parentSessionId = undefined
   respondPlan.mockReset().mockResolvedValue({ projection: approvedProjection, changed: true })
@@ -78,7 +89,8 @@ beforeEach(() => {
         projectId: 'project-1',
         status: 'waiting-plan-approval',
         activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
-        activePlanProjection: pendingProjection
+        activePlanProjection: pendingProjection,
+        artifacts: sessionPlanArtifacts
       } as never
     ]
   })
@@ -151,6 +163,12 @@ describe('Plan Preview workbench integration', () => {
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('tool:session-1:plan')
     expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeTruthy()
 
+    // The header shows the real artifact filename (never one fabricated from the Artifact
+    // Version id) as selectable text, with no label prefix in front of it.
+    expect(screen.getByText(planArtifactFilename)).toBeTruthy()
+    expect(screen.queryByText('Session Plan')).toBeNull()
+    expect(screen.queryByText(`plan-${pendingProjection.artifactVersionId}.json`)).toBeNull()
+
     fireEvent.click(screen.getByRole('button', { name: 'Download Plan' }))
     await waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
     expect(saveBlobFile).toHaveBeenCalledWith(
@@ -194,6 +212,8 @@ describe('Plan Preview workbench integration', () => {
       ]
     })
 
+    // Without loaded artifact metadata the header falls back to the document label.
+
     render(
       <PreviewToolContent
         item={{
@@ -210,6 +230,7 @@ describe('Plan Preview workbench integration', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
     expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
+    expect(screen.getByText('Session Plan')).toBeTruthy()
   })
 
   it('routes restored pending Plan decisions through the session-bound responder', async () => {

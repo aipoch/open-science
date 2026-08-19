@@ -303,6 +303,11 @@ describe('workspace Save as skill owner', () => {
         activeProviderId: 'active-provider',
         activeModel: 'active-model',
         agentFrameworkId: 'opencode',
+        visionModel: {
+          providerId: 'vision-provider',
+          model: 'vision-model',
+          reasoningEffort: 'default'
+        },
         providers: [
           {
             id: 'active-provider',
@@ -310,6 +315,15 @@ describe('workspace Save as skill owner', () => {
             name: 'Active provider',
             models: ['active-model'],
             supportsImageInput: false,
+            hasKey: true,
+            needsKey: false
+          },
+          {
+            id: 'vision-provider',
+            type: 'custom',
+            name: 'Vision provider',
+            models: ['vision-model'],
+            supportsImageInput: true,
             hasKey: true,
             needsKey: false
           }
@@ -347,6 +361,7 @@ describe('workspace Save as skill owner', () => {
         expect.objectContaining({
           projectId: original.projectId,
           sessionId: original.id,
+          supportsImageRelay: true,
           promptMessageId: expect.any(String)
         })
       )
