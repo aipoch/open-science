@@ -618,6 +618,19 @@ describe('settings repository', () => {
     expect(settings.providers[0].name).toBe('Renamed')
   })
 
+  it('rejects a conditional provider upsert queued after deletion', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertProvider(provider({ name: 'Original' }))
+    const staleProvider = (await repository.getSettings()).providers[0]
+
+    const deleting = repository.deleteProvider(staleProvider.id)
+    const updating = repository.upsertProvider({ ...staleProvider, name: 'Stale edit' }, true)
+
+    await expect(deleting).resolves.toMatchObject({ providers: [] })
+    await expect(updating).rejects.toThrow('Provider no longer exists.')
+    await expect(repository.getSettings()).resolves.toMatchObject({ providers: [] })
+  })
+
   it('keeps provider order stable when an existing provider is updated in place', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
