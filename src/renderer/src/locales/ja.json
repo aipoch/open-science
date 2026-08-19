@@ -3037,5 +3037,13 @@
   "Green": "緑",
   "Blue": "青",
   "Purple": "紫",
-  "Pink": "ピンク"
+  "Pink": "ピンク",
+  "Brain": "脳",
+  "Beaker": "ビーカー",
+  "Microscope": "顕微鏡",
+  "Teal": "ティール",
+  "Slate": "スレート",
+  "Change appearance for {{name}}": "{{name}} の外観を変更",
+  "Appearance wasn’t saved. Try again.": "外観を保存できませんでした。もう一度お試しください。",
+  "Specialist appearance picker — 8 states": "スペシャリスト外観ピッカー — 8つの状態"
 }

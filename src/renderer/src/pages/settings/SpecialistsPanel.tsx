@@ -62,6 +62,7 @@ import {
 } from './SpecialistMarketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SettingsSegmentedControl } from './SettingsSegmentedControl'
+import { SpecialistAppearancePicker } from './SpecialistAppearancePicker'
 import { SpecialistAvatar } from './specialist-avatar'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
@@ -1392,6 +1393,20 @@ const InstalledSpecialistsPanel = ({
                         data-slot="settings-list-row"
                         className="flex min-h-14 items-center gap-2 py-2.5"
                       >
+                        <SpecialistAppearancePicker
+                          name={item.displayName ?? item.name}
+                          iconKey={item.iconKey}
+                          colorKey={item.colorKey}
+                          disabled={catalogReadOnly}
+                          onChange={(patch) =>
+                            updateSpecialist({
+                              id: item.id,
+                              revision: item.revision,
+                              ...patch
+                            }).then(() => undefined)
+                          }
+                        />
+
                         {/* Click the row body to open the editor (prefilled) */}
                         <button
                           type="button"
@@ -1404,11 +1419,8 @@ const InstalledSpecialistsPanel = ({
                                 })
                               : t('Edit {{name}}', { name: item.displayName ?? item.name })
                           }
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                         >
-                          {/* Avatar */}
-                          <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
-
                           {/* Body: name + description */}
                           <div className="min-w-0 flex-1">
                             <span className="block truncate text-sm text-foreground">

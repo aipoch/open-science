@@ -29,7 +29,7 @@ import {
   type SpecialistProfileView
 } from '../../../../shared/specialist'
 import { SpecialistAvatar } from './specialist-avatar'
-import { AVATAR_COLORS } from './specialist-icons'
+import { AVATAR_COLORS, SPECIALIST_COLOR_OPTIONS } from './specialist-icons'
 import { APP_ICON_GROUPS, APP_ICONS, DEFAULT_APP_ICON } from '@/components/app-icons/registry'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useTagStore } from '@/stores/tag-store'
@@ -95,15 +95,6 @@ type SkillRow = {
 
 // Flat view of the grouped registry for selected-value lookups (trigger label, previews).
 const ICON_ENTRIES = APP_ICON_GROUPS.flatMap((group) => group.icons)
-
-const COLOR_OPTIONS = [
-  { key: 'blue', label: 'Blue' },
-  { key: 'green', label: 'Green' },
-  { key: 'teal', label: 'Teal' },
-  { key: 'amber', label: 'Amber' },
-  { key: 'purple', label: 'Purple' },
-  { key: 'slate', label: 'Slate' }
-] as const
 
 const SpecialistEditor = ({
   onCancel,
@@ -715,12 +706,15 @@ const SpecialistEditor = ({
                       aria-hidden="true"
                     />
                     <span>
-                      {COLOR_OPTIONS.find((option) => option.key === form.colorKey)?.label}
+                      {t(
+                        SPECIALIST_COLOR_OPTIONS.find((option) => option.key === form.colorKey)
+                          ?.label ?? 'Purple'
+                      )}
                     </span>
                   </span>
                 </SelectTrigger>
                 <SelectContent>
-                  {COLOR_OPTIONS.map((option) => (
+                  {SPECIALIST_COLOR_OPTIONS.map((option) => (
                     <SelectItem key={option.key} value={option.key}>
                       <span className="flex items-center gap-2">
                         <span
@@ -728,7 +722,7 @@ const SpecialistEditor = ({
                           style={{ background: AVATAR_COLORS[option.key] }}
                           aria-hidden="true"
                         />
-                        {option.label}
+                        {t(option.label)}
                       </span>
                     </SelectItem>
                   ))}
