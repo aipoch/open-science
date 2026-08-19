@@ -1,0 +1,172 @@
+import { describe, expect, it } from 'vitest'
+import type { ProcessSnapshotEntry, ProcessTreeSnapshot } from './process-snapshot'
+import {
+  ProcessCpuTracker,
+  mergeResourceSample,
+  renderSummaryMarkdown,
+  summarizeSamples,
+  validatePhase,
+  validateSampleInterval,
+  type ElectronProcessMetric,
+  type RuntimeResourceSample
+} from './runtime-resource-profiler'
+
+const processEntry = (overrides: Partial<ProcessSnapshotEntry> = {}): ProcessSnapshotEntry => ({
+  pid: 10,
+  parentPid: 1,
+  kind: 'electron',
+  rssKb: 100,
+  cumulativeCpuSeconds: 1,
+  ...overrides
+})
+
+const tree = (processes: ProcessSnapshotEntry[]): ProcessTreeSnapshot => ({
+  rootPid: 10,
+  complete: true,
+  processes
+})
+
+const electronMetric = (overrides: Partial<ElectronProcessMetric> = {}): ElectronProcessMetric => ({
+  pid: 10,
+  type: 'Browser',
+  creationTime: 1_000,
+  percentCpuUsage: 5,
+  cumulativeCpuSeconds: 1,
+  idleWakeupsPerSecond: 0,
+  workingSetKb: 90,
+  peakWorkingSetKb: 100,
+  ...overrides
+})
+
+describe('runtime resource profiler', () => {
+  it('calculates external-process CPU deltas and resets identity after PID reuse', () => {
+    const tracker = new ProcessCpuTracker()
+    expect(tracker.observe(processEntry({ kind: 'agent' }), 1_000)).toEqual({ identity: '10:1' })
+    expect(
+      tracker.observe(processEntry({ kind: 'agent', cumulativeCpuSeconds: 1.5 }), 2_000)
+    ).toEqual({ identity: '10:1', cpuPercent: 50 })
+    expect(
+      tracker.observe(processEntry({ kind: 'python', cumulativeCpuSeconds: 0.1 }), 3_000)
+    ).toEqual({ identity: '10:2' })
+  })
+
+  it('merges Electron role metrics with external descendants without content fields', () => {
+    const sample = mergeResourceSample(
+      2_000,
+      1_000,
+      'acp-turn',
+      tree([
+        processEntry(),
+        processEntry({
+          pid: 11,
+          parentPid: 10,
+          kind: 'agent',
+          rssKb: 50,
+          cumulativeCpuSeconds: 0.5
+        })
+      ]),
+      [electronMetric()],
+      new ProcessCpuTracker()
+    )
+
+    expect(sample.totals).toEqual({
+      processCount: 2,
+      totalCpuPercent: 5,
+      summedRssKb: 150,
+      electronWorkingSetKb: 90
+    })
+    expect(sample.processes).toEqual([
+      {
+        pid: 10,
+        parentPid: 1,
+        identity: '10:1000',
+        kind: 'electron',
+        cpuPercent: 5,
+        rssKb: 100,
+        electronType: 'Browser',
+        workingSetKb: 90
+      },
+      { pid: 11, parentPid: 10, identity: '11:1', kind: 'agent', rssKb: 50 }
+    ])
+    expect(JSON.stringify(sample)).not.toMatch(/prompt|response|argument|environment|path/iu)
+  })
+
+  it('summarizes phase trends and renders the privacy boundary', () => {
+    const samples: RuntimeResourceSample[] = [
+      {
+        capturedAt: 1_000,
+        elapsedMs: 0,
+        phase: 'idle',
+        rootPid: 10,
+        processTreeComplete: true,
+        electronMetricsComplete: true,
+        processes: [],
+        totals: {
+          processCount: 4,
+          totalCpuPercent: 1,
+          summedRssKb: 1_024,
+          electronWorkingSetKb: 900
+        }
+      },
+      {
+        capturedAt: 2_000,
+        elapsedMs: 1_000,
+        phase: 'idle',
+        rootPid: 10,
+        processTreeComplete: false,
+        electronMetricsComplete: true,
+        processes: [],
+        totals: {
+          processCount: 5,
+          totalCpuPercent: 3,
+          summedRssKb: 2_048,
+          electronWorkingSetKb: 1_800
+        }
+      }
+    ]
+    const summary = summarizeSamples(samples, {
+      startedAt: 1_000,
+      endedAt: 2_000,
+      sampleIntervalMs: 1_000,
+      nodeVersion: '22.0.0',
+      electronVersion: '39.0.0'
+    })
+
+    expect(summary.phases.idle.totalCpuPercent).toMatchObject({ mean: 1, max: 1, delta: 0 })
+    expect(summary.phases.idle.summedRssKb).toMatchObject({ first: 1_024, last: 1_024 })
+    expect(summary.phases.idle).toMatchObject({ sampleCount: 2, includedSampleCount: 1 })
+    expect(summary.phases.idle.roles).toEqual({})
+    expect(summary.incompleteSampleCount).toBe(1)
+    expect(renderSummaryMarkdown(summary)).toContain('records no\nprompts, responses')
+  })
+
+  it('excludes a sample when Electron metrics are unavailable', () => {
+    const sample = mergeResourceSample(
+      2_000,
+      1_000,
+      'idle',
+      tree([processEntry()]),
+      [],
+      new ProcessCpuTracker(),
+      false
+    )
+    const summary = summarizeSamples([sample], {
+      startedAt: 1_000,
+      endedAt: 2_000,
+      sampleIntervalMs: 1_000,
+      nodeVersion: '22.0.0'
+    })
+
+    expect(sample.electronMetricsComplete).toBe(false)
+    expect(summary.incompleteSampleCount).toBe(1)
+    expect(summary.phases.idle.includedSampleCount).toBe(0)
+    expect(summary.phases.idle.roles).toEqual({})
+  })
+
+  it('bounds intervals and accepts only report-local kebab-case phases', () => {
+    expect(validateSampleInterval(1_000)).toBe(1_000)
+    expect(() => validateSampleInterval(100)).toThrow('sampleIntervalMs')
+    expect(validatePhase('notebook-tool')).toBe('notebook-tool')
+    expect(() => validatePhase('User project')).toThrow('lowercase kebab-case')
+  })
+})

@@ -4,6 +4,11 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import {
+  RuntimeResourceProfiler,
+  type RuntimeProfileResult,
+  type RuntimeResourceProfilerOptions
+} from '../../scripts/performance/runtime-resource-profiler'
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { RendererFailureGate } from './renderer-failure-gate'
 
@@ -90,6 +95,7 @@ const closeElectronApplicationForCleanup = async (
 type ElectronApp = {
   readonly page: Page
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
+  beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   completeOnboarding: () => Promise<Page>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
@@ -97,14 +103,17 @@ type ElectronApp = {
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
+  markResourceProfilePhase: (phase: string) => Promise<void>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   readFakeAgentPrompts: () => Promise<
     readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
   >
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
-  restart: () => Promise<Page>
+  restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
+  sampleResourceProfileNow: () => Promise<void>
+  finishResourceProfile: () => Promise<RuntimeProfileResult>
   writeCorruptSessionFile: (projectId: string) => Promise<void>
 }
 
@@ -253,6 +262,7 @@ class ElectronAppHarness implements ElectronApp {
   private fakeAgentEnabled = false
   private fakeRemoteItEnabled = false
   private readonly rendererFailures = new RendererFailureGate()
+  private resourceProfiler: RuntimeResourceProfiler | undefined
   private readonly sabotagedDelegatedHandoffs = new Map<string, string>()
 
   private constructor(
@@ -290,6 +300,32 @@ class ElectronAppHarness implements ElectronApp {
   get page(): Page {
     if (!this.currentPage) throw new Error('Electron application is not running.')
     return this.currentPage
+  }
+
+  async beginResourceProfile(options: RuntimeResourceProfilerOptions = {}): Promise<void> {
+    if (this.resourceProfiler) throw new Error('Runtime resource profiling is already active.')
+    const profiler = new RuntimeResourceProfiler(options)
+    this.resourceProfiler = profiler
+    await profiler.attach(this.runningApplication)
+  }
+
+  async markResourceProfilePhase(phase: string): Promise<void> {
+    if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
+    this.resourceProfiler.markPhase(phase)
+    await this.resourceProfiler.sampleNow()
+  }
+
+  async sampleResourceProfileNow(): Promise<void> {
+    if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
+    await this.resourceProfiler.sampleNow()
+  }
+
+  async finishResourceProfile(): Promise<RuntimeProfileResult> {
+    const profiler = this.resourceProfiler
+    if (!profiler) throw new Error('Runtime resource profiling is not active.')
+    this.resourceProfiler = undefined
+    profiler.detach()
+    return profiler.finish()
   }
 
   async completeOnboarding(): Promise<Page> {
@@ -504,8 +540,12 @@ class ElectronAppHarness implements ElectronApp {
     this.sabotagedDelegatedHandoffs.delete(childName)
   }
 
-  async restart(): Promise<Page> {
+  async restart(options: { resourceProfilePhase?: string } = {}): Promise<Page> {
     await this.close()
+    if (options.resourceProfilePhase) {
+      if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
+      this.resourceProfiler.markPhase(options.resourceProfilePhase)
+    }
     await this.launch()
     return this.page
   }
@@ -520,6 +560,8 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async dispose(): Promise<void> {
+    this.resourceProfiler?.abort()
+    this.resourceProfiler = undefined
     await this.closeForCleanup().catch(() => undefined)
     await makeTreeWritable(this.testRoot)
     await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
@@ -534,6 +576,7 @@ class ElectronAppHarness implements ElectronApp {
       this.roots.fakeRemoteItRoot,
       this.windowMode
     )
+    await this.resourceProfiler?.attach(this.application)
     this.currentPage = await openMainWindow(
       this.application,
       this.rendererFailures,
@@ -600,6 +643,7 @@ class ElectronAppHarness implements ElectronApp {
     if (!this.application) return
 
     const application = this.application
+    this.resourceProfiler?.detach(application)
     this.application = undefined
     this.currentPage = undefined
     await application.close()
@@ -609,6 +653,7 @@ class ElectronAppHarness implements ElectronApp {
     if (!this.application) return
 
     const application = this.application
+    this.resourceProfiler?.detach(application)
     this.application = undefined
     this.currentPage = undefined
     await closeElectronApplicationForCleanup(
