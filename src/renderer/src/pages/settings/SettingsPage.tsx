@@ -1211,6 +1211,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     view={skillsView}
                     onNavigate={navigateSkills}
                     onOpenTag={navigateTag}
+                    onOpenSpecialist={(usage) =>
+                      navigate({
+                        ...currentLocation,
+                        panel: 'specialists',
+                        specialists:
+                          usage.kind === 'builtin'
+                            ? { kind: 'builtin', id: usage.id }
+                            : { kind: 'edit', id: usage.id }
+                      })
+                    }
                     canImportInstalledSkills={canImportInstalledSkills}
                   />
                 ) : activePanel === 'specialists' ? (

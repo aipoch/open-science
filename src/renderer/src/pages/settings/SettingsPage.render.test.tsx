@@ -2450,6 +2450,59 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
   })
 
+  it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-usage',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSkillId: 'alpha' })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      fireEvent.focus(
+        document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>(
+          '[aria-label="Open Researcher in Specialist Settings"]'
+        )!
+      )
+    })
+
+    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.textContent).toContain('Test Author')
+  })
+
   it('routes connector capability rows to detail or edit by server kind', async () => {
     const researcher: SpecialistProfileView = {
       id: 'spc-2',

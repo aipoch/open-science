@@ -89,7 +89,14 @@ describe('SkillDetailView', () => {
     expect(document.body.textContent).toContain('First skill description.')
     expect(document.body.textContent).toContain('Availability')
     expect(document.body.textContent).toContain('Shared with Main')
-    expect(document.body.textContent).toContain('Literature Reviewer')
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[data-slot="skill-usage-agents-trigger"]')
+        ?.focus()
+    )
+    expect(
+      document.body.querySelector('[data-slot="skill-usage-agents-popover"]')?.textContent
+    ).toContain('Literature Reviewer')
 
     // Files section renders the SKILL.md body.
     expect(document.body.textContent).toContain('Files')
@@ -191,6 +198,33 @@ describe('SkillDetailView', () => {
     act(() => toggle?.click())
 
     expect(useSettingsStore.getState().setSkillEnabled).toHaveBeenCalledWith('a', false)
+  })
+
+  it('omits the agent access row when no agent uses the Skill', async () => {
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      skills: [
+        {
+          id: 'a',
+          name: 'Alpha',
+          displayName: 'Alpha',
+          description: 'First skill description.',
+          source: 'featured',
+          updatedAt: detail.updatedAt,
+          enabled: false
+        }
+      ],
+      setSkillEnabled: vi.fn().mockResolvedValue(undefined)
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: true })
+
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Agents with access')
+    expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
   })
 
   it('shows a retryable error when Skill detail loading fails', async () => {

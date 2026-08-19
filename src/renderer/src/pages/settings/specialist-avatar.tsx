@@ -11,15 +11,17 @@ export const SpecialistAvatar = ({
 }: {
   iconKey?: string
   colorKey?: string
-  size?: 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg'
 }): React.JSX.Element => {
   const Icon = iconKey ? (APP_ICONS[iconKey] ?? DEFAULT_APP_ICON) : DEFAULT_APP_ICON
-  const tile = size === 'lg' ? 'size-14' : 'size-7'
-  const glyph = size === 'lg' ? 'size-7' : 'size-3.5'
+  const tile = size === 'lg' ? 'size-14' : size === 'sm' ? 'size-5' : 'size-7'
+  const glyph = size === 'lg' ? 'size-7' : size === 'sm' ? 'size-3' : 'size-3.5'
+  const radius = size === 'sm' ? 'rounded-md' : 'rounded-lg'
   return (
     <span
-      className={`flex ${tile} shrink-0 items-center justify-center rounded-lg text-[13px]`}
+      className={`flex ${tile} ${radius} shrink-0 items-center justify-center text-[13px]`}
       style={getAvatarStyle(colorKey)}
+      data-avatar-size={size}
       aria-hidden="true"
     >
       <Icon className={glyph} data-specialist-icon={iconKey ?? 'brain'} />
