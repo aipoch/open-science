@@ -948,6 +948,10 @@ describe('Russian catalog quality', () => {
     [
       'Sandbox tools that run without preview',
       'Инструменты песочницы, которые запускаются без предварительного просмотра'
+    ],
+    [
+      'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.',
+      'Ваши исследовательские данные находятся в скрытой папке. Перемещение их в видимую папку OpenScience упростит поиск и резервное копирование — настройки и история останутся на прежнем месте.'
     ]
   ])('keeps proofread Russian copy for %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
