@@ -63,3 +63,54 @@ export const formatDateTime = (
 
   return getFormatter(locale, style).format(date)
 }
+
+// Relative formatting ("3 minutes ago" / "3 分钟前"), same locale-argument contract as above and for
+// the same reasons: Intl.RelativeTimeFormat carries the CLDR pluralization a catalog would have to
+// hand-maintain. The surrounding prose still goes through i18next; only the time value uses this.
+const relativeFormatterCache = new Map<string, Intl.RelativeTimeFormat>()
+
+const getRelativeFormatter = (locale: Locale): Intl.RelativeTimeFormat => {
+  const cached = relativeFormatterCache.get(locale)
+
+  if (cached) return cached
+
+  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+
+  relativeFormatterCache.set(locale, formatter)
+
+  return formatter
+}
+
+const RELATIVE_UNITS: ReadonlyArray<[Intl.RelativeTimeFormatUnit, number]> = [
+  ['year', 365 * 24 * 3_600],
+  ['month', 30 * 24 * 3_600],
+  ['day', 24 * 3_600],
+  ['hour', 3_600],
+  ['minute', 60]
+]
+
+// Renders how far `value` sits from `now` in the coarsest sensible unit, clamped to "now" for
+// anything under 45 seconds apart so a just-refreshed timestamp reads "now", not "0 seconds ago".
+// Invalid dates return an empty string, matching formatDateTime.
+export const formatRelativeTime = (
+  value: Date | number | string,
+  locale: Locale,
+  now: Date | number | string = Date.now()
+): string => {
+  const date = value instanceof Date ? value : new Date(value)
+  const reference = now instanceof Date ? now : new Date(now)
+
+  if (Number.isNaN(date.getTime()) || Number.isNaN(reference.getTime())) return ''
+
+  const formatter = getRelativeFormatter(locale)
+  const seconds = Math.round((date.getTime() - reference.getTime()) / 1_000)
+  const magnitude = Math.abs(seconds)
+
+  if (magnitude < 45) return formatter.format(0, 'second')
+
+  for (const [unit, unitSeconds] of RELATIVE_UNITS) {
+    if (magnitude >= unitSeconds) return formatter.format(Math.round(seconds / unitSeconds), unit)
+  }
+
+  return formatter.format(seconds, 'second')
+}

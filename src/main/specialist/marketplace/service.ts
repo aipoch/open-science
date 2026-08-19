@@ -38,6 +38,11 @@ import {
 } from './repository'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1_000
+// How long a verified cached root stays the primary answer for automatic refreshes. Kept short so
+// a republished upstream becomes visible on the next view entry; a fresh-enough cache still
+// answers without a network round trip. A user-initiated refresh bypasses this TTL, and a stale
+// cache remains the offline fallback.
+const ROOT_CACHE_TTL_MS = 60 * 1_000
 const ROOT_MAX_BYTES = 2 * 1024 * 1024
 const RELEASE_MAX_BYTES = 8 * 1024 * 1024
 const ARTIFACT_MAX_BYTES = 50 * 1024 * 1024
@@ -319,7 +324,7 @@ export class MarketplaceService {
     }
   }
 
-  async list(): Promise<MarketplaceSnapshot> {
+  async list(options?: { forceRefresh?: boolean }): Promise<MarketplaceSnapshot> {
     await this.recover()
     const [sources, document, installedSpecialists] = await Promise.all([
       this.sources(),
@@ -327,7 +332,10 @@ export class MarketplaceService {
       this.options.getInstalledSpecialists()
     ])
     const results = await Promise.allSettled(
-      sources.map(async (source) => ({ source, loadedRoot: await this.loadRoot(source) }))
+      sources.map(async (source) => ({
+        source,
+        loadedRoot: await this.loadRoot(source, options)
+      }))
     )
     const specialists: MarketplaceSpecialistListing[] = []
     const failures: MarketplaceSourceFailure[] = []
@@ -760,7 +768,10 @@ export class MarketplaceService {
     return source
   }
 
-  private async loadRoot(source: ResolvedSource): Promise<LoadedRoot> {
+  private async loadRoot(
+    source: ResolvedSource,
+    options?: { forceRefresh?: boolean }
+  ): Promise<LoadedRoot> {
     const verifiedRoot = (rootBytes: Uint8Array, signatureBytes: Uint8Array): MarketplaceRoot => {
       const root = parseMarketplaceRoot(rootBytes)
       const signature = parseMarketplaceSignature(signatureBytes)
@@ -774,19 +785,30 @@ export class MarketplaceService {
       }
       return root
     }
+    // A cache younger than the TTL is a verified snapshot of slow-moving metadata, not a degraded
+    // fallback, so it answers without the network round trip (and reports its original timestamp).
+    if (!options?.forceRefresh) {
+      const cached = await this.options.repository.getCachedRoot(source.id).catch(() => undefined)
+      if (cached && this.now().getTime() - Date.parse(cached.cachedAt) < ROOT_CACHE_TTL_MS) {
+        try {
+          return {
+            root: verifiedRoot(cached.rootBytes, cached.signatureBytes),
+            refreshedAt: cached.cachedAt,
+            usingCachedMetadata: false
+          }
+        } catch {
+          // Corrupted or no-longer-trusted cache bytes: fall through to the network.
+        }
+      }
+    }
     let remoteError: unknown
     for (const base of source.metadataBaseUrls) {
       try {
-        const rootBytes = await this.fetchOne(
-          new URL('marketplace.json', base).href,
-          ROOT_MAX_BYTES,
-          source
-        )
-        const signatureBytes = await this.fetchOne(
-          new URL('marketplace.json.sig', base).href,
-          ROOT_MAX_BYTES,
-          source
-        )
+        // Root and signature are independent requests, so they fly together instead of serially.
+        const [rootBytes, signatureBytes] = await Promise.all([
+          this.fetchOne(new URL('marketplace.json', base).href, ROOT_MAX_BYTES, source),
+          this.fetchOne(new URL('marketplace.json.sig', base).href, ROOT_MAX_BYTES, source)
+        ])
         const root = verifiedRoot(rootBytes, signatureBytes)
         const refreshedAt = this.now().toISOString()
         await this.options.repository

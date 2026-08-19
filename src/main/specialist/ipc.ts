@@ -93,6 +93,21 @@ const isCandidateRequest = (request: unknown): request is SpecialistPackageInsta
   typeof (request as { candidateToken?: unknown }).candidateToken === 'string' &&
   Boolean((request as { candidateToken: string }).candidateToken)
 
+// The list endpoint accepts no renderer data beyond one optional boolean: a user-initiated
+// refresh sets forceRefresh to bypass the cached-root TTL. Anything else is rejected as before.
+const parseListMarketplaceRequest = (request: unknown): { forceRefresh?: boolean } | undefined => {
+  if (request === undefined) return undefined
+  if (
+    typeof request !== 'object' ||
+    request === null ||
+    Object.keys(request).length !== 1 ||
+    typeof (request as { forceRefresh?: unknown }).forceRefresh !== 'boolean'
+  ) {
+    throw new Error('Marketplace list does not accept renderer data.')
+  }
+  return { forceRefresh: (request as { forceRefresh: boolean }).forceRefresh }
+}
+
 const isInstallCandidateRequest = (
   request: unknown
 ): request is SpecialistPackageInstallRequest => {
@@ -348,8 +363,7 @@ export const registerSpecialistIpcHandlers = (
     // Binding per request would retain every completed request until the renderer is destroyed.
     const boundMarketplaceSenders = new WeakSet<object>()
     ipcMainHandle(SPECIALIST_MARKETPLACE_IPC.LIST, async (_event, request: unknown) => {
-      if (request !== undefined) throw new Error('Marketplace list does not accept renderer data.')
-      return marketplace.list()
+      return marketplace.list(parseListMarketplaceRequest(request))
     })
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.INSPECT_GITHUB_SOURCE,
