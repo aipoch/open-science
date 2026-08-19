@@ -727,7 +727,10 @@ class AcpRuntimeCoordinator {
       reject(error)
     }
 
-    void this.sendPromptObserved(request, settleAccepted).then(settleAccepted, settleRejected)
+    void this.sendPromptObserved(request, settleAccepted).then(
+      () => settleRejected(new Error('ACP prompt ended before provider acceptance.')),
+      settleRejected
+    )
     return accepted
   }
 

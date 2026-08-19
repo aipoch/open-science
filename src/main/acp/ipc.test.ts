@@ -80,7 +80,13 @@ const {
         options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
         return prompting
       },
-      sendPrompt,
+      sendPrompt: (request, promptAttemptId) => {
+        const prompting = sendPrompt(request, promptAttemptId)
+        return Promise.resolve(prompting).then((result) => {
+          options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
+          return result
+        })
+      },
       getSnapshot: vi.fn().mockReturnValue({
         status: 'idle',
         cwd: '/workspace',

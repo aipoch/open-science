@@ -653,6 +653,23 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it('rejects prompt admission when the turn ends without provider acceptance', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          skipProviderPromptAccepted: true
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+
+    await expect(
+      coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+    ).rejects.toThrow('ACP prompt ended before provider acceptance.')
+  })
+
   it('does not report provider acceptance when dispatch fails before acceptance', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>
