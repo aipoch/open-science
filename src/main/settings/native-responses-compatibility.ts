@@ -589,8 +589,38 @@ export class NativeResponsesCompatibilityProxy {
         ? { ...scopedBody, model: this.target.model }
         : scopedBody
       const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(routedBody)
+      const upstreamRequestBody = JSON.stringify(upstreamRequest)
+      const requestBytes = Buffer.byteLength(upstreamRequestBody, 'utf8')
+      // Derive the input size from the already-serialized body so a large multimodal input is not
+      // serialized a second time just for diagnostics. The subtracted 8/9 bytes are the JSON key and
+      // optional comma around the removed `input` field.
+      const { input: upstreamInput, ...upstreamRequestWithoutInput } = upstreamRequest
+      const inputBytes =
+        upstreamInput === undefined
+          ? 0
+          : Math.max(
+              0,
+              requestBytes -
+                Buffer.byteLength(JSON.stringify(upstreamRequestWithoutInput), 'utf8') -
+                (Object.keys(upstreamRequestWithoutInput).length > 0 ? 9 : 8)
+            )
       log.info('native Responses compatibility request', {
         requestId,
+        requestBytes,
+        inputBytes,
+        inputItemCount: Array.isArray(upstreamInput)
+          ? upstreamInput.length
+          : upstreamInput === undefined
+            ? 0
+            : 1,
+        instructionTextBytes:
+          typeof upstreamRequest.instructions === 'string'
+            ? Buffer.byteLength(upstreamRequest.instructions, 'utf8')
+            : 0,
+        toolDefinitionCount: Array.isArray(upstreamRequest.tools)
+          ? upstreamRequest.tools.length
+          : 0,
+        promptCacheKeyPresent: promptCacheKey !== undefined,
         namespaceToolCount: aliases.size,
         stream: body.stream === true,
         reviewerScoped,
@@ -604,7 +634,7 @@ export class NativeResponsesCompatibilityProxy {
       const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: upstreamHeaders(request, this.target.key),
-        body: JSON.stringify(upstreamRequest),
+        body: upstreamRequestBody,
         signal: AbortSignal.any([request.signal, upstreamAbort.signal])
       })
       clearUpstreamTimeout()

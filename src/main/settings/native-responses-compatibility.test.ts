@@ -874,6 +874,8 @@ describe('native Responses compatibility', () => {
 
   it('logs a privacy-safe lifecycle that distinguishes an upstream 502', async () => {
     const privatePrompt = 'private medical prompt'
+    const privateInstructions = 'private medical instructions'
+    const privateToolName = 'private_medical_tool'
     const privateUpstreamDetail = 'private gateway diagnostic'
     const proxy = new NativeResponsesCompatibilityProxy(
       {
@@ -896,7 +898,19 @@ describe('native Responses compatibility', () => {
           authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
-        body: JSON.stringify({ model: 'deepseek-v4-flash', input: privatePrompt })
+        body: JSON.stringify({
+          model: 'deepseek-v4-flash',
+          prompt_cache_key: 'private-cache-key',
+          instructions: privateInstructions,
+          input: [{ type: 'message', role: 'user', content: privatePrompt }],
+          tools: [
+            {
+              type: 'function',
+              name: privateToolName,
+              parameters: { type: 'object' }
+            }
+          ]
+        })
       })
       expect(response.status).toBe(502)
       await response.text()
@@ -910,7 +924,18 @@ describe('native Responses compatibility', () => {
       const completed = logSpies.info.mock.calls.find(
         ([message]) => message === 'native Responses compatibility request completed'
       )
-      expect(received?.[1]).toMatchObject({ requestId: expect.any(String) })
+      expect(received?.[1]).toMatchObject({
+        requestId: expect.any(String),
+        requestBytes: expect.any(Number),
+        inputBytes: expect.any(Number),
+        inputItemCount: 1,
+        instructionTextBytes: expect.any(Number),
+        toolDefinitionCount: 1,
+        promptCacheKeyPresent: true
+      })
+      expect(received?.[1]?.requestBytes).toBeGreaterThan(0)
+      expect(received?.[1]?.inputBytes).toBeGreaterThan(0)
+      expect(received?.[1]?.instructionTextBytes).toBeGreaterThan(0)
       expect(upstream?.[1]).toMatchObject({
         requestId: received?.[1]?.requestId,
         status: 502,
@@ -924,6 +949,9 @@ describe('native Responses compatibility', () => {
       })
       const serialized = JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
       expect(serialized).not.toContain(privatePrompt)
+      expect(serialized).not.toContain(privateInstructions)
+      expect(serialized).not.toContain(privateToolName)
+      expect(serialized).not.toContain('private-cache-key')
       expect(serialized).not.toContain(privateUpstreamDetail)
       expect(serialized).not.toContain('private-api-key')
       expect(serialized).not.toContain(connection.token)
