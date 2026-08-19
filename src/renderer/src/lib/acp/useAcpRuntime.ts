@@ -48,7 +48,7 @@ const getErrorMessage = (error: unknown): string => {
 const useAcpRuntime = (): {
   state: AcpStateSnapshot
   reconcileSnapshot: (snapshot: AcpStateSnapshot) => void
-  subscribeRuntimeEvents: (listener: RuntimeEventListener) => () => void
+  subscribeRuntimeEvents?: (listener: RuntimeEventListener) => () => void
   currentRuntimeEvents: () => readonly AcpRuntimeEvent[]
   actionError: string | null
   isConnecting: boolean
@@ -121,6 +121,8 @@ const useAcpRuntime = (): {
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [runtimeEventOwner] = useState(createRuntimeEventSubscriptionOwner)
+  const onRuntimeEvent = (window.api.acp as Partial<Pick<typeof window.api.acp, 'onEvent'>>).onEvent
+  const subscribeRuntimeEvents = onRuntimeEvent ? runtimeEventOwner.subscribe : undefined
 
   const applySnapshot = useCallback(
     (snapshot: AcpStateSnapshot): void => {
@@ -171,7 +173,7 @@ const useAcpRuntime = (): {
       hasPushedSnapshot = true
       applyMountedSnapshot(snapshot)
     })
-    const removeEventListener = window.api.acp.onEvent?.((event: AcpRuntimeEvent) => {
+    const removeEventListener = onRuntimeEvent?.((event: AcpRuntimeEvent) => {
       if (!isMounted) return
       runtimeEventOwner.observeEvent(event)
     })
@@ -183,7 +185,7 @@ const useAcpRuntime = (): {
       removeStateListener()
       removeEventListener?.()
     }
-  }, [applyInitialSnapshot, applySnapshot, runtimeEventOwner])
+  }, [applyInitialSnapshot, applySnapshot, onRuntimeEvent, runtimeEventOwner])
 
   // Runs an IPC action that returns a full runtime snapshot.
   const runSnapshotAction = useCallback(
@@ -454,7 +456,7 @@ const useAcpRuntime = (): {
   return {
     state,
     reconcileSnapshot: applySnapshot,
-    subscribeRuntimeEvents: runtimeEventOwner.subscribe,
+    subscribeRuntimeEvents,
     currentRuntimeEvents: runtimeEventOwner.currentEvents,
     actionError,
     isConnecting,

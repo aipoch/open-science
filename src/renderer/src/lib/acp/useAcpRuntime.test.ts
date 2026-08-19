@@ -432,10 +432,29 @@ describe('useAcpRuntime payload construction', () => {
 })
 
 describe('useAcpRuntime state subscription', () => {
+  it('keeps snapshot delivery enabled when the Main event channel is unavailable', async () => {
+    const event: AcpRuntimeEvent = {
+      id: 'runtime-1:event-1',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'snapshot output'
+    }
+    Reflect.deleteProperty(acpApi, 'onEvent')
+    acpApi.getState.mockResolvedValueOnce(createSnapshot({ events: [event] }))
+
+    const { result } = await mountRuntime()
+
+    expect(result.current.subscribeRuntimeEvents).toBeUndefined()
+    expect(result.current.state.events).toEqual([event])
+  })
+
   it('streams runtime events outside React state and unsubscribes both IPC listeners', async () => {
     const { result, unmount } = await mountRuntime()
     const delivered = vi.fn()
-    result.current.subscribeRuntimeEvents(delivered)
+    result.current.subscribeRuntimeEvents?.(delivered)
     const event: AcpRuntimeEvent = {
       id: 'runtime-1:event-1',
       timestamp: 1,
@@ -469,7 +488,7 @@ describe('useAcpRuntime state subscription', () => {
     acpApi.getState.mockReturnValueOnce(initial.promise)
     const { result } = await mountRuntime()
     const delivered: AcpRuntimeEvent[] = []
-    result.current.subscribeRuntimeEvents((events) => delivered.push(...events))
+    result.current.subscribeRuntimeEvents?.((events) => delivered.push(...events))
     const event: AcpRuntimeEvent = {
       id: 'runtime-1:event-1',
       timestamp: 2,
