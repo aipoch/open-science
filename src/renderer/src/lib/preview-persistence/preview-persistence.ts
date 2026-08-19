@@ -39,7 +39,13 @@ const createPreviewSaveScheduler = (
       drain: Promise<void> | undefined
     }
   >()
-  const failures = new Map<string, unknown>()
+  const failures = new Map<
+    string,
+    {
+      state: PersistedPreviewState
+      error: unknown
+    }
+  >()
 
   const schedule = ({ projectId, state }: SavePreviewStateRequest): void => {
     const queue = queues.get(projectId) ?? { pendingState: undefined, drain: undefined }
@@ -58,7 +64,7 @@ const createPreviewSaveScheduler = (
             await save({ projectId, state: nextState })
             failures.delete(projectId)
           } catch (error) {
-            failures.set(projectId, error)
+            failures.set(projectId, { state: nextState, error })
             reportError(error)
           }
         }
@@ -71,6 +77,10 @@ const createPreviewSaveScheduler = (
   }
 
   const flush = async (): Promise<void> => {
+    for (const [projectId, failure] of failures) {
+      if (!queues.has(projectId)) schedule({ projectId, state: failure.state })
+    }
+
     while (queues.size > 0) {
       await Promise.all(
         [...queues.values()]
@@ -80,7 +90,7 @@ const createPreviewSaveScheduler = (
     }
 
     if (failures.size > 0) {
-      throw failures.values().next().value ?? new Error('Preview persistence flush failed')
+      throw failures.values().next().value?.error ?? new Error('Preview persistence flush failed')
     }
   }
 

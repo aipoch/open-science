@@ -26,15 +26,18 @@ type StoreState = ReturnType<typeof usePreviewWorkbenchStore.getState>
 type Deferred<Value> = {
   promise: Promise<Value>
   resolve: (value: Value) => void
+  reject: (reason?: unknown) => void
 }
 
 const createDeferred = <Value,>(): Deferred<Value> => {
   let resolve!: (value: Value) => void
-  const promise = new Promise<Value>((innerResolve) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((innerResolve, innerReject) => {
     resolve = innerResolve
+    reject = innerReject
   })
 
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 // A stored file item as it lives in the workbench store (timestamps + type included).
@@ -641,6 +644,45 @@ describe('usePreviewPersistence per-project save/restore', () => {
     })
 
     expect(durableState?.activeItemId).toBe(secondItem.id)
+  })
+
+  it('retries the latest failed state on a later flush', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+
+    const item = createStoredFileItem()
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        panelState: 'open',
+        activeItemId: undefined,
+        items: [item]
+      })
+    })
+    await act(async () => Promise.resolve())
+
+    const failedSave = createDeferred<void>()
+    let durableState: PersistedPreviewState | undefined
+    save.mockClear()
+    save
+      .mockImplementationOnce(() => failedSave.promise)
+      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) => {
+        durableState = state
+        return Promise.resolve()
+      })
+
+    act(() => {
+      usePreviewWorkbenchStore.setState({ activeItemId: item.id })
+    })
+
+    const firstFlush = flushPreviewPersistence()
+    failedSave.reject(new Error('transient save failure'))
+    await expect(firstFlush).rejects.toThrow('transient save failure')
+
+    await flushPreviewPersistence()
+
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(durableState?.activeItemId).toBe(item.id)
   })
 
   it('flushes the active project on unmount', async () => {
