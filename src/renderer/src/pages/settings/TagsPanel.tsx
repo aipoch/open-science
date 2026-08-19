@@ -14,8 +14,13 @@ import {
 } from '../../../../shared/tags'
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogFormInputClassName,
+  dialogFormLabelClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
@@ -401,90 +406,103 @@ const TagsPanel = ({
         <Dialog.Portal>
           <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
           <Dialog.Content
-            className={cn(dialogPanelClassName('w-[min(480px,calc(100vw-2rem))]'), 'z-[60]')}
+            className={dialogPanelClassName('z-[60] w-[min(460px,calc(100vw-2rem))] p-0')}
           >
-            <div className={dialogHeaderClassName}>
-              <Dialog.Title className={dialogTitleClassName}>
-                {editing === 'new' ? t('New Tag') : t('Edit Tag')}
-              </Dialog.Title>
-              <Dialog.Close asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={dialogCloseButtonClassName}
-                  aria-label={t('Close')}
-                >
-                  <X className="size-4" />
-                </Button>
-              </Dialog.Close>
-            </div>
-            <Dialog.Description className={cn(dialogDescriptionClassName, 'px-5 pt-4')}>
-              {t('Choose a name, icon, and color. Names are unique regardless of case.')}
-            </Dialog.Description>
-            <div className="flex flex-col gap-4 p-5">
-              <label className="flex flex-col gap-1.5 text-sm font-medium">
-                {t('Name')}
-                <Input
-                  autoFocus
-                  value={draft.name}
-                  maxLength={64}
-                  onChange={(event) =>
-                    setDraft((value) => ({ ...value, name: event.target.value }))
-                  }
-                />
-              </label>
-              <fieldset>
-                <legend className="mb-2 text-sm font-medium">{t('Icon')}</legend>
-                <div className="flex flex-wrap gap-2">
-                  {TAG_ICON_KEYS.map((key) => {
-                    const Icon = TAG_ICONS[key]
-                    return (
+            <div>
+              <div className={dialogHeaderClassName}>
+                <Dialog.Title className={dialogTitleClassName}>
+                  {editing === 'new' ? t('New Tag') : t('Edit Tag')}
+                </Dialog.Title>
+                <Dialog.Close asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className={dialogCloseButtonClassName}
+                    aria-label={t('Close')}
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </Dialog.Close>
+              </div>
+              <div className={`${dialogBodyClassName} space-y-4`}>
+                <Dialog.Description className={dialogDescriptionClassName}>
+                  {t('Choose a name, icon, and color. Names are unique regardless of case.')}
+                </Dialog.Description>
+                <div>
+                  <label className={dialogFormLabelClassName} htmlFor="tag-form-name">
+                    {t('Name')}
+                  </label>
+                  <Input
+                    id="tag-form-name"
+                    autoFocus
+                    value={draft.name}
+                    maxLength={64}
+                    className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
+                    onChange={(event) =>
+                      setDraft((value) => ({ ...value, name: event.target.value }))
+                    }
+                  />
+                </div>
+                <fieldset>
+                  <legend className={dialogFormLabelClassName}>{t('Icon')}</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {TAG_ICON_KEYS.map((key) => {
+                      const Icon = TAG_ICONS[key]
+                      return (
+                        <Button
+                          key={key}
+                          type="button"
+                          variant="outline"
+                          size="icon-lg"
+                          aria-label={iconLabel(t, key)}
+                          aria-pressed={draft.iconKey === key}
+                          onClick={() => setDraft((value) => ({ ...value, iconKey: key }))}
+                          className={cn(
+                            draft.iconKey === key &&
+                              'border-primary bg-primary/10 text-primary hover:bg-primary/10'
+                          )}
+                        >
+                          <Icon className="size-4" aria-hidden="true" />
+                        </Button>
+                      )
+                    })}
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend className={dialogFormLabelClassName}>{t('Color')}</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {TAG_COLOR_KEYS.map((key) => (
                       <button
                         key={key}
                         type="button"
-                        aria-label={iconLabel(t, key)}
-                        aria-pressed={draft.iconKey === key}
-                        onClick={() => setDraft((value) => ({ ...value, iconKey: key }))}
+                        aria-label={colorLabel(t, key)}
+                        aria-pressed={draft.colorKey === key}
+                        onClick={() => setDraft((value) => ({ ...value, colorKey: key }))}
                         className={cn(
-                          'flex size-9 items-center justify-center rounded-lg border border-border hover:bg-muted',
-                          draft.iconKey === key && 'border-primary bg-primary/10 text-primary'
+                          'size-8 rounded-full border-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+                          TAG_COLORS[key],
+                          draft.colorKey === key
+                            ? 'ring-2 ring-primary ring-offset-2'
+                            : 'border-transparent'
                         )}
-                      >
-                        <Icon className="size-4" />
-                      </button>
-                    )
-                  })}
-                </div>
-              </fieldset>
-              <fieldset>
-                <legend className="mb-2 text-sm font-medium">{t('Color')}</legend>
-                <div className="flex flex-wrap gap-2">
-                  {TAG_COLOR_KEYS.map((key) => (
-                    <button
-                      key={key}
-                      type="button"
-                      aria-label={colorLabel(t, key)}
-                      aria-pressed={draft.colorKey === key}
-                      onClick={() => setDraft((value) => ({ ...value, colorKey: key }))}
-                      className={cn(
-                        'size-8 rounded-full border-2',
-                        TAG_COLORS[key],
-                        draft.colorKey === key
-                          ? 'ring-2 ring-primary ring-offset-2'
-                          : 'border-transparent'
-                      )}
-                    />
-                  ))}
-                </div>
-              </fieldset>
-              {formError ? (
-                <p role="alert" className="text-xs text-destructive">
-                  {formError}
-                </p>
-              ) : null}
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => setEditing(undefined)}>
+                      />
+                    ))}
+                  </div>
+                </fieldset>
+                {formError ? (
+                  <p role="alert" className="text-xs text-destructive">
+                    {formError}
+                  </p>
+                ) : null}
+              </div>
+              <div className={dialogFooterClassName}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  onClick={() => setEditing(undefined)}
+                >
                   {t('Cancel')}
                 </Button>
                 <Button
@@ -507,9 +525,9 @@ const TagsPanel = ({
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
           <AlertDialog.Content
-            className={cn(dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]'), 'z-[60]')}
+            className={dialogPanelClassName('z-[60] w-[min(440px,calc(100vw-2rem))] p-0')}
           >
-            <div className="p-5">
+            <div className={dialogBodyClassName}>
               <AlertDialog.Title className={dialogTitleClassName}>
                 {t('Delete Tag?')}
               </AlertDialog.Title>
@@ -529,20 +547,26 @@ const TagsPanel = ({
                   {deleteError}
                 </p>
               ) : null}
-              <div className="mt-5 flex justify-end gap-2">
-                <AlertDialog.Cancel asChild>
-                  <Button variant="outline" disabled={deleteBusy}>
-                    {t('Cancel')}
-                  </Button>
-                </AlertDialog.Cancel>
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
                 <Button
-                  variant="destructive"
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
                   disabled={deleteBusy}
-                  onClick={() => void confirmDelete()}
                 >
-                  {deleteBusy ? t('Deleting…') : t('Delete Tag')}
+                  {t('Cancel')}
                 </Button>
-              </div>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={deleteBusy}
+                onClick={() => void confirmDelete()}
+              >
+                {deleteBusy ? t('Deleting…') : t('Delete Tag')}
+              </Button>
             </div>
           </AlertDialog.Content>
         </AlertDialog.Portal>

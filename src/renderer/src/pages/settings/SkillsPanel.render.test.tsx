@@ -394,6 +394,16 @@ describe('SkillsPanel (list view)', () => {
     expect(betaRow?.querySelector('[aria-label="Toggle Beta"]')?.getAttribute('data-state')).toBe(
       'unchecked'
     )
+    const mainAgentLabel = Array.from(alphaRow?.querySelectorAll('span') ?? []).find(
+      (element) => element.textContent === 'Main Agent'
+    )
+    const tagMenu = alphaRow?.querySelector('[aria-label="Manage Tags"]')
+    const toggle = alphaRow?.querySelector('[aria-label="Toggle Alpha"]')
+    expect(mainAgentLabel).toBeDefined()
+    expect(tagMenu).not.toBeNull()
+    expect(toggle).not.toBeNull()
+    expect(mainAgentLabel!.compareDocumentPosition(tagMenu!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(tagMenu!.compareDocumentPosition(toggle!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('deletes a personal skill from its row control', () => {

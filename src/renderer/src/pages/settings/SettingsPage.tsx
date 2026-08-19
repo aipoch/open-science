@@ -181,7 +181,6 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
       { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'specialists', labelKey: 'Specialists', Icon: Users },
-      { id: 'tags', labelKey: 'Tags', Icon: TagsIcon },
       { id: 'compute', labelKey: 'Compute', Icon: Zap },
       { id: 'network', labelKey: 'Network', Icon: Globe }
     ]
@@ -191,6 +190,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
+      { id: 'tags', labelKey: 'Tags', Icon: TagsIcon },
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },

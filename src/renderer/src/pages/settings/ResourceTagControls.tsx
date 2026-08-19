@@ -202,13 +202,20 @@ const ResourceTagBadges = ({
   )
   const assigned = tags.filter((tag) => ids.has(tag.id))
   if (assigned.length === 0) return <></>
+  const compact = Number.isFinite(limit)
   return (
-    <div className="flex max-w-48 flex-wrap justify-end gap-1">
+    <div
+      className={cn(
+        compact
+          ? 'flex min-w-0 max-w-52 flex-nowrap items-center justify-end gap-1 overflow-hidden'
+          : 'flex flex-wrap items-center gap-1'
+      )}
+    >
       {assigned.slice(0, limit).map((tag) => (
-        <TagBadge key={tag.id} tag={tag} />
+        <TagBadge key={tag.id} tag={tag} className={compact ? 'min-w-0 max-w-24' : undefined} />
       ))}
       {assigned.length > limit ? (
-        <span className="self-center text-[11px] text-muted-foreground">
+        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
           +{assigned.length - limit}
         </span>
       ) : null}

@@ -618,22 +618,24 @@ const SkillsPanel = ({
                             <span className="block truncate text-xs text-muted-foreground">
                               {skill.description}
                             </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {usageLabel ? `${usageLabel} · ` : ''}
-                              {t(SCOPE_LABEL_KEYS[scope])}
-                            </span>
+                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                              <span className="min-w-0 truncate text-xs text-muted-foreground">
+                                {usageLabel ? `${usageLabel} · ` : ''}
+                                {t(SCOPE_LABEL_KEYS[scope])}
+                              </span>
+                              <ResourceTagBadges
+                                reference={{
+                                  resourceType: 'catalog.skill',
+                                  resourceId: skill.id
+                                }}
+                              />
+                            </div>
                           </button>
                           {exportStatus?.id === skill.id ? (
                             <span role="status" className="shrink-0 text-xs text-muted-foreground">
                               {exportStatus.message}
                             </span>
                           ) : null}
-                          <ResourceTagBadges
-                            reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
-                          />
-                          <ResourceTagMenu
-                            reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
-                          />
                           {skill.source !== 'featured' && canExportSkills ? (
                             <SettingsIconAction
                               label={t('Export {{name}}', { name: skill.displayName })}
@@ -680,6 +682,9 @@ const SkillsPanel = ({
                           ) : null}
                           <div className="flex shrink-0 items-center gap-2">
                             <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
+                            <ResourceTagMenu
+                              reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
+                            />
                             <SettingsToggle
                               enabled={skill.enabled}
                               aria-label={t('Toggle {{name}}', { name: skill.displayName })}

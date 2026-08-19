@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
+import { ResourceTagBadges } from './ResourceTagControls'
 import { TagsPanel } from './TagsPanel'
 
 let container: HTMLDivElement
@@ -72,5 +73,62 @@ describe('TagsPanel', () => {
       title: 'Analysis',
       subtitle: 'Skill'
     })
+  })
+
+  it('limits compact resource Tags and summarizes the overflow', () => {
+    useTagStore.setState({
+      tags: [
+        { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
+        {
+          id: 'tag-research',
+          name: 'Research with an intentionally long Tag name',
+          iconKey: 'flask-conical',
+          colorKey: 'purple',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'tag-production',
+          name: 'Production',
+          iconKey: 'database',
+          colorKey: 'green',
+          createdAt: 3,
+          updatedAt: 3
+        },
+        {
+          id: 'tag-writing',
+          name: 'Writing',
+          iconKey: 'bookmark',
+          colorKey: 'blue',
+          createdAt: 4,
+          updatedAt: 4
+        }
+      ],
+      assignments: ['tag-favorite', 'tag-research', 'tag-production', 'tag-writing'].map(
+        (tagId, index) => ({
+          tagId,
+          resourceType: 'catalog.skill' as const,
+          resourceId: 'analysis',
+          createdAt: index + 1
+        })
+      )
+    })
+
+    act(() => {
+      root.render(
+        <ResourceTagBadges reference={{ resourceType: 'catalog.skill', resourceId: 'analysis' }} />
+      )
+    })
+
+    expect(container.textContent).toContain('Favorites')
+    const longName = container.querySelector(
+      '[title="Research with an intentionally long Tag name"]'
+    )
+    expect(longName?.className).toContain('truncate')
+    expect(longName?.parentElement?.className).toContain('max-w-24')
+    expect(longName?.parentElement?.className).toContain('overflow-hidden')
+    expect(container.textContent).toContain('+2')
+    expect(container.textContent).not.toContain('Production')
+    expect(container.firstElementChild?.className).toContain('overflow-hidden')
   })
 })

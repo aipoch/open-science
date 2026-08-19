@@ -11,13 +11,15 @@ const TagBadge = ({ tag, className }: { tag: TagView; className?: string }): Rea
   return (
     <span
       className={cn(
-        'inline-flex max-w-40 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium',
+        'inline-flex min-w-0 max-w-40 items-center gap-1 overflow-hidden rounded-full border px-2 py-0.5 text-[11px] font-medium',
         TAG_COLORS[presentation.colorKey],
         className
       )}
     >
       <Icon className="size-3 shrink-0" aria-hidden="true" />
-      <span className="truncate">{presentation.name}</span>
+      <span className="min-w-0 truncate" title={presentation.name}>
+        {presentation.name}
+      </span>
     </span>
   )
 }
