@@ -38,8 +38,8 @@ type NotebookSessionLifecycleCallbacks = {
   onNotebookChanged?: (event: NotebookSessionReference) => void
 }
 
-type NotebookExecutorLifecycleFailure = {
-  operation: 'idle-shutdown' | 'terminated'
+type NotebookKernelStatusPersistenceFailure = {
+  operation: 'idle-shutdown' | 'terminated' | 'recovered-idle'
   lane: NotebookLaneIdentity
   kind?: KernelProcessKind
   env?: string
@@ -61,7 +61,7 @@ type NotebookSessionLifecycleOptions = {
   platform?: NodeJS.Platform
   callbacks?: NotebookSessionLifecycleCallbacks
   toSessionReference: (session: RuntimeSession) => NotebookSessionReference
-  onExecutorLifecycleFailure?: (failure: NotebookExecutorLifecycleFailure) => void
+  onKernelStatusPersistenceFailure?: (failure: NotebookKernelStatusPersistenceFailure) => void
 }
 
 type InternalNotebookSessionRequest = NotebookSessionRequest & {
@@ -252,7 +252,7 @@ class NotebookSessionLifecycleOwner {
         platform: this.options.platform,
         onIdleShutdown: (kind, env) => {
           void lifecycle.onIdleShutdown(kind, env).catch((error: unknown) => {
-            this.options.onExecutorLifecycleFailure?.({
+            this.options.onKernelStatusPersistenceFailure?.({
               operation: 'idle-shutdown',
               lane,
               kind,
@@ -263,7 +263,7 @@ class NotebookSessionLifecycleOwner {
         },
         onTerminated: (kind, env) => {
           void lifecycle.onTerminated(kind, env).catch((error: unknown) => {
-            this.options.onExecutorLifecycleFailure?.({
+            this.options.onKernelStatusPersistenceFailure?.({
               operation: 'terminated',
               lane,
               kind,
@@ -402,6 +402,21 @@ class NotebookSessionLifecycleOwner {
       })
     }
     session.setKernelStatus(processKey, status)
+  }
+
+  async persistRecoveredKernelIdle(session: RuntimeSession, processKey: string): Promise<void> {
+    try {
+      await this.persistKernelStatus(session, 'idle', processKey)
+    } catch (error) {
+      const kernelInstance = kernelInstanceForProcessKey(processKey)
+      this.options.onKernelStatusPersistenceFailure?.({
+        operation: 'recovered-idle',
+        lane: session.lane,
+        kind: kernelInstance.kind,
+        env: 'environment' in kernelInstance ? kernelInstance.environment : undefined,
+        error
+      })
+    }
   }
 
   async clearPersistedKernelTermination(

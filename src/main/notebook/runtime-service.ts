@@ -411,7 +411,7 @@ class NotebookRuntimeService {
       platform: options.platform,
       callbacks: options.callbacks,
       toSessionReference: (session) => this.sessionReadModel.toSessionReference(session),
-      onExecutorLifecycleFailure: ({ operation, lane, kind, env, error }) => {
+      onKernelStatusPersistenceFailure: ({ operation, lane, kind, env, error }) => {
         const message = 'notebook kernel lifecycle persistence failed'
         const fields = {
           ...errorLogFields(error),
@@ -492,7 +492,7 @@ class NotebookRuntimeService {
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args),
       setKernelStatus: (session, status, processKey) => session.setKernelStatus(processKey, status),
       persistRecoveredKernelIdle: (session, processKey) =>
-        this.sessionLifecycle.persistKernelStatus(session as RuntimeSession, 'idle', processKey),
+        this.sessionLifecycle.persistRecoveredKernelIdle(session as RuntimeSession, processKey),
       getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
       notifyAvailable: (session, source) =>
         this.sessionLifecycle.notifyAvailable(session as RuntimeSession, source),
