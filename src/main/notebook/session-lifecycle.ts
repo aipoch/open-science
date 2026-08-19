@@ -450,9 +450,12 @@ class NotebookSessionLifecycleOwner {
   ): Promise<void> {
     const session = this.options.sessions.get(lane)
     if (!session) return
-    await session.runExecutorLifecycleCallback(generation, async () => {
+    const processKey = processKeyFor(kind, env)
+    const projection = session.runExecutorLifecycleCallback(generation, async () => {
       await this.projectKernelIdleShutdown(lane, kind, env)
     })
+    session.blockKernelExecutionUntil(processKey, projection)
+    await projection
   }
 
   private async handleTerminated(
@@ -463,9 +466,12 @@ class NotebookSessionLifecycleOwner {
   ): Promise<void> {
     const session = this.options.sessions.get(lane)
     if (!session) return
-    await session.runExecutorLifecycleCallback(generation, async () => {
+    const processKey = processKeyFor(kind, env)
+    const projection = session.runExecutorLifecycleCallback(generation, async () => {
       await this.projectKernelTerminated(lane, kind, env)
     })
+    session.blockKernelExecutionUntil(processKey, projection)
+    await projection
   }
 }
 

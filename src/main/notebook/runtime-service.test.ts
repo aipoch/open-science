@@ -3645,6 +3645,45 @@ describe('notebook runtime service', () => {
     }
   )
 
+  it('orders a new execution after delayed idle-shutdown persistence', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const { service, lifecycles } = lifecycleCallbackHarness(root, { repository })
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    const persistenceGate = createDeferred<void>()
+    const markKernelTerminated = repository.markKernelTerminated.bind(repository)
+    const persistenceSpy = vi
+      .spyOn(repository, 'markKernelTerminated')
+      .mockImplementation(async (request) => {
+        await persistenceGate.promise
+        return markKernelTerminated(request)
+      })
+
+    const idleShutdown = lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
+    await vi.waitFor(() => expect(persistenceSpy).toHaveBeenCalledTimes(1))
+    let nextExecutionSettled = false
+    const nextExecution = service
+      .execute({ sessionId: 'session-1', workspaceCwd: root, code: '2' })
+      .finally(() => {
+        nextExecutionSettled = true
+      })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(nextExecutionSettled).toBe(false)
+
+    persistenceGate.resolve()
+    await idleShutdown
+    await nextExecution
+
+    expect((await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus).toBe(
+      'idle'
+    )
+    expect(
+      (await new NotebookRunRepository(root).findExisting('default-project', 'session-1'))?.kernel
+    ).toMatchObject({ lastKnownStatus: 'idle' })
+  })
+
   it('ignores an idle-shutdown callback from a session replaced under the same id', async () => {
     const root = await createStorageRoot()
     const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root)
