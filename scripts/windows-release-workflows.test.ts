@@ -37,7 +37,9 @@ type Workflow = {
     push?: { branches?: string[]; tags?: string[] }
     schedule?: Array<{ cron: string }>
     workflow_run?: { workflows?: string[]; types?: string[] }
-    workflow_call?: unknown
+    workflow_call?: {
+      inputs?: Record<string, { default?: unknown; description?: string; type?: string }>
+    }
     workflow_dispatch?: unknown
   }
 }
@@ -142,6 +144,54 @@ describe('post-merge Windows validation', () => {
     )
     expect(packageStep.run).toContain('unsigned_args=(-c.dmg.sign=false)')
     expect(packageStep.run).not.toContain('publisherName')
+  })
+
+  it('provides an isolated Windows-only SignPath dry-run', () => {
+    const build = readWorkflow('build.yml')
+    const inputs = build.on?.workflow_call?.inputs
+    const workflow = readWorkflow('signpath-test.yml')
+    const sign = workflow.jobs['sign-installer']
+    const uploadUnsigned = findStep(sign, 'Upload raw installer for SignPath')
+    const submit = findStep(sign, 'Submit SignPath test signing request')
+    const verify = findStep(sign, 'Verify Authenticode signature was added')
+    const uploadSigned = findStep(sign, 'Upload signed installer')
+
+    expect(inputs?.platform_name).toMatchObject({ type: 'string', default: '' })
+    expect(workflow.on).toEqual({ workflow_dispatch: null })
+    expect(workflow).toMatchObject({ permissions: { actions: 'read', contents: 'read' } })
+    expect(workflow.jobs.build).toMatchObject({
+      uses: './.github/workflows/build.yml',
+      with: { platform_name: 'windows-x64', skip_verify: true }
+    })
+    expect(sign).toMatchObject({ needs: 'build', 'runs-on': 'windows-latest' })
+    expect(findStep(sign, 'Select unsigned NSIS installer').run).toContain('*-win-x64-setup.exe')
+    expect(uploadUnsigned).toMatchObject({
+      id: 'upload-unsigned-installer',
+      uses: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+      with: expect.objectContaining({ archive: false, 'if-no-files-found': 'error' })
+    })
+    expect(submit).toMatchObject({
+      uses: 'signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627',
+      with: expect.objectContaining({
+        'api-token': '${{ secrets.SIGNPATH_API_TOKEN }}',
+        'organization-id': '${{ vars.SIGNPATH_ORGANIZATION_ID }}',
+        'project-slug': 'open-science',
+        'signing-policy-slug': 'test-signing',
+        'artifact-configuration-slug': 'windows-installer',
+        'github-artifact-id': '${{ steps.upload-unsigned-installer.outputs.artifact-id }}',
+        'skip-decompress': true,
+        'wait-for-completion': true
+      })
+    })
+    expect(verify.run).toContain('Get-AuthenticodeSignature')
+    expect(verify.run).toContain("$acceptableStatuses = @('Valid', 'NotTrusted')")
+    expect(verify.run).toContain('$signature.Status.ToString() -notin $acceptableStatuses')
+    expect(uploadSigned.with).toMatchObject({
+      name: 'signpath-test-windows-x64',
+      'retention-days': 7,
+      'if-no-files-found': 'error'
+    })
+    expect(workflow.jobs).not.toHaveProperty('publish')
   })
 
   it('separates immutable builds from blocking package smoke and advisory regressions', () => {
@@ -530,6 +580,7 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
       'notarize-mac.yml',
       'package-smoke.yml',
       'release.yml',
+      'signpath-test.yml',
       'mirror-to-website.yml',
       'windows-upgrade-smoke.yml'
     ]) {
