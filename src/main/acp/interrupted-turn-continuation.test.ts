@@ -406,6 +406,39 @@ describe('continueInterruptedTurn', () => {
     expect(startContinuation).not.toHaveBeenCalled()
   })
 
+  it('revalidates the durable turn inside dispatch-admitted root admission', async () => {
+    const durable = session([message('prompt-1', 'user', 'Keep going')])
+    const startContinuation = vi.fn()
+    const startDispatchAdmittedContinuation = vi.fn(
+      async (_request: AcpPromptRequest, validate: () => Promise<void>) => {
+        durable.resumeRecovery = {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'newer-prompt'
+        }
+        await validate()
+      }
+    )
+
+    await expect(
+      continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable),
+          startDispatchAdmittedContinuation
+        },
+        { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+      )
+    ).rejects.toThrow(/no longer matches the interrupted turn/i)
+
+    expect(startDispatchAdmittedContinuation).toHaveBeenCalledOnce()
+    expect(startContinuation).not.toHaveBeenCalled()
+  })
+
   it('rejects a stale or cross-branch recovery prompt', async () => {
     const durable = session([message('prompt-1', 'user', 'Keep going')])
 
