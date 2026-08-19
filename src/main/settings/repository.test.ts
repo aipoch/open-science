@@ -903,16 +903,24 @@ describe('settings repository', () => {
     expect(reloaded.pathsNormalizedAt).toBe(1000)
   })
 
-  it('sets dataRoot, overwrites on a later call, and survives a reload', async () => {
+  it('sets dataRoot with an idempotent onboarding marker and survives a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
 
-    const first = await repository.setDataRoot('/mnt/data-a')
+    const first = await repository.setDataRoot({
+      dataRoot: '/mnt/data-a',
+      onboardingCompletedAt: 1000
+    })
     expect(first.dataRoot).toBe('/mnt/data-a')
+    expect(first.onboardingCompletedAt).toBe(1000)
 
-    // Unlike the marker fields above, dataRoot is not idempotent-once: a later call must move it.
-    const second = await repository.setDataRoot('/mnt/data-b')
+    // dataRoot moves, but the one-time onboarding marker keeps its original timestamp.
+    const second = await repository.setDataRoot({
+      dataRoot: '/mnt/data-b',
+      onboardingCompletedAt: 2000
+    })
     expect(second.dataRoot).toBe('/mnt/data-b')
+    expect(second.onboardingCompletedAt).toBe(1000)
 
     // getSettings reads through sanitizeSettings, which normalizes the stored path (backslashes on
     // Windows), so compare against the platform-normalized form rather than the literal.

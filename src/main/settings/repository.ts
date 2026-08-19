@@ -49,6 +49,7 @@ import {
 } from './subagent-model-settings'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
+type DataRootUpdate = Readonly<{ dataRoot: string; onboardingCompletedAt?: number }>
 
 // Stable semantic mutation facade. The injected document store owns arbitration and atomic IO; all
 // secret handling remains above this layer in crypto.ts and service.ts.
@@ -414,10 +415,9 @@ class SettingsRepository {
     )
   }
 
-  // Persists the new data-root path after a successful migration (see storage/migration-service.ts).
-  // Unlike the marker fields above this is not idempotent-once: each call overwrites the prior value.
-  async setDataRoot(path: string): Promise<StoredSettings> {
-    return this.mutate((settings) => ({ ...settings, dataRoot: path }))
+  // Persists the relocatable data root, optionally with the idempotent onboarding marker.
+  async setDataRoot(update: DataRootUpdate): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...update, ...settings, dataRoot: update.dataRoot }))
   }
 
   // Sets (or clears, when `selection` is null) the persisted runtime choice for one language. The

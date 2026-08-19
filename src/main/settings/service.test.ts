@@ -3648,17 +3648,18 @@ describe('SettingsService: onboarding', () => {
     expect(settings.pathsNormalizedAt).toBeTypeOf('number')
   })
 
-  it('persists a new dataRoot across a fresh read', async () => {
+  it('persists a new dataRoot with onboarding completion across a fresh read', async () => {
     const service = createService()
 
     // The repository canonicalizes dataRoot to the host separator on read (for samePath comparisons),
     // so build the fixture the same way — a bare POSIX literal comes back with backslashes on Windows
     // and would fail the round-trip.
     const dataRoot = normalize('/mnt/new-data')
-    await service.setDataRoot(dataRoot)
+    await service.setDataRoot(dataRoot, { completeOnboarding: true })
 
     const settings = await service.getStoredSettings()
     expect(settings.dataRoot).toBe(dataRoot)
+    expect(settings.onboardingCompletedAt).toBeTypeOf('number')
   })
 })
 
