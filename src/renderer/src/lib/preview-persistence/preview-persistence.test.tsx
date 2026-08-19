@@ -530,6 +530,59 @@ describe('usePreviewPersistence per-project save/restore', () => {
     })
   })
 
+  it('keeps the latest state durable when an earlier save completes last', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+
+    const firstItem = createStoredFileItem()
+    const secondItem = createStoredFileItem({
+      id: 'file:session-1:/workspace/project/results.csv',
+      title: 'results.csv',
+      path: '/workspace/project/results.csv',
+      format: 'csv',
+      name: 'results.csv'
+    })
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        panelState: 'open',
+        activeItemId: undefined,
+        items: [firstItem, secondItem]
+      })
+    })
+    await act(async () => Promise.resolve())
+
+    const delayedFirstSave = createDeferred<void>()
+    let durableState: PersistedPreviewState | undefined
+    save.mockClear()
+    save
+      .mockImplementationOnce(
+        ({ state }: { state: PersistedPreviewState }) =>
+          delayedFirstSave.promise.then(() => {
+            durableState = state
+          })
+      )
+      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) => {
+        durableState = state
+        return Promise.resolve()
+      })
+
+    act(() => {
+      usePreviewWorkbenchStore.setState({ activeItemId: firstItem.id })
+      usePreviewWorkbenchStore.setState({ activeItemId: secondItem.id })
+    })
+
+    await act(async () => {
+      delayedFirstSave.resolve()
+      await delayedFirstSave.promise
+    })
+
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(2)
+      expect(durableState?.activeItemId).toBe(secondItem.id)
+    })
+  })
+
   it('flushes the active project on unmount', async () => {
     await act(async () => {
       root.render(<PersistenceHarness projectId="project-a" />)
