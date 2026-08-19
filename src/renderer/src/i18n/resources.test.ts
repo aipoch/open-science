@@ -623,6 +623,14 @@ describe('Korean safety copy', () => {
       '알림은 다른 앱을 사용하는 동안에만 표시됩니다. 사용자가 취소한 작업과 앱이 자동으로 다시 시도하는 실패는 알림을 표시하지 않습니다. 알림이 처음 표시될 때 운영 체제에서 알림 권한을 요청할 수 있습니다.'
     ],
     [
+      'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.',
+      'Remote.It은 제3자 서비스입니다. Open Science는 사용자가 설치한 데스크톱 CLI를 호출할 뿐이며, 이를 포함하거나 재배포하지 않고 등록하거나 계정을 생성하지도 않습니다.'
+    ],
+    [
+      'This report is posted publicly on GitHub. Edit the error text below to remove anything sensitive before sharing. Your runtime log stays on this device and is never attached automatically.',
+      '이 보고서는 GitHub에 공개로 게시됩니다. 공유하기 전에 아래 오류 텍스트를 편집하여 민감한 내용을 제거하세요. 런타임 로그는 이 기기에 남아 있으며 자동으로 첨부되지 않습니다.'
+    ],
+    [
       'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
       '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
