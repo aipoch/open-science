@@ -631,7 +631,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await backend.anthropicBridgeLease?.release()
   })
 
-  it('keeps a single Claude target behind loopback without exposing a retarget id', async () => {
+  it('keeps a single Claude target behind loopback and projects its model target', async () => {
     const harness = makeHarness()
     const backend = await harness.resolver.resolveActiveBackend()
 
@@ -647,9 +647,9 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       ],
       JSON.stringify(['provider-a', 'model-a'])
     )
-    await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.not.toHaveProperty(
-      'anthropicBridgeTargetId'
-    )
+    await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.toMatchObject({
+      anthropicBridgeTargetId: JSON.stringify(['provider-a', 'model-a'])
+    })
     await backend.anthropicBridgeLease?.release()
   })
 

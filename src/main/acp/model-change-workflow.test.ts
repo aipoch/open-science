@@ -56,6 +56,8 @@ type WorkflowHarness = {
   updateModel: ReturnType<typeof vi.fn>
   updateReasoningEffort: ReturnType<typeof vi.fn>
   updateAggregateModel: ReturnType<typeof vi.fn>
+  setProviderTransportTarget: ReturnType<typeof vi.fn>
+  setAnthropicBridgeTarget: ReturnType<typeof vi.fn>
   setBridgeReasoningEffort: ReturnType<typeof vi.fn>
   applyLiveEffort: ReturnType<typeof vi.fn>
   clearContext: ReturnType<typeof vi.fn>
@@ -147,6 +149,8 @@ const createHarness = (): WorkflowHarness => {
     updateReasoningEffort
   } as Pick<AcpBackendGenerationOwner, 'current' | 'updateModel' | 'updateReasoningEffort'>
 
+  const setProviderTransportTarget = vi.fn(() => true)
+  const setAnthropicBridgeTarget = vi.fn(() => true)
   const setBridgeReasoningEffort = vi.fn()
   const connectionResources = {
     epoch: 1,
@@ -163,8 +167,8 @@ const createHarness = (): WorkflowHarness => {
       return false
     },
     assertCurrentConnection: vi.fn(),
-    setProviderTransportTarget: vi.fn(() => true),
-    setAnthropicBridgeTarget: vi.fn(() => true),
+    setProviderTransportTarget,
+    setAnthropicBridgeTarget,
     setBridgeModelTarget: vi.fn(() => true),
     setBridgeReasoningEffort
   } as Pick<
@@ -218,6 +222,8 @@ const createHarness = (): WorkflowHarness => {
     updateModel,
     updateReasoningEffort,
     updateAggregateModel,
+    setProviderTransportTarget,
+    setAnthropicBridgeTarget,
     setBridgeReasoningEffort,
     applyLiveEffort,
     clearContext,
@@ -300,6 +306,32 @@ describe('ACP model-change workflow', () => {
       expect.objectContaining({ model: 'model-b' })
     )
     expect(harness.emitState).toHaveBeenCalledOnce()
+  })
+
+  it('reconnects when the current generation lacks a projected provider target', async () => {
+    const harness = createHarness()
+    harness.setProviderTransportTarget.mockReturnValue(false)
+
+    await expect(
+      harness.workflow.apply(target('model-b', { providerTransportTargetId: 'provider/model-b' }))
+    ).resolves.toBe(true)
+
+    expect(harness.setProviderTransportTarget).toHaveBeenCalledWith('provider/model-b')
+    expect(harness.requestReconnect).toHaveBeenCalledOnce()
+    expect(harness.updateModel).not.toHaveBeenCalled()
+  })
+
+  it('reconnects when the current generation lacks a projected Anthropic target', async () => {
+    const harness = createHarness()
+    harness.setAnthropicBridgeTarget.mockReturnValue(false)
+
+    await expect(
+      harness.workflow.apply(target('model-b', { anthropicBridgeTargetId: 'provider/model-b' }))
+    ).resolves.toBe(true)
+
+    expect(harness.setAnthropicBridgeTarget).toHaveBeenCalledWith('provider/model-b')
+    expect(harness.requestReconnect).toHaveBeenCalledOnce()
+    expect(harness.updateModel).not.toHaveBeenCalled()
   })
 
   it('reconnects instead of committing an image downgrade with opaque provider history', async () => {
