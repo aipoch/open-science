@@ -13,7 +13,8 @@ import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
-  providerRequestFingerprint
+  providerRequestFingerprint,
+  readBoundedProviderErrorBody
 } from './provider-error-replay'
 
 const ALLOWED_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens'])
@@ -30,8 +31,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   'transfer-encoding',
   'upgrade'
 ])
-const MAX_REPLAY_ERROR_BODY_BYTES = 256 * 1024
-
 type ProviderErrorSnapshot = Readonly<{
   body: Buffer
   headers: Record<string, string>
@@ -184,19 +183,20 @@ export class AnthropicProviderBridge {
     })
     const headers = responseHeaders(upstream.headers)
     if (isDeterministicProviderErrorStatus(upstream.status)) {
-      const upstreamBody = Buffer.from(await upstream.arrayBuffer())
+      const upstreamBody = await readBoundedProviderErrorBody(upstream, {
+        signal: request.signal
+      })
       delete headers['content-encoding']
-      const bodyToReplay =
-        upstreamBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
-          ? upstreamBody
-          : Buffer.from(
-              JSON.stringify({
-                error: {
-                  type: 'invalid_request_error',
-                  message: `Provider request failed with status ${upstream.status}`
-                }
-              })
-            )
+      const bodyToReplay = upstreamBody.complete
+        ? upstreamBody.body
+        : Buffer.from(
+            JSON.stringify({
+              error: {
+                type: 'invalid_request_error',
+                message: `Provider request failed with status ${upstream.status}`
+              }
+            })
+          )
       const snapshot = {
         body: bodyToReplay,
         headers: {

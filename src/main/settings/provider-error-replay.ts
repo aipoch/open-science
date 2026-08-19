@@ -10,6 +10,19 @@ const DETERMINISTIC_PROVIDER_ERROR_STATUS_CODES = new Set([
 ])
 const DEFAULT_TTL_MS = 30_000
 const DEFAULT_MAX_ENTRIES = 32
+const DEFAULT_ERROR_BODY_MAX_BYTES = 256 * 1024
+const DEFAULT_ERROR_BODY_TIMEOUT_MS = 10_000
+
+type BoundedProviderErrorBody = Readonly<{
+  body: Buffer
+  complete: boolean
+}>
+
+type BoundedProviderErrorBodyOptions = Readonly<{
+  maxBytes?: number
+  signal?: AbortSignal
+  timeoutMs?: number
+}>
 
 const isDeterministicProviderErrorStatus = (status: number): boolean =>
   DETERMINISTIC_PROVIDER_ERROR_STATUS_CODES.has(status)
@@ -27,6 +40,66 @@ const providerRequestFingerprint = (...parts: readonly string[]): string => {
     hash.update(part)
   }
   return hash.digest('hex')
+}
+
+const readBoundedProviderErrorBody = async (
+  response: Response,
+  options: BoundedProviderErrorBodyOptions = {}
+): Promise<BoundedProviderErrorBody> => {
+  const maxBytes = options.maxBytes ?? DEFAULT_ERROR_BODY_MAX_BYTES
+  const timeoutMs = options.timeoutMs ?? DEFAULT_ERROR_BODY_TIMEOUT_MS
+  const contentLength = response.headers.get('content-length')
+  if (contentLength && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
+    await response.body?.cancel().catch(() => undefined)
+    return { body: Buffer.alloc(0), complete: false }
+  }
+  if (!response.body) return { body: Buffer.alloc(0), complete: true }
+  if (options.signal?.aborted) {
+    await response.body.cancel().catch(() => undefined)
+    throw options.signal.reason ?? new DOMException('The request was aborted.', 'AbortError')
+  }
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let byteLength = 0
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  let removeAbortListener: (() => void) | undefined
+  const stopped = new Promise<'aborted' | 'timeout'>((resolve) => {
+    timeout = setTimeout(() => resolve('timeout'), timeoutMs)
+    if (options.signal) {
+      const onAbort = (): void => resolve('aborted')
+      options.signal.addEventListener('abort', onAbort, { once: true })
+      removeAbortListener = () => options.signal?.removeEventListener('abort', onAbort)
+    }
+  })
+
+  try {
+    while (true) {
+      const result = await Promise.race([
+        reader.read().then((value) => ({ kind: 'read' as const, value })),
+        stopped.then((kind) => ({ kind }))
+      ])
+      if (result.kind !== 'read') {
+        await reader.cancel().catch(() => undefined)
+        if (result.kind === 'aborted') {
+          throw options.signal?.reason ?? new DOMException('The request was aborted.', 'AbortError')
+        }
+        return { body: Buffer.alloc(0), complete: false }
+      }
+      if (result.value.done) return { body: Buffer.concat(chunks, byteLength), complete: true }
+      if (!result.value.value) continue
+      byteLength += result.value.value.byteLength
+      if (byteLength > maxBytes) {
+        await reader.cancel().catch(() => undefined)
+        return { body: Buffer.alloc(0), complete: false }
+      }
+      chunks.push(result.value.value)
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout)
+    removeAbortListener?.()
+    reader.releaseLock()
+  }
 }
 
 class DeterministicProviderErrorReplay<T> {
@@ -71,5 +144,6 @@ export {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
-  providerRequestFingerprint
+  providerRequestFingerprint,
+  readBoundedProviderErrorBody
 }

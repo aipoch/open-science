@@ -24,7 +24,8 @@ import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
-  providerRequestFingerprint
+  providerRequestFingerprint,
+  readBoundedProviderErrorBody
 } from './provider-error-replay'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
@@ -684,29 +685,36 @@ export class NativeResponsesCompatibilityProxy {
       })
       phase = 'forward-response'
       if (isDeterministicProviderErrorStatus(upstream.status)) {
+        const boundedBody = await readBoundedProviderErrorBody(upstream, {
+          signal: request.signal
+        })
         const rawBody =
-          responseType === 'json'
+          boundedBody.complete && responseType === 'json'
             ? Buffer.from(
-                JSON.stringify(restoreNativeResponsesPayload(await upstream.json(), aliases))
+                JSON.stringify(
+                  restoreNativeResponsesPayload(
+                    JSON.parse(boundedBody.body.toString('utf8')),
+                    aliases
+                  )
+                )
               )
-            : Buffer.from(await upstream.arrayBuffer())
-        const bodyToReplay =
-          rawBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
-            ? rawBody
-            : Buffer.from(
-                JSON.stringify({
-                  error: {
-                    type: 'invalid_request_error',
-                    message: `Provider request failed with status ${upstream.status}`,
-                    status: upstream.status
-                  }
-                })
-              )
+            : boundedBody.body
+        const bodyIsReplayable =
+          boundedBody.complete && rawBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
+        const bodyToReplay = bodyIsReplayable
+          ? rawBody
+          : Buffer.from(
+              JSON.stringify({
+                error: {
+                  type: 'invalid_request_error',
+                  message: `Provider request failed with status ${upstream.status}`,
+                  status: upstream.status
+                }
+              })
+            )
         const headers = {
           ...copyResponseHeaders(upstream),
-          ...(rawBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
-            ? {}
-            : { 'content-type': 'application/json' }),
+          ...(bodyIsReplayable ? {} : { 'content-type': 'application/json' }),
           'content-length': String(bodyToReplay.byteLength),
           'x-open-science-upstream-status': String(upstream.status)
         }

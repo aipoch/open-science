@@ -30,7 +30,8 @@ import {
 import {
   DeterministicProviderErrorReplay,
   providerErrorClientStatus,
-  providerRequestFingerprint
+  providerRequestFingerprint,
+  readBoundedProviderErrorBody
 } from './provider-error-replay'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
@@ -38,10 +39,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JsonObject = Record<string, any>
 
-// Diagnostics for the Codex Responses bridge. Logs the resolved upstream model, the tool translation
-// (Responses tool types in → Chat function names out), and what each turn actually produced (text vs
-// tool calls) so a "tools not called / task not continued" report can be traced. Never logs keys,
-// prompt text, or tool arguments — only shapes, counts, names, and the model id.
+// Diagnostics log only model IDs and tool shapes/counts, never keys, prompts, or arguments.
 const log = createLogger('acp-bridge')
 
 export type ResponsesBridgeTarget = {
@@ -545,8 +543,10 @@ export class ResponsesBridge {
       signal: request.signal
     })
     if (!upstream.ok) {
-      const errorBody = await upstream.text()
-      const message = upstreamErrorMessage(errorBody, upstream.status)
+      const errorBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
+      const message = errorBody.complete
+        ? upstreamErrorMessage(errorBody.body.toString('utf8'), upstream.status)
+        : `Provider request failed with status ${upstream.status}`
       this.deterministicErrors.remember(replayKey, upstream.status, {
         message,
         upstreamStatus: upstream.status

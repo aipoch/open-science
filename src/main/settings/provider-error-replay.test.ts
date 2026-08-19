@@ -4,7 +4,8 @@ import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
-  providerRequestFingerprint
+  providerRequestFingerprint,
+  readBoundedProviderErrorBody
 } from './provider-error-replay'
 
 describe('provider error replay policy', () => {
@@ -53,5 +54,42 @@ describe('provider error replay policy', () => {
     expect(cache.get('third')).toBe('third')
     cache.clear()
     expect(cache.get('first')).toBe(undefined)
+  })
+
+  it('cancels a deterministic error body as soon as it exceeds the byte limit', async () => {
+    let cancelled = false
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(8))
+        },
+        cancel() {
+          cancelled = true
+        }
+      }),
+      { status: 401 }
+    )
+
+    await expect(
+      readBoundedProviderErrorBody(response, { maxBytes: 10, timeoutMs: 1_000 })
+    ).resolves.toEqual({ body: Buffer.alloc(0), complete: false })
+    expect(cancelled).toBe(true)
+  })
+
+  it('cancels a deterministic error body that does not finish', async () => {
+    let cancelled = false
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true
+        }
+      }),
+      { status: 401 }
+    )
+
+    await expect(
+      readBoundedProviderErrorBody(response, { maxBytes: 10, timeoutMs: 5 })
+    ).resolves.toEqual({ body: Buffer.alloc(0), complete: false })
+    expect(cancelled).toBe(true)
   })
 })
