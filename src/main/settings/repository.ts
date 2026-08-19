@@ -49,9 +49,9 @@ import {
 } from './subagent-model-settings'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
+type Write = Promise<StoredSettings>
 
-// Stable semantic mutation facade. The injected document store owns arbitration and atomic IO; all
-// secret handling remains above this layer in crypto.ts and service.ts.
+// Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly store: SettingsDocumentStore
 
@@ -616,13 +616,13 @@ class SettingsRepository {
     })
   }
 
-  // Replaces one custom MCP server record (identity fields must be preserved by the caller).
-  async updateCustomServer(id: string, server: StoredCustomMcpServer): Promise<StoredSettings> {
+  // Replaces one custom MCP server record; background migrations may ignore a concurrently deleted id.
+  async updateCustomServer(id: string, server: StoredCustomMcpServer, allowMissing = false): Write {
     return this.mutateConnectors((connectors) => {
       const servers = connectors.customMcpServers
-      if (!servers?.some(({ id: existingId }) => existingId === id))
+      if (!servers?.some(({ id: existingId }) => existingId === id) && !allowMissing)
         throw new Error(`Unknown custom connector: ${id}`)
-      connectors.customMcpServers = servers.map((stored) => (stored.id === id ? server : stored))
+      connectors.customMcpServers = servers?.map((stored) => (stored.id === id ? server : stored))
     })
   }
 

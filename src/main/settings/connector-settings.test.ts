@@ -742,6 +742,29 @@ describe('ConnectorSettingsModule', () => {
     expect(storedJson).toContain('headerRefs')
   })
 
+  it('does not fail a legacy secret read when deletion wins the migration race', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-race',
+      name: 'legacy-race',
+      displayName: 'Legacy race',
+      transport: 'stdio',
+      enabled: true,
+      command: 'legacy-command',
+      env: { TOKEN: 'legacy-secret' }
+    })
+    const readSettings = repository.getSettings.bind(repository)
+    vi.spyOn(repository, 'getSettings').mockImplementationOnce(async () => {
+      const staleSettings = await readSettings()
+      await repository.removeCustomServer('legacy-race')
+      return staleSettings
+    })
+
+    await expect(service.getConnectors()).resolves.toMatchObject({
+      customMcpServers: [expect.objectContaining({ id: 'legacy-race' })]
+    })
+    expect((await readSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
   it('keeps legacy secrets readable but rejects new secret writes without secure storage', async () => {
     await repository.addCustomServer({
       id: 'legacy',
