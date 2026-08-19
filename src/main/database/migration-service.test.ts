@@ -749,10 +749,10 @@ describe('application database migrations', () => {
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
-      access(`${databasePath}.before-0009_vision_evidence.backup`)
+      access(`${databasePath}.before-0010_compute_password_auth.backup`)
     ).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0010_compute_password_auth.backup`)
+      access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<Array<{ agentContext: string; name: string }>>`
@@ -817,11 +817,11 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client, { databasePath })
     await client.$executeRawUnsafe(
       'VACUUM INTO ?',
-      `${databasePath}.before-0009_vision_evidence.backup`
+      `${databasePath}.before-0010_compute_password_auth.backup`
     )
     await client.$executeRawUnsafe(
       'VACUUM INTO ?',
-      `${databasePath}.before-0010_compute_password_auth.backup`
+      `${databasePath}.before-0011_cross_resource_tags.backup`
     )
     const futureBase = futureTestMigration()
     const statements = [
@@ -851,7 +851,7 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0010_compute_password_auth.backup',
+      'open-science.db.before-0011_cross_resource_tags.backup',
       `open-science.db.before-${future.id}.backup`
     ])
   })
@@ -1481,6 +1481,7 @@ describe('application database migrations', () => {
     const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
     const visionEvidenceBackupPath = `${databasePath}.before-0009_vision_evidence.backup`
     const computePasswordAuthBackupPath = `${databasePath}.before-0010_compute_password_auth.backup`
+    const crossResourceTagsBackupPath = `${databasePath}.before-0011_cross_resource_tags.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -1582,13 +1583,14 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0009_vision_evidence.backup',
-      'open-science.db.before-0010_compute_password_auth.backup'
+      'open-science.db.before-0010_compute_password_auth.backup',
+      'open-science.db.before-0011_cross_resource_tags.backup'
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(visionEvidenceBackupPath)).resolves.toBeUndefined()
+    await expect(access(visionEvidenceBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(computePasswordAuthBackupPath)).resolves.toBeUndefined()
+    await expect(access(crossResourceTagsBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
@@ -2080,11 +2082,11 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0009_vision_evidence.backup',
       'open-science.db.before-0010_compute_password_auth.backup',
+      'open-science.db.before-0011_cross_resource_tags.backup',
       unknownBackupName
     ])
-    expect(retired).toHaveLength(8)
+    expect(retired).toHaveLength(9)
     expect(retired).toEqual(
       expect.arrayContaining(
         MIGRATION_MANIFEST.slice(0, -2).map((migration) =>
