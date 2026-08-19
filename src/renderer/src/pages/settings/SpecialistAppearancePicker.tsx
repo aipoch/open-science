@@ -141,17 +141,17 @@ const SpecialistAppearancePicker = ({
       <PopoverContent
         side="right"
         align="start"
-        sideOffset={8}
+        sideOffset={6}
         collisionPadding={16}
-        className="w-72 max-w-[var(--radix-popover-content-available-width)] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-menu sm:w-80"
+        className="w-64 max-w-[var(--radix-popover-content-available-width)] rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
       >
-        <p className="text-sm font-semibold text-foreground">{t('Appearance')}</p>
+        <p className="text-xs font-semibold text-foreground">{t('Appearance')}</p>
 
-        <div className="mt-3" role="group" aria-labelledby={colorHeadingId}>
+        <div className="mt-2" role="group" aria-labelledby={colorHeadingId}>
           <p id={colorHeadingId} className="text-xs font-medium text-muted-foreground">
             {t('Color')}
           </p>
-          <div className="mt-1.5 grid grid-cols-3 gap-1 sm:grid-cols-6">
+          <div className="mt-1 grid grid-cols-3 gap-1 sm:grid-cols-6 [@media(pointer:coarse)]:grid-cols-3">
             {SPECIALIST_COLOR_OPTIONS.map((option) => {
               const selected = visibleAppearance.colorKey === option.key
               return (
@@ -164,17 +164,17 @@ const SpecialistAppearancePicker = ({
                   onClick={() => {
                     if (!selected) void save({ colorKey: option.key })
                   }}
-                  className="flex size-11 cursor-pointer items-center justify-center rounded-lg hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0"
+                  className="flex size-9 cursor-pointer items-center justify-center rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:size-11"
                 >
                   <span
                     className={cn(
-                      'flex size-7 items-center justify-center rounded-lg border border-foreground/10',
+                      'flex size-6 items-center justify-center rounded-md border border-foreground/10',
                       selected && 'ring-2 ring-primary ring-offset-2 ring-offset-popover'
                     )}
                     style={{ background: AVATAR_COLORS[option.key] }}
                     aria-hidden="true"
                   >
-                    {selected ? <Check className="size-3.5 text-foreground" /> : null}
+                    {selected ? <Check className="size-3 text-foreground" /> : null}
                   </span>
                 </button>
               )
@@ -182,11 +182,11 @@ const SpecialistAppearancePicker = ({
           </div>
         </div>
 
-        <div className="mt-3" role="group" aria-labelledby={iconHeadingId}>
+        <div className="mt-2" role="group" aria-labelledby={iconHeadingId}>
           <p id={iconHeadingId} className="text-xs font-medium text-muted-foreground">
             {t('Icon')}
           </p>
-          <div className="mt-1.5 grid grid-cols-3 gap-1 sm:grid-cols-6">
+          <div className="mt-1 grid grid-cols-3 gap-1 sm:grid-cols-6 [@media(pointer:coarse)]:grid-cols-3">
             {SPECIALIST_ICON_OPTIONS.map((option) => {
               const Icon = AVATAR_ICONS[option.key] ?? AVATAR_ICONS.brain
               const selected = visibleAppearance.iconKey === option.key
@@ -201,48 +201,50 @@ const SpecialistAppearancePicker = ({
                     if (!selected) void save({ iconKey: option.key })
                   }}
                   className={cn(
-                    'flex size-11 cursor-pointer items-center justify-center rounded-lg border border-transparent text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0',
+                    'flex size-9 cursor-pointer items-center justify-center rounded-md border border-transparent text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:size-11',
                     selected && 'border-primary/30 bg-primary/10 text-primary'
                   )}
                 >
-                  <Icon className="size-5" aria-hidden="true" />
+                  <Icon className="size-4" aria-hidden="true" />
                 </button>
               )
             })}
           </div>
         </div>
 
-        <div
-          className="mt-2 flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground"
-          role="status"
-          aria-live="polite"
-        >
-          {saveState === 'saving' && showSaving ? (
-            <>
-              <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-              <span>{t('Saving…')}</span>
-            </>
-          ) : saveState === 'success' ? (
-            <>
-              <CheckCircle2 className="size-3.5 text-status-success-accent" aria-hidden />
-              <span>{t('Saved')}</span>
-            </>
-          ) : saveState === 'error' ? (
-            <>
-              <AlertCircle className="size-3.5 shrink-0 text-destructive" aria-hidden />
-              <span className="min-w-0 flex-1 text-destructive">
-                {t('Appearance wasn’t saved. Try again.')}
-              </span>
-              <button
-                type="button"
-                className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-1 font-medium text-foreground underline underline-offset-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px motion-reduce:active:translate-y-0"
-                onClick={() => pendingPatch && void save(pendingPatch)}
-              >
-                {t('Try again')}
-              </button>
-            </>
-          ) : null}
-        </div>
+        {saveState !== 'idle' ? (
+          <div
+            className="mt-1 flex min-h-5 items-center gap-1.5 text-xs text-muted-foreground"
+            role="status"
+            aria-live="polite"
+          >
+            {saveState === 'saving' && showSaving ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+                <span>{t('Saving…')}</span>
+              </>
+            ) : saveState === 'success' ? (
+              <>
+                <CheckCircle2 className="size-3.5 text-status-success-accent" aria-hidden />
+                <span>{t('Saved')}</span>
+              </>
+            ) : saveState === 'error' ? (
+              <>
+                <AlertCircle className="size-3.5 shrink-0 text-destructive" aria-hidden />
+                <span className="min-w-0 flex-1 text-destructive">
+                  {t('Appearance wasn’t saved. Try again.')}
+                </span>
+                <button
+                  type="button"
+                  className="min-h-9 shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-1 font-medium text-foreground underline underline-offset-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:min-h-11"
+                  onClick={() => pendingPatch && void save(pendingPatch)}
+                >
+                  {t('Try again')}
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   )
