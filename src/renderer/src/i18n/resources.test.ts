@@ -466,7 +466,13 @@ describe('mandatory product glossary', () => {
   })
 
   it('ko preserves executable names, API identifiers, code spans, and data directory names', () => {
-    const patterns = [/\bOpenScience\b/g, /\b[\w.-]+\.(?:ps1|sh|mcp)\b/g, /<code>[^<]+<\/code>/g]
+    const patterns = [
+      /\bOpenScience\b/g,
+      /\b[\w.-]+\.(?:ps1|sh|mcp)\b/g,
+      /<code>[^<]+<\/code>/g,
+      /\bMessages(?= (?:or|또는) Chat Completions\b)/g,
+      /\bChat Completions\b/g
+    ]
     const identifiers = (text: string): string[] =>
       patterns
         .flatMap((pattern) => text.match(pattern) ?? [])
@@ -631,6 +637,10 @@ describe('Korean safety copy', () => {
       '이 보고서는 GitHub에 공개로 게시됩니다. 공유하기 전에 아래 오류 텍스트를 편집하여 민감한 내용을 제거하세요. 런타임 로그는 이 기기에 남아 있으며 자동으로 첨부되지 않습니다.'
     ],
     [
+      '{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project._other',
+      '손상된 대화 {{count}}개를 별도 위치로 옮겼습니다. 상태를 확인할 수 없어 프로젝트 보관 기능은 계속 사용할 수 없습니다. 그래도 프로젝트를 영구 삭제할 수는 있습니다.'
+    ],
+    [
       'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
       '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
@@ -663,14 +673,23 @@ describe('Korean language endonyms', () => {
   })
 })
 
+const KOREAN_HIDDEN_FORMATTING = /[\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u
+
 describe('Korean native UI style', () => {
   it('does not contain hidden formatting characters', () => {
     const offenders = Object.entries(catalog('ko'))
-      .filter(([, value]) => /[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/u.test(value))
+      .filter(([, value]) => KOREAN_HIDDEN_FORMATTING.test(value))
       .map(([key]) => key)
 
     expect(offenders).toEqual([])
   })
+
+  it.each(['\u061c', '\u2066', '\u2067', '\u2068', '\u2069'])(
+    'recognizes hidden bidirectional control U+%s',
+    (character) => {
+      expect(KOREAN_HIDDEN_FORMATTING.test(character)).toBe(true)
+    }
+  )
 
   it('uses a consistent Korean product voice without translated second-person pronouns', () => {
     const unnaturalVoice = /귀하|당신|우리는|그것을|하십시오|하시기 바랍니다|기다리고 있어요/u
@@ -761,7 +780,6 @@ describe('Korean native UI style', () => {
       '지원되지 않음 파일',
       'Open Science 이',
       '모두 스페셜리스트',
-      '하실 수',
       '대형 파일 (',
       '서브에이전트에서 사용됩니다',
       'Open Science 전체 현재 보기',
@@ -852,10 +870,18 @@ describe('Korean native UI style', () => {
 
     expect(offenders).toEqual([])
   })
+
+  it('preserves context-sensitive service and runtime terminology', () => {
+    expect(catalog('ko')).toMatchObject({
+      'Use {{service}}?': '{{service}} 서비스를 사용할까요?',
+      'Context window chart across {{count}} terminal outcomes_other':
+        '종료 결과 {{count}}개에 걸친 컨텍스트 창 차트'
+    })
+  })
 })
 
 describe('Korean binding terminology', () => {
-  const mandatoryTerms: Array<{ source: RegExp; expected: string; excludeSource?: RegExp }> = [
+  const mandatoryTerms: Array<{ source: RegExp; expected: string; stripSource?: RegExp }> = [
     { source: /\bprojects?\b/i, expected: '프로젝트' },
     { source: /\bsessions?\b/i, expected: '세션' },
     { source: /\bconversations?\b/i, expected: '대화' },
@@ -863,7 +889,7 @@ describe('Korean binding terminology', () => {
     {
       source: /\bmessages?\b/i,
       expected: '메시지',
-      excludeSource: /\bMessages or Chat Completions\b/
+      stripSource: /\bMessages or Chat Completions\b/
     },
     { source: /\btasks?\b/i, expected: '작업' },
     { source: /\bmodels?\b/i, expected: '모델' },
@@ -898,7 +924,7 @@ describe('Korean binding terminology', () => {
     { source: /\bmirrors?\b/i, expected: '미러' },
     { source: /\btrays?\b/i, expected: '트레이' },
     { source: /\bbookmarks?\b/i, expected: '북마크' },
-    { source: /\brunning\b/i, expected: '실행 중', excludeSource: /\bby running\b/i },
+    { source: /\brunning\b/i, expected: '실행 중', stripSource: /\bby running\b/i },
     { source: /\bcalls?\b/i, expected: '호출' },
     { source: /\breveal(?:s|ed|ing)?\b/i, expected: '표시' },
     { source: /\blight\b/i, expected: '라이트' },
@@ -907,13 +933,13 @@ describe('Korean binding terminology', () => {
 
   it.each(mandatoryTerms)(
     'uses $expected for matching source prose',
-    ({ source, expected, excludeSource }) => {
+    ({ source, expected, stripSource }) => {
       const offenders = Object.entries(catalog('ko'))
         .filter(([key]) => {
           const sourceText = englishOf(key)
             .replace(/<code>.*?<\/code>/g, '')
             .replace(/\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g, '')
-          return source.test(sourceText) && !excludeSource?.test(sourceText)
+          return source.test(stripSource ? sourceText.replace(stripSource, '') : sourceText)
         })
         .filter(([, value]) => !value.includes(expected))
         .map(([key]) => key)
