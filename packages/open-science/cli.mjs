@@ -8,7 +8,7 @@ import { mkdir, readFile, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { findServiceState, readWebToken, resolveConfigRoot, STATE_FILE } from './config-root.mjs'
@@ -356,26 +356,6 @@ const removeStateFiles = async (configRoot) => {
   await rm(join(configRoot, STATE_FILE), { force: true })
 }
 
-// Force-kills the daemon's entire process tree after graceful shutdown failed. The daemon is spawned
-// detached, so on POSIX it leads its own process group: negating the PID signals the whole group
-// (agent/Notebook children included), and SIGKILL is required because the graceful SIGTERM was ignored.
-const forceKillTree = (pid) => {
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    return
-  }
-  try {
-    process.kill(-pid, 'SIGKILL')
-  } catch {
-    // Group already gone or never formed: fall back to the lone leader.
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // Already dead.
-    }
-  }
-}
-
 // The real I/O the commands use, bundled so tests can substitute fakes. Declared after the helpers it
 // references so its initializer sees them; commands take `deps = DEFAULT_DEPS`, so production callers
 // pass nothing and get these.
@@ -383,7 +363,6 @@ const DEFAULT_DEPS = {
   findServiceState: (options) => findServiceState(options),
   readWebToken: (configRoot) => readWebToken(configRoot),
   isAlive: isProcessAlive,
-  forceKill: forceKillTree,
   removeState: (configRoot) => removeStateFiles(configRoot),
   fetch: (input, init) => fetch(input, init),
   sleep,
@@ -392,27 +371,13 @@ const DEFAULT_DEPS = {
   warn: (...args) => console.warn(...args)
 }
 
-// Waits for the daemon to exit gracefully, then force-kills its process tree and verifies the process
-// is actually gone. Returns true iff it stopped. The caller sends the graceful shutdown request first;
-// all timing/kill primitives are injected so the escalation path is testable without real processes.
+// Waits for the daemon to exit after an authenticated graceful shutdown request. A PID proves only
+// that some process is alive, not that it is still the daemon recorded in a potentially stale state
+// file, so this function deliberately never signals it. Returns true iff the PID is no longer alive.
 export const terminateDaemon = async (pid, opts) => {
-  const {
-    isAlive,
-    forceKill,
-    sleep: sleepFn,
-    now,
-    gracefulTimeoutMs,
-    killTimeoutMs,
-    onForceKill
-  } = opts
+  const { isAlive, sleep: sleepFn, now, gracefulTimeoutMs } = opts
   const deadline = now() + gracefulTimeoutMs
   while (now() < deadline && isAlive(pid)) await sleepFn(250)
-  if (!isAlive(pid)) return true
-
-  onForceKill?.()
-  forceKill(pid)
-  const killDeadline = now() + killTimeoutMs
-  while (now() < killDeadline && isAlive(pid)) await sleepFn(250)
   return !isAlive(pid)
 }
 
@@ -551,6 +516,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     return
   }
   const token = await deps.readWebToken(state.configRoot)
+  let shutdownAccepted = false
   try {
     const response = await deps.fetch(`http://127.0.0.1:${state.port}/api/shutdown`, {
       method: 'POST',
@@ -558,13 +524,20 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
       signal: AbortSignal.timeout(3_000)
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    shutdownAccepted = true
     await response.arrayBuffer()
   } catch (error) {
     deps.warn(`Graceful shutdown failed: ${error.message}`)
   }
 
+  if (!shutdownAccepted) {
+    throw new Error(
+      `Could not safely stop Open Science (PID ${state.pid}); the authenticated shutdown request was not accepted, so no process signal was sent.`
+    )
+  }
+
   // Attached: the web service rides on the running desktop app. A graceful request stops only the web
-  // service; the app stays up. Never fall through to force-killing — that pid is the user's app.
+  // service; the app stays up, so observe service health instead of waiting for its pid to exit.
   if (state.attached) {
     const stopped = await waitForWebServiceStopped(state, deps, STOP_TIMEOUT_MS)
     if (!stopped) {
@@ -579,17 +552,16 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
 
   const stopped = await terminateDaemon(state.pid, {
     isAlive: deps.isAlive,
-    forceKill: deps.forceKill,
     sleep: deps.sleep,
     now: deps.now,
-    gracefulTimeoutMs: STOP_TIMEOUT_MS,
-    killTimeoutMs: 2_000,
-    onForceKill: () => deps.warn('Graceful shutdown timed out; force-killing the process tree.')
+    gracefulTimeoutMs: STOP_TIMEOUT_MS
   })
   // Only claim success (and drop the state file) once the process is confirmed gone; otherwise leave
   // the state in place and fail loudly so the user isn't told it stopped when it didn't.
   if (!stopped) {
-    throw new Error(`Could not stop Open Science (PID ${state.pid}); it is still running.`)
+    throw new Error(
+      `Could not stop Open Science (PID ${state.pid}); it is still running, so no process signal was sent.`
+    )
   }
   await deps.removeState(state.configRoot)
   deps.log('Open Science stopped.')
