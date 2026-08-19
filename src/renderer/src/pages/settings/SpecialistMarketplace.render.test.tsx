@@ -370,6 +370,11 @@ describe('Specialist Marketplace settings', () => {
     const skills = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Skills')
     )
+    const connectors = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Connectors')
+    )
+    expect(skills?.querySelector('.lucide-scroll-text')).not.toBeNull()
+    expect(connectors?.querySelector('svg > rect[x="14.5"]')).not.toBeNull()
     expect(skills?.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(skills!)
     expect(skills?.getAttribute('aria-expanded')).toBe('true')
