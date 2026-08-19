@@ -352,6 +352,7 @@ describe('pull request change classification', () => {
   it.each([
     ['renderer view', 'src/renderer/src/components/Button.tsx'],
     ['renderer locale catalog', 'src/renderer/src/locales/ja.json'],
+    ['Korean locale catalog', 'src/renderer/src/locales/ko.json'],
     ['shared contract', 'src/shared/acp.ts'],
     ['main runtime', 'src/main/notebook/runtime-service.ts']
   ])('selects the i18n catalog lane for a scanned %s change', (_label, path) => {

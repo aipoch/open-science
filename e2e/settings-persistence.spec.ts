@@ -85,7 +85,8 @@ const localizedSettingsCases = [
 for (const localized of localizedSettingsCases) {
   test(`switches to ${localized.language} without clipping and persists it`, async ({ app }) => {
     let page = await app.completeOnboarding()
-    await page.setViewportSize({ width: 640, height: 800 })
+    const viewportWidth = 640
+    await page.setViewportSize({ width: viewportWidth, height: 800 })
 
     await page
       .locator('button')
@@ -123,7 +124,8 @@ for (const localized of localizedSettingsCases) {
     const tooltipBox = await tooltip.boundingBox()
     expect(tooltipBox).not.toBeNull()
     expect(tooltipBox?.x).toBeGreaterThanOrEqual(0)
-    expect((tooltipBox?.x ?? 0) + (tooltipBox?.width ?? 0)).toBeLessThanOrEqual(640)
+    // Windows reports fractional bounding boxes; 1px matches the button-clipping helper.
+    expect((tooltipBox?.x ?? 0) + (tooltipBox?.width ?? 0)).toBeLessThanOrEqual(viewportWidth + 1)
 
     await closeButton.click()
     page = await app.restart()
