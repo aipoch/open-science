@@ -19,6 +19,7 @@ import { locateApp } from './locate-app.mjs'
 const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 30_000
 const STOP_TIMEOUT_MS = 15_000
+const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
 
@@ -588,7 +589,7 @@ export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
 
 const resolveDownloadOutput = async (output) => {
   let candidate = output
-  for (let hop = 0; hop < 40; hop += 1) {
+  for (let hop = 0; ; hop += 1) {
     const linkTarget = await lstat(candidate).then(
       (metadata) => (metadata.isSymbolicLink() ? readlink(candidate) : undefined),
       (error) => {
@@ -597,6 +598,7 @@ const resolveDownloadOutput = async (output) => {
       }
     )
     if (linkTarget === undefined) return candidate
+    if (hop === MAX_DOWNLOAD_SYMLINK_HOPS) break
     candidate = resolve(dirname(candidate), linkTarget)
   }
   throw new Error(`Too many symbolic links in artifact output: ${output}`)

@@ -629,6 +629,42 @@ describe('task CLI', () => {
     }
   })
 
+  it.runIf(process.platform !== 'win32')(
+    'follows a 40-link artifact output symlink chain',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+      const target = join(directory, 'target.md')
+      const output = join(directory, 'link-0.md')
+      await writeFile(target, 'existing report')
+      for (let index = 39; index >= 0; index -= 1) {
+        await symlink(
+          index === 39 ? 'target.md' : `link-${index + 1}.md`,
+          join(directory, `link-${index}.md`)
+        )
+      }
+      const client = {
+        downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+      }
+
+      try {
+        await runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+
+        expect(await readlink(output)).toBe('link-1.md')
+        expect(await readFile(target, 'utf8')).toBe('replacement report')
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {
     const client = {
       getSessionPlan: vi.fn().mockResolvedValue({
