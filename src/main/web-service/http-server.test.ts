@@ -88,6 +88,46 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('serves static resources with browser security policies', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
+    await writeFile(join(staticRoot, 'app.js'), 'window.__staticTest = true')
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    for (const path of ['/', '/app.js']) {
+      const response = await fetch(`http://127.0.0.1:${server.port}${path}`, {
+        headers: { authorization: 'Bearer test-token' }
+      })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
+      expect(response.headers.get('content-security-policy')).toContain(
+        "frame-ancestors 'none'"
+      )
+      expect(response.headers.get('x-frame-options')).toBe('DENY')
+      expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+    }
+  })
+
   it('dispatches local Web RPC through the narrow application command view', async () => {
     const unusedFallbackInvoke = vi.fn()
     const directInvoke = vi.fn(

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
@@ -26,6 +26,21 @@ describe('web authentication', () => {
     expect(second).toBe(first)
     expect((await readFile(join(dir, 'web-token'), 'utf8')).trim()).toBe(first)
   })
+
+  it.runIf(process.platform !== 'win32')(
+    'repairs reused token permissions without rotating the credential',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'open-science-web-auth-'))
+      dirs.push(dir)
+      const tokenPath = join(dir, 'web-token')
+      const existing = 'a'.repeat(43)
+      await writeFile(tokenPath, `${existing}\n`, { mode: 0o644 })
+      await chmod(tokenPath, 0o644)
+
+      expect(await loadOrCreateWebToken(dir)).toBe(existing)
+      expect((await stat(tokenPath)).mode & 0o777).toBe(0o600)
+    }
+  )
 
   it('accepts only token-authenticated loopback requests with a same-origin Origin', () => {
     const token = 'a'.repeat(43)
