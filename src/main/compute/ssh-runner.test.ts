@@ -559,9 +559,15 @@ describe('SystemSshRunner', () => {
       timeoutMs: 5000,
       signal: controller.signal
     })
+    const settled = vi.fn()
+    void promise.then(settled, settled)
     controller.abort()
 
     child.emit('exit', null)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settled).not.toHaveBeenCalled()
+
+    child.emit('close', null)
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
@@ -585,6 +591,28 @@ describe('SystemSshRunner', () => {
 
     child.emit('close', null)
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('keeps a final boundary when an aborted child exits but its streams never close', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+    const settled = vi.fn()
+
+    void runner
+      .run(target(), 'leaves-streams-open', { timeoutMs: 5000, signal: controller.signal })
+      .then(settled, settled)
+
+    controller.abort()
+    child.emit('exit', null)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ name: 'AbortError' })
+    expect(child.kill.mock.calls).toEqual([['SIGTERM']])
   })
 
   it('rejects after a bounded grace period when an aborted child never closes', async () => {

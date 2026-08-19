@@ -368,7 +368,7 @@ export class SystemSshRunner implements SshRunner {
       const requestTermination = (): void => {
         if (settled) return
         if (processExited) {
-          finish(observedExitCode, undefined, true)
+          scheduleFinalBoundary()
           return
         }
         if (terminationTimer !== undefined || finalBoundaryTimer !== undefined) return
@@ -395,8 +395,7 @@ export class SystemSshRunner implements SshRunner {
         observedExitCode = code
         clearTimer(terminationTimer)
         terminationTimer = undefined
-        if (aborted) finish(code, undefined, true)
-        else if (timedOut) scheduleFinalBoundary()
+        if (aborted || timedOut) scheduleFinalBoundary()
       }
 
       const onClose = (code: number | null): void => {
