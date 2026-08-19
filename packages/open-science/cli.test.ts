@@ -1,4 +1,14 @@
-import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -560,6 +570,64 @@ describe('task CLI', () => {
       }
     }
   )
+
+  it.runIf(process.platform !== 'win32')(
+    'follows an existing artifact output symlink',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+      const target = join(directory, 'target.md')
+      const output = join(directory, 'report.md')
+      await writeFile(target, 'existing report')
+      await symlink('target.md', output)
+      const client = {
+        downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+      }
+
+      try {
+        await runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+
+        expect(await readlink(output)).toBe('target.md')
+        expect(await readFile(target, 'utf8')).toBe('replacement report')
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')('follows a dangling artifact output symlink', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+    const target = join(directory, 'target.md')
+    const output = join(directory, 'report.md')
+    await symlink('target.md', output)
+    const client = {
+      downloadArtifact: vi.fn().mockResolvedValue(new Response('downloaded report'))
+    }
+
+    try {
+      await runTaskCommand(
+        {
+          command: 'artifacts',
+          subcommand: 'download',
+          positionals: ['artifact-1'],
+          options: { output, json: true, jsonl: false }
+        },
+        { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+      )
+
+      expect(await readlink(output)).toBe('target.md')
+      expect(await readFile(target, 'utf8')).toBe('downloaded report')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 
   it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {
     const client = {

@@ -4,8 +4,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { closeSync, createWriteStream, openSync } from 'node:fs'
-import { chmod, mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { spawn } from 'node:child_process'
@@ -586,16 +586,33 @@ export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
   deps.log(await authenticatedUrl(state, deps))
 }
 
+const resolveDownloadOutput = async (output) => {
+  let candidate = output
+  for (let hop = 0; hop < 40; hop += 1) {
+    const linkTarget = await lstat(candidate).then(
+      (metadata) => (metadata.isSymbolicLink() ? readlink(candidate) : undefined),
+      (error) => {
+        if (error?.code === 'ENOENT') return undefined
+        throw error
+      }
+    )
+    if (linkTarget === undefined) return candidate
+    candidate = resolve(dirname(candidate), linkTarget)
+  }
+  throw new Error(`Too many symbolic links in artifact output: ${output}`)
+}
+
 const writeDownload = async (response, output) => {
   if (!response.body) throw new Error('Artifact download returned no data.')
-  const existingMode = await stat(output).then(
+  const destination = await resolveDownloadOutput(output)
+  const existingMode = await stat(destination).then(
     ({ mode }) => mode & 0o777,
     (error) => {
       if (error?.code === 'ENOENT') return undefined
       throw error
     }
   )
-  const temporaryOutput = `${output}.${process.pid}-${randomUUID()}.tmp`
+  const temporaryOutput = `${destination}.${process.pid}-${randomUUID()}.tmp`
   try {
     await pipeline(
       Readable.fromWeb(response.body),
@@ -605,7 +622,7 @@ const writeDownload = async (response, output) => {
       })
     )
     if (existingMode !== undefined) await chmod(temporaryOutput, existingMode)
-    await rename(temporaryOutput, output)
+    await rename(temporaryOutput, destination)
   } finally {
     await rm(temporaryOutput, { force: true }).catch(() => undefined)
   }
