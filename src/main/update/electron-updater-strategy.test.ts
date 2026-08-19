@@ -181,6 +181,84 @@ describe('ElectronUpdaterStrategy', () => {
     )
   })
 
+  it('preserves a completed in-place download when a check is requested during transfer', async () => {
+    const updater = new FakeUpdater()
+    let checkCalls = 0
+    let releaseLateCheck: (() => void) | undefined
+    const lateCheckGate = new Promise<void>((resolve) => {
+      releaseLateCheck = resolve
+    })
+    updater.checkForUpdates = vi.fn(async () => {
+      checkCalls += 1
+      updater.emit('checking-for-update')
+      if (checkCalls === 1) {
+        updater.emit('update-available', {
+          version: '0.3.0',
+          releaseNotes: 'notes',
+          files: [{ url: 'https://cdn/Open-Science-0.3.0.zip', size: 10000 }]
+        })
+        return
+      }
+      await lateCheckGate
+      updater.emit('update-not-available', { version: '0.2.0' })
+    })
+    let releaseDownload: (() => void) | undefined
+    const downloadGate = new Promise<void>((resolve) => {
+      releaseDownload = resolve
+    })
+    updater.runDownload = async () => {
+      await downloadGate
+      updater.emit('update-downloaded', { version: '0.3.0' })
+    }
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+
+    await strategy.check()
+    const downloading = strategy.download()
+    const checking = strategy.check()
+    releaseDownload?.()
+    await downloading
+    releaseLateCheck?.()
+    await checking
+
+    const readyStatus = strategy.getStatus()
+    expect(await strategy.check()).toBe(readyStatus)
+    expect(checkCalls).toBe(1)
+    expect(strategy.getStatus().state).toBe('ready')
+  })
+
+  it('does not start an in-place download while a provider check is active', async () => {
+    const updater = new FakeUpdater()
+    let releaseCheck: (() => void) | undefined
+    const checkGate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('checking-for-update')
+      await checkGate
+      updater.emit('update-available', { version: '0.3.0', releaseNotes: 'notes' })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+
+    const checking = strategy.check()
+    const checkingStatus = strategy.getStatus()
+    expect(checkingStatus.state).toBe('checking')
+    expect(await strategy.download()).toBe(checkingStatus)
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+
+    releaseCheck?.()
+    expect((await checking).state).toBe('available')
+  })
+
   it('records a failed in-place download without the provider error message', async () => {
     const updater = new FakeUpdater()
     updater.runDownload = async () => {

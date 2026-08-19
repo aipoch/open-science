@@ -185,6 +185,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // latest, so an older (drained) download can't clear a newer one's lifecycle.
   private downloadGeneration = 0
   private downloadOperation?: DiagnosticOperation
+  private checkInFlight = false
   private status: UpdateStatus
   private applying = false
   private installerStarted = false
@@ -337,36 +338,50 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   async check(): Promise<UpdateStatus> {
-    if (this.applying) return this.status
+    // Keep provider checks mutually exclusive with downloads. A late check event can otherwise replace
+    // ready with checking/available/up-to-date and make apply() reject the completed update.
+    if (
+      this.applying ||
+      this.checkInFlight ||
+      this.downloadLifecycle ||
+      this.status.state === 'ready'
+    ) {
+      return this.status
+    }
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',
       fields: { strategy: 'in-place' }
     })
-    operation.phase('query-provider')
+    this.checkInFlight = true
     try {
-      await this.updater.checkForUpdates()
-    } catch (error) {
-      this.setStatus({
-        state: 'error',
-        error: error instanceof Error ? error.message : 'Update check failed'
-      })
-      operation.fail(error, { result: 'error' })
+      operation.phase('query-provider')
+      try {
+        await this.updater.checkForUpdates()
+      } catch (error) {
+        this.setStatus({
+          state: 'error',
+          error: error instanceof Error ? error.message : 'Update check failed'
+        })
+        operation.fail(error, { result: 'error' })
+      }
+      // Wait for the notes fetch triggered by update-available so the returned status carries them.
+      await this.notesHydration
+      if (this.status.state === 'error') {
+        operation.fail(new Error('Updater check failed'), { result: 'error' })
+      } else {
+        operation.complete({ result: this.status.state })
+      }
+      return this.status
+    } finally {
+      this.checkInFlight = false
     }
-    // Wait for the notes fetch triggered by update-available so the returned status carries them.
-    await this.notesHydration
-    if (this.status.state === 'error') {
-      operation.fail(new Error('Updater check failed'), { result: 'error' })
-    } else {
-      operation.complete({ result: this.status.state })
-    }
-    return this.status
   }
 
   async download(): Promise<UpdateStatus> {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
     // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
     // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
-    if (this.applying || this.downloadToken) return this.status
+    if (this.applying || this.checkInFlight || this.downloadToken) return this.status
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-download',
