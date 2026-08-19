@@ -152,4 +152,18 @@ describe('SkillUsageAgents', () => {
 
     expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
   })
+
+  it('describes the shared avatar stack as Connector availability when requested', () => {
+    act(() =>
+      root.render(
+        <SkillUsageAgents resourceKind="Connector" mainEnabled usages={usages.slice(0, 1)} />
+      )
+    )
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="skill-usage-agents-trigger"]'
+    )
+    expect(trigger?.dataset.resourceKind).toBe('connector')
+    expect(trigger?.getAttribute('aria-label')).toBe('View Connector availability for 2 agents')
+  })
 })

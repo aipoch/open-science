@@ -1340,7 +1340,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       />
                     </div>
                   ) : (
-                    <ConnectorsPanel onNavigate={navigateConnectors} onOpenTag={navigateTag} />
+                    <ConnectorsPanel
+                      onNavigate={navigateConnectors}
+                      onOpenTag={navigateTag}
+                      onOpenSpecialist={(usage) =>
+                        navigate({
+                          ...currentLocation,
+                          panel: 'specialists',
+                          specialists:
+                            usage.kind === 'builtin'
+                              ? { kind: 'builtin', id: usage.id }
+                              : { kind: 'edit', id: usage.id }
+                        })
+                      }
+                    />
                   )
                 ) : activePanel === 'compute' ? (
                   computeView.kind === 'add' ? (

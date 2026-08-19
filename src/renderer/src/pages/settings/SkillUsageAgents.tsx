@@ -23,13 +23,15 @@ type SkillUsageAgentsProps = {
   usages: readonly SpecialistUsage[]
   onOpenSpecialist?: (usage: SpecialistUsage) => void
   className?: string
+  resourceKind?: 'Skill' | 'Connector'
 }
 
 const SkillUsageAgents = ({
   mainEnabled,
   usages,
   onOpenSpecialist,
-  className
+  className,
+  resourceKind = 'Skill'
 }: SkillUsageAgentsProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -120,11 +122,19 @@ const SkillUsageAgents = ({
           type="button"
           aria-haspopup="dialog"
           aria-expanded={open}
-          aria-label={t('View Skill availability for {{count}} agents', {
-            count: agentCount,
-            defaultValue_one: 'View Skill availability for {{count}} agent'
-          })}
+          aria-label={
+            resourceKind === 'Connector'
+              ? t('View Connector availability for {{count}} agents', {
+                  count: agentCount,
+                  defaultValue_one: 'View Connector availability for {{count}} agent'
+                })
+              : t('View Skill availability for {{count}} agents', {
+                  count: agentCount,
+                  defaultValue_one: 'View Skill availability for {{count}} agent'
+                })
+          }
           data-slot="skill-usage-agents-trigger"
+          data-resource-kind={resourceKind.toLowerCase()}
           data-main-enabled={mainEnabled ? 'true' : 'false'}
           className={cn(
             'relative h-6 shrink-0 rounded-md outline-none ring-offset-background transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring active:bg-muted disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11',
