@@ -389,7 +389,7 @@ describe('TagsPanel', () => {
     expect(container.textContent).toContain('Auto Research')
   })
 
-  it('aligns Tag counts and scopes management actions to the selected custom Tag', async () => {
+  it('aligns Tag counts and scopes management actions to the responsive detail view', async () => {
     useTagStore.setState({
       tags: [
         { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
@@ -412,8 +412,15 @@ describe('TagsPanel', () => {
       container.querySelectorAll<HTMLButtonElement>('[data-slot="tag-list-row"]')
     )
     const counts = tagRows.map((row) => row.querySelector('[data-slot="tag-list-count"]'))
+    const masterDetail = container.querySelector('[data-slot="tag-master-detail"]')
+    const tagList = masterDetail?.querySelector('aside')
 
     expect(tagRows).toHaveLength(2)
+    expect(masterDetail?.classList.contains('grid-cols-1')).toBe(true)
+    expect(masterDetail?.classList.contains('md:grid-cols-[15rem_minmax(0,1fr)]')).toBe(true)
+    expect(tagList?.classList.contains('border-b')).toBe(true)
+    expect(tagList?.classList.contains('md:border-b-0')).toBe(true)
+    expect(tagList?.classList.contains('md:border-r')).toBe(true)
     expect(tagRows.every((row) => row.classList.contains('w-full'))).toBe(true)
     expect(counts.map((count) => count?.textContent)).toEqual(['1', '0'])
     expect(counts.every((count) => count?.classList.contains('ml-auto'))).toBe(true)
@@ -424,7 +431,9 @@ describe('TagsPanel', () => {
 
     await act(async () => tagRows[1]?.click())
 
+    const detailHeader = container.querySelector('[data-slot="tag-detail-header"]')
     const detailActions = container.querySelector('[data-slot="tag-detail-actions"]')
+    expect(detailHeader?.classList.contains('flex-wrap')).toBe(true)
     expect(detailActions?.querySelector('[aria-label="Edit Tag"]')).not.toBeNull()
     expect(detailActions?.querySelector('[aria-label="Delete Tag"]')).not.toBeNull()
   })

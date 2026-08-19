@@ -289,8 +289,11 @@ const TagsPanel = ({
           {t('Tags could not be loaded.')}
         </p>
       ) : null}
-      <div className="grid min-h-[420px] flex-1 grid-cols-[15rem_minmax(0,1fr)] overflow-hidden rounded-lg border border-border">
-        <aside className="border-r border-border bg-background p-2">
+      <div
+        data-slot="tag-master-detail"
+        className="grid min-h-[420px] flex-1 grid-cols-1 overflow-hidden rounded-lg border border-border md:grid-cols-[15rem_minmax(0,1fr)]"
+      >
+        <aside className="border-b border-border bg-background p-2 md:border-r md:border-b-0">
           {tags.map((tag) => (
             <Button
               key={tag.id}
@@ -326,7 +329,10 @@ const TagsPanel = ({
         >
           {selectedTag ? (
             <>
-              <div className="mb-4 flex min-h-7 items-center justify-between gap-3">
+              <div
+                data-slot="tag-detail-header"
+                className="mb-4 flex min-h-7 flex-wrap items-center justify-between gap-3"
+              >
                 <div className="flex min-w-0 items-center gap-2">
                   <TagBadge tag={selectedTag} />
                   <span className="shrink-0 text-xs text-muted-foreground">
