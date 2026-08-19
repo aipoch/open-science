@@ -483,6 +483,40 @@ const AgentPanel = ({
       ))
 
   const pendingRepairCard = frameworkCards.find((card) => card.key === pendingRepair)
+  const installedRadioId =
+    installedFrameworks.find((card) => card.frameworkId === agentFrameworkId)?.frameworkId ??
+    installedFrameworks[0]?.frameworkId
+
+  const handleFrameworkRadioKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'radio') {
+      return
+    }
+    const radios = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(
+        '[role="radio"]:not([aria-disabled="true"])'
+      )
+    )
+    if (radios.length === 0) return
+    const currentIndex = radios.indexOf(event.target)
+    if (currentIndex < 0) return
+
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      nextIndex = (currentIndex + 1) % radios.length
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      nextIndex = (currentIndex - 1 + radios.length) % radios.length
+    } else if (event.key === 'Home') {
+      nextIndex = 0
+    } else if (event.key === 'End') {
+      nextIndex = radios.length - 1
+    }
+    if (nextIndex === undefined) return
+
+    event.preventDefault()
+    const nextRadio = radios[nextIndex]
+    nextRadio.focus()
+    if (nextRadio !== event.target) nextRadio.click()
+  }
 
   // Maps one framework descriptor to its card, wiring in the panel-level concerns: radio selection
   // (via the switch confirmation), the uninstall dialog, and the per-runtime install slice that
@@ -502,6 +536,7 @@ const AgentPanel = ({
       notReadyHint={card.notReadyHint}
       active={agentFrameworkId === card.frameworkId}
       onSelect={() => requestSwitch(card.frameworkId)}
+      radioTabIndex={card.ready ? (card.frameworkId === installedRadioId ? 0 : -1) : undefined}
       onRepairRequired={cardNeedsRepair(card) ? () => setPendingRepair(card.key) : undefined}
       selectDisabled={
         anyInstalling ||
@@ -619,7 +654,14 @@ const AgentPanel = ({
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
                 {t('Installed')} · {installedFrameworks.length}
               </p>
-              <div className="space-y-3">{installedFrameworks.map(renderFrameworkCard)}</div>
+              <div
+                role="radiogroup"
+                aria-label={title}
+                className="space-y-3"
+                onKeyDown={handleFrameworkRadioKeyDown}
+              >
+                {installedFrameworks.map(renderFrameworkCard)}
+              </div>
             </div>
           ) : null}
           {availableFrameworks.length > 0 ? (

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { formatDisplayNumber } from '@/lib/locale-format'
 import {
   SPECIALIST_DESCRIPTION_MAX_LENGTH,
   SPECIALIST_ID_MAX_LENGTH,
@@ -889,8 +890,8 @@ const SpecialistEditor = ({
               className="min-h-[120px] resize-y pb-7 text-[13px]"
             />
             <span className="pointer-events-none absolute bottom-2 right-3 text-[11px] tabular-nums text-muted-foreground">
-              {form.systemPrompt.length.toLocaleString()} /{' '}
-              {SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH.toLocaleString()}
+              {formatDisplayNumber(form.systemPrompt.length)} /{' '}
+              {formatDisplayNumber(SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH)}
             </span>
             {getFieldError('systemPrompt') ? (
               <p className="mt-1 text-xs text-danger-000">{getFieldError('systemPrompt')}</p>

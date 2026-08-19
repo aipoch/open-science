@@ -4,6 +4,7 @@ import {
   SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
   SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL
 } from '../../shared/session-persistence-flush'
+import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 import {
   createElectronSessionPersistenceFlush,
   requestRendererSessionPersistenceFlush
@@ -22,13 +23,13 @@ vi.mock('electron', () => ({
   }
 }))
 
-type Listener = (requestId: string) => void
+type Listener = (response: SessionPersistenceFlushResponse) => void
 
 const createHarness = (
   available = true
 ): {
   sendRequest: ReturnType<typeof vi.fn>
-  respond: Listener
+  respond: (requestId: string, status?: SessionPersistenceFlushResponse['status']) => void
   rendererGone: () => void
   cleanupResponse: ReturnType<typeof vi.fn>
   cleanupGone: ReturnType<typeof vi.fn>
@@ -42,7 +43,7 @@ const createHarness = (
 
   return {
     sendRequest,
-    respond: (requestId) => responseListener(requestId),
+    respond: (requestId, status = 'completed') => responseListener({ requestId, status }),
     rendererGone: () => goneListener(),
     cleanupResponse,
     cleanupGone,
@@ -90,6 +91,20 @@ describe('requestRendererSessionPersistenceFlush', () => {
     expect(harness.sendRequest).not.toHaveBeenCalled()
   })
 
+  it('surfaces an unresolved renderer revision conflict to the quit owner', async () => {
+    const harness = createHarness()
+    const request = harness.request()
+    harness.respond('flush-1', 'conflict')
+    await expect(request).resolves.toBe('conflict')
+  })
+
+  it('fails closed when the renderer returns an invalid status', async () => {
+    const harness = createHarness()
+    const request = harness.request()
+    harness.respond('flush-1', 'invalid' as SessionPersistenceFlushResponse['status'])
+    await expect(request).resolves.toBe('renderer-failed')
+  })
+
   it('releases the quit when the renderer disappears', async () => {
     const harness = createHarness()
     const request = harness.request()
@@ -122,6 +137,41 @@ describe('requestRendererSessionPersistenceFlush', () => {
 })
 
 describe('createElectronSessionPersistenceFlush', () => {
+  it('uses a five-second default timeout for a live renderer that never acknowledges', async () => {
+    vi.useFakeTimers()
+    electronMocks.on.mockClear()
+    electronMocks.removeListener.mockClear()
+
+    try {
+      const webContents = {
+        isDestroyed: vi.fn(() => false),
+        send: vi.fn(),
+        on: vi.fn(),
+        removeListener: vi.fn()
+      }
+      const window = {
+        isDestroyed: vi.fn(() => false),
+        webContents
+      }
+      const flush = createElectronSessionPersistenceFlush(() => window as never)
+      const request = flush()
+      let settled = false
+      void request.then(() => {
+        settled = true
+      })
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(request).resolves.toBe('timeout')
+      expect(electronMocks.removeListener).toHaveBeenCalledOnce()
+      expect(webContents.removeListener).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('accepts only the target renderer acknowledgement with the matching request ID', async () => {
     electronMocks.on.mockClear()
     electronMocks.removeListener.mockClear()
@@ -152,7 +202,7 @@ describe('createElectronSessionPersistenceFlush', () => {
       ([channel]) => channel === SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL
     )
     const responseHandler = responseRegistration?.[1] as
-      ((event: { sender: unknown }, response: { requestId: string }) => void) | undefined
+      ((event: { sender: unknown }, response: SessionPersistenceFlushResponse) => void) | undefined
     expect(responseHandler).toBeTypeOf('function')
     const rendererGoneRegistration = webContents.on.mock.calls.find(
       ([event]) => event === 'render-process-gone'
@@ -160,15 +210,18 @@ describe('createElectronSessionPersistenceFlush', () => {
     const rendererGoneListener = rendererGoneRegistration?.[1] as (() => void) | undefined
     expect(rendererGoneListener).toBeTypeOf('function')
 
-    responseHandler?.({ sender: {} }, { requestId: sentRequest.requestId })
+    responseHandler?.({ sender: {} }, { requestId: sentRequest.requestId, status: 'completed' })
     await Promise.resolve()
     expect(settled).toBe(false)
 
-    responseHandler?.({ sender: webContents }, { requestId: 'other-request' })
+    responseHandler?.({ sender: webContents }, { requestId: 'other-request', status: 'completed' })
     await Promise.resolve()
     expect(settled).toBe(false)
 
-    responseHandler?.({ sender: webContents }, { requestId: sentRequest.requestId })
+    responseHandler?.(
+      { sender: webContents },
+      { requestId: sentRequest.requestId, status: 'completed' }
+    )
     await expect(request).resolves.toBe('completed')
     expect(electronMocks.removeListener).toHaveBeenCalledWith(
       SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL,

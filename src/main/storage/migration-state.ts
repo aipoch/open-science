@@ -1,5 +1,6 @@
 import { dialog, type App } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 // Two module-level flags (not parameters) because the quit guard, the migrate IPC handler, and the
 // ACP/notebook write paths live in different modules but must agree on a single truth.
@@ -97,16 +98,17 @@ export const waitForDataRootWriters = (): Promise<void> => {
 // Native confirm shown when the user tries to quit mid-migration. Returns true iff they chose to
 // quit anyway. Kept as the injectable default so the guard's control flow stays unit-testable
 // without a real Electron dialog.
-const defaultConfirmQuit = (): boolean =>
+const defaultConfirmQuit = (translate: NativeTranslator): boolean =>
   dialog.showMessageBoxSync({
     type: 'warning',
-    buttons: ['Keep waiting', 'Quit anyway'],
+    buttons: [translate('Keep waiting'), translate('Quit anyway')],
     defaultId: 0,
     cancelId: 0,
-    title: 'Move in progress',
-    message: 'Open Science is still moving your data.',
-    detail:
+    title: translate('Move in progress'),
+    message: translate('Open Science is still moving your data.'),
+    detail: translate(
       'Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.'
+    )
   }) === 1
 
 // Installs a before-quit guard so an in-flight migration is not silently torn down by Cmd+Q / the
@@ -116,12 +118,13 @@ const defaultConfirmQuit = (): boolean =>
 // so the second pass falls straight through. `confirmQuit` is injectable for tests.
 export const installMigrationQuitGuard = (
   app: Pick<App, 'on' | 'quit'>,
-  confirmQuit: () => boolean = defaultConfirmQuit
+  confirmQuit?: () => boolean,
+  translate: NativeTranslator = englishNativeTranslator
 ): void => {
   app.on('before-quit', (event) => {
     if (!isMigrationInProgress()) return
     event.preventDefault()
-    if (confirmQuit()) {
+    if ((confirmQuit ?? (() => defaultConfirmQuit(translate)))()) {
       endMigration()
       app.quit()
     }

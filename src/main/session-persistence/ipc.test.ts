@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
+  createEmptySessionManifest,
   materializeSessionConversationGraph,
   type PersistedChatSession
 } from '../../shared/session-persistence'
@@ -34,6 +35,7 @@ vi.mock('../lifecycle-broadcast', () => ({
 }))
 
 import {
+  canReconcileSessionAbsences,
   createSessionPersistenceHandlers,
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
@@ -73,6 +75,47 @@ const createMockReviewRepository = (): ReviewRepository =>
   }) as unknown as ReviewRepository
 
 describe('session persistence IPC handlers', () => {
+  it('keeps absence-based reconciliation closed for quarantined Session authority', () => {
+    expect(
+      canReconcileSessionAbsences({
+        sessions: [],
+        manifest: createEmptySessionManifest(),
+        diagnostics: {
+          isComplete: true,
+          warnings: [
+            {
+              kind: 'corrupt',
+              projectId: 'project-1',
+              fileName: 'session-1.invalid-1.json',
+              recovered: true
+            }
+          ],
+          isProjectDeletionRecoveryComplete: true
+        }
+      })
+    ).toBe(false)
+  })
+
+  it('opens absence-based reconciliation only after both authorities are complete', () => {
+    const result = {
+      sessions: [],
+      manifest: createEmptySessionManifest(),
+      diagnostics: {
+        isComplete: true,
+        warnings: [],
+        isProjectDeletionRecoveryComplete: true
+      }
+    }
+
+    expect(canReconcileSessionAbsences(result)).toBe(true)
+    expect(
+      canReconcileSessionAbsences({
+        ...result,
+        diagnostics: { ...result.diagnostics, isProjectDeletionRecoveryComplete: false }
+      })
+    ).toBe(false)
+  })
+
   it('reads cached Session metadata only after Project deletion recovery', async () => {
     const order: string[] = []
     const projectRecovery = {

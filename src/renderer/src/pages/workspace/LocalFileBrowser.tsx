@@ -16,8 +16,10 @@ import {
   Home,
   Pin,
   PinOff,
-  RefreshCw
+  RefreshCw,
+  X
 } from 'lucide-react'
+import { AlertDialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -46,7 +48,19 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from './preview-file-item'
@@ -80,6 +94,8 @@ type BrowserState =
   | { kind: 'loading' }
   | { kind: 'ok'; entries: LocalDirEntry[]; resolvedPath: string; truncated: boolean }
   | { kind: 'error'; problem: LocalListingProblem }
+
+type PendingSensitiveEntry = { entry: LocalDirEntry; path: string }
 
 // Hover hint for the toolbar controls. Every one of them is icon-only (or icon + a two-word label),
 // so the label alone doesn't say what the control does; the delay keeps hints from flashing while the
@@ -338,6 +354,98 @@ const LocalListing = ({
   )
 }
 
+const SensitiveLocalPathDialog = ({
+  pending,
+  onCancel,
+  onConfirm
+}: {
+  pending: PendingSensitiveEntry | null
+  onCancel: () => void
+  onConfirm: (pending: PendingSensitiveEntry) => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const retainedPending = useRetainedDialogValue(pending)
+  const isDirectory = retainedPending?.entry.isDirectory ?? true
+
+  return (
+    <AlertDialog.Root
+      open={Boolean(pending)}
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
+      <AlertDialog.Portal>
+        <AlertDialog.Overlay
+          className={`${dialogOverlayClassName} z-[60]`}
+          data-testid="sensitive-local-path-overlay"
+        />
+        <AlertDialog.Content
+          className={dialogPanelClassName('z-[60] w-[min(420px,calc(100vw-2rem))] p-0')}
+          data-testid="sensitive-local-path-dialog"
+        >
+          <div className={dialogHeaderClassName}>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              {isDirectory ? t('Open sensitive folder?') : t('Open sensitive file?')}
+            </AlertDialog.Title>
+            <AlertDialog.Cancel asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                className={dialogCloseButtonClassName}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </AlertDialog.Cancel>
+          </div>
+
+          <AlertDialog.Description asChild>
+            <div className={dialogBodyClassName}>
+              <p className={dialogDescriptionClassName}>
+                {isDirectory
+                  ? t(
+                      'This folder may contain credentials or secrets. Open it only if you trust its contents.'
+                    )
+                  : t(
+                      'This file may contain credentials or secrets. Open it only if you trust its contents.'
+                    )}
+              </p>
+              <p className="mt-3 break-all rounded-lg bg-bg-100 px-3 py-2 font-mono text-xs text-text-100">
+                {retainedPending?.path}
+              </p>
+            </div>
+          </AlertDialog.Description>
+
+          <div className={dialogFooterClassName}>
+            <AlertDialog.Cancel asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                className={dialogCancelButtonClassName}
+                data-testid="sensitive-local-path-cancel"
+              >
+                {t('Cancel')}
+              </Button>
+            </AlertDialog.Cancel>
+            <AlertDialog.Action asChild>
+              <Button
+                type="button"
+                data-testid="sensitive-local-path-confirm"
+                onClick={() => {
+                  if (retainedPending) onConfirm(retainedPending)
+                }}
+              >
+                {isDirectory ? t('Open folder') : t('Open file')}
+              </Button>
+            </AlertDialog.Action>
+          </div>
+        </AlertDialog.Content>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  )
+}
+
 export const LocalFileBrowser = ({
   onEntryCountChange,
   requestedPath
@@ -356,6 +464,9 @@ export const LocalFileBrowser = ({
   const [state, setState] = useState<BrowserState>({ kind: 'loading' })
   const [addressInput, setAddressInput] = useState('')
   const [bookmarks, setBookmarks] = useState<string[]>([])
+  const [pendingSensitiveEntry, setPendingSensitiveEntry] = useState<PendingSensitiveEntry | null>(
+    null
+  )
   const upsertAndActivateItem = usePreviewWorkbenchStore((s) => s.upsertAndActivateItem)
   // Latest count reporter, read through a ref so navigate() stays identity-stable even when the
   // parent passes a fresh closure.
@@ -462,16 +573,8 @@ export const LocalFileBrowser = ({
     void navigate(resolved)
   }
 
-  // Directory → navigate in; file → open a preview-workbench tab. Sensitive paths (credential dirs
-  // like .ssh, private keys, dotenv files) warn first, whether entering or opening.
-  const handleOpenEntry = (entry: LocalDirEntry): void => {
-    const path = resolveLocalPath(currentPath, entry.name, window.api.platform)
-    if (isSensitiveLocalPath(path, window.api.platform)) {
-      const prompt = entry.isDirectory
-        ? `"${entry.name}" may contain credentials or secrets. Open this folder anyway?`
-        : `"${entry.name}" may contain credentials or secrets. Open it anyway?`
-      if (!window.confirm(prompt)) return
-    }
+  // Directory → navigate in; file → open a preview-workbench tab.
+  const openEntry = ({ entry, path }: PendingSensitiveEntry): void => {
     if (entry.isDirectory) {
       void navigate(path)
       return
@@ -485,6 +588,20 @@ export const LocalFileBrowser = ({
         mtimeMs: entry.mtimeMs
       })
     )
+  }
+
+  // Sensitive paths (credential dirs like .ssh, private keys, dotenv files) require an explicit,
+  // translated in-app confirmation before the same open action runs.
+  const handleOpenEntry = (entry: LocalDirEntry): void => {
+    const pending = {
+      entry,
+      path: resolveLocalPath(currentPath, entry.name, window.api.platform)
+    }
+    if (isSensitiveLocalPath(pending.path, window.api.platform)) {
+      setPendingSensitiveEntry(pending)
+      return
+    }
+    openEntry(pending)
   }
 
   const isBookmarked = bookmarks.includes(currentPath)
@@ -593,6 +710,14 @@ export const LocalFileBrowser = ({
 
       {/* Listing */}
       <LocalListing state={state} onOpenEntry={handleOpenEntry} />
+      <SensitiveLocalPathDialog
+        pending={pendingSensitiveEntry}
+        onCancel={() => setPendingSensitiveEntry(null)}
+        onConfirm={(pending) => {
+          setPendingSensitiveEntry(null)
+          openEntry(pending)
+        }}
+      />
     </div>
   )
 }

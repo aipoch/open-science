@@ -748,7 +748,8 @@ export class SpecialistPackageService {
 
   async install(
     request: SpecialistPackageInstallRequest,
-    ownerId?: number
+    ownerId?: number,
+    options?: { activateAfterInstall?: boolean }
   ): Promise<SpecialistPackageInstallResult> {
     if (
       !request ||
@@ -846,7 +847,8 @@ export class SpecialistPackageService {
         candidate.overwrite
           ? { expectedRevision: candidate.overwrite.expectedRevision }
           : undefined,
-        (document) => this.assertApprovedImpact(resolvedPlan, document)
+        (document) => this.assertApprovedImpact(resolvedPlan, document),
+        options
       )
     } catch (error) {
       return {

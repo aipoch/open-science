@@ -13,6 +13,7 @@ import { fetchManifest } from './manifest'
 import type { UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
   channel: Channel,
@@ -38,6 +39,7 @@ export type UpdateServiceDeps = {
   // starts the installer download from scratch rather than resuming last session's fragment via Range.
   removeFile?: (path: string) => Promise<void>
   log?: Logger
+  translate?: NativeTranslator
 }
 
 const NOOP_LOGGER: Logger = {
@@ -87,6 +89,7 @@ export class UpdateService implements UpdateStrategy {
   private readonly openExternal: (url: string) => Promise<void>
   private readonly removeFile: (path: string) => Promise<void>
   private readonly log: Logger
+  private readonly translate: NativeTranslator
   // Per-session set of target paths that have already been downloaded once this run. The first
   // download to a given path removes any pre-existing <target>.part so a restart starts fresh
   // (design: "app closes → start from scratch"). Within a session the path stays in the set and
@@ -106,6 +109,7 @@ export class UpdateService implements UpdateStrategy {
     this.openExternal = deps.openExternal ?? ((url) => shell.openExternal(url))
     this.removeFile = deps.removeFile ?? ((path) => rm(path, { force: true }))
     this.log = deps.log ?? NOOP_LOGGER
+    this.translate = deps.translate ?? englishNativeTranslator
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
@@ -117,7 +121,10 @@ export class UpdateService implements UpdateStrategy {
     if (this.platform !== 'darwin') return downloadsPath
 
     const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const options = { defaultPath: downloadsPath, title: 'Save the update installer' }
+    const options = {
+      defaultPath: downloadsPath,
+      title: this.translate('Save the update installer')
+    }
     const result = window
       ? await dialog.showSaveDialog(window, options)
       : await dialog.showSaveDialog(options)

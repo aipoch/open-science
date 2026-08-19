@@ -482,6 +482,35 @@ describe('settings repository', () => {
     expect((await repository.getSettings()).closePreference).toBeUndefined()
   })
 
+  it('persists and sanitizes the locale preference without defaulting an absent field', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    expect(sanitizeSettings({}).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'fr' }).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'system' }).localePreference).toBe('system')
+
+    await repository.setLocalePreference('ja')
+    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('ja')
+  })
+
+  it('serializes startup locale and runtime settings writes through one document store', async () => {
+    const root = await createStorageRoot()
+    const store = new SettingsDocumentStore(root)
+    const startupRepository = new SettingsRepository(store)
+    const runtimeRepository = new SettingsRepository(store)
+
+    await Promise.all([
+      startupRepository.setLocalePreference('zh-Hant'),
+      runtimeRepository.setNotificationsEnabled(false)
+    ])
+
+    await expect(store.read()).resolves.toMatchObject({
+      localePreference: 'zh-Hant',
+      notificationsEnabled: false
+    })
+  })
+
   it('persists, sanitizes, and clears the project files filter preference', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

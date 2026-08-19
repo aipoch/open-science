@@ -46,7 +46,10 @@ const approvalRequest: ComputeApprovalRequest = {
 // property is replaced — Radix's portal and tooltip layers need the real jsdom window.
 const stubDetailsGet = (doc: string, isSkeleton = false): void => {
   ;(window as unknown as { api: { compute: Record<string, unknown> } }).api = {
-    compute: { detailsGet: vi.fn().mockResolvedValue({ doc, isSkeleton }) }
+    compute: {
+      detailsGet: vi.fn().mockResolvedValue({ doc, isSkeleton }),
+      deletionStatus: vi.fn().mockResolvedValue({ blockedByJobs: false })
+    }
   }
 }
 
@@ -124,7 +127,7 @@ describe('ComputePanel i18n', () => {
     expect(container.textContent).toContain('No SSH hosts yet')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('连接运行重型计算的地方')
+    expect(container.textContent).toContain('通过 SSH 连接你自己的服务器，为繁重任务提供算力')
     expect(container.textContent).toContain('SSH 主机')
     expect(container.textContent).toContain('添加 SSH 主机')
     expect(container.textContent).toContain('还没有 SSH 主机')
@@ -150,6 +153,10 @@ describe('ComputePanel i18n', () => {
     await act(async () => {
       removeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
+    const confirm = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')
+    ).find((button) => button.textContent?.trim() === 'Remove Host')
+    await act(async () => confirm?.click())
 
     expect(deleteHost).toHaveBeenCalledWith('ssh:biowulf')
     expect(container.textContent).toContain('Removed biowulf.')
@@ -189,7 +196,7 @@ describe('ComputePanel i18n', () => {
 describe('ComputeHostDetail i18n', () => {
   it('translates the section headings and the default concurrency value', async () => {
     useComputeStore.setState({ hosts: [host({ scratchRoot: '/my/scratch', scratchPinned: true })] })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
     await flush()
 
     expect(container.textContent).toContain('Scratch root')
@@ -223,7 +230,7 @@ describe('ComputeHostDetail i18n', () => {
 
   it('re-renders a stored validation error in the language active at render time', async () => {
     useComputeStore.setState({ hosts: [host()] })
-    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />))
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
     await flush()
 
     // Three "Edit" buttons exist on this page; pick the one inside the concurrency block.

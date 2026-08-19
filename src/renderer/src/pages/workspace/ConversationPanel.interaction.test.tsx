@@ -20,6 +20,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -596,6 +597,7 @@ beforeEach(() => {
   respondToSessionPlanMock.mockReset().mockResolvedValue(undefined)
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useSettingsStore.setState(createInitialSettingsState())
+  useSpecialistStore.setState({ items: [], isLoaded: true })
   mockHasRunningJobs = false
   mockAllJobs = []
 })
@@ -1781,6 +1783,49 @@ describe('ConversationPanel composer intake', () => {
       (container.querySelector('[data-testid="menu-branch-in-new-session"]') as HTMLButtonElement)
         .disabled
     ).toBe(false)
+  })
+
+  it('keeps send and Plan first available while Branch stays disabled for a pending replay', () => {
+    const session: ChatSession = {
+      id: 'session-replay',
+      projectId: 'project-a',
+      title: 'Replay pending',
+      cwd: '/workspace',
+      status: 'idle',
+      pendingHistoryReplay: { kind: 'all' },
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      conversation: {
+        availability: {
+          submit: true,
+          branch: false
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ planFirst: vi.fn(), branch: vi.fn() })
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'continue from this branch' }] }
+        }
+      }
+    })
+
+    expect(
+      (container.querySelector('[data-testid="menu-plan-first"]') as HTMLButtonElement).disabled
+    ).toBe(false)
+    expect(
+      (container.querySelector('[data-testid="menu-branch-in-new-session"]') as HTMLButtonElement)
+        .disabled
+    ).toBe(true)
   })
 
   it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
@@ -3786,6 +3831,43 @@ describe('ConversationPanel fix loop lock', () => {
     })
 
     expect(container.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+  })
+
+  it('adds the enhanced composer edge and compact picker for an available Specialist', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'available-specialist',
+          name: 'AVAILABLE_SPECIALIST',
+          displayName: 'Available Specialist',
+          colorKey: 'purple',
+          description: 'Available for this session.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'available-specialist' }
+      }
+    })
+
+    const composer = container.querySelector<HTMLFormElement>('[data-specialist-color="#ede9fe"]')
+    const specialistEdge = composer?.querySelector<HTMLElement>('.composer-specialist-color-in')
+    expect(specialistEdge?.style.borderColor).toBe('rgb(237, 233, 254)')
+    expect(
+      container
+        .querySelector('[data-testid="composer-specialist-picker-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Available Specialist')
   })
 
   it('cancel button is visible when session is running and calls onCancelRun', () => {

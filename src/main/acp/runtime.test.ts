@@ -7635,6 +7635,57 @@ describe('ACP runtime session management', () => {
     ).toEqual([])
   })
 
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+    ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+    ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
+    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+  ] as const)(
+    'accepts a zero usage update from the %s native compaction turn',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['remote-session-1'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        usageForPrompt: (text) => {
+          if (text.includes('establish positive usage')) return { used: 120_000, size: 200_000 }
+          if (text === '/compact') return { used: 0, size: 200_000 }
+          return undefined
+        }
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'establish positive usage' })
+      expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toMatchObject({
+        used: 120_000,
+        size: 200_000
+      })
+
+      await runtime.compactSession({ sessionId: session.sessionId })
+
+      expect(agent.prompts.at(-1)).toEqual({ sessionId: 'remote-session-1', text: '/compact' })
+      expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toMatchObject({
+        used: 0,
+        size: 200_000
+      })
+    }
+  )
+
   it('keeps compaction successful when a hidden usage update state callback throws', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'], {

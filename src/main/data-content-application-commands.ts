@@ -13,7 +13,10 @@ import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 
-import type { ApplicationCommandContract } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  type ApplicationCommandContract
+} from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
 import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
@@ -538,10 +541,18 @@ const registerDataContentApplicationCommands = (
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
         return dependencies.withDataRootWrite(async () => {
-          const result = await dependencies.sessions.saveSession(
-            invocation.args[0],
-            invocation.args[1]
-          )
+          let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
+          try {
+            result = await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
+          } catch (error) {
+            if (SessionPersistence.isSessionRevisionConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session revision conflict.'
+              )
+            }
+            throw error
+          }
           publishLifecycle(
             dependencies.events,
             result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,

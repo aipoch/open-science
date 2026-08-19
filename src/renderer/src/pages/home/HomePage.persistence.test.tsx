@@ -307,7 +307,10 @@ describe('HomePage persistence recovery', () => {
   })
 
   it('keeps the confirmation open, explains a durable deletion failure, and allows retry', async () => {
-    deleteProject.mockRejectedValueOnce(new Error('Project storage is unavailable.'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    deleteProject.mockRejectedValueOnce(
+      new Error('ENOENT: no such file or directory, unlink /Users/private/OpenScience/project-1')
+    )
 
     await act(async () =>
       root.render(
@@ -329,9 +332,17 @@ describe('HomePage persistence recovery', () => {
     expect(confirm?.dataset.hasProject).toBe('true')
     expect(confirm?.dataset.isDeleting).toBe('false')
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-      'Project storage is unavailable.'
+      'Could not delete the project. Please try again.'
+    )
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain('/Users/private')
+    expect(warn).toHaveBeenCalledWith(
+      'Project deletion failed',
+      expect.objectContaining({
+        message: 'ENOENT: no such file or directory, unlink /Users/private/OpenScience/project-1'
+      })
     )
     expect(useProjectStore.getState().projects).toContainEqual(project)
+    warn.mockRestore()
 
     deleteProject.mockResolvedValueOnce(undefined)
     await act(async () => confirm?.click())

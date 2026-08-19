@@ -16,6 +16,7 @@ type NotebookApplicationDeps = Pick<
   | 'micromambaRunner'
   | 'locale'
   | 'appVersion'
+  | 'translate'
 > &
   ProjectIdScope & {
     events: ApplicationEventPublisher

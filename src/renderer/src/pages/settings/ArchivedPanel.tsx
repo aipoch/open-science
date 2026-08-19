@@ -161,9 +161,10 @@ const ArchivedPanel = ({
       setProjectToDelete(undefined)
     })()
       .then(() => onNavigate({ kind: 'list' }))
-      .catch((deleteError: unknown) =>
-        setProjectDeleteError(describeError(deleteError, t('Could not delete project.')))
-      )
+      .catch((deleteError: unknown) => {
+        console.warn('Project deletion failed', deleteError)
+        setProjectDeleteError(t('Could not delete project.'))
+      })
       .finally(() => setBusyKey(undefined))
   }
 

@@ -4,8 +4,7 @@ import type { ComputeJob } from '../../shared/compute'
 import type { JobPollerDeps } from './job-poller'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import type { ScpRunner } from './scp-runner'
-import type { SshRunner } from './ssh-runner'
+import type { ComputeConnectionBroker } from './connection-broker'
 import { createComputeJobRuntime } from './job-runtime'
 
 describe('createComputeJobRuntime', () => {
@@ -17,8 +16,7 @@ describe('createComputeJobRuntime', () => {
     const resume = vi.fn()
     const unbind = vi.fn()
     const jobDeletionOwner = { bindRuntime: vi.fn(() => unbind) }
-    const runner = {} as SshRunner
-    const scpRunner = {} as ScpRunner
+    const connectionBroker = {} as ComputeConnectionBroker
     const hostRepository = {} as ComputeHostRepository
     const jobRepository = {} as ComputeJobRepository
     const broadcast = vi.fn()
@@ -34,9 +32,10 @@ describe('createComputeJobRuntime', () => {
         jobDeletionOwner,
         hostRepository,
         jobRepository,
+        connectionBroker,
         storageRoot: '/data'
       },
-      { runner, scpRunner, broadcast, harvest, createPoller }
+      { broadcast, harvest, createPoller }
     )
     const pollerDeps = wiredPollerDeps
     expect(pollerDeps).toBeDefined()
@@ -53,8 +52,7 @@ describe('createComputeJobRuntime', () => {
 
     expect(handleJobUpdated).toHaveBeenCalledWith(job)
     expect(harvest).toHaveBeenCalledWith(job, {
-      sshRunner: runner,
-      scpRunner,
+      connectionBroker,
       hostRepository,
       jobRepository,
       storageRoot: '/data',

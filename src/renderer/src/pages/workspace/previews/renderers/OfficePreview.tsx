@@ -6,6 +6,7 @@ import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbe
 import type {
   OfficePreviewErrorCode,
   OfficePreviewHostMessage,
+  OfficePreviewPhase,
   OfficePreviewRequestedExtension,
   OfficePreviewRuntimeState,
   OfficePreviewSource
@@ -24,19 +25,44 @@ import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
 
-// `title` carries already-resolved text forwarded from the child runtime over IPC; `titleKey` carries
-// a catalog key for the phases this component sets itself. Only one is ever populated.
-type OfficeLoadingTitleKey = 'Checking the Office file' | 'Starting Office preview'
-
 type OfficeHostState =
-  | { kind: 'loading'; title?: string; titleKey?: OfficeLoadingTitleKey; description?: string }
+  | { kind: 'loading'; phase: OfficePreviewPhase | 'checking' }
   | { kind: 'ready' }
   | { kind: 'too-large' }
   | { kind: 'error'; error?: OfficePreviewErrorCode }
 
 const OFFICE_CHECKING_STATE: OfficeHostState = {
   kind: 'loading',
-  titleKey: 'Checking the Office file'
+  phase: 'checking'
+}
+
+// The isolated runtime reports semantic state only. Keeping every user-visible key in literal t()
+// calls makes the catalog guard authoritative and prevents runtime English from becoming a dynamic
+// translation key that static analysis cannot see.
+const officeLoadingCopy = (
+  phase: OfficePreviewPhase | 'checking',
+  extension: OfficePreviewRequestedExtension,
+  t: ReturnType<typeof useTranslation>['t']
+): { title: string; description?: string } => {
+  if (phase === 'checking') return { title: t('Checking the Office file') }
+  if (phase === 'starting') return { title: t('Starting Office preview') }
+  if (phase === 'reading') return { title: t('Reading the Office file') }
+  if (phase === 'validating') return { title: t('Validating the Office package') }
+  if (phase === 'parsing') {
+    if (extension === 'docx') return { title: t('Parsing the Word document') }
+    if (extension === 'pptx') return { title: t('Parsing the PowerPoint presentation') }
+    return {
+      title: t('Parsing the Excel workbook'),
+      description: t('Preparing worksheets, styles, and virtualized viewport data.')
+    }
+  }
+  if (phase === 'rendering') {
+    return {
+      title: t('Rendering the preview'),
+      description: t('Building the document view.')
+    }
+  }
+  return { title: t('Starting Office preview') }
 }
 
 const resolveOfficeExtension = (item: PreviewFileItem): OfficePreviewRequestedExtension => {
@@ -163,8 +189,7 @@ const RemoteOfficePreviewContent = ({
       } else {
         setState({
           kind: 'loading',
-          title: nextState.title,
-          description: nextState.description
+          phase: nextState.phase
         })
       }
     }
@@ -322,7 +347,7 @@ const RemoteOfficePreviewContent = ({
           src={frame.url}
           onLoad={() => {
             // A same-document frame reload needs a fresh process check and start capability.
-            setState({ kind: 'loading', titleKey: 'Starting Office preview' })
+            setState({ kind: 'loading', phase: 'starting' })
             setFrameLoadGeneration((generation) => generation + 1)
           }}
           sandbox="allow-scripts allow-same-origin"
@@ -332,10 +357,7 @@ const RemoteOfficePreviewContent = ({
       ) : null}
       {state.kind === 'loading' ? (
         <div className="absolute inset-0 z-10 bg-bg-000">
-          <PreviewLoadingContent
-            title={state.titleKey ? t(state.titleKey) : state.title ? t(state.title) : undefined}
-            description={state.description ? t(state.description) : undefined}
-          />
+          <PreviewLoadingContent {...officeLoadingCopy(state.phase, extension, t)} />
         </div>
       ) : null}
     </div>

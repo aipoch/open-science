@@ -17,7 +17,9 @@ import type {
   PrepareMarketplaceInstallRequest,
   RemoveMarketplaceSourceRequest
 } from '../../../shared/specialist-marketplace'
+import type { SpecialistMarketplaceProvenance } from '../../../shared/specialist'
 import type { SpecialistPackageService } from '../package/service'
+import { compareSemver } from '../package/semver'
 import { filterMarketplaceSpecialistZip } from '../package/zip-adapter'
 import {
   marketplaceKeyFingerprint,
@@ -81,6 +83,10 @@ type MarketplaceServiceOptions = {
   >
   setSkillsMainEnabled: (ids: readonly string[], enabled: boolean) => Promise<void>
 }
+
+type InstalledSpecialistIdentity = Awaited<
+  ReturnType<MarketplaceServiceOptions['getInstalledSpecialists']>
+>[number]
 
 type ResolvedSource = {
   id: string
@@ -202,6 +208,15 @@ const sourceView = (source: ResolvedSource, metadata?: LoadedRoot): MarketplaceS
     ...(metadata?.usingCachedMetadata ? { usingCachedMetadata: true } : {})
   }
 }
+
+const matchesInstalledProvenance = (
+  provenance: MarketplaceInstallProvenance,
+  specialist: InstalledSpecialistIdentity
+): boolean =>
+  specialist.id === provenance.specialistId &&
+  specialist.origin === 'imported' &&
+  provenance.installedArchiveDigest !== undefined &&
+  specialist.archiveDigest === provenance.installedArchiveDigest
 
 const githubAssetUrl = (
   source: Pick<ResolvedSource, 'owner' | 'repository'>,
@@ -355,6 +370,34 @@ export class MarketplaceService {
       ),
       failures
     }
+  }
+
+  async installedSpecialistProvenance(
+    installedSpecialists: readonly InstalledSpecialistIdentity[]
+  ): Promise<ReadonlyMap<string, SpecialistMarketplaceProvenance>> {
+    const document = await this.options.repository.getAll()
+    const provenanceBySpecialistId = new Map<string, SpecialistMarketplaceProvenance>()
+
+    // A Specialist may have provenance from more than one Marketplace source. The newest exact
+    // installation is the current acquisition source; reverse first so equal timestamps prefer the
+    // most recently recorded entry too.
+    const newestFirst = [...document.installations]
+      .reverse()
+      .sort((left, right) => right.installedAt.localeCompare(left.installedAt))
+    for (const provenance of newestFirst) {
+      if (provenanceBySpecialistId.has(provenance.specialistId)) continue
+      if (
+        !installedSpecialists.some((specialist) =>
+          matchesInstalledProvenance(provenance, specialist)
+        )
+      ) {
+        continue
+      }
+      provenanceBySpecialistId.set(provenance.specialistId, {
+        publisher: provenance.publisher
+      })
+    }
+    return provenanceBySpecialistId
   }
 
   async inspectGitHubSource(
@@ -595,7 +638,9 @@ export class MarketplaceService {
       if (candidate.newSkillIds.length > 0) {
         await this.options.setSkillsMainEnabled(candidate.newSkillIds, false)
       }
-      result = await this.options.packages.install(request, ownerId)
+      result = await this.options.packages.install(request, ownerId, {
+        activateAfterInstall: true
+      })
     } catch (error) {
       await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
       throw error
@@ -783,12 +828,8 @@ export class MarketplaceService {
         (candidate) => candidate.sourceId === source.id && candidate.specialistId === item.id
       )
       const installed = provenance
-        ? installedSpecialists.find(
-            (candidate) =>
-              candidate.id === item.id &&
-              candidate.origin === 'imported' &&
-              provenance.installedArchiveDigest !== undefined &&
-              candidate.archiveDigest === provenance.installedArchiveDigest
+        ? installedSpecialists.find((candidate) =>
+            matchesInstalledProvenance(provenance, candidate)
           )
         : undefined
       return {
@@ -800,7 +841,14 @@ export class MarketplaceService {
         summary: item.summary,
         publisher: item.publisher,
         version: item.latest.version,
-        ...(installed ? { installedVersion: provenance?.version } : {})
+        ...(installed
+          ? {
+              installedVersion: provenance?.version,
+              ...(compareSemver(item.latest.version, provenance!.version) === 1
+                ? { updateAvailable: true }
+                : {})
+            }
+          : {})
       }
     })
   }

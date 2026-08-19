@@ -11,16 +11,22 @@ import {
 type RendererSessionPersistenceFlushDeps = {
   isRendererAvailable: () => boolean
   sendRequest: (requestId: string) => void
-  onResponse: (listener: (requestId: string) => void) => () => void
+  onResponse: (listener: (response: SessionPersistenceFlushResponse) => void) => () => void
   onRendererGone: (listener: () => void) => () => void
   createRequestId: () => string
   timeoutMs: number
 }
 
-const DEFAULT_RENDERER_FLUSH_TIMEOUT_MS = 1_500
+const DEFAULT_RENDERER_FLUSH_TIMEOUT_MS = 5_000
 
 export type RendererSessionPersistenceFlushOutcome =
-  'completed' | 'unavailable' | 'renderer-gone' | 'send-failed' | 'timeout'
+  | 'completed'
+  | 'conflict'
+  | 'renderer-failed'
+  | 'unavailable'
+  | 'renderer-gone'
+  | 'send-failed'
+  | 'timeout'
 
 export const requestRendererSessionPersistenceFlush = async (
   deps: RendererSessionPersistenceFlushDeps
@@ -41,8 +47,13 @@ export const requestRendererSessionPersistenceFlush = async (
       resolve(outcome)
     }
     const timer = setTimeout(() => finish('timeout'), deps.timeoutMs)
-    removeResponse = deps.onResponse((responseId) => {
-      if (responseId === requestId) finish('completed')
+    removeResponse = deps.onResponse((response) => {
+      if (response.requestId !== requestId) return
+      if (response.status === 'completed' || response.status === 'conflict') {
+        finish(response.status)
+        return
+      }
+      finish('renderer-failed')
     })
     removeRendererGone = deps.onRendererGone(() => finish('renderer-gone'))
 
@@ -57,8 +68,8 @@ export const requestRendererSessionPersistenceFlush = async (
 export const createElectronSessionPersistenceFlush = (
   getWindow: () => BrowserWindow | undefined,
   timeoutMs = DEFAULT_RENDERER_FLUSH_TIMEOUT_MS
-): (() => Promise<RendererSessionPersistenceFlushOutcome>) => {
-  return () => {
+): ((timeoutOverrideMs?: number) => Promise<RendererSessionPersistenceFlushOutcome>) => {
+  return (timeoutOverrideMs) => {
     const window = getWindow()
     const webContents = window?.webContents
     return requestRendererSessionPersistenceFlush({
@@ -74,7 +85,7 @@ export const createElectronSessionPersistenceFlush = (
           response: SessionPersistenceFlushResponse | undefined
         ): void => {
           if (event.sender !== webContents || typeof response?.requestId !== 'string') return
-          listener(response.requestId)
+          listener(response)
         }
         ipcMain.on(SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL, handler)
         return () => ipcMain.removeListener(SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL, handler)
@@ -84,7 +95,7 @@ export const createElectronSessionPersistenceFlush = (
         return () => webContents?.removeListener('render-process-gone', listener)
       },
       createRequestId: randomUUID,
-      timeoutMs
+      timeoutMs: timeoutOverrideMs ?? timeoutMs
     })
   }
 }

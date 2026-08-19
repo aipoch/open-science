@@ -1,8 +1,11 @@
 import type { DetailsAuthor, ProbeResult } from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import {
+  classifyConnectionFailure,
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer
+} from './connection-broker'
 import type { ComputeHostRepository } from './repository'
-import type { SshRunner } from './ssh-runner'
-import { resolveSshTarget } from './ssh-runner'
 
 const PROBE_TIMEOUT_MS = 30_000
 const PROBE_MAX_OUTPUT_BYTES = 4 * 1024
@@ -67,13 +70,24 @@ export const parseProbeOutput = (stdout: string): ProbeScriptOutput => {
   }
 }
 
-const errorTail = (stderr: string, stdout: string, maxLines = 10): string => {
-  const lines = [stderr, stdout]
-    .filter(Boolean)
-    .join('\n')
-    .split('\n')
-    .filter((line) => line.trim())
-  return lines.slice(-maxLines).join('\n')
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === 'AbortError'
+
+const waitForRetry = (delayMs: number, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const complete = (): void => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }
+    const abort = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+      reject(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
+    }
+    const timer = setTimeout(complete, delayMs)
+    signal?.addEventListener('abort', abort, { once: true })
+  })
 }
 
 const buildDetailsSkeleton = (probe: ProbeResult): string => {
@@ -92,34 +106,67 @@ const hostNotFound = (providerId: string): Error =>
 
 export class ComputeHostProfileOwner {
   constructor(
-    private readonly runner: SshRunner,
+    private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
     private readonly repository: ComputeHostRepository
   ) {}
 
-  async probe(providerId: string): Promise<ProbeResult> {
+  async probe(providerId: string, signal?: AbortSignal): Promise<ProbeResult> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
 
     const probedAt = new Date().toISOString()
-    let target
-    try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
-    } catch (error) {
+    const authenticationRevision = host.authentication?.revision ?? 0
+    const persistFailure = async (error: unknown): Promise<ProbeResult> => {
+      if (isAbortError(error)) throw error
+      const failure =
+        error instanceof ComputeConnectionError
+          ? error
+          : new ComputeConnectionError('host_unreachable')
       const result: ProbeResult = {
         ok: false,
         probedAt,
         exitCode: null,
-        errorTail: error instanceof Error ? error.message : String(error)
+        errorTail: failure.message,
+        authenticationCode: failure.code,
+        authenticationRevision
       }
       await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
       return result
     }
+    let connection
+    try {
+      connection = await this.connectionBroker.acquire(providerId, {
+        intent: 'probe',
+        interactive: true,
+        ...(signal ? { signal } : {})
+      })
+    } catch (error) {
+      return persistFailure(error)
+    }
 
-    let runResult = await this.runner.run(target, PROBE_SCRIPT, {
-      timeoutMs: PROBE_TIMEOUT_MS,
-      loginShell: true,
-      maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
-    })
+    let runResult
+    try {
+      runResult = await connection.run(PROBE_SCRIPT, {
+        timeoutMs: PROBE_TIMEOUT_MS,
+        loginShell: true,
+        maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
+      })
+    } catch (error) {
+      if (error instanceof ComputeConnectionError && error.code === 'host_unreachable') {
+        await waitForRetry(3000, signal)
+        try {
+          runResult = await connection.run(PROBE_SCRIPT, {
+            timeoutMs: PROBE_TIMEOUT_MS,
+            loginShell: true,
+            maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
+          })
+        } catch (retryError) {
+          return persistFailure(retryError)
+        }
+      } else {
+        return persistFailure(error)
+      }
+    }
     const connectionFailed =
       runResult.timedOut ||
       runResult.exitCode === 255 ||
@@ -128,12 +175,16 @@ export class ComputeHostProfileOwner {
     if (connectionFailed && !runResult.timedOut) {
       const errorText = (runResult.stderr + runResult.stdout).toLowerCase()
       if (errorText.includes('no route to host') || errorText.includes('network is unreachable')) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 3000))
-        runResult = await this.runner.run(target, PROBE_SCRIPT, {
-          timeoutMs: PROBE_TIMEOUT_MS,
-          loginShell: true,
-          maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
-        })
+        await waitForRetry(3000, signal)
+        try {
+          runResult = await connection.run(PROBE_SCRIPT, {
+            timeoutMs: PROBE_TIMEOUT_MS,
+            loginShell: true,
+            maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
+          })
+        } catch (error) {
+          return persistFailure(error)
+        }
       }
     }
 
@@ -142,11 +193,16 @@ export class ComputeHostProfileOwner {
       runResult.exitCode === 255 ||
       (runResult.exitCode === null && runResult.stderr.includes('Connection'))
     if (connectionFailedFinal) {
+      const failure =
+        classifyConnectionFailure(runResult, false) ??
+        new ComputeConnectionError('host_unreachable')
       const result: ProbeResult = {
         ok: false,
         probedAt,
         exitCode: runResult.exitCode,
-        errorTail: errorTail(runResult.stderr, runResult.stdout) || 'Connection failed'
+        errorTail: failure.message,
+        authenticationCode: failure.code,
+        authenticationRevision
       }
       await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
       return result
@@ -162,6 +218,7 @@ export class ComputeHostProfileOwner {
       probedAt,
       exitCode: runResult.exitCode,
       errorTail: null,
+      authenticationRevision,
       os: parsed.os,
       cpus: parsed.cpus,
       memMib: parsed.memMib,

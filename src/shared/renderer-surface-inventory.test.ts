@@ -62,6 +62,9 @@ const GENERATED_SOURCE_OMISSIONS = [
   'handoff.list',
   'handoff.onChanged',
   'handoff.retry',
+  'locale.initialize',
+  'locale.onChanged',
+  'locale.setPreference',
   'network.checkConnectivity',
   'network.getInfo',
   'notifications.syncViewState',
@@ -148,7 +151,14 @@ const WEB_UNAVAILABLE_CHANNELS = [
 const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   artifacts: ['open-file'],
   cli: ['install', 'uninstall'],
-  compute: ['download', 'reveal-in-folder'],
+  compute: [
+    'change-authentication',
+    'create-password',
+    'download',
+    'password-capability',
+    'reset-password',
+    'reveal-in-folder'
+  ],
   'local-fs': [
     'get-roots',
     'grant-root',

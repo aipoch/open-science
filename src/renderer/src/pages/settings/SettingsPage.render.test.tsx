@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, createRef, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -362,7 +363,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.className).toContain('bg-background')
     expect(nav?.className).toContain('md:w-48')
     expect(nav?.className).toContain('w-[min(86vw,320px)]')
-    expect(nav?.nextElementSibling?.className).toContain('bg-card')
+    expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).toContain('Remote access')
@@ -812,6 +813,15 @@ describe('SettingsPage layout', () => {
         ?.click()
     })
     expect(nav?.getAttribute('aria-hidden')).toBeNull()
+    const drawer = document.body.querySelector<HTMLElement>(
+      '[data-slot="mobile-settings-navigation"]'
+    )
+    const content = document.body.querySelector<HTMLElement>('[data-slot="settings-main"]')
+    expect(drawer?.getAttribute('role')).toBe('dialog')
+    expect(drawer?.getAttribute('aria-modal')).toBe('true')
+    expect(content?.hasAttribute('inert')).toBe(true)
+    expect(content?.getAttribute('aria-hidden')).toBe('true')
+    expect(nav?.contains(document.activeElement)).toBe(true)
 
     const generalTab = Array.from(nav?.querySelectorAll('button') ?? []).find((button) =>
       /general/i.test(button.textContent ?? '')
@@ -2249,9 +2259,10 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
     await act(async () => {
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Marketplace')
-        ?.click()
+      const marketplaceTab = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      ).find((button) => button.textContent?.trim() === 'Marketplace')
+      if (marketplaceTab) fireEvent.mouseDown(marketplaceTab, { button: 0 })
       await Promise.resolve()
     })
     await act(async () => {

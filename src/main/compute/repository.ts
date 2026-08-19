@@ -2,18 +2,37 @@ import type { ComputeHost as PrismaComputeHost, PrismaClient } from '@prisma/cli
 
 import type {
   ComputeHost,
+  ComputeAuthenticationMode,
   ComputeHostShape,
   CreateComputeHostRequest,
   DetailsAuthor,
   ProbeResult,
   SshOverrides
 } from '../../shared/compute'
+import type {
+  ChangeComputeHostAuthenticationPersistence,
+  CreatePasswordHostPersistence,
+  PasswordCreatePreparation,
+  PasswordResetPreparation,
+  PreparePasswordCreateRequest,
+  PreparePasswordResetRequest,
+  ResetPasswordHostPersistence
+} from './compute-auth-owner'
 import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import { ComputeConnectionError } from './connection-broker'
 
 // Only the computeHost delegate is needed; typing to this subset keeps the repository unit-testable
 // with a lightweight mock instead of a real (engine-backed) PrismaClient (aligns with the reviewer and
 // projects repositories, per design.md §2).
-type ComputeHostClient = Pick<PrismaClient, 'computeHost'>
+type ComputeHostClient = Pick<
+  PrismaClient,
+  | 'computeHost'
+  | 'computeCredential'
+  | 'computeAuthOperation'
+  | 'computeJob'
+  | '$transaction'
+  | '$executeRawUnsafe'
+>
 
 // Resolves the Prisma client on demand so a failed initialization is not held forever (see
 // projects/repository.ts).
@@ -40,15 +59,51 @@ const asShape = (value: string): ComputeHostShape =>
 const asAuthor = (value: string | null): DetailsAuthor | undefined =>
   value === 'user' || value === 'agent' ? value : undefined
 
+const asAuthenticationMode = (value: string): ComputeAuthenticationMode => {
+  if (value === 'ssh_config' || value === 'password') return value
+  throw new Error('This SSH authentication configuration is not supported.')
+}
+
+const escapeSqlLike = (value: string): string =>
+  value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
+
+type AuthenticationOperationKind = 'create_password' | 'reset_password' | 'change_authentication'
+
+const assertOperationBinding = (
+  operation: { providerId: string; operationKind: string; requestFingerprint: string },
+  providerId: string,
+  operationKind: AuthenticationOperationKind,
+  requestFingerprint: string
+): void => {
+  if (
+    operation.providerId !== providerId ||
+    operation.operationKind !== operationKind ||
+    operation.requestFingerprint !== requestFingerprint
+  ) {
+    throw new ComputeConnectionError('credential_conflict')
+  }
+}
+
 // Maps a Prisma row (JSON strings + DateTime + nullable columns) into the epoch-ms domain shape shared
 // with the renderer.
-const toHost = (row: PrismaComputeHost): ComputeHost => ({
+const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => ({
   id: row.id,
   providerId: row.providerId,
   displayName: row.displayName,
   shape: asShape(row.shape),
   sshAlias: row.sshAlias,
   sshOverrides: parseJson<SshOverrides>(row.sshOverrides),
+  authentication: {
+    mode: asAuthenticationMode(row.authenticationMode ?? 'ssh_config'),
+    credentialStatus:
+      row.authenticationMode === 'password'
+        ? hasCredential
+          ? 'configured'
+          : 'missing'
+        : 'missing',
+    revision: row.authenticationRevision ?? 1,
+    lastVerifiedAt: row.lastVerifiedAt?.getTime()
+  },
   scratchRoot: row.scratchRoot ?? undefined,
   scratchPinned: row.scratchPinned,
   concurrencyLimit: row.concurrencyLimit ?? undefined,
@@ -79,12 +134,41 @@ const serializeOverrides = (overrides: SshOverrides | undefined): string | null 
 class ComputeHostRepository {
   constructor(private readonly getClient: ComputeHostClientProvider) {}
 
+  async getAuthenticationOperation(
+    operationId: string
+  ): Promise<Readonly<{ requestFingerprint: string }> | null> {
+    const client = await this.getClient()
+    const operation = await client.computeAuthOperation.findUnique({ where: { id: operationId } })
+    return operation ? { requestFingerprint: operation.requestFingerprint } : null
+  }
+
+  async preparePasswordCreate(
+    request: PreparePasswordCreateRequest
+  ): Promise<PasswordCreatePreparation> {
+    const providerId = computeProviderId(request.sshAlias)
+    const client = await this.getClient()
+    const replay = await client.computeAuthOperation.findUnique({
+      where: { id: request.operationId }
+    })
+    if (replay) {
+      assertOperationBinding(replay, providerId, 'create_password', request.requestFingerprint)
+      const existing = await client.computeHost.findUnique({ where: { providerId } })
+      if (!existing) throw new Error('The prior credential operation result is unavailable.')
+      return { kind: 'replay', host: toHost(existing, true) }
+    }
+    const duplicate = await client.computeHost.findUnique({ where: { providerId } })
+    if (duplicate) {
+      throw new Error(`A host with alias "${request.sshAlias}" is already registered.`)
+    }
+    return { kind: 'ready' }
+  }
+
   // Lists hosts newest-first for the Compute list view.
   async list(): Promise<ComputeHost[]> {
     const client = await this.getClient()
     const rows = await client.computeHost.findMany({ orderBy: { createdAt: 'desc' } })
 
-    return rows.map(toHost)
+    return rows.map((row) => toHost(row))
   }
 
   // Returns a single host by its provider id ("ssh:<alias>") or null when it no longer exists.
@@ -140,11 +224,362 @@ class ComputeHostRepository {
     return toHost(row)
   }
 
+  // Validated password Hosts and their encrypted credential are committed together. The operation
+  // row makes a retried local command return the original result without creating a duplicate.
+  async createPasswordHost(request: CreatePasswordHostPersistence): Promise<ComputeHost> {
+    const detailsDoc = request.detailsDoc ?? ''
+    if (detailsDoc.length > DETAILS_DOC_MAX_LENGTH) {
+      throw new Error(
+        `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (got ${detailsDoc.length}).`
+      )
+    }
+    const providerId = computeProviderId(request.sshAlias)
+    const client = await this.getClient()
+    const row = await client.$transaction(async (transaction) => {
+      const replay = await transaction.computeAuthOperation.findUnique({
+        where: { id: request.operationId }
+      })
+      if (replay) {
+        assertOperationBinding(replay, providerId, 'create_password', request.requestFingerprint)
+        const existing = await transaction.computeHost.findUnique({
+          where: { providerId: replay.providerId }
+        })
+        if (!existing) throw new Error('The prior credential operation result is unavailable.')
+        return existing
+      }
+      const duplicate = await transaction.computeHost.findUnique({ where: { providerId } })
+      if (duplicate) {
+        throw new Error(`A host with alias "${request.sshAlias}" is already registered.`)
+      }
+      const host = await transaction.computeHost.create({
+        data: {
+          providerId,
+          displayName: request.displayName?.trim() || request.sshAlias,
+          sshAlias: request.sshAlias,
+          sshOverrides: serializeOverrides({ user: request.username, port: request.port }),
+          authenticationMode: 'password',
+          authenticationRevision: 1,
+          lastVerifiedAt: request.verifiedAt,
+          detailsDoc,
+          detailsUpdatedBy: detailsDoc ? 'user' : null,
+          detailsUpdatedAt: detailsDoc ? request.verifiedAt : null,
+          credential: { create: { ciphertext: new Uint8Array(request.ciphertext) } }
+        }
+      })
+      await transaction.computeAuthOperation.create({
+        data: {
+          id: request.operationId,
+          providerId,
+          operationKind: 'create_password',
+          requestFingerprint: request.requestFingerprint,
+          resultRevision: 1
+        }
+      })
+      return host
+    })
+    return toHost(row, true)
+  }
+
+  async getCredential(
+    computeHostId: string
+  ): Promise<{ ciphertext: Buffer; revision: number } | null> {
+    const client = await this.getClient()
+    const host = await client.computeHost.findUnique({
+      where: { id: computeHostId },
+      select: {
+        authenticationRevision: true,
+        credential: { select: { ciphertext: true } }
+      }
+    })
+    return host?.credential
+      ? {
+          ciphertext: Buffer.from(host.credential.ciphertext),
+          revision: host.authenticationRevision
+        }
+      : null
+  }
+
+  async clearAuthenticationFailure(providerId: string): Promise<void> {
+    const client = await this.getClient()
+    await client.computeHost.update({ where: { providerId }, data: { probeResult: null } })
+  }
+
+  async updateAuthenticationFailure(
+    providerId: string,
+    authenticationRevision: number,
+    result: ProbeResult,
+    shape: ComputeHostShape
+  ): Promise<boolean> {
+    const client = await this.getClient()
+    const updated = await client.computeHost.updateMany({
+      where: { providerId, authenticationRevision },
+      data: {
+        probeResult: JSON.stringify(result),
+        shape
+      }
+    })
+    return updated.count === 1
+  }
+
+  async preparePasswordReset(
+    request: PreparePasswordResetRequest
+  ): Promise<PasswordResetPreparation> {
+    const client = await this.getClient()
+    const replay = await client.computeAuthOperation.findUnique({
+      where: { id: request.operationId }
+    })
+    if (replay && replay.providerId !== request.providerId) {
+      throw new ComputeConnectionError('credential_conflict')
+    }
+    if (replay) {
+      assertOperationBinding(
+        replay,
+        request.providerId,
+        'reset_password',
+        request.requestFingerprint
+      )
+    }
+    const row = await client.computeHost.findUnique({ where: { providerId: request.providerId } })
+    if (!row || row.authenticationMode !== 'password') {
+      throw new ComputeConnectionError('credential_required')
+    }
+    if (replay) {
+      if (
+        replay.resultRevision !== request.expectedAuthenticationRevision + 1 ||
+        row.authenticationRevision !== replay.resultRevision
+      ) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
+      return { kind: 'replay', host: toHost(row, true) }
+    }
+    if (row.authenticationRevision !== request.expectedAuthenticationRevision) {
+      throw new ComputeConnectionError('credential_conflict')
+    }
+    return { kind: 'ready', host: toHost(row, true) }
+  }
+
+  async resetPasswordHost(request: ResetPasswordHostPersistence): Promise<ComputeHost> {
+    const client = await this.getClient()
+    const row = await client.$transaction(async (transaction) => {
+      const replay = await transaction.computeAuthOperation.findUnique({
+        where: { id: request.operationId }
+      })
+      if (replay) {
+        assertOperationBinding(
+          replay,
+          request.providerId,
+          'reset_password',
+          request.requestFingerprint
+        )
+        if (replay.resultRevision !== request.expectedAuthenticationRevision + 1) {
+          throw new ComputeConnectionError('credential_conflict')
+        }
+        const existing = await transaction.computeHost.findUnique({
+          where: { providerId: request.providerId }
+        })
+        if (!existing) throw new ComputeConnectionError('credential_required')
+        if (existing.authenticationRevision !== replay.resultRevision) {
+          throw new ComputeConnectionError('credential_conflict')
+        }
+        return existing
+      }
+      const current = await transaction.computeHost.findUnique({
+        where: { providerId: request.providerId }
+      })
+      if (
+        !current ||
+        current.authenticationMode !== 'password' ||
+        current.authenticationRevision !== request.expectedAuthenticationRevision
+      ) {
+        throw new ComputeConnectionError(current ? 'credential_conflict' : 'credential_required')
+      }
+      await transaction.computeCredential.upsert({
+        where: { computeHostId: current.id },
+        create: {
+          computeHostId: current.id,
+          ciphertext: new Uint8Array(request.ciphertext)
+        },
+        update: { ciphertext: new Uint8Array(request.ciphertext) }
+      })
+      const updated = await transaction.computeHost.update({
+        where: { id: current.id },
+        data: {
+          authenticationRevision: { increment: 1 },
+          lastVerifiedAt: request.verifiedAt,
+          probeResult: null
+        }
+      })
+      await transaction.computeAuthOperation.create({
+        data: {
+          id: request.operationId,
+          providerId: request.providerId,
+          operationKind: 'reset_password',
+          requestFingerprint: request.requestFingerprint,
+          resultRevision: request.expectedAuthenticationRevision + 1
+        }
+      })
+      return updated
+    })
+    return toHost(row, true)
+  }
+
+  async replayAuthenticationChange(
+    operationId: string,
+    providerId: string,
+    requestFingerprint: string
+  ): Promise<ComputeHost | null> {
+    const client = await this.getClient()
+    const operation = await client.computeAuthOperation.findUnique({ where: { id: operationId } })
+    if (!operation) return null
+    assertOperationBinding(operation, providerId, 'change_authentication', requestFingerprint)
+    const host = await client.computeHost.findUnique({ where: { providerId } })
+    if (!host) throw new ComputeConnectionError('credential_conflict')
+    if (host.authenticationRevision !== operation.resultRevision) {
+      throw new ComputeConnectionError('credential_conflict')
+    }
+    return toHost(host, host.authenticationMode === 'password')
+  }
+
+  async changeAuthentication(
+    request: ChangeComputeHostAuthenticationPersistence
+  ): Promise<ComputeHost> {
+    const client = await this.getClient()
+    const row = await client.$transaction(async (transaction) => {
+      const replay = await transaction.computeAuthOperation.findUnique({
+        where: { id: request.operationId }
+      })
+      if (replay) {
+        assertOperationBinding(
+          replay,
+          request.providerId,
+          'change_authentication',
+          request.requestFingerprint
+        )
+        const replayHost = await transaction.computeHost.findUnique({
+          where: { providerId: request.providerId }
+        })
+        if (!replayHost) throw new ComputeConnectionError('credential_conflict')
+        if (replayHost.authenticationRevision !== replay.resultRevision) {
+          throw new ComputeConnectionError('credential_conflict')
+        }
+        return replayHost
+      }
+
+      const current = await transaction.computeHost.findUnique({
+        where: { providerId: request.providerId }
+      })
+      if (!current) {
+        throw new Error(`No compute host found with provider id "${request.providerId}".`)
+      }
+      if (current.authenticationRevision !== request.expectedRevision) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
+      const blockingJobs = await transaction.computeJob.count({
+        where: {
+          providerId: request.providerId,
+          OR: [
+            { status: { in: ['queued', 'submitted', 'running'] } },
+            {
+              status: { in: ['success', 'failed', 'timeout'] },
+              harvestedAt: null
+            }
+          ]
+        }
+      })
+      if (blockingJobs > 0) {
+        throw new ComputeConnectionError('credential_change_blocked_by_jobs')
+      }
+
+      const updated = await transaction.computeHost.updateMany({
+        where: {
+          id: current.id,
+          authenticationRevision: request.expectedRevision
+        },
+        data: {
+          sshOverrides: serializeOverrides({
+            user: request.username,
+            port: request.port,
+            ...(request.authenticationMode === 'ssh_config' && request.identityFile
+              ? { identityFile: request.identityFile }
+              : {})
+          }),
+          authenticationMode: request.authenticationMode,
+          authenticationRevision: { increment: 1 },
+          lastVerifiedAt: request.verifiedAt,
+          probeResult: null
+        }
+      })
+      if (updated.count !== 1) throw new ComputeConnectionError('credential_conflict')
+
+      if (request.authenticationMode === 'password') {
+        if (!request.ciphertext) throw new ComputeConnectionError('credential_required')
+        await transaction.computeCredential.upsert({
+          where: { computeHostId: current.id },
+          create: {
+            computeHostId: current.id,
+            ciphertext: new Uint8Array(request.ciphertext)
+          },
+          update: { ciphertext: new Uint8Array(request.ciphertext) }
+        })
+      } else {
+        await transaction.computeCredential.deleteMany({ where: { computeHostId: current.id } })
+      }
+      await transaction.$executeRawUnsafe(
+        `DELETE FROM "PermissionGrant"
+         WHERE "capabilityKind" = ? AND "capabilityKey" LIKE ? ESCAPE '\\'`,
+        'execution',
+        `exec:compute/${escapeSqlLike(request.providerId)}/%`
+      )
+      await transaction.computeAuthOperation.create({
+        data: {
+          id: request.operationId,
+          providerId: request.providerId,
+          operationKind: 'change_authentication',
+          requestFingerprint: request.requestFingerprint,
+          resultRevision: request.expectedRevision + 1
+        }
+      })
+      const committed = await transaction.computeHost.findUnique({
+        where: { providerId: request.providerId }
+      })
+      if (!committed) throw new ComputeConnectionError('credential_conflict')
+      return committed
+    })
+    return toHost(row, row.authenticationMode === 'password')
+  }
+
   // Removes a host row by provider id.
   async delete(providerId: string): Promise<void> {
     const client = await this.getClient()
+    await client.$transaction(async (transaction) => {
+      const host = await transaction.computeHost.findUnique({
+        where: { providerId },
+        select: { id: true }
+      })
+      if (!host) return
+      await transaction.computeCredential.deleteMany({ where: { computeHostId: host.id } })
+      await transaction.computeAuthOperation.deleteMany({ where: { providerId } })
+      await transaction.$executeRawUnsafe(
+        `DELETE FROM "PermissionGrant"
+         WHERE "capabilityKind" = ? AND "capabilityKey" LIKE ? ESCAPE '\\'`,
+        'execution',
+        `exec:compute/${escapeSqlLike(providerId)}/%`
+      )
+      await transaction.computeHost.delete({ where: { providerId } })
+    })
+  }
 
-    await client.computeHost.delete({ where: { providerId } })
+  // Defensive startup repair for databases copied with foreign-key enforcement disabled or
+  // interrupted legacy writes. The normal one-to-one FK prevents these rows from being created.
+  async cleanupOrphanCredentials(): Promise<number> {
+    const client = await this.getClient()
+    return client.$executeRawUnsafe(
+      `DELETE FROM "ComputeCredential"
+       WHERE NOT EXISTS (
+         SELECT 1 FROM "ComputeHost"
+         WHERE "ComputeHost"."id" = "ComputeCredential"."computeHostId"
+       )`
+    )
   }
 
   // Writes the structured probe snapshot and inferred shape. Never touches detailsDoc (design.md §4).
@@ -155,6 +590,16 @@ class ComputeHostRepository {
   ): Promise<void> {
     const client = await this.getClient()
 
+    if (Number.isInteger(result.authenticationRevision)) {
+      await client.computeHost.updateMany({
+        where: { providerId, authenticationRevision: result.authenticationRevision },
+        data: {
+          probeResult: JSON.stringify(result),
+          shape
+        }
+      })
+      return
+    }
     await client.computeHost.update({
       where: { providerId },
       data: {

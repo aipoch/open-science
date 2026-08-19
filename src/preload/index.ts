@@ -4,6 +4,10 @@ import { createElectronRendererContractAdapter } from './electron-renderer-contr
 import type { OpenScienceAPI } from './renderer-api'
 
 import type { ComputeApprovalDecision, ComputeApprovalRequest, JobSummary } from '../shared/compute'
+import type {
+  InitializeLocalePreferenceRequest,
+  SetLocalePreferenceRequest
+} from '../shared/locale'
 import type { NotebookLanguage } from '../shared/notebook'
 import type { DiscoveredInterpreter } from '../shared/notebook-runtime'
 import type {
@@ -112,6 +116,13 @@ const api: OpenScienceAPI = {
   }),
   lifecycle: {
     getClientId: () => electronRendererContracts.invoke('lifecycle.getClientId')
+  },
+  locale: {
+    initialize: (request: InitializeLocalePreferenceRequest) =>
+      electronRendererContracts.invoke('locale.initialize', request),
+    setPreference: (request: SetLocalePreferenceRequest) =>
+      electronRendererContracts.invoke('locale.setPreference', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('locale.onChanged', listener)
   },
   databaseStartup: {
     getState: () => electronRendererContracts.invoke('databaseStartup.getState'),
@@ -529,6 +540,14 @@ const api: OpenScienceAPI = {
     list: () => electronRendererContracts.invoke('compute.list'),
     get: (providerId) => electronRendererContracts.invoke('compute.get', providerId),
     create: (request) => electronRendererContracts.invoke('compute.create', request),
+    createPassword: (request) =>
+      electronRendererContracts.invoke('compute.createPassword', request),
+    resetPassword: (request) => electronRendererContracts.invoke('compute.resetPassword', request),
+    changeAuthentication: (request) =>
+      electronRendererContracts.invoke('compute.changeAuthentication', request),
+    passwordCapability: () => electronRendererContracts.invoke('compute.passwordCapability'),
+    deletionStatus: (request) =>
+      electronRendererContracts.invoke('compute.deletionStatus', request),
     delete: (request) => electronRendererContracts.invoke('compute.delete', request),
     sshConfigAliases: () => electronRendererContracts.invoke('compute.sshConfigAliases'),
     probe: (providerId) => electronRendererContracts.invoke('compute.probe', providerId),

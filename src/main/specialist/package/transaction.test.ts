@@ -104,6 +104,27 @@ describe('SpecialistPackageTransaction imported setup lifecycle', () => {
     })
   })
 
+  it('activates a new Marketplace import without requiring a separate setup save', async () => {
+    const installed = await new SpecialistPackageTransaction(storageDir, repository).install(
+      plan(),
+      new Date('2026-08-04T00:00:00.000Z'),
+      'archive-digest',
+      undefined,
+      undefined,
+      { activateAfterInstall: true }
+    )
+
+    expect(installed).toMatchObject({
+      enabled: true,
+      setupPending: false,
+      selectedCapabilities: {
+        skillIds: ['bundled-analysis'],
+        connectorIds: [],
+        connectorTools: []
+      }
+    })
+  })
+
   it('checks the approved impact against the authoritative pre-commit document', async () => {
     const transaction = new SpecialistPackageTransaction(storageDir, repository)
     const approvedImpactChanged = new Error('approved impact changed')
@@ -168,5 +189,39 @@ describe('SpecialistPackageTransaction imported setup lifecycle', () => {
     })
     expect(overwritten.iconKey).toBeUndefined()
     expect(overwritten.colorKey).toBeUndefined()
+  })
+
+  it('keeps an existing Marketplace Specialist disabled while completing an update', async () => {
+    await repository.insert({
+      id: 'imported-specialist',
+      name: 'IMPORTED_SPECIALIST',
+      displayName: 'Imported Specialist',
+      description: 'Old description.',
+      systemPrompt: 'Old instructions.',
+      enabled: false,
+      setupPending: false,
+      capabilityMode: 'selected',
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: emptySelectedConfig(),
+      revision: 4,
+      packageVersion: '0.9.0',
+      origin: 'imported',
+      ownedSkillIds: []
+    })
+
+    const updated = await new SpecialistPackageTransaction(storageDir, repository).install(
+      plan(),
+      new Date('2026-08-04T00:00:00.000Z'),
+      'archive-digest',
+      { expectedRevision: 4 },
+      undefined,
+      { activateAfterInstall: true }
+    )
+
+    expect(updated).toMatchObject({
+      enabled: false,
+      setupPending: false,
+      revision: 5
+    })
   })
 })

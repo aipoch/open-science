@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { AlertTriangle, ChevronDown, FileUp, Upload, X } from 'lucide-react'
+import { RadioGroup } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
@@ -466,16 +467,15 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   {t('Markdown shown to the agent when the skill is invoked.')}
                 </p>
               </div>
-              <div
-                role="radiogroup"
+              <RadioGroup.Root
                 aria-label={t('Content mode')}
+                value={contentMode}
+                onValueChange={(value) => setContentMode(value as 'write' | 'upload')}
+                orientation="horizontal"
                 className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5"
               >
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={contentMode === 'write'}
-                  onClick={() => setContentMode('write')}
+                <RadioGroup.Item
+                  value="write"
                   className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
                     contentMode === 'write'
                       ? 'bg-card font-medium text-foreground shadow-sm'
@@ -483,12 +483,9 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   }`}
                 >
                   {t('Write')}
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={contentMode === 'upload'}
-                  onClick={() => setContentMode('upload')}
+                </RadioGroup.Item>
+                <RadioGroup.Item
+                  value="upload"
                   className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
                     contentMode === 'upload'
                       ? 'bg-card font-medium text-foreground shadow-sm'
@@ -496,8 +493,8 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   }`}
                 >
                   {t('Upload')}
-                </button>
-              </div>
+                </RadioGroup.Item>
+              </RadioGroup.Root>
             </div>
 
             {contentMode === 'write' ? (

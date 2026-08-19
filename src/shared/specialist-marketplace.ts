@@ -46,6 +46,7 @@ export type MarketplaceSpecialistListing = {
   publisher: MarketplacePublisher
   version: string
   installedVersion?: string
+  updateAvailable?: boolean
 }
 
 export type MarketplaceSourceFailure = {

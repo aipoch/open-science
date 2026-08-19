@@ -171,7 +171,12 @@ describe('ArchivedPanel', () => {
   })
 
   it('clears a failed Project deletion error before opening the next confirmation', async () => {
-    const deleteProject = vi.fn().mockRejectedValue(new Error('first deletion failed'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const deleteProject = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('ENOENT: no such file or directory, unlink /Users/private/OpenScience/project-1')
+      )
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [{ ...project, archivedAt: 2 }],
@@ -195,7 +200,8 @@ describe('ArchivedPanel', () => {
     ).find((button) => button.textContent === 'Delete')
     await act(async () => confirmDelete?.click())
 
-    expect(dialog?.querySelector('[role="alert"]')?.textContent).toBe('first deletion failed')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toBe('Could not delete project.')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).not.toContain('/Users/private')
 
     const close = dialog?.querySelector<HTMLButtonElement>('[aria-label="Close"]')
     await act(async () => close?.click())
@@ -203,6 +209,7 @@ describe('ArchivedPanel', () => {
     dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
 
     expect(dialog?.querySelector('[role="alert"]')).toBeNull()
+    warn.mockRestore()
   })
 
   it('delegates archived Project runtime cleanup to the main deletion coordinator', async () => {

@@ -1,5 +1,5 @@
 import { ArrowUpRight, ChevronRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -11,7 +11,7 @@ import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { Button } from '@/components/ui/button'
 import { ConnectorGlyph } from './connector-icons'
-import { SettingsToggle } from './SettingsLayout'
+import { SettingsLoadNotice, SettingsToggle } from './SettingsLayout'
 import { ToolPermissionControl } from './ToolPermissionControl'
 import { ResourceAvailability } from './ResourceAvailability'
 import { specialistsUsingConnector } from './specialist-resource-scope'
@@ -56,6 +56,9 @@ const ConnectorDetailView = ({
   const permissionGrants = usePermissionGrantsStore((state) => state.grants)
   const loadPermissionGrants = usePermissionGrantsStore((state) => state.load)
   const [detail, setDetail] = useState<ConnectorDetail | null>(null)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [operationError, setOperationError] = useState<string | undefined>()
+  const loadRequestRef = useRef(0)
   // Ids of tools whose description is expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -67,13 +70,38 @@ const ConnectorDetailView = ({
       return next
     })
 
+  const loadDetail = async (): Promise<void> => {
+    const requestId = ++loadRequestRef.current
+    setDetail(null)
+    setLoadState('loading')
+    try {
+      const result = await window.api.settings.getConnectorDetail(id)
+      if (loadRequestRef.current !== requestId) return
+      setDetail(result)
+      setLoadState('ready')
+    } catch {
+      if (loadRequestRef.current === requestId) setLoadState('error')
+    }
+  }
+
+  const retryLoad = (): void => {
+    void loadDetail()
+  }
+
   useEffect(() => {
-    let active = true
-    void window.api.settings.getConnectorDetail(id).then((result) => {
-      if (active) setDetail(result)
-    })
+    const requestId = ++loadRequestRef.current
+    void window.api.settings.getConnectorDetail(id).then(
+      (result) => {
+        if (loadRequestRef.current !== requestId) return
+        setDetail(result)
+        setLoadState('ready')
+      },
+      () => {
+        if (loadRequestRef.current === requestId) setLoadState('error')
+      }
+    )
     return () => {
-      active = false
+      loadRequestRef.current += 1
     }
   }, [id])
 
@@ -85,12 +113,33 @@ const ConnectorDetailView = ({
     void loadSpecialists()
   }, [loadSpecialists])
 
-  // Persist one tool's permission, folding the refreshed detail back into local state.
-  const handleToolChange = async (toolId: string, permission: ToolPermission): Promise<void> => {
-    await setToolPermission(toolId, permission).then(setDetail)
+  const savePolicy = async (command: () => Promise<void>): Promise<void> => {
+    setOperationError(undefined)
+    try {
+      await command()
+    } catch {
+      setOperationError(t('Could not save this setting. The previous value was restored.'))
+    }
   }
 
-  if (!detail) return <div className="p-5" />
+  // Persist one tool's permission, folding the refreshed detail back into local state.
+  const handleToolChange = (toolId: string, permission: ToolPermission): Promise<void> =>
+    savePolicy(async () => {
+      setDetail(await setToolPermission(toolId, permission))
+    })
+
+  if (!detail) {
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={loadState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Connector…')}
+          errorMessage={t('Open Science could not load this Connector.')}
+          onRetry={retryLoad}
+        />
+      </div>
+    )
+  }
 
   const enabled = storeConnector?.enabled ?? detail.enabled
   const autoAllow = storeConnector?.autoAllow ?? detail.autoAllow
@@ -119,11 +168,24 @@ const ConnectorDetailView = ({
         </p>
       ) : null}
 
+      {operationError ? (
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+        >
+          {operationError}
+        </p>
+      ) : null}
+
       <ResourceAvailability
         mainEnabled={enabled}
         mainToggleLabel={t('Toggle {{name}}', { name: detail.displayName })}
         usages={usages}
-        onToggleMain={() => void setConnectorEnabled(id, !enabled).catch(() => undefined)}
+        onToggleMain={() =>
+          void savePolicy(async () => {
+            await setConnectorEnabled(id, !enabled)
+          })
+        }
       />
 
       {/* Skip approvals: allow every tool without a per-call approval card. */}
@@ -139,7 +201,11 @@ const ConnectorDetailView = ({
         <SettingsToggle
           enabled={autoAllow}
           aria-label={t('Skip approvals for {{name}}', { name: id })}
-          onToggle={() => void setConnectorAutoAllow(id, !autoAllow).catch(() => undefined)}
+          onToggle={() =>
+            void savePolicy(async () => {
+              await setConnectorAutoAllow(id, !autoAllow)
+            })
+          }
         />
       </div>
 

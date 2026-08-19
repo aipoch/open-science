@@ -110,7 +110,8 @@ describe('application database (integration)', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
 
@@ -580,6 +581,10 @@ describe('application database (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
+    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -657,6 +662,10 @@ describe('application database (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
+    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
+    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -712,7 +721,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    const backupPath = `${databasePath}.before-0010_compute_password_auth.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -749,11 +758,10 @@ describe('application database (integration)', () => {
         `
       ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
       await expect(
-        backupClient.$queryRaw<Array<{ name: string }>>`
-          SELECT "name" FROM "sqlite_schema"
-          WHERE "type" = 'table' AND "name" = '_open_science_migrations'
+        backupClient.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([])
+      ).resolves.toEqual([{ id: '0009_vision_evidence' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1022,7 +1030,8 @@ describe('application database (integration)', () => {
         '0006_database_domain_constraints',
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ]
     })
 

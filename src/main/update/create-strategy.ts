@@ -7,6 +7,7 @@ import { createLogger } from '../logger'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'
 import type { InstallGate, UpdateStrategy } from './strategy'
+import type { NativeTranslator } from '../locale/main-process-messages'
 
 export type CreateStrategyOptions = {
   // Whether this is a packaged (installed) build. Defaults to app.isPackaged; injectable for tests.
@@ -16,6 +17,7 @@ export type CreateStrategyOptions = {
   // Immutable pre-install backend shutdown gate for in-place strategies. The manual installer flow
   // ignores it because applying there does not quit or replace the running app.
   installGate?: InstallGate
+  translate?: NativeTranslator
 }
 
 const OFFICIAL_MAC_BUNDLE_ID = 'com.aipoch.open-science'
@@ -68,5 +70,5 @@ export const createUpdateStrategy = (
   if (platform === 'darwin' && macCanAutoUpdate(isPackaged, version)) {
     return createInPlaceStrategy()
   }
-  return new UpdateService({ log })
+  return new UpdateService({ log, translate: opts.translate })
 }

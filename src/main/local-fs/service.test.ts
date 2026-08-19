@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
   shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => '') }
 }))
 
-// access/readdir/realpath start as delegating wrappers so listDrives tests can substitute
+// access/readdir/realpath/stat start as delegating wrappers so tests can substitute
 // per-platform fakes; every other export stays real for the listDir/preview tests above.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -19,15 +19,16 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     access: vi.fn(actual.access),
     readdir: vi.fn(actual.readdir),
-    realpath: vi.fn(actual.realpath)
+    realpath: vi.fn(actual.realpath),
+    stat: vi.fn(actual.stat)
   }
 })
 
-import { access, readdir } from 'node:fs/promises'
+import { access, readdir, stat } from 'node:fs/promises'
 
 import { app } from 'electron'
 
-import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { LOCAL_DIR_ENTRY_CAP, type GrantedLocalRoot } from '../../shared/local-fs'
 import { LocalFsService, type GrantedLocalRootsStore } from './service'
 
 // The unmocked fs/promises, for restoring the delegating wrappers after each listDrives test.
@@ -49,11 +50,73 @@ afterAll(() => {
 })
 
 describe('LocalFsService.listDir', () => {
+  afterEach(() => {
+    vi.mocked(readdir).mockImplementation(realFsPromises.readdir as never)
+    vi.mocked(stat).mockImplementation(realFsPromises.stat)
+  })
+
   it('lists entries directories-first, alphabetical', async () => {
     const listing = await service.listDir(root)
     expect(listing.entries.map((e) => e.name)).toEqual(['Alpha', 'sub', 'data.csv', 'notes.md'])
     expect(listing.entries[0].isDirectory).toBe(true)
     expect(listing.entries.find((e) => e.name === 'notes.md')?.size).toBeGreaterThan(0)
+  })
+
+  it('sorts the complete readdir result before applying the entry cap', async () => {
+    const fileDirents = Array.from({ length: LOCAL_DIR_ENTRY_CAP }, (_, index) => ({
+      name: `file-${String(index).padStart(4, '0')}`,
+      isDirectory: () => false,
+      isSymbolicLink: () => false
+    }))
+    const directoryDirent = {
+      name: 'zzz-directory',
+      isDirectory: () => true,
+      isSymbolicLink: () => false
+    }
+    vi.mocked(readdir).mockResolvedValueOnce([...fileDirents, directoryDirent] as never)
+    vi.mocked(stat).mockResolvedValue({
+      isDirectory: () => false,
+      size: 1,
+      mtimeMs: 1
+    } as never)
+
+    const listing = await service.listDir(root)
+
+    expect(listing.truncated).toBe(true)
+    expect(listing.entries).toHaveLength(LOCAL_DIR_ENTRY_CAP)
+    expect(listing.entries[0]).toMatchObject({ name: 'zzz-directory', isDirectory: true })
+    expect(listing.entries.at(-1)?.name).toBe('file-4998')
+    expect(listing.entries.some((entry) => entry.name === 'file-4999')).toBe(false)
+  })
+
+  it('keeps directory symlink candidates eligible before applying the entry cap', async () => {
+    const fileDirents = Array.from({ length: LOCAL_DIR_ENTRY_CAP }, (_, index) => ({
+      name: `file-${String(index).padStart(4, '0')}`,
+      isDirectory: () => false,
+      isSymbolicLink: () => false
+    }))
+    const directoryLinkDirent = {
+      name: 'zzz-directory-link',
+      isDirectory: () => false,
+      isSymbolicLink: () => true
+    }
+    vi.mocked(readdir).mockResolvedValueOnce([...fileDirents, directoryLinkDirent] as never)
+    vi.mocked(stat).mockImplementation(
+      async (path) =>
+        ({
+          isDirectory: () => String(path).endsWith(directoryLinkDirent.name),
+          size: 1,
+          mtimeMs: 1
+        }) as never
+    )
+
+    const listing = await service.listDir(root)
+
+    expect(listing.truncated).toBe(true)
+    expect(listing.entries).toHaveLength(LOCAL_DIR_ENTRY_CAP)
+    expect(listing.entries[0]).toMatchObject({ name: 'zzz-directory-link', isDirectory: true })
+    expect(listing.entries.at(-1)?.name).toBe('file-4998')
+    expect(listing.entries.some((entry) => entry.name === 'file-4999')).toBe(false)
   })
 
   it('resolves symlinks and .. via realpath', async () => {

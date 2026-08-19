@@ -128,7 +128,8 @@ export class SpecialistPackageTransaction {
     importedAt: Date,
     archiveDigest: string,
     overwrite?: { expectedRevision: number },
-    assertApprovedImpact?: (document: Readonly<StoredSpecialists>) => Promise<void>
+    assertApprovedImpact?: (document: Readonly<StoredSpecialists>) => Promise<void>,
+    options?: { activateAfterInstall?: boolean }
   ): Promise<SpecialistProfileView> {
     const run = this.queue.then(async () => {
       await this.recover()
@@ -148,8 +149,8 @@ export class SpecialistPackageTransaction {
         displayName: plan.payload.displayName ?? plan.payload.name,
         description: plan.payload.description,
         systemPrompt: plan.payload.systemPrompt,
-        enabled: false,
-        setupPending: true,
+        enabled: options?.activateAfterInstall ? (existing?.enabled ?? true) : false,
+        setupPending: options?.activateAfterInstall ? false : true,
         capabilityMode: 'selected',
         fullAccess: emptyFullAccessConfig(),
         selectedCapabilities: {

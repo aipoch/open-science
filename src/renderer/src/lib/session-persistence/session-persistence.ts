@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
+  isSessionRevisionConflictError,
+  sessionRevision,
   type DeleteSessionRequest,
   type LoadAllSessionsResult,
+  type LoadSessionRequest,
   type PersistedChatSession,
   type SaveSessionOptions,
   type SessionConflictRebaseField,
@@ -15,6 +19,7 @@ import {
 } from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
+  getExternallyHydratedSessionAuthority,
   isExternallyHydratedSession,
   toPersistedSession,
   useSessionStore
@@ -24,6 +29,7 @@ import { projectRendererFailure } from '../../renderer-diagnostics'
 
 type SessionPersistenceApi = {
   loadAll: () => Promise<LoadAllSessionsResult>
+  loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
     options?: SaveSessionOptions
@@ -61,6 +67,110 @@ const conflictRebaseFieldChanged = (
   return previous[field] !== next[field]
 }
 
+const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
+  'revision',
+  'runtimeContext',
+  'archivedAt',
+  'branchSource',
+  'delegationPolicy',
+  'enabledComputeHosts',
+  'specialistId',
+  'specialistBindingPending'
+])
+
+const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => jsonValuesEqual(value, right[index]))
+    )
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  const rightKeys = Object.keys(rightRecord)
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) => Object.hasOwn(rightRecord, key) && jsonValuesEqual(leftRecord[key], rightRecord[key])
+    )
+  )
+}
+
+const conversationGraphsEqualIgnoringBranchTimestamps = (
+  left: PersistedChatSession['conversationGraph'],
+  right: PersistedChatSession['conversationGraph']
+): boolean => {
+  if (!left || !right) return left === right
+  const withoutBranchTimestamps = (
+    graph: NonNullable<PersistedChatSession['conversationGraph']>
+  ): PersistedChatSession['conversationGraph'] => ({
+    ...graph,
+    branches: graph.branches.map((branch) => ({ ...branch, updatedAt: 0 }))
+  })
+  return jsonValuesEqual(withoutBranchTimestamps(left), withoutBranchTimestamps(right))
+}
+
+const sessionFieldValuesEqual = (
+  key: keyof PersistedChatSession,
+  left: unknown,
+  right: unknown
+): boolean =>
+  key === 'conversationGraph'
+    ? conversationGraphsEqualIgnoringBranchTimestamps(
+        left as PersistedChatSession['conversationGraph'],
+        right as PersistedChatSession['conversationGraph']
+      )
+    : jsonValuesEqual(left, right)
+
+const rebaseSessionAfterRevisionConflict = (
+  base: PersistedChatSession,
+  submitted: PersistedChatSession,
+  latest: PersistedChatSession
+): PersistedChatSession | undefined => {
+  const rebased: PersistedChatSession = structuredClone(latest)
+  const keys = new Set([
+    ...Object.keys(base),
+    ...Object.keys(submitted),
+    ...Object.keys(latest)
+  ] as Array<keyof PersistedChatSession>)
+  const mainOwnsStatus =
+    latest.runtimeContext?.permission?.state === 'pending' ||
+    latest.status === 'waiting-plan-approval'
+
+  for (const key of keys) {
+    if (
+      MAIN_OWNED_SESSION_FIELDS.has(key) ||
+      key === 'updatedAt' ||
+      (key === 'status' && mainOwnsStatus)
+    ) {
+      continue
+    }
+    const baseValue = base[key]
+    const submittedValue = submitted[key]
+    const latestValue = latest[key]
+    const localChanged = !sessionFieldValuesEqual(key, submittedValue, baseValue)
+    if (!localChanged) continue
+    const remoteChanged = !sessionFieldValuesEqual(key, latestValue, baseValue)
+    if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue))
+      return undefined
+
+    if (Object.hasOwn(submitted, key)) {
+      Object.assign(rebased, { [key]: structuredClone(submittedValue) })
+    } else {
+      Reflect.deleteProperty(rebased, key)
+    }
+  }
+
+  rebased.revision = sessionRevision(latest)
+  rebased.updatedAt = Math.max(base.updatedAt, submitted.updatedAt, latest.updatedAt) + 1
+  return rebased
+}
+
 const mergeSaveSessionOptions = (
   previous: SaveSessionOptions | undefined,
   next: SaveSessionOptions | undefined
@@ -78,6 +188,7 @@ const createOrderedSessionPersistence = (
   api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
+  const acknowledgedRevisions = new Map<string, number>()
   let pendingLatest:
     | {
         target: string
@@ -115,7 +226,13 @@ const createOrderedSessionPersistence = (
         pendingLatest = undefined
         pendingLatestPromise = undefined
       }
-      return entry.task(entry.options)
+      return entry.task(entry.options).then((durable) => {
+        acknowledgedRevisions.set(
+          durable.id,
+          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
+        )
+        return durable
+      })
     }
     const run = queue.then(runTask, runTask)
     pendingLatest = entry
@@ -130,7 +247,21 @@ const createOrderedSessionPersistence = (
   return {
     saveLatestSession,
     saveSession: (session, options) =>
-      enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
+      enqueue(async () => {
+        const submitted = structuredClone(session)
+        submitted.revision = Math.max(
+          sessionRevision(submitted),
+          acknowledgedRevisions.get(submitted.id) ?? 0
+        )
+        const durable = options
+          ? await api.saveSession(submitted, options)
+          : await api.saveSession(submitted)
+        acknowledgedRevisions.set(
+          durable.id,
+          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
+        )
+        return durable
+      }),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
     flush: () => queue.then(() => undefined)
   }
@@ -146,10 +277,37 @@ const liveSessionPersistence = createOrderedSessionPersistence({
   saveManifest: (request) => window.api.sessions.saveManifest(request)
 })
 
-const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
-  liveSessionPersistence.saveSession(session)
+const unresolvedSessionRevisionConflictTargets = new Set<string>()
 
-const flushSessionPersistence = (): Promise<void> => liveSessionPersistence.flush()
+const saveSessionInOrder = async (session: PersistedChatSession): Promise<PersistedChatSession> => {
+  const target = `session:${session.id}`
+  try {
+    const durable = await liveSessionPersistence.saveSession(session)
+    unresolvedSessionRevisionConflictTargets.delete(target)
+    return durable
+  } catch (error) {
+    if (isSessionRevisionConflictError(error)) {
+      unresolvedSessionRevisionConflictTargets.add(target)
+    }
+    throw error
+  }
+}
+
+class SessionPersistenceFlushConflictError extends Error {
+  readonly code = 'session-revision-conflict' as const
+
+  constructor() {
+    super('Session persistence has an unresolved revision conflict.')
+    this.name = 'SessionPersistenceFlushConflictError'
+  }
+}
+
+const flushSessionPersistence = async (): Promise<void> => {
+  await liveSessionPersistence.flush()
+  if (unresolvedSessionRevisionConflictTargets.size > 0) {
+    throw new SessionPersistenceFlushConflictError()
+  }
+}
 
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
@@ -307,13 +465,15 @@ type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => 
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
   sessions: readonly Pick<ChatSession, 'id'>[],
-  conflictRebaseFields?: Map<string, SessionConflictRebaseField[]>
+  conflictRebaseFields?: Map<string, SessionConflictRebaseField[]>,
+  ...relatedTargets: Set<string>[]
 ): void => {
   const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
   for (const target of targets) {
     if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
       targets.delete(target)
       conflictRebaseFields?.delete(target)
+      for (const related of relatedTargets) related.delete(target)
     }
   }
 }
@@ -378,6 +538,8 @@ const SAFE_SESSION_LOAD_ERROR =
   'Open Science could not read saved conversation data. Retry to continue.'
 const SAFE_SESSION_WRITE_ERROR =
   'Open Science could not save the latest conversation changes. Retry before closing the app.'
+const SESSION_REVISION_CONFLICT_WRITE_ERROR =
+  'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
 
 // Hydrates the in-memory session store from the per-session files loaded by the main process.
 const loadPersistedSessions = async (
@@ -420,6 +582,36 @@ const createStoreSaver = (
 ): StoreSaver => {
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
+  const acknowledgedRevisions = new Map(
+    initial.sessions.map((session) => [session.id, sessionRevision(session)])
+  )
+  const acknowledgedSessions = new Map(
+    initial.sessions.map((session) => [session.id, toPersistedSession(session)])
+  )
+
+  const recoverRevisionConflict = async (
+    error: unknown,
+    submitted: PersistedChatSession,
+    options: SaveSessionOptions | undefined,
+    save: SessionPersistenceApi['saveSession']
+  ): Promise<PersistedChatSession> => {
+    if (!isSessionRevisionConflictError(error)) throw error
+    const base = acknowledgedSessions.get(submitted.id)
+    if (!base) throw error
+    let latest: PersistedChatSession | undefined
+    try {
+      latest = await api.loadOne({
+        projectId: submitted.projectId,
+        sessionId: submitted.id
+      })
+    } catch {
+      throw error
+    }
+    if (!latest) throw error
+    const rebased = rebaseSessionAfterRevisionConflict(base, submitted, latest)
+    if (!rebased) throw error
+    return options ? save(rebased, options) : save(rebased)
+  }
 
   return (state, options) => {
     const nextSessions = state.sessions
@@ -439,6 +631,22 @@ const createStoreSaver = (
 
       const target = `session:${session.id}`
       const isForced = options?.forceTargets?.has(target) === true
+      if (isExternallyHydratedSession(session)) {
+        const authority = getExternallyHydratedSessionAuthority(session)
+        if (authority) {
+          const previousAuthority = acknowledgedSessions.get(session.id)
+          const authorityIsNewer =
+            !previousAuthority ||
+            sessionRevision(authority) > sessionRevision(previousAuthority) ||
+            (sessionRevision(authority) === sessionRevision(previousAuthority) &&
+              authority.updatedAt >= previousAuthority.updatedAt)
+          acknowledgedRevisions.set(
+            session.id,
+            Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(authority))
+          )
+          if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
+        }
+      }
 
       if (
         (previousById.get(session.id) !== session || isForced) &&
@@ -464,13 +672,14 @@ const createStoreSaver = (
         const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
         const applyDurableSession = (
           durableSession: PersistedChatSession,
-          options: SaveSessionOptions | undefined
+          options: SaveSessionOptions | undefined,
+          recoveredRevisionConflict = false
         ): void => {
           useSessionStore.getState().applyDurableSessionProjection({
             source: session,
             session: durableSession,
             mode:
-              (options?.conflictRebaseFields?.length ?? 0) > 0
+              recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0
                 ? 'replace-persisted-if-current'
                 : 'merge-upload-identities'
           })
@@ -484,15 +693,32 @@ const createStoreSaver = (
                 const persisted = observePersistencePhase('session-serialize', () =>
                   toPersistedSession(session)
                 )
+                persisted.revision =
+                  acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                 let durableSession: PersistedChatSession
+                let recoveredRevisionConflict = false
                 try {
-                  durableSession = await persistence.saveSession(persisted, saveOptions)
+                  durableSession = saveOptions
+                    ? await persistence.saveSession(persisted, saveOptions)
+                    : await persistence.saveSession(persisted)
                 } catch (error) {
-                  reportPersistenceError(error, 'session-save')
-                  throw error
+                  try {
+                    durableSession = await recoverRevisionConflict(
+                      error,
+                      persisted,
+                      saveOptions,
+                      api.saveSession
+                    )
+                    recoveredRevisionConflict = true
+                  } catch (finalError) {
+                    reportPersistenceError(finalError, 'session-save')
+                    throw finalError
+                  }
                 }
+                acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
+                acknowledgedSessions.set(session.id, durableSession)
                 observePersistencePhase('session-apply-durable', () =>
-                  applyDurableSession(durableSession, saveOptions)
+                  applyDurableSession(durableSession, saveOptions, recoveredRevisionConflict)
                 )
               }
             : () =>
@@ -502,17 +728,36 @@ const createStoreSaver = (
                     const persisted = observePersistencePhase('session-serialize', () =>
                       toPersistedSession(session)
                     )
+                    persisted.revision =
+                      acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                     let durableSession: PersistedChatSession
+                    let recoveredRevisionConflict = false
                     try {
-                      durableSession = await (coalescedOptions
-                        ? api.saveSession(persisted, coalescedOptions)
-                        : api.saveSession(persisted))
+                      durableSession = coalescedOptions
+                        ? await api.saveSession(persisted, coalescedOptions)
+                        : await api.saveSession(persisted)
                     } catch (error) {
-                      reportPersistenceError(error, 'session-save')
-                      throw error
+                      try {
+                        durableSession = await recoverRevisionConflict(
+                          error,
+                          persisted,
+                          coalescedOptions,
+                          api.saveSession
+                        )
+                        recoveredRevisionConflict = true
+                      } catch (finalError) {
+                        reportPersistenceError(finalError, 'session-save')
+                        throw finalError
+                      }
                     }
+                    acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
+                    acknowledgedSessions.set(session.id, durableSession)
                     observePersistencePhase('session-apply-durable', () =>
-                      applyDurableSession(durableSession, coalescedOptions)
+                      applyDurableSession(
+                        durableSession,
+                        coalescedOptions,
+                        recoveredRevisionConflict
+                      )
                     )
                     return durableSession
                   },
@@ -573,6 +818,11 @@ const createStoreSaver = (
 
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
 const useSessionPersistence = (): SessionPersistenceState => {
+  const { t } = useTranslation()
+  const translateRef = useRef(t)
+  useEffect(() => {
+    translateRef.current = t
+  }, [t])
   const [isHydrated, setIsHydrated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isReady, setIsReady] = useState(false)
@@ -588,6 +838,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
   const failedConflictRebaseFields = useRef(new Map<string, SessionConflictRebaseField[]>())
+  const revisionConflictTargets = useRef(new Set<string>())
   const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
@@ -610,6 +861,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {
+    if (revisionConflictTargets.current.size > 0) {
+      retryLoad()
+      return
+    }
     const saver = saverRef.current
     if (!saver || failedWriteTargets.current.size === 0) return
 
@@ -617,7 +872,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
     pruneRemovedSessionWriteTargets(
       failedWriteTargets.current,
       state.sessions,
-      failedConflictRebaseFields.current
+      failedConflictRebaseFields.current,
+      revisionConflictTargets.current,
+      unresolvedSessionRevisionConflictTargets
     )
     if (failedWriteTargets.current.size === 0) {
       setWriteError(undefined)
@@ -628,7 +885,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       forceTargets: new Set(failedWriteTargets.current),
       conflictRebaseFieldsByTarget: new Map(failedConflictRebaseFields.current)
     }).catch(reportPersistenceError)
-  }, [])
+  }, [retryLoad])
 
   useEffect(() => {
     let isMounted = true
@@ -648,6 +905,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
           preferredSelection
         )
         if (!result || !isMounted) return
+        unresolvedSessionRevisionConflictTargets.clear()
+        revisionConflictTargets.current.clear()
         setIsHydrated(true)
         const loadWarnings = result.diagnostics?.warnings ?? []
         const sessionWarningCount = loadWarnings.filter(
@@ -727,6 +986,23 @@ const useSessionPersistence = (): SessionPersistenceState => {
           onFailure: (target, _error, context) => {
             if (!isMounted) return
             failedWriteTargets.current.add(target)
+            if (isSessionRevisionConflictError(_error)) {
+              revisionConflictTargets.current.add(target)
+              unresolvedSessionRevisionConflictTargets.add(target)
+              pruneRemovedSessionWriteTargets(
+                failedWriteTargets.current,
+                useSessionStore.getState().sessions,
+                failedConflictRebaseFields.current,
+                revisionConflictTargets.current,
+                unresolvedSessionRevisionConflictTargets
+              )
+              if (!failedWriteTargets.current.has(target)) {
+                if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+                return
+              }
+              setWriteError(translateRef.current(SESSION_REVISION_CONFLICT_WRITE_ERROR))
+              return
+            }
             const conflictRebaseFields = context.conflictRebaseFields
             if (conflictRebaseFields && conflictRebaseFields.length > 0) {
               failedConflictRebaseFields.current.set(target, [
@@ -739,7 +1015,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
             pruneRemovedSessionWriteTargets(
               failedWriteTargets.current,
               useSessionStore.getState().sessions,
-              failedConflictRebaseFields.current
+              failedConflictRebaseFields.current,
+              revisionConflictTargets.current,
+              unresolvedSessionRevisionConflictTargets
             )
             // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
             // must not resurrect a retry target for a Session that no longer exists in the store.
@@ -753,6 +1031,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
             if (!isMounted) return
             failedWriteTargets.current.delete(target)
             failedConflictRebaseFields.current.delete(target)
+            revisionConflictTargets.current.delete(target)
+            unresolvedSessionRevisionConflictTargets.delete(target)
             if (target === 'manifest' && retryManifestWritePending.current) {
               retryManifestWritePending.current = false
               setIsReady(true)
@@ -770,7 +1050,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
         pruneRemovedSessionWriteTargets(
           failedWriteTargets.current,
           state.sessions,
-          failedConflictRebaseFields.current
+          failedConflictRebaseFields.current,
+          revisionConflictTargets.current,
+          unresolvedSessionRevisionConflictTargets
         )
         if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         void save(state).catch(reportPersistenceError)

@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import { ChevronDown } from 'lucide-react'
+import { RadioGroup } from 'radix-ui'
 import { useMemo, useState } from 'react'
 import { useTranslation, Trans } from 'react-i18next'
 
@@ -378,30 +379,20 @@ export function ConnectorAddForm({
             )}
           </div>
         ) : null}
-        <div
-          role="radiogroup"
+        <RadioGroup.Root
           aria-label={t('Connector type')}
+          value={mode}
+          onValueChange={(value) => switchMode(value as ConnectorMode)}
+          orientation="horizontal"
           className="inline-flex w-fit items-center rounded-lg bg-muted p-0.5"
         >
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'local'}
-            onClick={() => switchMode('local')}
-            className={segmentButtonClassName(mode === 'local')}
-          >
+          <RadioGroup.Item value="local" className={segmentButtonClassName(mode === 'local')}>
             {t('Local command')}
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'remote'}
-            onClick={() => switchMode('remote')}
-            className={segmentButtonClassName(mode === 'remote')}
-          >
+          </RadioGroup.Item>
+          <RadioGroup.Item value="remote" className={segmentButtonClassName(mode === 'remote')}>
             {t('Remote server')}
-          </button>
-        </div>
+          </RadioGroup.Item>
+        </RadioGroup.Root>
 
         <div data-slot="settings-editor-field" className={fieldClassName}>
           <label className={fieldLabelClassName} htmlFor="connector-name">

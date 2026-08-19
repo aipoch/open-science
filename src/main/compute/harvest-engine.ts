@@ -24,11 +24,17 @@ import { dirname, join } from 'node:path'
 import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
-import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
-import { resolveSshTarget } from './ssh-runner'
-import type { ScpRunner } from './scp-runner'
-import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './scp-runner'
-import { quoteRemotePath } from './job-dispatcher'
+import {
+  classifyConnectionFailure,
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from './connection-broker'
+import {
+  quoteRemotePath,
+  SHELL_UNSAFE_CHARS,
+  validateRelativeTransferPath
+} from './remote-path-security'
 import {
   classifyFiles,
   HARVEST_MAX_FILE_MB,
@@ -102,28 +108,23 @@ const ENUMERATE_TIMEOUT_MS = 60_000
  * Returns FileEntry[] (relative paths + byte sizes). Throws on SSH failure.
  */
 export const enumerateRemoteFiles = async (
-  sshRunner: SshRunner,
-  target: ResolvedSshTarget,
+  connection: ComputeConnectionLease,
   remoteWorkdir: string
 ): Promise<FileEntry[]> => {
   // Single-quote the workdir path for safe embedding in the SSH command.
   const quotedWorkdir = quoteRemotePath(remoteWorkdir)
   const cmd = `find ${quotedWorkdir} -type f -printf '%P\\t%s\\n' 2>/dev/null || true`
 
-  const result = await sshRunner.run(target, cmd, {
+  const result = await connection.run(cmd, {
     timeoutMs: ENUMERATE_TIMEOUT_MS,
     loginShell: false,
     maxOutputBytes: 4 * 1024 * 1024 // 4 MB cap — a listing of millions of files
   })
-
-  if (result.timedOut) {
-    throw new Error('SSH enumerate timed out')
-  }
+  const connectionFailure = classifyConnectionFailure(result, false)
+  if (connectionFailure) throw connectionFailure
 
   if (result.exitCode !== 0 && result.exitCode !== null) {
-    throw new Error(
-      `SSH enumerate failed (exit ${result.exitCode}): ${result.stderr.trim() || '(no stderr)'}`
-    )
+    throw new Error('Remote file enumeration failed.')
   }
 
   // Check if output was truncated (exceeds 4MB cap). A huge directory listing would lose trailing
@@ -159,12 +160,7 @@ export const enumerateRemoteFiles = async (
 // Validates a relative file path from the remote listing before using it in an scp arg.
 // Returns an error string on rejection, undefined on success.
 const validateRelativePath = (path: string): string | undefined => {
-  if (!path) return 'empty path'
-  if (path.startsWith('/')) return 'absolute path not allowed'
-  if (path.includes('..')) return 'path traversal not allowed'
-  if (GLOB_CHARS.test(path)) return 'glob characters not allowed'
-  if (SHELL_UNSAFE_CHARS.test(path)) return 'shell-unsafe characters in path'
-  return undefined
+  return validateRelativeTransferPath(path)
 }
 
 type HarvestDownloadLimitError = Error & { limitExceeded?: boolean }
@@ -175,8 +171,7 @@ type HarvestDownloadLimitError = Error & { limitExceeded?: boolean }
  * the application-owned byte budget. Test runners without that capability retain the SCP seam.
  */
 const downloadFile = async (
-  scpRunner: ScpRunner,
-  target: ResolvedSshTarget,
+  connection: ComputeConnectionLease,
   remoteWorkdir: string,
   relativePath: string,
   localDestPath: string,
@@ -197,15 +192,9 @@ const downloadFile = async (
 
   await mkdir(dirname(localDestPath), { recursive: true })
 
-  if (!scpRunner.copyFromRemoteBounded) {
-    throw new Error('bounded remote copy is unavailable')
-  }
-  const result = await scpRunner.copyFromRemoteBounded(
-    target,
-    absRemotePath,
-    localDestPath,
-    maxBytes
-  )
+  const result = await connection.download(absRemotePath, localDestPath, maxBytes)
+  const connectionFailure = classifyConnectionFailure(result, false)
+  if (connectionFailure) throw connectionFailure
   if (result.exceeded) {
     const error = new Error(
       'download exceeded the allowed byte budget for ' + relativePath
@@ -215,8 +204,7 @@ const downloadFile = async (
   }
   if (result.timedOut) throw new Error('download timed out for ' + relativePath)
   if (result.exitCode !== 0) {
-    const detail = result.stderr.trim() || 'remote copy exited ' + String(result.exitCode)
-    throw new Error('remote copy failed for ' + relativePath + ': ' + detail)
+    throw new Error('remote copy failed for ' + relativePath)
   }
   return result.bytesWritten
 }
@@ -226,13 +214,10 @@ const downloadFile = async (
 // ---------------------------------------------------------------------------
 
 export type HarvestDeps = {
-  sshRunner: SshRunner
-  scpRunner: ScpRunner
+  connectionBroker: ComputeConnectionBrokerAcquirer
   hostRepository: Pick<ComputeHostRepository, 'get'>
   jobRepository: Pick<ComputeJobRepository, 'update'>
   storageRoot: string
-  /** Override resolveSshTarget for tests (defaults to real implementation). */
-  resolveSshTargetFn?: typeof resolveSshTarget
   /** Override free-space discovery for deterministic tests. */
   getFreeDiskBytesFn?: (path: string) => Promise<number>
   /**
@@ -285,13 +270,20 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
   // Serialize before acquiring the data-root writer lease so queued harvests do not unnecessarily
   // delay a storage migration. The active harvest keeps its lease through every download.
   return await withHarvestBudgetLock(async () =>
-    withDataRootWrite(async () => harvestJobUnchecked(job, deps))
+    withDataRootWrite(async () => {
+      try {
+        await harvestJobUnchecked(job, deps)
+      } catch (error) {
+        if (!(error instanceof ComputeConnectionError)) throw error
+        // Connection failures are recoverable. Keep harvestedAt unset so the restart/tick scan can
+        // retry after credentials, host keys, or network reachability are repaired.
+      }
+    })
   )
 }
 
 const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
-  const { sshRunner, scpRunner, hostRepository, jobRepository, storageRoot } = deps
-  const resolveFn = deps.resolveSshTargetFn ?? resolveSshTarget
+  const { connectionBroker, hostRepository, jobRepository, storageRoot } = deps
 
   const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
   const featuredDir = join(harvestDir, 'featured')
@@ -357,6 +349,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
         finished_at: updatedJob.finished_at,
         exit_code: updatedJob.exit_code,
         error_code: updatedJob.error_code,
+        last_poll_error: updatedJob.last_poll_error,
         remote_workdir: updatedJob.remote_workdir,
         stdout_tail: updatedJob.stdout_tail,
         stderr_tail: updatedJob.stderr_tail,
@@ -365,7 +358,8 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
         featured_files: payload.featured_files,
         featured_file_count: payload.featured_file_count,
         left_on_remote_count: payload.left_on_remote_count,
-        left_on_remote: payload.left_on_remote
+        left_on_remote: payload.left_on_remote,
+        harvest_error: updatedJob.harvest_error
       }
 
       deps.broadcast?.(summary)
@@ -389,25 +383,20 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     return
   }
 
-  // ── 2. Resolve SSH target ───────────────────────────────────────────────────
-  let target: ResolvedSshTarget
-  try {
-    target = await resolveFn(host.sshAlias, host.sshOverrides)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    await finalizeAndReturn(`ssh resolve failed: ${msg}`, '[]')
-    return
-  }
+  // ── 2. Acquire one Host/revision-scoped connection lease ────────────────────
+  const connection: ComputeConnectionLease = await connectionBroker.acquire(job.provider_id, {
+    intent: 'job_harvest'
+  })
 
   const remoteWorkdir = job.remote_workdir ?? `~/.openscience/jobs/${job.job_id}`
 
   // ── 3. Enumerate remote files ───────────────────────────────────────────────
   let remoteFiles: FileEntry[]
   try {
-    remoteFiles = await enumerateRemoteFiles(sshRunner, target, remoteWorkdir)
+    remoteFiles = await enumerateRemoteFiles(connection, remoteWorkdir)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    await finalizeAndReturn(`enumerate failed: ${msg}`, '[]')
+    if (err instanceof ComputeConnectionError) throw err
+    await finalizeAndReturn('Remote file enumeration failed.', '[]')
     return
   }
 
@@ -509,8 +498,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     const temporaryPath = `${localPath}.${randomUUID()}.partial`
     try {
       const bytesWritten = await downloadFile(
-        scpRunner,
-        target,
+        connection,
         remoteWorkdir,
         relativePath,
         temporaryPath,
@@ -521,6 +509,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
       return true
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined)
+      if (error instanceof ComputeConnectionError) throw error
       const candidate = error as HarvestDownloadLimitError
       if (candidate.limitExceeded) {
         const reason =

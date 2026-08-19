@@ -11,6 +11,7 @@ import { FileBrowserModal } from './FileBrowserModal'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -212,6 +213,40 @@ describe('FileBrowserModal', () => {
     })
 
     expect(document.body.textContent).toContain("Couldn't open this path.")
+  })
+
+  it('offers credential recovery for the affected Host without a password modal', async () => {
+    const openSettingsToComputeAuthentication = vi.fn()
+    useSettingsStore.setState({ openSettingsToComputeAuthentication })
+    setComputeApi({
+      listDir: vi.fn().mockRejectedValue({
+        message: 'Authentication failed. Verify the username and password.',
+        remoteFsError: {
+          detail: 'Authentication failed. Verify the username and password.',
+          remoteKind: 'connection',
+          authenticationCode: 'authentication_failed'
+        }
+      }),
+      bookmarksGet: vi.fn().mockResolvedValue([]),
+      bookmarksSet: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId="ssh:biowulf" />
+      )
+      await Promise.resolve()
+    })
+    const manage = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Manage credentials'
+    )
+    await act(async () => manage?.click())
+
+    expect(openSettingsToComputeAuthentication).toHaveBeenCalledWith(
+      'ssh:biowulf',
+      'authentication_failed'
+    )
+    expect(document.querySelector('input[type="password"]')).toBeNull()
   })
 
   it('shows detail panel when a file is selected', async () => {

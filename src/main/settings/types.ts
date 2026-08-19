@@ -26,6 +26,7 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import type { LanguagePreference } from '../../shared/locale'
 import type { AgentFrameworkId } from '../agent-framework'
 import type {
   OAuthClientInformationMixed,
@@ -169,6 +170,9 @@ export type StoredSettings = {
   notificationsEnabled?: boolean
   // Conversation-driven Skill package import. Absent means enabled.
   conversationSkillImportEnabled?: boolean
+  // Interface language preference shared by desktop renderer and native surfaces. Absent means the
+  // renderer may import the historical localStorage value once; otherwise the default is 'system'.
+  localePreference?: LanguagePreference
   // Windows titlebar-close behavior. Absent means ask every time.
   closePreference?: CloseActionPreference
   // Last Files-tab source filter (artifact collection, this computer, or a granted folder).

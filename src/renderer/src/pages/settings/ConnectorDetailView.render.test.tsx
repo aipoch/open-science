@@ -179,6 +179,61 @@ describe('ConnectorDetailView', () => {
     expect(useSettingsStore.getState().setConnectorAutoAllow).toHaveBeenCalledWith('ensembl', true)
   })
 
+  it('shows a loading status before the Connector detail settles', () => {
+    ;(window.api.settings.getConnectorDetail as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise(() => undefined)
+    )
+
+    act(() => {
+      root.render(<ConnectorDetailView id="ensembl" />)
+    })
+
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
+      'Loading Connector…'
+    )
+  })
+
+  it('shows a retryable error when Connector detail loading fails', async () => {
+    const getConnectorDetail = window.api.settings.getConnectorDetail as ReturnType<typeof vi.fn>
+    getConnectorDetail
+      .mockRejectedValueOnce(new Error('detail unavailable'))
+      .mockResolvedValueOnce(detail)
+
+    await act(async () => {
+      root.render(<ConnectorDetailView id="ensembl" />)
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Open Science could not load this Connector.'
+    )
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => {
+      retry?.click()
+      await Promise.resolve()
+    })
+    expect(getConnectorDetail).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('lookup_gene')
+  })
+
+  it('reports a rejected Connector policy change after rollback', async () => {
+    useSettingsStore.setState({
+      setConnectorEnabled: vi.fn().mockRejectedValue(new Error('write failed'))
+    })
+    await render()
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save this setting. The previous value was restored.'
+    )
+  })
+
   it('tracks live store state so the header toggle flips both directions', async () => {
     // Seed the connectors list as ConnectorsPanel.loadConnectors would; the header switch must read
     // this reconciled state, not the one-time detail fetch, or it sticks and only fires one way.

@@ -22,6 +22,7 @@ import {
 
 export {
   createInitialSessionState,
+  getExternallyHydratedSessionAuthority,
   isExternallyHydratedSession,
   toPersistedSession,
   type ActiveRun,
@@ -41,6 +42,7 @@ export {
   isSessionWaitReason,
   projectSessionActionability,
   resolveRootPermissionPending,
+  sessionAwaitsHistoryReplay,
   type SessionActionabilityFacts,
   type SessionActionabilityProjection,
   type SessionActionAvailability,

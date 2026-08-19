@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { ComputeJobRepository } from './job-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
+import { dispatchJob } from './job-dispatcher'
+import { ComputeHostRepository } from './repository'
 
 // Exercises ComputeJobRepository against the current application schema in a real SQLite database.
 // Schema migration behavior is owned by src/main/database/migration-service.test.ts.
@@ -23,6 +26,45 @@ afterEach(async () => {
 })
 
 describe('ComputeJob repository (SQLite integration)', () => {
+  it('persists credential conflicts reported while dispatching a migrated job', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-credential-conflict-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+
+    const hostRepository = new ComputeHostRepository(() => Promise.resolve(client))
+    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const host = await hostRepository.create({ sshAlias: 'credential-conflict-host' })
+    await jobRepository.create({
+      id: 'credential-conflict-job',
+      providerId: host.providerId,
+      shape: 'direct_ssh',
+      sessionId: 'credential-conflict-session',
+      projectId: 'credential-conflict-project',
+      intent: 'verify credentials',
+      command: 'true',
+      commandHash: 'credential-conflict-hash',
+      initialStatus: 'submitted'
+    })
+    const connectionBroker: ComputeConnectionBrokerAcquirer = {
+      acquire: async () => {
+        throw new ComputeConnectionError('credential_conflict')
+      }
+    }
+
+    await dispatchJob('credential-conflict-job', {
+      connectionBroker,
+      hostRepository,
+      jobRepository
+    })
+
+    expect(await jobRepository.get('credential-conflict-job')).toMatchObject({
+      status: 'error',
+      error_code: 'credential_conflict'
+    })
+  })
+
   it('round-trips CRUD', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-'))
 
@@ -276,6 +318,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const unharvested = await repo.findTerminalUnharvested()
     expect(unharvested).toHaveLength(1)
     expect(unharvested[0]!.job_id).toBe('job-success-unharvested')
+    await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:test')).resolves.toBe(true)
+    await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:other')).resolves.toBe(false)
   })
 
   it('findPendingNotifications returns jobs with notifiedAt set and notificationConsumedAt null', async () => {

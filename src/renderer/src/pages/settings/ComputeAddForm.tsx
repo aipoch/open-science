@@ -1,8 +1,7 @@
-import { ChevronDown } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Trans, useTranslation } from 'react-i18next'
+import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import type { CreateComputeHostRequest, SshOverrides } from '../../../../shared/compute'
+import type { ComputeAuthenticationMode } from '../../../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,6 +14,17 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useComputeStore } from '@/stores/compute-store'
+import {
+  ComputeAdvancedSettings,
+  ComputeAuthenticationFields,
+  ComputeAuthenticationIntroduction,
+  ComputeAuthenticationSection
+} from './ComputeAuthenticationSection'
+import {
+  computeAuthenticationErrorCopy,
+  getComputeAuthenticationStrategy,
+  type ComputeAuthenticationValues
+} from './compute-authentication-form'
 
 type ComputeAddFormProps = {
   // Called with the new host's provider id after a successful create (SettingsPage navigates to the
@@ -23,34 +33,13 @@ type ComputeAddFormProps = {
   onCancel: () => void
 }
 
-// Builds the create request from the form, trimming and dropping empty advanced overrides so an empty
-// section is stored as no overrides (never "{}"). Only user/port/identity — never credentials.
-const buildRequest = (
-  alias: string,
-  detailsDoc: string,
-  user: string,
-  port: string,
-  identityFile: string
-): CreateComputeHostRequest => {
-  const overrides: SshOverrides = {}
-  if (user.trim()) overrides.user = user.trim()
-  const portNum = Number.parseInt(port.trim(), 10)
-  if (port.trim() !== '' && Number.isFinite(portNum)) overrides.port = portNum
-  if (identityFile.trim()) overrides.identityFile = identityFile.trim()
-
-  return {
-    sshAlias: alias.trim(),
-    detailsDoc: detailsDoc.trim() ? detailsDoc : undefined,
-    sshOverrides: Object.keys(overrides).length > 0 ? overrides : undefined
-  }
-}
-
 export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): React.JSX.Element {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
   const sshAliases = useComputeStore((state) => state.sshAliases)
   const loadSshAliases = useComputeStore((state) => state.loadSshAliases)
   const createHost = useComputeStore((state) => state.createHost)
+  const createPasswordHost = useComputeStore((state) => state.createPasswordHost)
   const probeHost = useComputeStore((state) => state.probeHost)
 
   const [alias, setAlias] = useState('')
@@ -59,18 +48,41 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   const [user, setUser] = useState('')
   const [port, setPort] = useState('')
   const [identityFile, setIdentityFile] = useState('')
+  const [authenticationMode, setAuthenticationMode] =
+    useState<ComputeAuthenticationMode>('ssh_config')
+  const [password, setPassword] = useState('')
+  const [operationId] = useState(() => crypto.randomUUID())
+  const [passwordCapability, setPasswordCapability] = useState<
+    Awaited<ReturnType<Window['api']['compute']['passwordCapability']>> | undefined
+  >()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     void loadSshAliases()
+    void window.api.compute
+      .passwordCapability()
+      .then(setPasswordCapability)
+      .catch(() =>
+        setPasswordCapability({ available: false, reason: 'secure_storage_unavailable' })
+      )
   }, [loadSshAliases])
 
   const detailsTooLong = detailsDoc.length > DETAILS_DOC_MAX_LENGTH
-  const canSubmit = useMemo(
-    () => alias.trim().length > 0 && !detailsTooLong && !isSubmitting,
-    [alias, detailsTooLong, isSubmitting]
-  )
+  const authenticationValues: ComputeAuthenticationValues = {
+    mode: authenticationMode,
+    user,
+    port,
+    identityFile,
+    password
+  }
+  const authenticationStrategy = getComputeAuthenticationStrategy(authenticationMode)
+  const canSubmit =
+    alias.trim().length > 0 &&
+    alias.trim().length <= 255 &&
+    !detailsTooLong &&
+    !isSubmitting &&
+    authenticationStrategy.isValid(authenticationValues, passwordCapability)
 
   const handleSubmit = async (): Promise<void> => {
     if (!canSubmit) return
@@ -78,14 +90,23 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
     setError(undefined)
 
     try {
-      const host = await createHost(buildRequest(alias, detailsDoc, user, port, identityFile))
+      const host = await authenticationStrategy.create(
+        authenticationValues,
+        {
+          sshAlias: alias.trim(),
+          detailsDoc: detailsDoc.trim() ? detailsDoc : undefined,
+          operationId
+        },
+        { createSshConfigHost: createHost, createPasswordHost }
+      )
+      setPassword('')
       // Navigate to the detail page immediately; the probe runs in the background so the detail page
       // can show "Probing…" state (design.md §7: create record → auto-probe → redirect to detail).
       onCreated(host.providerId)
       // Fire-and-forget: errors are captured as probeResult.ok=false and surfaced in the detail UI.
       void probeHost(host.providerId).catch(() => undefined)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('Could not add host.'))
+      setError(computeAuthenticationErrorCopy(err, t))
     } finally {
       setIsSubmitting(false)
     }
@@ -94,10 +115,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   return (
     <div className="p-5">
       <p className="mb-5 text-[13px] leading-5 text-muted-foreground">
-        <Trans
-          i18nKey="Pick a host alias from your <path>~/.ssh/config</path>, or type one. Open Science will use it as a compute provider via your existing SSH key — no credentials are copied."
-          components={{ path: <code className="font-mono text-xs" /> }}
-        />
+        <ComputeAuthenticationIntroduction strategy={authenticationStrategy} />
       </p>
 
       <div className="flex flex-col gap-5">
@@ -134,6 +152,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
             value={alias}
             onChange={(event) => setAlias(event.target.value)}
             placeholder={t('e.g. biowulf, lab-gpu, coder.myworkspace')}
+            required
           />
         </div>
 
@@ -163,80 +182,46 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
           />
         </div>
 
-        {/* Advanced overrides (collapsible). Values are stored as sshOverrides JSON; never credentials. */}
-        <div className="rounded-xl border border-border">
-          <button
-            type="button"
-            aria-expanded={advancedOpen}
-            onClick={() => setAdvancedOpen((open) => !open)}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-foreground"
-          >
-            <ChevronDown
-              className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
-                advancedOpen ? '' : '-rotate-90'
-              }`}
-              aria-hidden="true"
-            />
-            {t('Advanced (override ~/.ssh/config)')}
-          </button>
+        <ComputeAuthenticationSection
+          mode={authenticationMode}
+          passwordCapability={passwordCapability}
+          onModeChange={(mode) => {
+            const strategy = getComputeAuthenticationStrategy(mode)
+            setAuthenticationMode(mode)
+            setAdvancedOpen(false)
+            if (!strategy.usesPassword) setPassword('')
+          }}
+        />
 
-          {advancedOpen ? (
-            <div className="flex flex-col gap-4 border-t border-border px-3 py-3">
-              <p className="text-xs text-muted-foreground">
-                <Trans
-                  i18nKey="By default Open Science resolves connection details by running <code>ssh -G</code> against the alias in your <path>~/.ssh/config</path>. Set these only if you need to override that."
-                  components={{
-                    code: <code className="font-mono" />,
-                    path: <code className="font-mono" />
-                  }}
-                />
-              </p>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="compute-user" className="text-sm font-medium text-foreground">
-                  {t('User')}
-                </label>
-                <Input
-                  id="compute-user"
-                  value={user}
-                  onChange={(event) => setUser(event.target.value)}
-                  placeholder="argocd"
-                />
-                <span className="text-xs text-muted-foreground">
-                  {t('Leave empty to use User from ~/.ssh/config.')}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="compute-port" className="text-sm font-medium text-foreground">
-                  {t('Port')}
-                </label>
-                <Input
-                  id="compute-port"
-                  inputMode="numeric"
-                  value={port}
-                  onChange={(event) => setPort(event.target.value)}
-                  placeholder="22"
-                />
-                <span className="text-xs text-muted-foreground">
-                  {t('Leave empty for 22 or Port from ~/.ssh/config.')}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="compute-identity" className="text-sm font-medium text-foreground">
-                  {t('Identity file')}
-                </label>
-                <Input
-                  id="compute-identity"
-                  value={identityFile}
-                  onChange={(event) => setIdentityFile(event.target.value)}
-                  placeholder="~/.ssh/id_ed25519"
-                />
-                <span className="text-xs text-muted-foreground">
-                  {t('Leave empty for ssh-agent / IdentityFile from ~/.ssh/config.')}
-                </span>
-              </div>
-            </div>
-          ) : null}
-        </div>
+        {authenticationStrategy.fieldSet === 'password' ? (
+          <div className="flex flex-col gap-4">
+            <ComputeAuthenticationFields
+              strategy={authenticationStrategy}
+              user={user}
+              port={port}
+              identityFile={identityFile}
+              password={password}
+              onUserChange={setUser}
+              onPortChange={setPort}
+              onIdentityFileChange={setIdentityFile}
+              onPasswordChange={setPassword}
+            />
+          </div>
+        ) : (
+          <ComputeAdvancedSettings
+            strategy={authenticationStrategy}
+            open={advancedOpen}
+            user={user}
+            port={port}
+            identityFile={identityFile}
+            password={password}
+            onOpenChange={setAdvancedOpen}
+            onUserChange={setUser}
+            onPortChange={setPort}
+            onIdentityFileChange={setIdentityFile}
+            onPasswordChange={setPassword}
+          />
+        )}
 
         {error ? (
           <p role="alert" className="text-sm text-destructive">
@@ -245,11 +230,19 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         ) : null}
 
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={isSubmitting}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setPassword('')
+              onCancel()
+            }}
+            disabled={isSubmitting}
+          >
             {tCommon('Cancel')}
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-            {isSubmitting ? t('Adding host…') : t('Add')}
+            {isSubmitting ? authenticationStrategy.progressLabel(t) : t('Add')}
           </Button>
         </div>
       </div>

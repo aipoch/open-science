@@ -125,8 +125,7 @@ describe('connectOfficePreviewRuntime', () => {
       expect(container.dataset.officePreviewReady).toBe('false')
       options.reportState({
         sessionId: start.sessionId,
-        phase: 'rendering',
-        title: 'Rendering the preview'
+        phase: 'rendering'
       })
       expect(container.dataset.officePreviewReady).toBe('false')
       options.reportState({ sessionId: start.sessionId, phase: 'ready' })

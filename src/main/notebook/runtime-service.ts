@@ -41,6 +41,7 @@ import {
 import { NotebookExportReader } from './export-reader'
 import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import type { ProbeDeps } from './mirror-probe'
 import {
   installPackages as installPackagesDefault,
@@ -209,6 +210,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   saveIpynbAll?: (
     files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>
   ) => Promise<ExportNotebookAllResult>
+  translate?: NativeTranslator
   environmentStateTracker?: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -227,13 +229,14 @@ type RuntimeSession = NotebookSessionAggregate
 
 const saveIpynbWithDialog = async (
   suggestedName: string,
-  data: string
+  data: string,
+  translate: NativeTranslator = englishNativeTranslator
 ): Promise<ExportNotebookResult> => {
   const { app, dialog } = await import('electron')
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: join(app.getPath('downloads'), suggestedName),
-    title: 'Export notebook',
-    filters: [{ name: 'Jupyter Notebook', extensions: ['ipynb'] }]
+    title: translate('Export notebook'),
+    filters: [{ name: translate('Jupyter Notebook'), extensions: ['ipynb'] }]
   })
 
   if (canceled || !filePath) return { saved: false }
@@ -869,7 +872,8 @@ class NotebookRuntimeService {
   // scoped to whichever data kernel was most recently active when repl ran.
   async exportIpynb(request: ExportNotebookKernelRequest): Promise<ExportNotebookResult> {
     const file = await this.exportReader.readKernel(request)
-    return (this.options.saveIpynb ?? saveIpynbWithDialog)(file.name, file.data)
+    if (this.options.saveIpynb) return this.options.saveIpynb(file.name, file.data)
+    return saveIpynbWithDialog(file.name, file.data, this.options.translate)
   }
 
   // The "Download all" path: writes one .ipynb per data kernel that has runs to a directory the
@@ -878,7 +882,8 @@ class NotebookRuntimeService {
   // main button, so the renderer gates the secondary button on `kindsWithRuns.has('python') && has('r')`.
   async exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult> {
     const files = await this.exportReader.readAll(request)
-    return (this.options.saveIpynbAll ?? saveIpynbAll)(files)
+    if (this.options.saveIpynbAll) return this.options.saveIpynbAll(files)
+    return saveIpynbAll(files, undefined, this.options.translate)
   }
 
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the

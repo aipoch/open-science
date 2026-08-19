@@ -1,10 +1,13 @@
 import { create } from 'zustand'
 
 import type {
+  ChangeComputeHostAuthenticationRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
   CreateComputeHostRequest,
+  CreatePasswordComputeHostRequest,
+  ResetPasswordComputeHostRequest,
   DeleteComputeHostRequest,
   ProbeResult
 } from '../../../shared/compute'
@@ -25,6 +28,9 @@ type ComputeStore = ComputeStoreData & {
   loadHosts: () => Promise<void>
   loadSshAliases: () => Promise<void>
   createHost: (request: CreateComputeHostRequest) => Promise<ComputeHost>
+  createPasswordHost: (request: CreatePasswordComputeHostRequest) => Promise<ComputeHost>
+  resetPassword: (request: ResetPasswordComputeHostRequest) => Promise<ComputeHost>
+  changeAuthentication: (request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>
   deleteHost: (providerId: string) => Promise<void>
   // Runs the probe bundle and updates the cached host with the returned probeResult.
   probeHost: (providerId: string) => Promise<ProbeResult>
@@ -60,7 +66,7 @@ export const createInitialComputeState = (): ComputeStoreData => ({
 })
 
 // Renderer cache of the SQLite-backed compute host list; the DB remains the source of truth.
-export const useComputeStore = create<ComputeStore>((set) => ({
+export const useComputeStore = create<ComputeStore>((set, get) => ({
   ...createInitialComputeState(),
 
   // Loads the full host list. A DB/IPC failure is recorded (not thrown) so the panel can show an
@@ -103,10 +109,75 @@ export const useComputeStore = create<ComputeStore>((set) => ({
     return host
   },
 
+  createPasswordHost: async (request) => {
+    const result = await window.api.compute.createPassword(request)
+    if (!result.ok) {
+      throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
+    }
+    const host = result.host
+    set((state) => ({
+      hosts: sortByCreatedDesc([
+        host,
+        ...state.hosts.filter((candidate) => candidate.providerId !== host.providerId)
+      ]),
+      loadError: undefined
+    }))
+    return host
+  },
+
+  resetPassword: async (request) => {
+    const result = await window.api.compute.resetPassword(request)
+    if (!result.ok) {
+      throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
+    }
+    set((state) => ({
+      hosts: state.hosts.map((host) =>
+        host.providerId === result.host.providerId ? result.host : host
+      )
+    }))
+    // The committed reset clears the persisted probe snapshot (main nulls it because the result
+    // belongs to the previous credential revision). Re-probe so the Host's status refreshes on its
+    // own instead of sitting at "Not probed". Fire-and-forget, like the Add form's post-create
+    // probe: failures become probeResult.ok=false and surface in the detail UI.
+    void get()
+      .probeHost(result.host.providerId)
+      .catch(() => undefined)
+    return result.host
+  },
+
+  changeAuthentication: async (request) => {
+    const result = await window.api.compute.changeAuthentication(request)
+    if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
+    const host = result.host
+    set((state) => ({
+      hosts: state.hosts.map((candidate) =>
+        candidate.providerId === host.providerId ? host : candidate
+      ),
+      loadError: undefined
+    }))
+    // Same as resetPassword: the commit clears the persisted probe snapshot, so re-probe in the
+    // background. Without this, a successful "Test and save" leaves the Host looking disconnected
+    // ("Not probed") even though the candidate connection was just verified.
+    void get()
+      .probeHost(host.providerId)
+      .catch(() => undefined)
+    return host
+  },
+
   // Removes a host by provider id and drops it from the cache.
   deleteHost: async (providerId) => {
     const request: DeleteComputeHostRequest = { providerId }
-    await window.api.compute.delete(request)
+    try {
+      await window.api.compute.delete(request)
+    } catch (error) {
+      let host: ComputeHost | null
+      try {
+        host = await window.api.compute.get(providerId)
+      } catch {
+        throw error
+      }
+      if (host) throw error
+    }
 
     set((state) => ({ hosts: state.hosts.filter((host) => host.providerId !== providerId) }))
   },

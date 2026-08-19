@@ -110,4 +110,26 @@ describe('settings navigation slice', () => {
       pendingSpecialistId: undefined
     })
   })
+
+  it('opens the exact Compute Host authentication recovery target', () => {
+    store.getState().openSettingsToComputeAuthentication('ssh:biowulf', 'authentication_failed')
+
+    expect(store.getState()).toMatchObject({
+      isSettingsOpen: true,
+      pendingSettingsPanel: undefined,
+      pendingComputeAuthentication: {
+        providerId: 'ssh:biowulf',
+        errorCode: 'authentication_failed'
+      }
+    })
+    const targetRequestId = store.getState().pendingComputeAuthentication!.requestId
+
+    store.getState().consumePendingComputeAuthentication()
+    expect(store.getState().pendingComputeAuthentication).toBeUndefined()
+
+    store.getState().openSettingsToComputeAuthentication('ssh:biowulf', 'authentication_failed')
+    expect(store.getState().pendingComputeAuthentication?.requestId).toBeGreaterThan(
+      targetRequestId
+    )
+  })
 })

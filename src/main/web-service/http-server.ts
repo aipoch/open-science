@@ -10,7 +10,10 @@ import { gzip } from 'node:zlib'
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
-import { toApplicationCommandErrorEnvelope } from '../../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope
+} from '../../shared/application-command-contract'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
 import {
@@ -41,6 +44,7 @@ import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
+const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const gzipAsync = promisify(gzip)
 
 // Remote Browser access is an application session, not authority over native host lifecycle and
@@ -102,6 +106,26 @@ type WebServerOptions = {
     versions: { electron: string; chrome: string; node: string }
   }
 }
+
+// Keep the remote payload allowlisted: the full bootstrap also carries host-local diagnostics.
+const remoteWebBootstrap = ({
+  appName,
+  appVersion,
+  platform,
+  versions
+}: WebServerOptions['bootstrap']): Omit<WebServerOptions['bootstrap'], 'configRoot'> => ({
+  appName,
+  appVersion,
+  platform,
+  versions
+})
+
+const publicApplicationCommandError = (
+  error: unknown
+): ReturnType<typeof toApplicationCommandErrorEnvelope> =>
+  error instanceof ApplicationCommandError
+    ? toApplicationCommandErrorEnvelope(error)
+    : { code: 'command-failed', message: INTERNAL_SERVER_ERROR_MESSAGE }
 
 export type ExternalWebAccessAuthorization = {
   kind: 'authorized' | 'authorized-pairing-manager'
@@ -281,7 +305,7 @@ const taskError = (response: ServerResponse, error: unknown): void => {
   json(response, 500, {
     error: {
       code: 'internal_error',
-      message: error instanceof Error ? error.message : 'Internal server error'
+      message: INTERNAL_SERVER_ERROR_MESSAGE
     }
   })
 }
@@ -553,7 +577,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           ? []
           : options.applicationCommands.remoteWeb.rejectedCommandNames()
         json(response, 200, {
-          ...options.bootstrap,
+          ...(auth.ok ? options.bootstrap : remoteWebBootstrap(options.bootstrap)),
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcChannels,
           eventStream: internalEventStream.cursor(),
@@ -571,8 +595,16 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           json(response, 404, { ok: false, error: 'Shutdown is not available.' })
           return
         }
+        const onShutdownRequest = options.onShutdownRequest
+        let shutdownScheduled = false
+        const scheduleShutdown = (): void => {
+          if (shutdownScheduled) return
+          shutdownScheduled = true
+          setImmediate(onShutdownRequest)
+        }
+        response.once('finish', scheduleShutdown)
+        response.once('close', scheduleShutdown)
         json(response, 202, { ok: true })
-        setImmediate(options.onShutdownRequest)
         return
       }
 
@@ -689,7 +721,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             webRpcError(response, 401, 'invalid_request', error.message)
             return
           }
-          const publicError = toApplicationCommandErrorEnvelope(error)
+          const publicError = publicApplicationCommandError(error)
           webRpcError(response, 500, publicError.code, publicError.message)
         }
         return
@@ -709,9 +741,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       response.writeHead(404).end()
-    } catch (error) {
+    } catch {
       json(response, 500, {
-        error: error instanceof Error ? error.message : 'Internal server error'
+        error: INTERNAL_SERVER_ERROR_MESSAGE
       })
     }
   })
@@ -845,12 +877,25 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       removeTaskProgressSink?.()
       for (const socket of sockets) socket.close()
       wsServer.close()
-      await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+      // Stop accepting connections before force-closing handlers that ignore caller cancellation.
+      const closePromise = new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+      let cleanupError: unknown
       try {
         clientLeases.dispose()
+      } catch (error) {
+        cleanupError = error
       } finally {
-        commandClient.dispose()
+        try {
+          commandClient.dispose()
+        } catch (error) {
+          cleanupError = cleanupError
+            ? new AggregateError([cleanupError, error], 'Web command client cleanup failed.')
+            : error
+        }
       }
+      server.closeAllConnections()
+      await closePromise
+      if (cleanupError) throw cleanupError
     }
   }
 }

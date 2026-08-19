@@ -8,35 +8,18 @@ import { stat } from 'node:fs/promises'
 import { platform } from 'node:os'
 import { join } from 'node:path'
 
+import {
+  GLOB_CHARS,
+  quoteRemotePath,
+  SHELL_UNSAFE_CHARS,
+  shellSingleQuote
+} from './remote-path-security'
 import type { ResolvedSshTarget } from './ssh-runner'
 
-// Glob metacharacters that must not appear in an import path (prevents shell expansion).
-// Exported so other compute modules (e.g. job input validation) share one source of truth.
-export const GLOB_CHARS = /[*?[\]{}\\]/
+// Preserve the established public exports while keeping the security policy in one module.
+export { GLOB_CHARS, SHELL_UNSAFE_CHARS, shellSingleQuote }
 
-// Shell-dangerous characters that must not appear in a path used as an scp remote spec.
-// Traditional scp (pre-OpenSSH-9 SCP/RCP protocol) passes the remote path through a remote
-// shell, so command-substitution / redirection / control chars in an attacker- or agent-supplied
-// path could execute as the user. scp's protocol default is version-dependent (SFTP on 9+), so we
-// reject these characters outright rather than rely on quoting, which is fragile across versions.
-// Control chars (0x00–0x1f, 0x7f) are included. Note: this deliberately rejects legitimate but
-// rare filenames containing `$` etc. on the transfer path — an acceptable trade for a security
-// boundary. Directory browsing (listDir) does NOT use this; it single-quotes for the ssh-exec
-// shell we fully control, preserving the ability to browse such names.
-// Exported so other compute modules (e.g. job input validation) share one source of truth.
-// eslint-disable-next-line no-control-regex
-export const SHELL_UNSAFE_CHARS = /[$`;|&<>()"'\x00-\x1f\x7f]/
-
-// Wraps a string in single quotes for safe embedding in a shell command we author (ssh-exec).
-// Inside single quotes the shell performs no expansion at all; the only character needing special
-// handling is the single quote itself, closed and re-opened via the '\'' idiom.
-export const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
-
-const shellRemotePath = (value: string): string => {
-  if (value === '~') return '~'
-  if (value.startsWith('~/')) return `~/${shellSingleQuote(value.slice(2))}`
-  return shellSingleQuote(value)
-}
+const shellRemotePath = quoteRemotePath
 
 // 2 GiB in bytes — hard upper limit for os-downloads destination.
 export const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
@@ -150,27 +133,49 @@ export type BoundedScpResult = ScpResult & {
   exceeded: boolean
 }
 
+export type ScpRunOptions = Readonly<{
+  env?: NodeJS.ProcessEnv
+  signal?: AbortSignal
+}>
+
 // Injectable scp runner interface for testability. The real implementation spawns system scp.
 export interface ScpRunner {
-  copy(scpBinary: string, args: string[], timeoutMs?: number): Promise<ScpResult>
+  copy(
+    scpBinary: string,
+    args: string[],
+    timeoutMs?: number,
+    options?: ScpRunOptions
+  ): Promise<ScpResult>
   copyFromRemoteBounded?(
     target: ResolvedSshTarget,
     remotePath: string,
     localPath: string,
     maxBytes: number,
-    timeoutMs?: number
+    timeoutMs?: number,
+    options?: ScpRunOptions
   ): Promise<BoundedScpResult>
 }
 
 // Production scp runner: spawns the system scp binary. No credentials are passed — key material
 // lives in the OS ssh-agent and is used transparently (BatchMode in scp args ensures no prompts).
 export class SystemScpRunner implements ScpRunner {
-  async copy(scpBinary: string, args: string[], timeoutMs = SCP_TIMEOUT_MS): Promise<ScpResult> {
-    return new Promise((resolve) => {
+  async copy(
+    scpBinary: string,
+    args: string[],
+    timeoutMs = SCP_TIMEOUT_MS,
+    options: ScpRunOptions = {}
+  ): Promise<ScpResult> {
+    options.signal?.throwIfAborted()
+    return new Promise((resolve, reject) => {
       const stderrChunks: Buffer[] = []
       let timedOut = false
 
-      const child = execFile(scpBinary, args, { timeout: 0, encoding: 'buffer' })
+      const child = execFile(scpBinary, args, {
+        timeout: 0,
+        encoding: 'buffer',
+        ...(options.env ? { env: options.env } : {}),
+        ...(options.signal ? { signal: options.signal } : {})
+      })
 
       const timer = setTimeout(() => {
         timedOut = true
@@ -192,6 +197,10 @@ export class SystemScpRunner implements ScpRunner {
 
       child.on('error', (err) => {
         clearTimeout(timer)
+        if (err.name === 'AbortError') {
+          reject(err)
+          return
+        }
         resolve({ exitCode: null, stderr: err.message, timedOut })
       })
     })
@@ -202,13 +211,15 @@ export class SystemScpRunner implements ScpRunner {
     remotePath: string,
     localPath: string,
     maxBytes: number,
-    timeoutMs = SCP_TIMEOUT_MS
+    timeoutMs = SCP_TIMEOUT_MS,
+    options: ScpRunOptions = {}
   ): Promise<BoundedScpResult> {
+    options.signal?.throwIfAborted()
     const boundedBytes = Math.max(0, Math.floor(maxBytes))
     const remoteCommand =
       'head -c ' + String(boundedBytes + 1) + ' -- ' + shellRemotePath(remotePath)
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const stderrChunks: Buffer[] = []
       let bytesWritten = 0
       let exceeded = false
@@ -220,7 +231,9 @@ export class SystemScpRunner implements ScpRunner {
       let outputError: string | undefined
 
       const child = spawn(target.sshBinary, [...target.extraArgs, target.host, remoteCommand], {
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['ignore', 'pipe', 'pipe'],
+        ...(options.env ? { env: options.env } : {}),
+        ...(options.signal ? { signal: options.signal } : {})
       })
       const output = createWriteStream(localPath, { flags: 'w' })
 
@@ -290,6 +303,12 @@ export class SystemScpRunner implements ScpRunner {
 
       child.on('error', (error) => {
         clearTimeout(timer)
+        if (error.name === 'AbortError') {
+          settled = true
+          output.destroy()
+          reject(error)
+          return
+        }
         outputError = error.message
         processClosed = true
         closeOutput()

@@ -6,7 +6,9 @@ import {
   createEmptySessionManifest,
   createSessionFile,
   decodeSessionFile,
+  SessionRevisionConflictError,
   sanitizeSessionUploadedAttachments,
+  sessionRevision,
   normalizeSessionManifest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
@@ -187,6 +189,7 @@ const assertSafeSegment = (segment: string): string => {
 // at their Project/Session scope, while malformed JSON is backed up for later recovery.
 class SessionRepository {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
+  private readonly sessionRevisions = new Map<string, number>()
   private writeSequence = 0
   private backupSequence = 0
   private readonly dependencies: SessionRepositoryDependencies
@@ -405,11 +408,40 @@ class SessionRepository {
     )
   }
 
-  // Writes one Session file behind its Project/Session lane to preserve authority order.
-  async saveSession(session: PersistedChatSession): Promise<void> {
-    return this.operationScheduler.runSession(session.projectId, session.id, () =>
-      this.writeSession(session)
-    )
+  // Compares and advances whole-Session authority inside the same Project/Session lane as the atomic
+  // replacement. Callers that own a stale renderer projection pass expectedRevision; trusted Main
+  // mutations omit it after loading within the coordinator's matching Session lane.
+  async saveSession(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
+      const key = `${session.projectId}:${session.id}`
+      let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
+      if (expectedRevision !== undefined) {
+        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+          throw new Error('Session expected revision must be a non-negative integer.')
+        }
+        const current = await this.loadSessionWithDiagnostics(session.projectId, session.id, {
+          mode: 'read-only'
+        })
+        if (current.status === 'unreadable') {
+          throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
+        }
+        actualRevision = current.status === 'found' ? sessionRevision(current.session) : 0
+        if (actualRevision !== expectedRevision) {
+          throw new SessionRevisionConflictError(expectedRevision, actualRevision)
+        }
+      }
+
+      const durableSession: PersistedChatSession = {
+        ...session,
+        revision: actualRevision + 1
+      }
+      await this.writeSession(durableSession)
+      this.sessionRevisions.set(key, durableSession.revision!)
+      return durableSession
+    })
   }
 
   async saveCommittedProjectSession(session: PersistedChatSession): Promise<void> {
@@ -417,7 +449,13 @@ class SessionRepository {
       if ((await this.getProjectSessionDeletionState(session.projectId)) !== 'legacy-committed') {
         throw new Error('Cannot save a Session outside committed Project deletion authority.')
       }
-      await this.writeSessionToDirectory(session, this.deletedProjectDir(session.projectId))
+      const key = `${session.projectId}:${session.id}`
+      const durableSession: PersistedChatSession = {
+        ...session,
+        revision: Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0) + 1
+      }
+      await this.writeSessionToDirectory(durableSession, this.deletedProjectDir(session.projectId))
+      this.sessionRevisions.set(key, durableSession.revision!)
     })
   }
 

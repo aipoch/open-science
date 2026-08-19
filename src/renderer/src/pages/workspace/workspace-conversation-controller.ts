@@ -253,6 +253,7 @@ const useWorkspaceConversationController = (
 
       const branchInNewSession = mode === 'branch'
       if (branchInNewSession && !activeSession) return
+      if (branchInNewSession && !canBranch(current)) return
       if (activeSession && session.lifecycle.isBarrierInFlight(activeSession.id)) return
       if (
         current.supportsImageInput !== true &&

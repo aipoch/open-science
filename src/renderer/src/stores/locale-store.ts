@@ -7,7 +7,7 @@ import {
   resolveLocalePreference,
   resolvePreference
 } from '@/lib/locale-preference'
-import type { LanguagePreference, Locale } from '../../../shared/locale'
+import type { LanguagePreference, Locale, LocalePreferenceSnapshot } from '../../../shared/locale'
 
 type LocaleStore = {
   // The user's choice: 'system' (detect from the device) or an explicit locale.
@@ -32,5 +32,47 @@ export const useLocaleStore = create<LocaleStore>((set) => ({
     applyHtmlLang(locale)
     persistPreference(preference)
     set({ preference, locale })
+    void window.api?.locale
+      ?.setPreference({ preference })
+      .then((snapshot) => {
+        if (useLocaleStore.getState().preference === preference) applyLocaleSnapshot(snapshot)
+      })
+      .catch(() => undefined)
   }
 }))
+
+const applyLocaleSnapshot = (snapshot: LocalePreferenceSnapshot): void => {
+  setI18nLocale(snapshot.locale)
+  applyHtmlLang(snapshot.locale)
+  persistPreference(snapshot.preference)
+  useLocaleStore.setState(snapshot)
+}
+
+let stopLocalePreferenceSync: (() => void) | undefined
+
+// Electron Main owns the durable preference. localStorage remains a synchronous first-paint cache
+// and the one-time source for historical installs whose settings.json has no localePreference yet.
+// Web builds expose no locale bridge, so they keep browser-local ownership unchanged.
+export const startLocalePreferenceSync = (): (() => void) => {
+  stopLocalePreferenceSync?.()
+  const localeApi = window.api?.locale
+  if (!localeApi) return () => undefined
+
+  const unsubscribe = localeApi.onChanged(applyLocaleSnapshot)
+  const cachedPreference = useLocaleStore.getState().preference
+  void localeApi
+    .initialize({ cachedPreference })
+    .then((snapshot) => {
+      // A user choice made while startup IPC was in flight wins over the older startup reply.
+      if (useLocaleStore.getState().preference === cachedPreference) {
+        applyLocaleSnapshot(snapshot)
+      }
+    })
+    .catch(() => undefined)
+
+  stopLocalePreferenceSync = () => {
+    unsubscribe()
+    stopLocalePreferenceSync = undefined
+  }
+  return stopLocalePreferenceSync
+}

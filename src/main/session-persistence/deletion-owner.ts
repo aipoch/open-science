@@ -15,6 +15,7 @@ import {
   UnsafeLegacyUploadResidualError
 } from '../uploads/repository'
 import type { ProjectSessionDeletionState } from './repository'
+import { saveSessionWithRevision } from './save-session'
 import type { SessionPersistenceStateOwner } from './state-owner'
 import { hasLegacySessionUpload } from './legacy-upload'
 
@@ -44,7 +45,7 @@ type SessionDeletionRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -204,9 +205,9 @@ class SessionPersistenceDeletionOwner {
     const next: PersistedChatSession = { ...loaded.session }
     if (request.archived) next.archivedAt = Date.now()
     else delete next.archivedAt
-    await this.repository.saveSession(next)
-    this.stateOwner.recordSession(next)
-    return next
+    const persisted = await saveSessionWithRevision(this.repository, next)
+    this.stateOwner.recordSession(persisted)
+    return persisted
   }
 
   private async prepareSessionUploadsForTerminalDelete(
@@ -221,16 +222,17 @@ class SessionPersistenceDeletionOwner {
     const upgradedSession = await this.uploads.upgradeLegacySessionUploads(session, {
       mode: 'live-save'
     })
-    await this.repository.saveSession(upgradedSession)
-    return this.uploads.upgradeLegacySessionUploads(upgradedSession, {
+    const persisted = await saveSessionWithRevision(this.repository, upgradedSession)
+    return this.uploads.upgradeLegacySessionUploads(persisted, {
       mode: 'terminal-delete'
     })
   }
 
   private async prepareProjectSessionUploadsForTerminalDelete(
     session: PersistedChatSession,
-    saveUpgradedSession: (session: PersistedChatSession) => Promise<void> = (upgraded) =>
-      this.repository.saveSession(upgraded),
+    saveUpgradedSession: (session: PersistedChatSession) => Promise<void> = async (upgraded) => {
+      await saveSessionWithRevision(this.repository, upgraded)
+    },
     requireExistingUploadAuthority = false
   ): Promise<{ hasUnsafeResidual: boolean }> {
     if (!this.uploads) return { hasUnsafeResidual: false }

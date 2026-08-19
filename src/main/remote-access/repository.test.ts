@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -63,6 +63,36 @@ describe('RemoteAccessRepository', () => {
         trustedBrowsers: []
       })
     ).toEqual({ version: 4, mode: 'off', trustedBrowsers: [] })
+  })
+
+  it.each([1, 2, 3, 4])('accepts supported configuration version %i', (version) => {
+    expect(parseStored({ version, mode: 'off', trustedBrowsers: [] })).toEqual({
+      version: 4,
+      mode: 'off',
+      trustedBrowsers: []
+    })
+  })
+
+  it.each([
+    ['malformed JSON', '{'],
+    [
+      'a future schema version',
+      JSON.stringify({ version: 5, mode: 'remoteit-public', trustedBrowsers: [] })
+    ]
+  ])('rejects %s instead of treating it as first-run state', async (_case, contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-repository-invalid-'))
+    roots.push(root)
+    await writeFile(join(root, 'remote-access.json'), contents)
+
+    await expect(new RemoteAccessRepository(root).load()).rejects.toThrow()
+  })
+
+  it('rejects filesystem read errors instead of treating them as first-run state', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-remote-repository-read-error-'))
+    roots.push(configRoot)
+    await mkdir(join(configRoot, 'remote-access.json'))
+
+    await expect(new RemoteAccessRepository(configRoot).load()).rejects.toThrow()
   })
 
   it('migrates the legacy shared service identifier to App access', () => {

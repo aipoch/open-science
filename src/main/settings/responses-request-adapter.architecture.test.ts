@@ -165,7 +165,7 @@ describe('Responses request adapter ownership', () => {
     expect(bridge).toContain('new ProviderLoopbackHttpHost')
     expect(host).toContain('createServer(')
     expect(bridge).toContain('reviewerSessionKeys')
-    expect(bridge).toContain('reasoningByCallId')
+    expect(bridge).toContain('reasoningByPromptCacheKey')
     expect(bridge).toContain('streamChatToResponses(')
   })
 })

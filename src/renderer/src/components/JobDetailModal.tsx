@@ -12,6 +12,12 @@ import { JobStatusBadge } from './JobStatusBadge'
 import { JobTerminalOutput } from './JobTerminalOutput'
 import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
 import { FileBrowserModal } from '../pages/settings/FileBrowserModal'
+import { useSettingsStore } from '@/stores/settings-store'
+import {
+  computeRuntimeAuthenticationCode,
+  computeRuntimeRecoveryAction,
+  computeRuntimeRecoveryCopy
+} from '../pages/settings/compute-runtime-recovery'
 
 // How often the terminal output auto-refreshes (design.md §15.3: ≈15s).
 const TERMINAL_REFRESH_MS = 15_000
@@ -109,6 +115,14 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 
   // Pull latest data from the store on every render (store subscribes to compute:job-updated).
   const latestJob = useSessionJobStore((s) => s.jobsById.get(job.job_id)) ?? job
+  const openSettingsToComputeAuthentication = useSettingsStore(
+    (state) => state.openSettingsToComputeAuthentication
+  )
+  const runtimeErrorCode = computeRuntimeAuthenticationCode(
+    latestJob.error_code,
+    latestJob.last_poll_error,
+    latestJob.harvest_error
+  )
 
   // Track elapsed time for running jobs
   const [now, setNow] = useState(() => Date.now())
@@ -200,6 +214,26 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
           </span>
         </div>
       </div>
+
+      {runtimeErrorCode ? (
+        <div
+          role="alert"
+          className="m-3 rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-sm text-status-failure-strong"
+        >
+          <p>{computeRuntimeRecoveryCopy(runtimeErrorCode, t)}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            onClick={() =>
+              openSettingsToComputeAuthentication(latestJob.provider_id, runtimeErrorCode)
+            }
+          >
+            {computeRuntimeRecoveryAction(runtimeErrorCode, t)}
+          </Button>
+        </div>
+      ) : null}
 
       {/* 3b placeholder: featured outputs / left-on-remote — hidden until harvest data exists */}
       {/* <FeaturedOutputs job={latestJob} /> */}

@@ -14,6 +14,7 @@ import {
   type VisionModelConfiguration
 } from '../../shared/settings'
 import { isPermissionProfileId } from '../../shared/permission-profiles'
+import { isLanguagePreference } from '../../shared/locale'
 import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -304,6 +305,9 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   const conversationSkillImportEnabled = asBoolean(value.conversationSkillImportEnabled)
   if (conversationSkillImportEnabled !== undefined) {
     settings.conversationSkillImportEnabled = conversationSkillImportEnabled
+  }
+  if (isLanguagePreference(value.localePreference)) {
+    settings.localePreference = value.localePreference
   }
   const closePreference = asString(value.closePreference)
   if (closePreference === 'minimize' || closePreference === 'quit') {

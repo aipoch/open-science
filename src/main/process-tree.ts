@@ -91,26 +91,29 @@ const waitForExit = (child: ChildProcess, ms: number): Promise<boolean> =>
     })
   })
 
-// Best-effort descendant discovery on POSIX. Node's child.kill() signals only the immediate child, so a
+type DescendantSnapshot = { pids: number[]; complete: boolean }
+
+// Descendant discovery on POSIX. Node's child.kill() signals only the immediate child, so a
 // grandchild (conda, the claude CLI, a package manager) would otherwise be orphaned exactly as it would
 // on Windows without taskkill /T. `ps -A -o pid=,ppid=` is available on both macOS (BSD) and Linux
-// (procps); any failure resolves to an empty list so we still fall back to killing the direct child.
-const collectDescendantPids = (rootPid: number): Promise<number[]> =>
-  new Promise<number[]>((resolve) => {
+// (procps). A failed snapshot is marked incomplete: we still kill the direct child, but MUST NOT report
+// the whole tree reaped when we could not enumerate it.
+const collectDescendantPids = (rootPid: number): Promise<DescendantSnapshot> =>
+  new Promise<DescendantSnapshot>((resolve) => {
     let ps: ChildProcess
     try {
       ps = spawn('ps', ['-A', '-o', 'pid=,ppid='], { windowsHide: true })
     } catch {
-      resolve([])
+      resolve({ pids: [], complete: false })
       return
     }
 
     let out = ''
     let settled = false
-    const finish = (pids: number[]): void => {
+    const finish = (snapshot: DescendantSnapshot): void => {
       if (settled) return
       settled = true
-      resolve(pids)
+      resolve(snapshot)
     }
 
     // A hung ps must not stall teardown; abandon it after the grace and fall back to the direct kill.
@@ -121,7 +124,7 @@ const collectDescendantPids = (rootPid: number): Promise<number[]> =>
       } catch {
         // ps may have already exited.
       }
-      finish([])
+      finish({ pids: [], complete: false })
     }, TERMINATE_GRACE_MS)
     timer.unref?.()
 
@@ -130,10 +133,14 @@ const collectDescendantPids = (rootPid: number): Promise<number[]> =>
     })
     ps.on('error', () => {
       clearTimeout(timer)
-      finish([])
+      finish({ pids: [], complete: false })
     })
-    ps.on('close', () => {
+    ps.on('close', (code) => {
       clearTimeout(timer)
+      if (code !== 0) {
+        finish({ pids: [], complete: false })
+        return
+      }
       try {
         const childrenByParent = new Map<number, number[]>()
         for (const line of out.split('\n')) {
@@ -156,9 +163,9 @@ const collectDescendantPids = (rootPid: number): Promise<number[]> =>
             stack.push(kid)
           }
         }
-        finish(descendants)
+        finish({ pids: descendants, complete: true })
       } catch {
-        finish([])
+        finish({ pids: [], complete: false })
       }
     })
   })
@@ -236,7 +243,9 @@ const terminatePosixTree = async (
   log: ProcessTreeLogger | undefined
 ): Promise<ProcessTreeKillResult> => {
   const gracefulSignal = signal ?? 'SIGTERM'
-  const descendants = child.pid === undefined ? [] : await collectDescendantPids(child.pid)
+  const snapshot =
+    child.pid === undefined ? { pids: [], complete: true } : await collectDescendantPids(child.pid)
+  const descendants = snapshot.pids
 
   signalPids(descendants, gracefulSignal)
   killDirectChild(child, gracefulSignal)
@@ -244,7 +253,7 @@ const terminatePosixTree = async (
   const exited = await waitForExit(child, TERMINATE_GRACE_MS)
   const survivors = descendants.filter(isProcessAlive)
 
-  if (exited && survivors.length === 0) return { reaped: true }
+  if (exited && survivors.length === 0) return { reaped: snapshot.complete }
 
   let childExited = exited
   if (survivors.length > 0) {
@@ -262,7 +271,9 @@ const terminatePosixTree = async (
   }
 
   // Re-check after SIGKILL: reaped only if the direct child exited and no descendant is still alive.
-  return { reaped: childExited && descendants.filter(isProcessAlive).length === 0 }
+  return {
+    reaped: snapshot.complete && childExited && descendants.filter(isProcessAlive).length === 0
+  }
 }
 
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually

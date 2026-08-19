@@ -42,13 +42,22 @@ describe('project store', () => {
   })
 
   it('records a load error instead of throwing when the DB is unavailable', async () => {
-    setProjectsApi({ list: vi.fn().mockRejectedValue(new Error('database is locked')) })
+    const rawError = new Error(
+      'EACCES: /Users/private/.open-science-dev/open-science.db could not be opened'
+    )
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setProjectsApi({ list: vi.fn().mockRejectedValue(rawError) })
 
     await useProjectStore.getState().loadProjects()
 
     expect(useProjectStore.getState().isLoaded).toBe(true)
-    expect(useProjectStore.getState().loadError).toBe('database is locked')
+    expect(useProjectStore.getState().loadError).toBe(
+      'Open Science could not load projects. Retry to continue.'
+    )
+    expect(useProjectStore.getState().loadError).not.toContain('/Users/private')
     expect(useProjectStore.getState().projects).toEqual([])
+    expect(warn).toHaveBeenCalledWith('Project list loading failed', rawError)
+    warn.mockRestore()
   })
 
   it('ignores an older project load that resolves after a newer request', async () => {

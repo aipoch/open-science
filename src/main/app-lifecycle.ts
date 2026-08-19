@@ -56,12 +56,16 @@ export type AppLifecycleDeps = {
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
-  flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
+  flushSessionPersistence: (
+    timeoutMs?: number
+  ) => Promise<RendererSessionPersistenceFlushOutcome | void>
   // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
   log?: Logger
   // Drains the logger's serialized write queue after the shutdown terminal record.
   flushLogs?: () => Promise<void>
   logFlushTimeoutMs?: number
+  // Shared timeout budget for the preflight and post-drain renderer persistence attempts.
+  rendererFlushTimeoutMs?: number
   // Classifies an orderly shutdown without changing its cleanup sequence.
   shutdownTrigger?: () => ApplicationShutdownTrigger
   // True while a data-root migration is copying; a quit during it is owned by the migration guard.
@@ -97,6 +101,9 @@ export const installAppLifecycle = (
 } => {
   const platform = deps.platform ?? process.platform
   const logFlushTimeoutMs = deps.logFlushTimeoutMs ?? 1_000
+  const rendererFlushTimeoutMs = Math.max(2, deps.rendererFlushTimeoutMs ?? 5_000)
+  const rendererPreflightTimeoutMs = Math.floor(rendererFlushTimeoutMs / 2)
+  const rendererFinalFlushTimeoutMs = rendererFlushTimeoutMs - rendererPreflightTimeoutMs
 
   let mainWindow: BrowserWindow | undefined
   const hiddenWindows = new WeakSet<BrowserWindow>()
@@ -120,7 +127,8 @@ export const installAppLifecycle = (
     outcome: RendererSessionPersistenceFlushOutcome
   ): ShutdownStepOutcome => {
     if (outcome === 'timeout') return 'timeout'
-    if (outcome === 'send-failed') return 'failed'
+    if (outcome === 'send-failed' || outcome === 'renderer-failed' || outcome === 'conflict')
+      return 'failed'
     if (outcome === 'renderer-gone') return 'degraded'
     return 'completed'
   }
@@ -302,10 +310,53 @@ export const installAppLifecycle = (
           })
         : undefined
       let usageDrainResult: ShutdownStepOutcome
+      let rendererPreflightOutcome: RendererSessionPersistenceFlushOutcome
+      let rendererPreflightResult: ShutdownStepOutcome
       let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
       let rendererFlushResult: ShutdownStepOutcome
       let backendTeardownResult: ShutdownStepOutcome
+      let shutdownAbortedForSessionConflict = false
+      const flushRendererSessionPersistence = async (
+        phase: 'renderer-session-preflight' | 'renderer-session-flush',
+        timeoutMs: number
+      ): Promise<{
+        outcome: RendererSessionPersistenceFlushOutcome
+        result: ShutdownStepOutcome
+      }> => {
+        diagnostics?.phase(phase)
+        try {
+          const outcome = (await deps.flushSessionPersistence(timeoutMs)) ?? 'completed'
+          const result = rendererStepOutcome(outcome)
+          diagnostics?.phase(phase, { result })
+          return { outcome, result }
+        } catch (error) {
+          diagnostics?.phase(phase, { result: 'failed', ...diagnosticErrorFields(error) })
+          return { outcome: 'send-failed', result: 'failed' }
+        }
+      }
       try {
+        const preflight = await flushRendererSessionPersistence(
+          'renderer-session-preflight',
+          rendererPreflightTimeoutMs
+        )
+        rendererPreflightOutcome = preflight.outcome
+        rendererPreflightResult = preflight.result
+        if (rendererPreflightOutcome === 'conflict') {
+          shutdownAbortedForSessionConflict = true
+          diagnostics?.complete({
+            degraded: true,
+            rendererPreflightOutcome,
+            rendererPreflightResult,
+            usageDrainResult: 'degraded',
+            rendererFlushResult: 'degraded',
+            backendTeardownResult: 'degraded'
+          })
+          if (deps.flushLogs) {
+            await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
+          }
+          return
+        }
+
         diagnostics?.phase('usage-drain')
         try {
           usageDrainResult = normalizeStepOutcome(await deps.prepareForQuit())
@@ -318,19 +369,12 @@ export const installAppLifecycle = (
           })
         }
 
-        diagnostics?.phase('renderer-session-flush')
-        try {
-          rendererFlushOutcome = (await deps.flushSessionPersistence()) ?? 'completed'
-          rendererFlushResult = rendererStepOutcome(rendererFlushOutcome)
-          diagnostics?.phase('renderer-session-flush', { result: rendererFlushResult })
-        } catch (error) {
-          rendererFlushOutcome = 'send-failed'
-          rendererFlushResult = 'failed'
-          diagnostics?.phase('renderer-session-flush', {
-            result: rendererFlushResult,
-            ...diagnosticErrorFields(error)
-          })
-        }
+        const finalFlush = await flushRendererSessionPersistence(
+          'renderer-session-flush',
+          rendererFinalFlushTimeoutMs
+        )
+        rendererFlushOutcome = finalFlush.outcome
+        rendererFlushResult = finalFlush.result
 
         diagnostics?.phase('backend-teardown')
         try {
@@ -349,6 +393,8 @@ export const installAppLifecycle = (
           backendTeardownResult !== 'completed'
         diagnostics?.complete({
           degraded,
+          rendererPreflightResult,
+          rendererPreflightOutcome,
           usageDrainResult,
           rendererFlushResult,
           rendererFlushOutcome,
@@ -360,9 +406,16 @@ export const installAppLifecycle = (
           if (result === 'timeout') console.warn('[shutdown] final log flush timed out')
         }
       } finally {
-        trayBox.current?.destroy()
-        shutdownFinished = true
-        deps.app.exit(0)
+        if (shutdownAbortedForSessionConflict) {
+          shutdownStarted = false
+          quitConfirmed = false
+          clearApplicationShutdownTrigger()
+          showMainWindow()
+        } else {
+          trayBox.current?.destroy()
+          shutdownFinished = true
+          deps.app.exit(0)
+        }
       }
     })()
   })

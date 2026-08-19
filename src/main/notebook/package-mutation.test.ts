@@ -386,6 +386,7 @@ describe('NotebookPackageMutationOwner', () => {
       },
       installPackages: vi.fn(async (_request, deps) => {
         deps?.onBeforeSpawn?.()
+        deps?.onChild?.(process.pid)
         throw childFailure
       })
     })

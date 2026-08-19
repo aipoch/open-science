@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { formatDisplayNumber } from '@/lib/locale-format'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
@@ -109,8 +110,6 @@ type WorkspaceMessageItemProps = {
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
-const tokenCountFormatter = new Intl.NumberFormat('en-US')
-
 const toMessageDate = (timestamp: number | undefined): Date | undefined => {
   if (timestamp === undefined) return undefined
   const date = new Date(timestamp)
@@ -201,9 +200,9 @@ const TurnTokenUsage = ({
     usage && safeTotalTokens !== undefined
       ? t('{{entries}}; Total {{total}} tokens', {
           entries: entries
-            .map(([label, value]) => `${label} ${tokenCountFormatter.format(value ?? 0)}`)
+            .map(([label, value]) => `${label} ${formatDisplayNumber(value ?? 0)}`)
             .join(', '),
-          total: tokenCountFormatter.format(safeTotalTokens)
+          total: formatDisplayNumber(safeTotalTokens)
         })
       : t('Token usage breakdown unavailable')
 
@@ -376,7 +375,7 @@ const TurnTokenUsage = ({
                 {label}
               </dt>
               <dd className="tabular-nums text-muted-foreground">
-                {typeof value === 'number' ? tokenCountFormatter.format(value) : '—'}
+                {typeof value === 'number' ? formatDisplayNumber(value) : '—'}
               </dd>
             </div>
           ))}
@@ -387,7 +386,7 @@ const TurnTokenUsage = ({
         >
           <span>{t('Total')}</span>
           <span className="tabular-nums">
-            {safeTotalTokens !== undefined ? tokenCountFormatter.format(safeTotalTokens) : '—'}
+            {safeTotalTokens !== undefined ? formatDisplayNumber(safeTotalTokens) : '—'}
           </span>
         </div>
         {frameworkName || model ? (

@@ -45,19 +45,28 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
         return state
       })
       .catch((error: unknown) => {
-        if (!(error instanceof DatabaseMigrationError)) throw error
+        const classified =
+          error instanceof DatabaseMigrationError
+            ? error
+            : new DatabaseMigrationError(
+                'database_startup_unavailable',
+                'Open Science could not finish checking its database.',
+                true,
+                undefined,
+                { cause: error }
+              )
         try {
-          deps.reportBlocked(error)
+          deps.reportBlocked(classified)
         } catch {
           // A diagnostic sink failure must not bypass the database compatibility gate.
         }
         const blocked: DatabaseStartupState = {
           phase: 'blocked',
           error: {
-            code: error.code,
-            message: error.message,
-            retryable: error.retryable,
-            ...(error.migrationId ? { migrationId: error.migrationId } : {})
+            code: classified.code,
+            message: classified.message,
+            retryable: classified.retryable,
+            ...(classified.migrationId ? { migrationId: classified.migrationId } : {})
           }
         }
         publish(blocked)

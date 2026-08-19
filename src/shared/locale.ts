@@ -20,6 +20,22 @@ export type LanguagePreference = (typeof LANGUAGE_PREFERENCES)[number]
 
 export const DEFAULT_LANGUAGE_PREFERENCE: LanguagePreference = 'system'
 
+// Current desktop projection. Main persists `preference` in settings.json and resolves `system`
+// against Electron's system-language list for native surfaces. Renderer localStorage is a synchronous
+// first-paint cache and the historical source imported when settings.json has no locale field yet.
+export type LocalePreferenceSnapshot = {
+  preference: LanguagePreference
+  locale: Locale
+}
+
+export type InitializeLocalePreferenceRequest = {
+  cachedPreference: LanguagePreference
+}
+
+export type SetLocalePreferenceRequest = {
+  preference: LanguagePreference
+}
+
 export const isLocale = (value: unknown): value is Locale =>
   typeof value === 'string' && (LOCALES as readonly string[]).includes(value)
 

@@ -56,9 +56,12 @@ const permissionEventPaths = ['acp.onPermissionRequest', 'permissions.onChanged'
 const computePaths = [
   'compute.bookmarksGet',
   'compute.bookmarksSet',
+  'compute.changeAuthentication',
   'compute.concurrencySet',
   'compute.create',
+  'compute.createPassword',
   'compute.delete',
+  'compute.deletionStatus',
   'compute.detailsGet',
   'compute.detailsSave',
   'compute.download',
@@ -70,9 +73,11 @@ const computePaths = [
   'compute.jobsPendingNotification',
   'compute.list',
   'compute.listDir',
+  'compute.passwordCapability',
   'compute.probe',
   'compute.replayApproval',
   'compute.replayPendingApprovals',
+  'compute.resetPassword',
   'compute.respondApproval',
   'compute.revealInFolder',
   'compute.scratchSet',
@@ -239,7 +244,7 @@ describe('renderer surface compatibility matrix', () => {
     ])
   })
 
-  it('keeps Compute complete locally and rejects only native download/reveal on remote Web', async () => {
+  it('keeps Compute complete locally and rejects local-only credential and deletion commands on remote Web', async () => {
     const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
 
@@ -255,7 +260,14 @@ describe('renderer surface compatibility matrix', () => {
     const remoteRestrictedCompute = computePaths
       .map((path) => WEB_INVOKE_CHANNELS[path])
       .filter((channel) => REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel))
-    expect(remoteRestrictedCompute).toEqual(['compute:download', 'compute:reveal-in-folder'])
+    expect(remoteRestrictedCompute).toEqual([
+      'compute:change-authentication',
+      'compute:create-password',
+      'compute:download',
+      'compute:password-capability',
+      'compute:reset-password',
+      'compute:reveal-in-folder'
+    ])
 
     const remoteApi: Record<string, unknown> = {}
     installWebRendererContracts(remoteApi, {
@@ -266,14 +278,30 @@ describe('renderer surface compatibility matrix', () => {
       nativeAdapters: {}
     })
     const remoteCompute = remoteApi.compute as {
+      changeAuthentication(): Promise<unknown>
+      createPassword(): Promise<unknown>
       download(): Promise<unknown>
+      passwordCapability(): Promise<unknown>
+      resetPassword(): Promise<unknown>
       revealInFolder(): Promise<unknown>
     }
+    await expect(remoteCompute.changeAuthentication()).rejects.toThrow(
+      'This action is only available in the local desktop app (compute:change-authentication).'
+    )
+    await expect(remoteCompute.createPassword()).rejects.toThrow(
+      'This action is only available in the local desktop app (compute:create-password).'
+    )
     await expect(remoteCompute.download()).rejects.toThrow(
       'This action is only available in the local desktop app (compute:download).'
     )
     await expect(remoteCompute.revealInFolder()).rejects.toThrow(
       'This action is only available in the local desktop app (compute:reveal-in-folder).'
+    )
+    await expect(remoteCompute.passwordCapability()).rejects.toThrow(
+      'This action is only available in the local desktop app (compute:password-capability).'
+    )
+    await expect(remoteCompute.resetPassword()).rejects.toThrow(
+      'This action is only available in the local desktop app (compute:reset-password).'
     )
   })
 

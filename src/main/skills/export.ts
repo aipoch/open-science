@@ -5,6 +5,7 @@ import { zipSync, type Zippable } from 'fflate'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
 import { canonicalSkillDocument } from './skill-document-name'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import {
   inspectSkillPackage,
   SkillPackagePolicyError,
@@ -107,12 +108,13 @@ export const buildSkillExportArchive = async (
 
 export const saveSkillExport = async (
   adapter: SkillExportDialog,
-  archive: SkillExportArchive
+  archive: SkillExportArchive,
+  translate: NativeTranslator = englishNativeTranslator
 ): Promise<{ saved: boolean }> => {
   const selected = await adapter.showSaveDialog({
-    title: 'Export Skill',
+    title: translate('Export Skill'),
     defaultPath: archive.fileName,
-    filters: [{ name: 'Skill ZIP', extensions: ['zip'] }]
+    filters: [{ name: translate('Skill ZIP'), extensions: ['zip'] }]
   })
   if (selected.canceled || !selected.filePath) return { saved: false }
   await adapter.writeFile(selected.filePath, archive.archiveBytes)

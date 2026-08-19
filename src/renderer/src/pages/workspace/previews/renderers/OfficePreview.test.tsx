@@ -50,13 +50,7 @@ describe('OfficePreviewRenderer', () => {
   let container: HTMLDivElement
   let root: Root
   let stateListener:
-    | ((state: {
-        sessionId: string
-        requestId?: string
-        phase: string
-        title?: string
-        error?: string
-      }) => void)
+    | ((state: { sessionId: string; requestId?: string; phase: string; error?: string }) => void)
     | undefined
   const open = vi.fn()
   const attachFrame = vi.fn()
@@ -64,12 +58,7 @@ describe('OfficePreviewRenderer', () => {
   const close = vi.fn()
   const removeStateListener = vi.fn()
 
-  const emitState = (state: {
-    sessionId: string
-    phase: string
-    title?: string
-    error?: string
-  }): void => {
+  const emitState = (state: { sessionId: string; phase: string; error?: string }): void => {
     const requestId = (open.mock.calls.at(-1)?.[0] as { requestId?: string } | undefined)?.requestId
     stateListener?.({ ...state, requestId })
   }
@@ -340,8 +329,7 @@ describe('OfficePreviewRenderer', () => {
     await act(async () => {
       emitState({
         sessionId: 'office-session-1',
-        phase: 'parsing',
-        title: 'Parsing the Excel workbook'
+        phase: 'parsing'
       })
     })
     expect(container.textContent).toContain('Parsing the Excel workbook')

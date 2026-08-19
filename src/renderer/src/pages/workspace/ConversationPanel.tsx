@@ -78,6 +78,7 @@ import { ComposerContextUsage } from './ComposerContextUsage'
 import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
 import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
+import { ComposerSpecialistPicker } from './ComposerSpecialistPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { normalizeRunFailureError } from './error-report'
@@ -106,6 +107,7 @@ import { hasMainConversation, type SideChatController } from './use-side-chat-co
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
+import { getAvatarColor } from '../settings/specialist-icons'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -555,6 +557,13 @@ const ConversationPanel = ({
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
     : undefined
+  const selectedSpecialist = specialistId
+    ? specialistItems.find((item) => item.kind !== 'reviewer' && item.id === specialistId)
+    : undefined
+  const specialistComposerColor =
+    selectedSpecialist && selectedSpecialist.kind !== 'reviewer' && !specialistUnavailable
+      ? getAvatarColor(selectedSpecialist.colorKey)
+      : undefined
   const effectiveSpecialistSkills = resolveEffectiveSpecialistSkills(
     activeSpecialist?.kind === 'custom' ? activeSpecialist : undefined,
     catalogSkills.map((skill) => ({
@@ -683,7 +692,7 @@ const ConversationPanel = ({
   }
 
   const handleBranchInNewSession = (): void => {
-    if (!effectiveCanSend || !onBranchInNewSession) return
+    if (!effectiveCanSend || !onBranchInNewSession || !canBranchInNewSession) return
     onBranchInNewSession(docToSkillIds(draftDoc))
   }
 
@@ -1201,9 +1210,18 @@ const ConversationPanel = ({
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
                       ordinaryComposerBlocked && 'hidden'
                     )}
+                    data-specialist-color={specialistComposerColor}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
                   >
+                    {specialistComposerColor && selectedSpecialist ? (
+                      <span
+                        key={selectedSpecialist.id}
+                        className="composer-specialist-color-in"
+                        style={{ borderColor: specialistComposerColor }}
+                        aria-hidden="true"
+                      />
+                    ) : null}
                     {/* File-drag overlay is scoped to the composer input card only. */}
                     {isDragging ? (
                       <FileDropOverlay label={t('Drop files to attach')} className="rounded-2xl" />
@@ -1615,6 +1633,12 @@ const ConversationPanel = ({
                           openRequest={agentControlsOpenRequest}
                         />
 
+                        <ComposerSpecialistPicker
+                          selectedId={specialistId}
+                          readOnly={!canChangeAgentControls}
+                          onChange={onSpecialistChange}
+                        />
+
                         {/* Compatibility indicator for an explicit user selection while a turn is
                             running. Approved SDK switches are represented by the durable lifecycle
                             row and never wait for another user message. */}
@@ -1788,7 +1812,9 @@ const ConversationPanel = ({
                                           !canPlanFirst &&
                                           !canStartSideChat &&
                                           !canRetrySideChatHydration &&
-                                          (!effectiveCanSend || !onBranchInNewSession)
+                                          (!effectiveCanSend ||
+                                            !onBranchInNewSession ||
+                                            !canBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
                                         aria-label={t('More send options')}
@@ -1844,7 +1870,11 @@ const ConversationPanel = ({
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-branch-in-new-session"
-                                    disabled={!effectiveCanSend || !onBranchInNewSession}
+                                    disabled={
+                                      !effectiveCanSend ||
+                                      !onBranchInNewSession ||
+                                      !canBranchInNewSession
+                                    }
                                     onSelect={handleBranchInNewSession}
                                     className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
                                   >

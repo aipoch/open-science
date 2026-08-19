@@ -28,6 +28,7 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { formatDisplayNumber } from '@/lib/locale-format'
 
 import type {
   AcpContextUsage,
@@ -48,18 +49,21 @@ type ContextWindowDialogProps = {
   onOpenChange: (open: boolean) => void
 }
 
-const tokenFormatter = new Intl.NumberFormat('en-US')
 const formatTokens = (tokens: number): string => {
   const absolute = Math.abs(tokens)
   if (absolute >= 1_000_000) {
     const value = tokens / 1_000_000
-    return `${Math.abs(value) >= 10 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}M`
+    return `${formatDisplayNumber(value, {
+      maximumFractionDigits: Math.abs(value) >= 10 || Number.isInteger(value) ? 0 : 1
+    })}M`
   }
   if (absolute >= 1_000) {
     const value = tokens / 1_000
-    return `${Math.abs(value) >= 100 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}K`
+    return `${formatDisplayNumber(value, {
+      maximumFractionDigits: Math.abs(value) >= 100 || Number.isInteger(value) ? 0 : 1
+    })}K`
   }
-  return tokenFormatter.format(tokens)
+  return formatDisplayNumber(tokens)
 }
 
 // Catalog keys stay unresolved at module scope so changing locale updates every render site.
@@ -496,7 +500,7 @@ const ContextHistoryChart = ({
                     aria-label={t('Run {{run}}, {{state}}, {{tokens}} context-window tokens', {
                       run: point.runNumber,
                       state: t(state.label),
-                      tokens: tokenFormatter.format(usage.used)
+                      tokens: formatDisplayNumber(usage.used)
                     })}
                     onPointerEnter={() => onPreview(index)}
                     onPointerLeave={() => onPreview(undefined)}

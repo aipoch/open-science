@@ -570,6 +570,15 @@ colors communicate a successful or failed probe/migration result.
 - Icon buttons: `Button variant="ghost" size="icon"`, `size-8`.
 - Workspace composer shell: `px-4 pb-2`; center content in `mx-auto w-full max-w-4xl`, then use `px-1 md:px-3` so the composer text track aligns with the message content after the form's own `px-3`.
 - Workspace composer form: `relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque`.
+- When a runnable Specialist is bound, keep the composer at its normal height and use a two-pixel
+  edge in the exact color of that Specialist's avatar tile. When the selection changes, fade only
+  that edge from transparent to opaque; do not add a multicolor gradient, glow, or geometry motion.
+  Under `prefers-reduced-motion`, show the final edge immediately.
+- Show the active Specialist as its avatar tile in a standard `size-8` composer icon button, with no
+  separate label, arrow, border, or persistent gray container. The button's accessible label exposes
+  the full Specialist name. Its popover searches display name, stable name, and description; supports
+  Arrow Up/Down, Home/End, Enter, and ordinary pointer selection; fits within the viewport on narrow
+  screens; and stays at or below `16rem` so it does not dominate compressed three-column layouts.
 - During a normal running root turn, the primary composer submit action captures the current doc,
   attachments, permission profile, Specialist, Session, Agent Frame, and Message Branch into a
   renderer-memory queue instead of overlapping the active runtime prompt. The queue drains one item
@@ -760,6 +769,7 @@ colors communicate a successful or failed probe/migration result.
 - Skill and Connector detail pages place the Main switch and the complete read-only Specialist usage list in an **Availability** section. The section explicitly directs membership changes back to each Specialist rather than presenting scope as another switch.
 - Settings deletion remains a device-level action, distinct from removing a capability from one Specialist. A shared resource requires an impact preview before device deletion/removal; Specialist detail changes only that Specialist's membership. Bundled Connectors are never physically deletable.
 - The Specialist Marketplace is external content, not a built-in catalog. The app loads signed static metadata from configured official mirrors or user-approved GitHub repositories, downloads a digest-pinned export-compatible ZIP only during the reviewed install flow, and defaults newly installed Skills to Main off. Marketplace rows derive **Installed** / **Update available** from persisted provenance plus the current imported Specialist identity; deleting or replacing that Specialist must not leave a stale installed badge. New provenance stores both the upstream artifact digest and the selection-filtered ZIP digest actually installed. Historical records without the latter remain readable but fail closed without an exact installed badge until a later reinstall/update records it.
+- Installed custom Specialist rows render capability scope, acquisition source, publisher, package version, and local-change status as separate read-only badges rather than one separator-delimited sentence. Exact digest-linked provenance shows **Marketplace** plus its publisher; ordinary or unverifiable historical imports show **Imported ZIP**. If more than one Marketplace source has exact provenance for the same installed archive, the latest `installedAt` record supplies the displayed publisher.
 - After successful signature and digest verification, Marketplace root and release bytes are retained as a replaceable last-known-good cache. An unavailable source may show those verified listings with their refresh time, but installation still requires a currently downloadable ZIP with the pinned digest. User-added source removal deletes its cache without deleting installed Specialist provenance.
 - Marketplace updates use the same two-stage download/review interaction and atomic Specialist package overwrite transaction as installation. The user explicitly confirms the installed and incoming versions plus any local-change or shared-Skill conflicts; newly added Skills remain disabled for Main, and existing resources are retained unless the user removes them separately.
 

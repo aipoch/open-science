@@ -190,6 +190,15 @@ export class LocalFsService {
     const resolvedPath = await realpath(path)
     const dirents = await readdir(resolvedPath, { withFileTypes: true })
     const truncated = dirents.length > LOCAL_DIR_ENTRY_CAP
+    // readdir order is filesystem-dependent. Sort the inexpensive Dirent metadata before applying
+    // the cap so repeated listings select the same visible subset. Keep symlinks ahead of ordinary
+    // files so directory targets remain eligible, then resolve only the selected entries below.
+    dirents.sort((a, b) => {
+      const aRank = a.isDirectory() ? 0 : a.isSymbolicLink() ? 1 : 2
+      const bRank = b.isDirectory() ? 0 : b.isSymbolicLink() ? 1 : 2
+      if (aRank !== bRank) return aRank - bRank
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
     const capped = truncated ? dirents.slice(0, LOCAL_DIR_ENTRY_CAP) : dirents
 
     const entries: LocalDirEntry[] = []

@@ -105,10 +105,12 @@ const publicStoreTarget = modulePath(facadePath)
 const publicValueExports = [
   'createInitialSessionState',
   'createSessionStore',
+  'getExternallyHydratedSessionAuthority',
   'isExternallyHydratedSession',
   'isSessionWaitReason',
   'projectSessionActionability',
   'resolveRootPermissionPending',
+  'sessionAwaitsHistoryReplay',
   'toPersistedSession',
   'useSessionStore'
 ].sort()

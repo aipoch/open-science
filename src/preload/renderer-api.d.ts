@@ -76,7 +76,15 @@ import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
+  ComputeHostDeletionStatus,
+  ComputePasswordCapability,
   CreateComputeHostRequest,
+  CreatePasswordComputeHostRequest,
+  CreatePasswordComputeHostResult,
+  ResetPasswordComputeHostRequest,
+  ResetPasswordComputeHostResult,
+  ChangeComputeHostAuthenticationRequest,
+  ChangeComputeHostAuthenticationResult,
   DeleteComputeHostRequest,
   DetailsAuthor,
   JobSummary,
@@ -372,6 +380,11 @@ import type {
   WindowFindResult
 } from '../shared/window-controls'
 import type { DatabaseStartupState } from '../shared/database-startup'
+import type {
+  InitializeLocalePreferenceRequest,
+  LocalePreferenceSnapshot,
+  SetLocalePreferenceRequest
+} from '../shared/locale'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -390,6 +403,11 @@ export interface OpenScienceAPI {
   }
   lifecycle: {
     getClientId(): Promise<string>
+  }
+  locale: {
+    initialize(request: InitializeLocalePreferenceRequest): Promise<LocalePreferenceSnapshot>
+    setPreference(request: SetLocalePreferenceRequest): Promise<LocalePreferenceSnapshot>
+    onChanged(listener: AcpListener<LocalePreferenceSnapshot>): RemoveListener
   }
   databaseStartup: {
     getState(): Promise<DatabaseStartupState>
@@ -704,6 +722,15 @@ export interface OpenScienceAPI {
     list(): Promise<ComputeHost[]>
     get(providerId: string): Promise<ComputeHost | null>
     create(request: CreateComputeHostRequest): Promise<ComputeHost>
+    createPassword(
+      request: CreatePasswordComputeHostRequest
+    ): Promise<CreatePasswordComputeHostResult>
+    resetPassword(request: ResetPasswordComputeHostRequest): Promise<ResetPasswordComputeHostResult>
+    changeAuthentication(
+      request: ChangeComputeHostAuthenticationRequest
+    ): Promise<ChangeComputeHostAuthenticationResult>
+    passwordCapability(): Promise<ComputePasswordCapability>
+    deletionStatus(request: DeleteComputeHostRequest): Promise<ComputeHostDeletionStatus>
     delete(request: DeleteComputeHostRequest): Promise<void>
     // Selectable Host aliases parsed from ~/.ssh/config (patterns / Match blocks excluded).
     sshConfigAliases(): Promise<string[]>

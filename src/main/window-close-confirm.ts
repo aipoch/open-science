@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 
 import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../shared/storage'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import {
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
@@ -181,38 +182,43 @@ export const createCloseConfirm = (
 const nativeFallback = async (
   getWindow: () => BrowserWindow | undefined,
   variant: CloseConfirmVariant,
-  sessions: ActiveSessionInfo[]
+  sessions: ActiveSessionInfo[],
+  translate: NativeTranslator
 ): Promise<NativeCloseConfirmResult> => {
   const hasDelegatedWork = hasDelegatedActiveSession(sessions)
   const options = hasDelegatedWork
     ? {
         type: 'warning' as const,
-        buttons: [variant === 'quit' ? 'Return to tasks' : 'Minimize to tray'],
+        buttons: [
+          variant === 'quit' ? translate('Return to tasks') : translate('Minimize to tray')
+        ],
         defaultId: 0,
         cancelId: 0,
         title: 'Open Science',
-        message: 'Subagents are still running',
-        detail: 'Return to the running tasks and stop their subagents before quitting Open Science.'
+        message: translate('Subagents are still running'),
+        detail: translate(
+          'Return to the running tasks and stop their subagents before quitting Open Science.'
+        )
       }
     : variant === 'quit'
       ? {
           type: 'question' as const,
-          buttons: ['Cancel', 'Quit'],
+          buttons: [translate('Cancel'), translate('Quit')],
           defaultId: 0,
           cancelId: 0,
           title: 'Open Science',
-          message: 'Quit Open Science?',
-          detail: 'Work is still running and will be interrupted if you quit.'
+          message: translate('Quit Open Science?'),
+          detail: translate('Work is still running and will be interrupted if you quit.')
         }
       : {
           type: 'question' as const,
-          buttons: ['Minimize to tray', 'Quit'],
+          buttons: [translate('Minimize to tray'), translate('Quit')],
           defaultId: 0,
           cancelId: 0,
           title: 'Open Science',
-          message: 'Minimize to tray or quit?',
-          detail: 'Background work may still be running.',
-          checkboxLabel: "Don't ask again",
+          message: translate('Minimize to tray or quit?'),
+          detail: translate('Background work may still be running.'),
+          checkboxLabel: translate("Don't ask again"),
           checkboxChecked: true
         }
   const window = getWindow()
@@ -232,7 +238,8 @@ const nativeFallback = async (
 // can be recreated). Response listeners are per-confirm and removed when it settles.
 export const createElectronCloseConfirm = (
   getWindow: () => BrowserWindow | undefined,
-  preferences: ClosePreferenceAccess
+  preferences: ClosePreferenceAccess,
+  translate: NativeTranslator = englishNativeTranslator
 ): ((variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>) =>
   createCloseConfirm({
     // Reveal the window before asking: a tray/Ctrl+Q quit can arrive while the window is hidden
@@ -271,7 +278,7 @@ export const createElectronCloseConfirm = (
         window.webContents.off('responsive', onRecover)
       }
     },
-    nativeFallback: (variant, sessions) => nativeFallback(getWindow, variant, sessions),
+    nativeFallback: (variant, sessions) => nativeFallback(getWindow, variant, sessions, translate),
     getClosePreference: preferences.get,
     setClosePreference: preferences.set,
     newRequestId: () => randomUUID()

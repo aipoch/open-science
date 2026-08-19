@@ -43,6 +43,26 @@ describe('completeQuitPersistenceFlush', () => {
         }
       )
     ).rejects.toThrow('renderer unavailable')
-    expect(acknowledge).toHaveBeenCalledWith({ requestId: 'flush-1' })
+    expect(acknowledge).toHaveBeenCalledWith({ requestId: 'flush-1', status: 'failed' })
+  })
+
+  it('acknowledges an unresolved revision conflict without classifying the flush as completed', async () => {
+    const acknowledge = vi.fn()
+    const conflict = Object.assign(new Error('revision changed'), {
+      code: 'session-revision-conflict'
+    })
+
+    await expect(
+      completeQuitPersistenceFlush(
+        { requestId: 'flush-1' },
+        {
+          suppressAutoReviews: () => undefined,
+          drainRuntimeEvents: async () => undefined,
+          flushPersistence: async () => Promise.reject(conflict),
+          acknowledge
+        }
+      )
+    ).rejects.toBe(conflict)
+    expect(acknowledge).toHaveBeenCalledWith({ requestId: 'flush-1', status: 'conflict' })
   })
 })

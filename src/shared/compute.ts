@@ -17,6 +17,34 @@ export type SshOverrides = {
   identityFile?: string
 }
 
+export type ComputeAuthenticationMode = 'ssh_config' | 'password'
+export type ComputeCredentialStatus = 'configured' | 'missing' | 'unavailable'
+export type ComputePasswordCapability = Readonly<{
+  available: boolean
+  reason?: 'unsupported_platform' | 'secure_storage_unavailable'
+}>
+export type ComputeAuthenticationErrorCode =
+  | 'credential_required'
+  | 'credential_unavailable'
+  | 'secure_storage_unavailable'
+  | 'authentication_failed'
+  | 'credential_conflict'
+  | 'credential_change_blocked_by_jobs'
+  | 'host_key_unknown'
+  | 'host_key_changed'
+  | 'host_unreachable'
+  | 'timeout'
+  | 'create_failed'
+  | 'reset_failed'
+  | 'unsupported_auth_configuration'
+
+export type ComputeAuthenticationStatus = Readonly<{
+  mode: ComputeAuthenticationMode
+  credentialStatus: ComputeCredentialStatus
+  revision: number
+  lastVerifiedAt: number | undefined
+}>
+
 // One GPU model + how many of it a probe found. Part of the probe snapshot, not written in Phase 1.
 export type ProbeGpu = {
   type: string
@@ -30,6 +58,8 @@ export type ProbeResult = {
   probedAt: string
   exitCode: number | null
   errorTail: string | null
+  authenticationCode?: ComputeAuthenticationErrorCode
+  authenticationRevision?: number
   os?: string
   cpus?: number
   memMib?: number
@@ -49,6 +79,8 @@ export type ComputeHost = {
   shape: ComputeHostShape
   sshAlias: string
   sshOverrides: SshOverrides | undefined
+  // Absent only in legacy/in-memory callers; persisted Hosts always project this status.
+  authentication?: ComputeAuthenticationStatus
   scratchRoot: string | undefined
   scratchPinned: boolean
   concurrencyLimit: number | undefined
@@ -68,9 +100,50 @@ export type CreateComputeHostRequest = {
   sshOverrides?: SshOverrides
 }
 
+export type CreatePasswordComputeHostRequest = Omit<CreateComputeHostRequest, 'sshOverrides'> & {
+  authenticationMode: 'password'
+  username: string
+  port: number
+  password: string
+  operationId: string
+}
+
+export type CreatePasswordComputeHostResult =
+  | Readonly<{ ok: true; host: ComputeHost }>
+  | Readonly<{ ok: false; errorCode: ComputeAuthenticationErrorCode }>
+
+export type ResetPasswordComputeHostRequest = Readonly<{
+  providerId: string
+  password: string
+  operationId: string
+  expectedAuthenticationRevision: number
+}>
+
+export type ResetPasswordComputeHostResult =
+  | Readonly<{ ok: true; host: ComputeHost }>
+  | Readonly<{ ok: false; errorCode: ComputeAuthenticationErrorCode }>
+
+export type ChangeComputeHostAuthenticationRequest = Readonly<{
+  providerId: string
+  expectedRevision: number
+  operationId: string
+  authenticationMode: ComputeAuthenticationMode
+  // Absent in ssh_config mode: the User (and port fallback) then come from ~/.ssh/config.
+  username?: string
+  port: number
+  identityFile?: string
+  password?: string
+}>
+
+export type ChangeComputeHostAuthenticationResult =
+  | Readonly<{ ok: true; host: ComputeHost }>
+  | Readonly<{ ok: false; errorCode: ComputeAuthenticationErrorCode }>
+
 export type DeleteComputeHostRequest = {
   providerId: string
 }
+
+export type ComputeHostDeletionStatus = Readonly<{ blockedByJobs: boolean }>
 
 // Matches the UI character counter and the compute_details cap (32 KiB) in later issues.
 export const DETAILS_DOC_MAX_LENGTH = 32768
@@ -91,7 +164,12 @@ export type ExecResult = {
 // retry_after_user_action=true means the system will NOT retry automatically — the user must fix
 // an external condition first (e.g. SSH connectivity).
 export type ComputeCallError = {
-  error_code: 'host_unreachable' | 'timeout' | 'approval_denied' | 'queue_full'
+  error_code:
+    | 'host_unreachable'
+    | 'timeout'
+    | 'approval_denied'
+    | 'queue_full'
+    | ComputeAuthenticationErrorCode
   message: string
   retry_after_user_action: boolean
 }
@@ -247,6 +325,7 @@ export type JobSummary = {
   finished_at: number | undefined
   exit_code: number | undefined
   error_code: string | undefined
+  last_poll_error?: string
   remote_workdir: string | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined

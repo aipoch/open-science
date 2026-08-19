@@ -42,7 +42,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorGlyph } from './connector-icons'
-import { SettingsIconAction, SettingsSection, SettingsToggle } from './SettingsLayout'
+import {
+  SettingsIconAction,
+  SettingsLoadNotice,
+  SettingsSection,
+  SettingsToggle
+} from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import {
   resourceScope,
@@ -159,11 +164,40 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [removing, setRemoving] = useState(false)
   const [checkingRemoval, setCheckingRemoval] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [operationError, setOperationError] = useState<string | null>(null)
+  const loadRequestRef = useRef(0)
   const removalCheckSequence = useRef(0)
   const removalCheckInFlight = useRef<number | undefined>(undefined)
 
+  const loadCatalog = async (): Promise<void> => {
+    const requestId = ++loadRequestRef.current
+    setCatalogState('loading')
+    try {
+      await loadConnectors()
+      if (loadRequestRef.current === requestId) setCatalogState('ready')
+    } catch {
+      if (loadRequestRef.current === requestId) setCatalogState('error')
+    }
+  }
+
+  const retryCatalog = (): void => {
+    void loadCatalog()
+  }
+
   useEffect(() => {
-    void loadConnectors()
+    const requestId = ++loadRequestRef.current
+    void loadConnectors().then(
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('ready')
+      },
+      () => {
+        if (loadRequestRef.current === requestId) setCatalogState('error')
+      }
+    )
+    return () => {
+      loadRequestRef.current += 1
+    }
   }, [loadConnectors])
 
   useEffect(() => {
@@ -242,7 +276,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     try {
       await authenticateCustomServer({ id })
     } catch (error) {
-      await loadConnectors().catch(() => undefined)
+      await loadCatalog()
       setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
     } finally {
       setAuthenticatingIds((current) => {
@@ -266,6 +300,15 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         next.delete(id)
         return next
       })
+    }
+  }
+
+  const saveToggle = async (command: () => Promise<void>): Promise<void> => {
+    setOperationError(null)
+    try {
+      await command()
+    } catch {
+      setOperationError(t('Could not save this setting. The previous value was restored.'))
     }
   }
 
@@ -327,6 +370,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     ({ resource }) => resource.group === 'directory'
   )
   const customExpanded = !collapsed.custom
+  const hasCachedCatalog = connectors.length > 0 || customServers.length > 0
 
   // Renders one collapsible bundled-connector section (Featured / Directory) with its rows.
   const connectorGroup = (
@@ -398,9 +442,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         enabled={connector.enabled}
                         aria-label={connector.displayName}
                         onToggle={() =>
-                          void setConnectorEnabled(connector.id, !connector.enabled).catch(
-                            () => undefined
-                          )
+                          void saveToggle(async () => {
+                            await setConnectorEnabled(connector.id, !connector.enabled)
+                          })
                         }
                       />
                     </div>
@@ -418,8 +462,30 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     )
   }
 
+  if (!hasCachedCatalog && catalogState !== 'ready') {
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={catalogState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Connectors…')}
+          errorMessage={t('Open Science could not load Connectors.')}
+          onRetry={retryCatalog}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="p-5">
+      {catalogState === 'error' ? (
+        <SettingsLoadNotice
+          state="error"
+          loadingLabel={t('Loading Connectors…')}
+          errorMessage={t('Open Science could not load Connectors.')}
+          onRetry={retryCatalog}
+          className="mb-4"
+        />
+      ) : null}
       <SettingsSection
         title={t('Contact email')}
         description={t(
@@ -580,13 +646,13 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       </div>
 
       <div className="flex flex-col gap-4">
-        {authError ? (
+        {authError || operationError ? (
           <div
             className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
             role="alert"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{t(authError)}</span>
+            <span>{operationError ?? t(authError ?? '')}</span>
           </div>
         ) : null}
         {showFeatured
@@ -758,9 +824,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                             }
                             onToggle={() => {
                               if (requiresSignInBeforeEnable(server)) return
-                              void setCustomServerEnabled(server.id, !server.enabled).catch(
-                                () => undefined
-                              )
+                              void saveToggle(async () => {
+                                await setCustomServerEnabled(server.id, !server.enabled)
+                              })
                             }}
                           />
                         </div>

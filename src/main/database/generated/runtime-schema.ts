@@ -387,7 +387,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "harvestedAt" DATETIME,
     CONSTRAINT "ComputeJob_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
     CONSTRAINT "ComputeJob_status_check" CHECK ("status" IN ('queued', 'submitted', 'running', 'success', 'failed', 'timeout', 'error')),
-    CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'host_unreachable', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
+    CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
     CONSTRAINT "ComputeJob_timeoutSeconds_check" CHECK ("timeoutSeconds" IS NULL OR "timeoutSeconds" BETWEEN 1 AND 604800),
     CONSTRAINT "ComputeJob_notification_check" CHECK ("notificationConsumedAt" IS NULL OR "notifiedAt" IS NOT NULL),
     CONSTRAINT "ComputeJob_harvestPayload_check" CHECK (("harvestError" IS NULL AND "leftOnRemote" IS NULL) OR "harvestedAt" IS NOT NULL),
@@ -407,6 +407,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
     "sshAlias" TEXT NOT NULL,
     "sshOverrides" TEXT,
+    "authenticationMode" TEXT NOT NULL DEFAULT 'ssh_config',
+    "authenticationRevision" INTEGER NOT NULL DEFAULT 1,
+    "lastVerifiedAt" DATETIME,
     "scratchRoot" TEXT,
     "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
     "concurrencyLimit" INTEGER,
@@ -416,6 +419,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "detailsUpdatedBy" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ComputeHost_authenticationMode_check" CHECK ("authenticationMode" IN ('ssh_config', 'password')),
+    CONSTRAINT "ComputeHost_authenticationRevision_check" CHECK ("authenticationRevision" >= 1),
     CONSTRAINT "ComputeHost_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
     CONSTRAINT "ComputeHost_scratchPinned_check" CHECK ("scratchPinned" IN (false, true)),
     CONSTRAINT "ComputeHost_concurrencyLimit_check" CHECK ("concurrencyLimit" IS NULL OR "concurrencyLimit" BETWEEN 1 AND 500),
@@ -424,6 +429,23 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeHost_scratchRoot_check" CHECK ("scratchPinned" = false OR "scratchRoot" IS NOT NULL),
     CONSTRAINT "ComputeHost_sshOverridesJson_check" CHECK ("sshOverrides" IS NULL OR (json_valid("sshOverrides") AND json_type("sshOverrides") = 'object')),
     CONSTRAINT "ComputeHost_probeResultJson_check" CHECK ("probeResult" IS NULL OR (json_valid("probeResult") AND json_type("probeResult") = 'object'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "ComputeCredential" (
+    "computeHostId" TEXT NOT NULL PRIMARY KEY,
+    "ciphertext" BLOB NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ComputeCredential_computeHostId_fkey" FOREIGN KEY ("computeHostId") REFERENCES "ComputeHost" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "ComputeAuthOperation" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "providerId" TEXT NOT NULL,
+    "operationKind" TEXT NOT NULL,
+    "requestFingerprint" TEXT NOT NULL,
+    "resultRevision" INTEGER NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ComputeAuthOperation_resultRevision_check" CHECK ("resultRevision" >= 1),
+    CONSTRAINT "ComputeAuthOperation_operationKind_check" CHECK ("operationKind" IN ('create_password', 'reset_password', 'change_authentication'))
 );`,
   `CREATE TABLE IF NOT EXISTS "GrantedLocalRoot" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -486,6 +508,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeJob_status_idx" ON "ComputeJob"("status");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId");`,
+  `CREATE INDEX IF NOT EXISTS "ComputeAuthOperation_providerId_idx" ON "ComputeAuthOperation"("providerId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`
 ] as const
 
@@ -518,6 +541,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'ReviewScopeSnapshot',
   'ComputeJob',
   'ComputeHost',
+  'ComputeCredential',
+  'ComputeAuthOperation',
   'GrantedLocalRoot'
 ] as const
 

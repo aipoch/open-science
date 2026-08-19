@@ -1,4 +1,5 @@
 import { Ban, CircleCheck, Hand } from 'lucide-react'
+import { RadioGroup } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import type { ToolPermission } from '../../../../shared/settings'
@@ -30,57 +31,50 @@ export function ToolPermissionControl({
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div
-        role="radiogroup"
+      <RadioGroup.Root
         aria-label={label}
+        value={value}
+        onValueChange={(next) => onChange(next as ToolPermission)}
+        orientation="horizontal"
         className="inline-flex shrink-0 gap-0.5 rounded-lg bg-muted p-0.5"
       >
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={value === 'allow'}
+            <RadioGroup.Item
+              value="allow"
               aria-label={t('Always allow')}
-              onClick={() => onChange('allow')}
               className={segment(value === 'allow', true)}
             >
               <CircleCheck className="size-3.5" aria-hidden />
-            </button>
+            </RadioGroup.Item>
           </TooltipTrigger>
           <TooltipContent>{t('Always allow')}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={value === 'ask'}
+            <RadioGroup.Item
+              value="ask"
               aria-label={t('Require approval')}
-              onClick={() => onChange('ask')}
               className={segment(value === 'ask', false)}
             >
               <Hand className="size-3.5" aria-hidden />
-            </button>
+            </RadioGroup.Item>
           </TooltipTrigger>
           <TooltipContent>{t('Require approval')}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={value === 'block'}
+            <RadioGroup.Item
+              value="block"
               aria-label={t('Block')}
-              onClick={() => onChange('block')}
               className={segment(value === 'block', false)}
             >
               <Ban className="size-3.5" aria-hidden />
-            </button>
+            </RadioGroup.Item>
           </TooltipTrigger>
           <TooltipContent>{t('Block')}</TooltipContent>
         </Tooltip>
-      </div>
+      </RadioGroup.Root>
     </TooltipProvider>
   )
 }

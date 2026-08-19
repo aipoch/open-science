@@ -1,4 +1,5 @@
 import { Check } from 'lucide-react'
+import { RadioGroup } from 'radix-ui'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -45,18 +46,21 @@ const AppIconSection = (): React.JSX.Element => {
       aria-label={t('App icon')}
       separated
     >
-      <div role="radiogroup" aria-label={t('App icon')} className="flex flex-wrap gap-3">
+      <RadioGroup.Root
+        aria-label={t('App icon')}
+        value={appIconVariant}
+        onValueChange={(value) => void setAppIconVariant(value as AppIconVariant)}
+        orientation="horizontal"
+        className="flex flex-wrap gap-3"
+      >
         {previews.map((preview) => {
           const selected = preview.id === appIconVariant
           return (
-            <button
+            <RadioGroup.Item
               key={preview.id}
-              type="button"
-              role="radio"
-              aria-checked={selected}
+              value={preview.id}
               aria-label={preview.label}
               title={preview.description}
-              onClick={() => void setAppIconVariant(preview.id as AppIconVariant)}
               className={cn(
                 'relative flex w-28 flex-col items-center gap-2 rounded-xl border p-3 text-center transition-colors duration-150 motion-reduce:transition-none',
                 selected
@@ -79,10 +83,10 @@ const AppIconSection = (): React.JSX.Element => {
                 className="size-14 rounded-2xl"
               />
               <span className="text-xs font-medium text-foreground">{preview.label}</span>
-            </button>
+            </RadioGroup.Item>
           )
         })}
-      </div>
+      </RadioGroup.Root>
 
       <p className="mt-3 text-xs text-muted-foreground">
         {t(

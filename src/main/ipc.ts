@@ -31,7 +31,8 @@ import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import {
   LIFECYCLE_CHANNELS,
-  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
+  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
 
 import { createAcpRuntime } from './acp/runtime-composition'
@@ -163,6 +164,7 @@ import {
 import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
 import {
+  canReconcileSessionAbsences,
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlersWithAttributionAuthority,
@@ -208,6 +210,7 @@ import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
+import type { SettingsDocumentStore } from './settings/document-store'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
@@ -306,11 +309,16 @@ import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 
 const permissionGrantsLog = createLogger('permission-grants')
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
+  // Startup and the application runtime share one settings.json transaction owner. Tests and
+  // non-desktop compositions may omit it and receive the existing default store.
+  settingsStore?: SettingsDocumentStore
+  translate?: NativeTranslator
   managedPreviewProtocol: PreviewProtocolRegistrar
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
   // disabled there by contract, not just incidentally via Notification.isSupported().
@@ -369,8 +377,10 @@ const previewArgs = (args: Record<string, unknown>): string => {
 const createApplicationModules = async (
   {
     mainEntryPath,
+    settingsStore,
     managedPreviewProtocol,
     headless = false,
+    translate = englishNativeTranslator,
     onAppIconVariantChanged,
     listAppIconPreviews
   }: IpcRegistrationOptions,
@@ -401,8 +411,9 @@ const createApplicationModules = async (
   )
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
-  const settingsRepository = new SettingsRepository(resolveStorageRoot(), (operation) =>
-    specialistPackageSkillAdapter.runMutationExclusive(operation)
+  const settingsRepository = new SettingsRepository(
+    settingsStore ?? resolveStorageRoot(),
+    (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
@@ -701,7 +712,14 @@ const createApplicationModules = async (
     },
     undefined,
     computeJobDeletionPort,
-    (session) => {
+    (session, owner) => {
+      if (owner === 'runtime-context') {
+        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+          session,
+          originClientId: MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
+        })
+        return
+      }
       delegatedActivity.recordSession(session)
       broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
         session,
@@ -853,7 +871,7 @@ const createApplicationModules = async (
         ...result,
         sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
           result.sessions,
-          result.diagnostics?.isComplete === true
+          canReconcileSessionAbsences(result)
         )
       }
     },
@@ -946,6 +964,7 @@ const createApplicationModules = async (
       micromambaRunner,
       locale: app.getLocale(),
       appVersion: app.getVersion(),
+      translate,
       events: applicationEvents,
       disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator
@@ -1376,6 +1395,7 @@ const createApplicationModules = async (
   surfaceAdapters = beforeAcpAdapters
   const {
     computeService,
+    connectionBroker,
     jobDeletionOwner,
     jobRepository,
     hostRepository,
@@ -1401,6 +1421,7 @@ const createApplicationModules = async (
   await modules.add(
     {
       computeService,
+      connectionBroker,
       jobDeletionOwner,
       hostRepository,
       jobRepository,
@@ -1969,7 +1990,11 @@ const createApplicationModules = async (
   const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })
   const logsCommandOwner = createLogsCommandOwner()
   declareElectronAdapter('desktop-utilities', () => {
-    registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })
+    registerFileSaveHandlers({
+      resolveManagedFilePath,
+      resolveSessionArtifactFilePath,
+      translate
+    })
     registerLogsIpcHandlers(logsCommandOwner)
     registerGithubIpcHandlers({}, githubCommandOwner)
     registerCliInstallIpcHandlers(cliCommandOwner)
@@ -2359,6 +2384,7 @@ const createApplicationModules = async (
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
   const updateStrategy = createUpdateStrategy(process.platform, {
+    translate,
     installGate: createDelegatedSafeInstallGate(
       () => getActiveDelegatedSessions().length > 0,
       () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
@@ -2465,9 +2491,9 @@ const createApplicationModules = async (
       connectorTemplateFiles: {
         select: async () => {
           const selected = await dialog.showOpenDialog({
-            title: 'Import Connector configuration',
+            title: translate('Import Connector configuration'),
             properties: ['openFile'],
-            filters: [{ name: 'Connector configuration', extensions: ['json'] }]
+            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
           })
           const filePath = selected.filePaths[0]
           if (selected.canceled || !filePath) return { cancelled: true as const }
@@ -2482,9 +2508,9 @@ const createApplicationModules = async (
         },
         save: async (suggestedFileName, contents, sender) => {
           const selected = await showSettingsSaveDialog(sender, {
-            title: 'Export Connector configuration',
+            title: translate('Export Connector configuration'),
             defaultPath: suggestedFileName,
-            filters: [{ name: 'Connector configuration', extensions: ['json'] }]
+            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
           })
           if (selected.canceled || !selected.filePath) return false
           await writeFile(selected.filePath, contents, 'utf8')
@@ -2498,7 +2524,8 @@ const createApplicationModules = async (
               showSaveDialog: (options) => showSettingsSaveDialog(sender, options),
               writeFile: (filePath, bytes) => writeFile(filePath, bytes)
             },
-            archive
+            archive,
+            translate
           )
       }
     })
@@ -2531,6 +2558,7 @@ const createApplicationModules = async (
       () => void runtime.requestSkillsReload(),
       createContributionTemplateExporter({
         appVersion: app.getVersion(),
+        translate,
         showSaveDialog: (options) => dialog.showSaveDialog(options),
         readReadme: () => readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
         writeFile: (filePath, bytes) => writeFile(filePath, bytes)
@@ -2538,18 +2566,22 @@ const createApplicationModules = async (
       {
         service: specialistPackageService,
         selectArchive: () =>
-          selectSpecialistArchive({
-            showOpenDialog: (options) => dialog.showOpenDialog(options),
-            readFile,
-            getFileSize: async (filePath) => (await stat(filePath)).size
-          }),
+          selectSpecialistArchive(
+            {
+              showOpenDialog: (options) => dialog.showOpenDialog(options),
+              readFile,
+              getFileSize: async (filePath) => (await stat(filePath)).size
+            },
+            translate
+          ),
         saveReport: (report) =>
           saveSpecialistPackageReport(
             {
               showSaveDialog: (options) => dialog.showSaveDialog(options),
               writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf8')
             },
-            report
+            report,
+            translate
           ),
         saveExport: (archive) =>
           saveSpecialistExport(
@@ -2557,7 +2589,8 @@ const createApplicationModules = async (
               showSaveDialog: (options) => dialog.showSaveDialog(options),
               writeFile: (filePath, bytes) => writeFile(filePath, bytes)
             },
-            archive
+            archive,
+            translate
           )
       },
       marketplaceService
@@ -2817,6 +2850,7 @@ const createApplicationModules = async (
     )
   )
   const conversationExportService = createConversationExportService({
+    translate,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
     isSessionActive: (projectId, sessionId) =>
       runtime

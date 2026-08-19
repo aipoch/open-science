@@ -1466,6 +1466,33 @@ describe('SpecialistPackageService', () => {
     expect(duplicate).toMatchObject({ origin: 'local', packageVersion: '0.1.0', ownedSkillIds: [] })
   })
 
+  it('forwards Marketplace activation to the package transaction', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+    const preview = await service.preview(validZip())
+
+    await expect(
+      service.install({ candidateToken: preview.candidateToken }, undefined, {
+        activateAfterInstall: true
+      })
+    ).resolves.toMatchObject({
+      status: 'installed',
+      specialist: {
+        id: 'research-synth',
+        enabled: true,
+        setupPending: false
+      }
+    })
+    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+      enabled: true,
+      setupPending: false
+    })
+  })
+
   it('does not erase a profile created while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
     const profiles = new ProfileService(repository)

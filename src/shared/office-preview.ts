@@ -91,8 +91,6 @@ export type OfficePreviewRuntimeState = {
   sessionId: string
   requestId?: string
   phase: OfficePreviewPhase
-  title?: string
-  description?: string
   error?: OfficePreviewErrorCode
 }
 
@@ -152,8 +150,6 @@ export const isOfficePreviewRuntimeState = (value: unknown): value is OfficePrev
     typeof state.phase === 'string' &&
     OFFICE_PREVIEW_PHASES.has(state.phase as OfficePreviewPhase) &&
     (state.requestId === undefined || typeof state.requestId === 'string') &&
-    (state.title === undefined || typeof state.title === 'string') &&
-    (state.description === undefined || typeof state.description === 'string') &&
     (state.error === undefined ||
       (typeof state.error === 'string' &&
         OFFICE_PREVIEW_ERRORS.has(state.error as OfficePreviewErrorCode)))

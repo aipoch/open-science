@@ -84,4 +84,38 @@ describe('ToolPermissionControl', () => {
     act(() => radio('Require approval')?.click())
     expect(onChange).toHaveBeenCalledWith('ask')
   })
+
+  it('uses one Tab stop and wraps selection with ArrowRight', async () => {
+    const onChange = vi.fn()
+    act(() => {
+      root.render(
+        <ToolPermissionControl
+          value="block"
+          onChange={onChange}
+          label="Permission for list_marts"
+        />
+      )
+    })
+
+    const radios = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    const group = document.body.querySelector<HTMLElement>('[role="radiogroup"]')
+    expect(group?.tabIndex).toBe(0)
+    expect(radios.map((option) => option.tabIndex)).toEqual([-1, -1, -1])
+
+    act(() => {
+      group?.focus()
+    })
+    expect(document.activeElement).toBe(radios[2])
+    expect(radios.map((option) => option.tabIndex)).toEqual([-1, -1, 0])
+
+    await act(async () => {
+      radios[2].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(onChange).toHaveBeenCalledWith('allow')
+    expect(document.activeElement).toBe(radios[0])
+  })
 })

@@ -68,13 +68,20 @@ describe('notification attention metadata migration', () => {
       applied: [
         '0007_notification_attention_metadata',
         '0008_database_json_constraints',
-        '0009_vision_evidence'
+        '0009_vision_evidence',
+        '0010_compute_password_auth'
       ],
       from: '0006_database_domain_constraints',
-      to: '0009_vision_evidence'
+      to: '0010_compute_password_auth'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0009_vision_evidence.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0010_compute_password_auth.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

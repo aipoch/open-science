@@ -1,5 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { request as httpRequest } from 'node:http'
+import { request as httpRequest, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -183,6 +183,28 @@ describe('startWebHttpServer', () => {
       protocolVersion: WEB_RPC_PROTOCOL_VERSION,
       ok: false,
       error: { code: 'invalid-command-arguments', message: 'Invalid project request.' }
+    })
+
+    directInvoke.mockRejectedValueOnce(
+      new Error('SQLITE_CANTOPEN: /Users/private/.open-science/open-science.db')
+    )
+    const internalErrorResponse = await fetch(
+      `http://127.0.0.1:${server.port}/rpc/projects%3Alist`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'x-open-science-client': 'direct-client'
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      }
+    )
+    expect(internalErrorResponse.status).toBe(500)
+    expect(await internalErrorResponse.json()).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      ok: false,
+      error: { code: 'command-failed', message: 'Internal server error' }
     })
 
     const directSignal = directInvoke.mock.calls[0]?.[1].callerLease.signal
@@ -707,6 +729,80 @@ describe('startWebHttpServer', () => {
     expect(directSignals[0]?.aborted).toBe(true)
   })
 
+  it('bounds close when an active HTTP request does not finish', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    let markInvocationStarted: (() => void) | undefined
+    const invocationStarted = new Promise<void>((resolve) => {
+      markInvocationStarted = resolve
+    })
+    let releaseInvocation: (() => void) | undefined
+    const invocationGate = new Promise<void>((resolve) => {
+      releaseInvocation = resolve
+    })
+    let callerSignal: AbortSignal | undefined
+    const directInvoke = vi.fn(async (_channel, invocation) => {
+      callerSignal = invocation.callerLease.signal
+      markInvocationStarted?.()
+      await invocationGate
+      return []
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => ['projects:list'],
+        invoke: vi.fn(),
+        dispose: vi.fn()
+      },
+      applicationCommands: {
+        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const request = httpRequest({
+      host: '127.0.0.1',
+      port: server.port,
+      path: '/rpc/projects%3Alist',
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        connection: 'close',
+        'content-type': 'application/json',
+        'x-open-science-client': 'test-client'
+      }
+    })
+    request.on('error', () => undefined)
+    request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
+    await invocationStarted
+
+    const closePromise = server.close()
+    const closeOutcome = await Promise.race([
+      closePromise.then(() => 'closed' as const),
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 250))
+    ])
+
+    releaseInvocation?.()
+    await closePromise
+    request.destroy()
+    servers.splice(servers.indexOf(server), 1)
+
+    expect(closeOutcome).toBe('closed')
+    expect(callerSignal?.aborted).toBe(true)
+  })
+
   it('passes pairing authority only for trusted-browser Web RPC calls', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
@@ -931,6 +1027,7 @@ describe('startWebHttpServer', () => {
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
+    const authorizeHttp = vi.fn().mockResolvedValue(authorizedExternalAccess())
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
@@ -946,7 +1043,7 @@ describe('startWebHttpServer', () => {
         }
       },
       externalAccess: {
-        authorizeHttp: vi.fn().mockResolvedValue(authorizedExternalAccess()),
+        authorizeHttp,
         authorizeWebSocket: vi.fn().mockResolvedValue({})
       },
       bootstrap: {
@@ -984,16 +1081,29 @@ describe('startWebHttpServer', () => {
     }
     const remoteBootstrap = await fetch(bootstrapUrl)
     expect(remoteBootstrap.status).toBe(200)
-    expect(await remoteBootstrap.json()).toMatchObject({
+    const remoteBootstrapBody = await remoteBootstrap.json()
+    expect(remoteBootstrapBody).toMatchObject({
       rpcChannels: [remotelyAvailableChannel],
       restrictedRpcChannels: localOnlyChannels
     })
+    expect(remoteBootstrapBody).not.toHaveProperty('configRoot')
 
     const localBootstrap = await fetch(bootstrapUrl, {
       headers: { authorization: 'Bearer local-token' }
     })
     expect(localBootstrap.status).toBe(200)
-    expect(await localBootstrap.json()).toMatchObject({ rpcChannels, restrictedRpcChannels: [] })
+    expect(await localBootstrap.json()).toMatchObject({
+      configRoot: '/fake/root',
+      rpcChannels,
+      restrictedRpcChannels: []
+    })
+
+    authorizeHttp.mockRejectedValueOnce(
+      new Error('EACCES: /Users/private/.open-science/remote-access.json')
+    )
+    const failedBootstrap = await fetch(bootstrapUrl)
+    expect(failedBootstrap.status).toBe(500)
+    expect(await failedBootstrap.json()).toEqual({ error: 'Internal server error' })
 
     for (const channel of localOnlyChannels) {
       const remoteResponse = await fetch(rpcUrl(channel), {
@@ -1313,6 +1423,61 @@ describe('startWebHttpServer', () => {
     expect(response.status).toBe(202)
     expect(await response.json()).toEqual({ ok: true })
     await vi.waitFor(() => expect(onShutdownRequest).toHaveBeenCalledOnce())
+  })
+
+  it('delivers the shutdown acknowledgement before closing an attached server', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    let shutdownClose: Promise<void> | undefined
+    const onShutdownRequest = (): void => {
+      shutdownClose = server.close()
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      onShutdownRequest,
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const originalEnd = ServerResponse.prototype.end
+    ServerResponse.prototype.end = function (
+      this: ServerResponse,
+      ...args: unknown[]
+    ): ServerResponse {
+      setTimeout(() => Reflect.apply(originalEnd, this, args), 25)
+      return this
+    } as typeof ServerResponse.prototype.end
+    let response: Response
+    try {
+      response = await fetch(`http://127.0.0.1:${server.port}/api/shutdown`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer test-token' }
+      })
+    } finally {
+      ServerResponse.prototype.end = originalEnd
+    }
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(shutdownClose).toBeDefined())
+    await shutdownClose
+    servers.splice(servers.indexOf(server), 1)
   })
 
   it('keeps shutdown local even when remote Browser access is authorized', async () => {
@@ -1643,6 +1808,19 @@ describe('startWebHttpServer', () => {
     expect(missingProject.status).toBe(404)
     expect(await missingProject.json()).toEqual({
       error: { code: 'project_not_found', message: 'Project not found: missing' }
+    })
+
+    tasks.startRun.mockRejectedValueOnce(
+      new Error('SQLITE_CANTOPEN: /Users/private/.open-science/open-science.db')
+    )
+    const internalError = await fetch(`${base}/api/v1/runs`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ project: 'project-1', prompt: 'Research this.' })
+    })
+    expect(internalError.status).toBe(500)
+    expect(await internalError.json()).toEqual({
+      error: { code: 'internal_error', message: 'Internal server error' }
     })
 
     const malformed = await fetch(`${base}/api/v1/runs`, {

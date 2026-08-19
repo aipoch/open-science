@@ -1542,6 +1542,10 @@ describe('HomePage activity overview', () => {
       (button) => button.textContent === 'Retry'
     )
     expect(retry).toBeDefined()
+    expect(container.querySelector('[role="alert"] p')?.textContent).toBe(
+      'Open Science could not load projects. Retry to continue.'
+    )
+    expect(container.textContent).not.toContain('database is locked')
 
     await act(async () => retry?.click())
     expect(loadProjects).toHaveBeenCalledOnce()

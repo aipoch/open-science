@@ -295,6 +295,27 @@
 }
 
 @layer components {
+  @keyframes composer-specialist-color-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* Match the composer edge to the selected Specialist avatar with one quiet color fade. */
+  .composer-specialist-color-in {
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    border-width: 2px;
+    border-style: solid;
+    border-radius: inherit;
+    pointer-events: none;
+    animation: composer-specialist-color-in 480ms ease-out both;
+  }
+
   /* Theme-independent edge treatment for compact horizontal navigation and chip rails. */
   .scroll-fade-x {
     -webkit-mask-image: var(--scroll-fade-x-mask, none);
@@ -667,6 +688,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .composer-specialist-color-in {
+      animation: none;
+      opacity: 1;
+    }
+
     .home-session-title-running::after {
       animation: none;
       display: none;

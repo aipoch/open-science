@@ -1,4 +1,5 @@
 import { Check, Monitor, Moon, Sun } from 'lucide-react'
+import { RadioGroup } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -39,21 +40,20 @@ export const ThemeSegmentedControl = (): React.JSX.Element => {
   const setPreference = useThemeStore((state) => state.setPreference)
 
   return (
-    <div
-      role="radiogroup"
+    <RadioGroup.Root
       aria-label={t('Theme')}
+      value={preference}
+      onValueChange={(value) => setPreference(value as ThemePreference)}
+      orientation="horizontal"
       className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/50 p-1"
     >
       {THEME_OPTIONS.map(({ value, labelKey, Icon }) => {
         const selected = preference === value
         return (
-          <button
+          <RadioGroup.Item
             key={value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
+            value={value}
             aria-label={t(labelKey)}
-            onClick={() => setPreference(value)}
             className={cn(
               'inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors duration-150 ease-out motion-reduce:transition-none',
               selected
@@ -63,10 +63,10 @@ export const ThemeSegmentedControl = (): React.JSX.Element => {
           >
             <Icon className="size-3.5" strokeWidth={2} aria-hidden="true" />
             <span>{t(labelKey)}</span>
-          </button>
+          </RadioGroup.Item>
         )
       })}
-    </div>
+    </RadioGroup.Root>
   )
 }
 

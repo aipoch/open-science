@@ -233,7 +233,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createManagedPreviewProtocolBridge },
         { configureMainWindow, createMainWindow },
         { installMigrationQuitGuard, isMigrationInProgress },
-        { createAppTray, setTrayIconVariant },
+        { createAppTray, refreshAppTrayLocale, setTrayIconVariant },
+        { LocalePreferenceOwner },
+        { registerLocalePreferenceIpc },
         { installAppLifecycle },
         { disposeIpcHandlerRegistry },
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
@@ -252,13 +254,17 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createDatabaseStartupOwner },
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
         { getProjectDbClient },
-        { resolveStorageRoot }
+        { resolveStorageRoot },
+        { SettingsDocumentStore },
+        { SettingsRepository }
       ] = await Promise.all([
         import('./ipc'),
         import('./managed-preview-protocol'),
         import('./windows'),
         import('./storage/migration-state'),
         import('./tray'),
+        import('./locale/owner'),
+        import('./locale/ipc'),
         import('./app-lifecycle'),
         import('./ipc-handler-registry'),
         import('./web-service'),
@@ -277,13 +283,28 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./database/database-startup-owner'),
         import('./database/database-startup-ipc'),
         import('./projects/prisma-client'),
-        import('./storage-root')
+        import('./storage-root'),
+        import('./settings/document-store'),
+        import('./settings/repository')
       ])
 
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
       startupDiagnostics?.phase('prepare-shell')
       const managedPreviewProtocolBridge = createManagedPreviewProtocolBridge(protocol)
+      // Create the settings document owner before any native surface. The startup locale repository
+      // and the later application Settings repository share this store, so every settings.json
+      // mutation uses one serialization queue and one atomic-write implementation.
+      const settingsStore = new SettingsDocumentStore(resolveStorageRoot())
+      const startupSettingsRepository = new SettingsRepository(settingsStore)
+      const startupSettings = await startupSettingsRepository.getSettings()
+      const localeOwner = new LocalePreferenceOwner(
+        app.getPreferredSystemLanguages(),
+        startupSettingsRepository,
+        startupSettings.localePreference
+      )
+      const translate = localeOwner.t.bind(localeOwner)
+      const disposeLocalePreferenceIpc = registerLocalePreferenceIpc(localeOwner)
 
       // Set app user model id for windows
       electronApp.setAppUserModelId(APP_USER_MODEL_ID)
@@ -323,7 +344,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       })
       const startupWindow = webMode.headless
         ? undefined
-        : createMainWindow(startupWindowCloseOptions)
+        : createMainWindow(startupWindowCloseOptions, translate)
       if (startupWindow) {
         if (!forwardSecondInstanceDuringStartup) {
           throw new Error('Second-instance startup relay is not initialized.')
@@ -367,6 +388,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         // the app icon variant — the tray only exists once the lifecycle is installed (assigned in the
         // createTray callback). Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
         const appTrayBox: { current: ReturnType<typeof createAppTray> } = { current: undefined }
+        const disposeTrayLocaleSubscription = localeOwner.subscribe(() =>
+          refreshAppTrayLocale(appTrayBox.current)
+        )
         // Unread state restores before the main-window lifecycle is installed. Late-bind its getter so
         // restoration remains window-independent while later badge/probe calls always target the live window.
         const mainWindowGetterBox: {
@@ -388,6 +412,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           dispose: disposeApplicationRuntime
         } = await registerIpcHandlers({
           mainEntryPath,
+          settingsStore,
+          translate,
           managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
           handoffRuntime: 'production',
           headless: webMode.headless,
@@ -468,10 +494,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         return {
           installMigrationQuitGuard,
           isMigrationInProgress,
-          createMainWindow,
+          createMainWindow: (options: Parameters<typeof createMainWindow>[0]) =>
+            createMainWindow(options, translate),
           configureMainWindow,
           startupWindow,
           createAppTray,
+          translate,
           buildAuthenticatedWebUrl,
           routeSecondInstance,
           taskNotifications,
@@ -490,12 +518,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             getWindow: () => InstanceType<typeof BrowserWindow> | undefined
           ) => createElectronSessionPersistenceFlush(getWindow),
           createConfirmClose: (getWindow: () => InstanceType<typeof BrowserWindow> | undefined) =>
-            createElectronCloseConfirm(getWindow, {
-              get: () => settingsService.getClosePreference(),
-              set: async (preference) => {
-                await settingsService.setClosePreference(preference)
-              }
-            }),
+            createElectronCloseConfirm(
+              getWindow,
+              {
+                get: () => settingsService.getClosePreference(),
+                set: async (preference) => {
+                  await settingsService.setClosePreference(preference)
+                }
+              },
+              translate
+            ),
           installAppLifecycle,
           createDesktopAttentionController,
           wireDesktopAttention,
@@ -507,12 +539,15 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           databaseStartupOwner,
           databaseStartupQuitGuard,
           disposeIpcHandlerRegistry: () => {
+            disposeTrayLocaleSubscription()
+            disposeLocalePreferenceIpc()
             managedPreviewProtocolBridge.dispose()
             disposeDatabaseStartupIpc()
             disposeIpcHandlerRegistry()
           }
         }
       } catch (error) {
+        disposeLocalePreferenceIpc()
         databaseStartupQuitGuard.dispose()
         managedPreviewProtocolBridge.dispose()
         disposeDatabaseStartupIpc()
@@ -524,7 +559,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     // Warn (rather than silently tear down) if the user tries to quit mid data-root migration. Installed
     // BEFORE the lifecycle so its before-quit runs first: a migration it cancels leaves
     // event.defaultPrevented set, which the lifecycle's quit cleanup honors.
-    installMigrationQuitGuard: (ctx) => ctx.installMigrationQuitGuard(app),
+    installMigrationQuitGuard: (ctx) =>
+      ctx.installMigrationQuitGuard(app, undefined, ctx.translate),
     // Install the tray, first window, and the quit/activate/window-all-closed handlers. shutdownBackends
     // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
     // process tree so a Windows taskkill /T completes before app.exit.
@@ -543,6 +579,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
                 iconPath: trayIconPath,
                 variantIconPaths: trayVariantIconPaths,
                 initialVariant: ctx.getAppIconVariant(),
+                translate: ctx.translate,
                 templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
                 ...handlers,
                 ...(headlessWeb

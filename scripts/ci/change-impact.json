@@ -119,6 +119,8 @@
         "src/main/app-lifecycle.ts",
         "src/main/artifacts/durability.ts",
         "src/main/cli-install/launcher.ts",
+        "src/main/compute/connection-adapters.ts",
+        "src/main/compute/credential-vault.ts",
         "src/main/compute/scp-runner.ts",
         "src/main/compute/ssh-runner.ts",
         "src/main/crash-diagnostics.ts",

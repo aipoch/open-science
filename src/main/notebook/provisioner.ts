@@ -304,11 +304,10 @@ export interface RuntimeProvisioner {
 export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private provisioning = false
   private legacyCacheCleanupComplete = false
-  // Prefixes whose write in THIS process failed with a child we could not confirm stopped (a worker MAY
-  // still be live). A force Reset must NOT delete+rebuild such a prefix — its orphan can't be probed
-  // (its PID never landed) and could still be writing. Per-process (not persisted), so it is empty after
-  // a restart: post-restart the spawning process is provably gone, and a force Reset then proceeds (the
-  // documented escape hatch for an otherwise-stuck µs-window orphan). See clearQuarantine.
+  // Prefixes whose write in THIS process failed with a child tree we could not confirm stopped (a worker
+  // MAY still be live). A force Reset must NOT delete+rebuild such a prefix. This in-memory set guards the
+  // current app lifetime; the retained journal plus downgraded {spawning} sidecar guard later startups
+  // until recovery has authoritative evidence that the unknown writer is gone. See clearQuarantine.
   private readonly liveUnconfirmedPrefixes = new Set<string>()
 
   constructor(private readonly deps: ProvisionerDeps) {}
@@ -549,10 +548,20 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     try {
       await run(onBeforeSpawn, onChild)
     } catch (error) {
-      // A recording failure whose child could NOT be confirmed stopped: a worker may still be writing
-      // the prefix, so KEEP the sidecar + journal record (recovery blocks) instead of clearing them.
+      // A teardown whose child tree could NOT be confirmed stopped: a worker may still be writing the
+      // prefix, so KEEP the sidecar + journal record (recovery blocks) instead of clearing them.
       if (isChildUnconfirmedError(error)) {
         retainForRecovery = true
+        // The recorded direct PID is no longer sufficient evidence: it may already be gone while an
+        // unenumerated/reparented descendant keeps writing. Convert the sidecar back to the existing
+        // no-verifiable-PID state so startup recovery also blocks until a machine reboot proves the
+        // unknown tree gone, instead of probing the dead parent and reconciling under its survivor.
+        try {
+          recordSpawnIntentSync(this.deps.root, operationId)
+        } catch {
+          // Keep the prior sidecar + journal as the best evidence still available. The in-process block
+          // below remains authoritative for this app lifetime when the filesystem cannot be updated.
+        }
         // Block the prefix IN THIS PROCESS now — not just via the retained journal entry, which only
         // gates the next boot. Otherwise an in-session Retry would pass assertPrefixWritable and begin()
         // a SECOND op (begin() does not reject a same-runtime record), spawning a worker that races the

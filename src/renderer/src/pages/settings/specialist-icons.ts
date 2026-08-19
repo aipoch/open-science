@@ -21,6 +21,9 @@ export const AVATAR_COLORS: Record<string, string> = {
 }
 export const DEFAULT_AVATAR_COLOR = '#ececea'
 
+export const getAvatarColor = (colorKey?: string): string =>
+  colorKey ? (AVATAR_COLORS[colorKey] ?? DEFAULT_AVATAR_COLOR) : DEFAULT_AVATAR_COLOR
+
 export const AVATAR_ICONS: Record<string, LucideIcon> = {
   brain: Brain,
   beaker: Beaker,
@@ -31,5 +34,5 @@ export const AVATAR_ICONS: Record<string, LucideIcon> = {
 }
 
 export const getAvatarStyle = (colorKey?: string): CSSProperties => ({
-  background: colorKey ? (AVATAR_COLORS[colorKey] ?? DEFAULT_AVATAR_COLOR) : DEFAULT_AVATAR_COLOR
+  background: getAvatarColor(colorKey)
 })

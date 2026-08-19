@@ -16,6 +16,7 @@ import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigat
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger } from './logger'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
@@ -112,7 +113,10 @@ const configureMainWindow = (window: BrowserWindow, opts: MainWindowCloseOptions
   mainWindowCloseOptions.set(window, opts)
 }
 
-const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
+const createMainWindow = (
+  opts?: MainWindowCloseOptions,
+  translate: NativeTranslator = englishNativeTranslator
+): BrowserWindow => {
   const window = createAppWindow({
     width: 1280,
     // The first-run environment summary needs enough vertical space to keep its Continue action
@@ -243,13 +247,14 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     void dialog
       .showMessageBox(window, {
         type: 'error',
-        buttons: ['Reload', 'Close window'],
+        buttons: [translate('Reload'), translate('Close window')],
         defaultId: 0,
         cancelId: 1,
         title: 'Open Science',
-        message: 'The app window stopped responding repeatedly.',
-        detail:
+        message: translate('The app window stopped responding repeatedly.'),
+        detail: translate(
           'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'
+        )
       })
       .then(
         ({ response }) => {
