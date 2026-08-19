@@ -311,6 +311,11 @@ type ConversationPanelSubagents = {
   stop: () => void | Promise<void>
 }
 
+type StopSubmissionState = Readonly<{
+  pending: boolean
+  error?: string
+}>
+
 type ConversationPanelProps = {
   view: ConversationPanelView
   composer: Pick<WorkspaceComposerController, 'view' | 'actions'>
@@ -459,10 +464,11 @@ const ConversationPanel = ({
   const settingsLoaded = useSettingsStore((state) => state.isLoaded)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
-  const stopSubmissionPendingRef = useRef(false)
-  const [isStopping, setIsStopping] = useState(false)
+  const stopSubmissionPendingSessionIdsRef = useRef(new Set<string>())
+  const [stopSubmissionsBySessionId, setStopSubmissionsBySessionId] = useState(
+    () => new Map<string, StopSubmissionState>()
+  )
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
-  const [stopError, setStopError] = useState<string>()
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
@@ -484,38 +490,51 @@ const ConversationPanel = ({
     setIsReportOpen(true)
   }
 
-  const submitStop = (action: () => void | Promise<void>): void => {
-    if (stopSubmissionPendingRef.current) return
-    stopSubmissionPendingRef.current = true
-    setIsStopping(true)
-    setStopError(undefined)
+  const activeStopSubmission = activeSession
+    ? stopSubmissionsBySessionId.get(activeSession.id)
+    : undefined
+  const isStopping = activeStopSubmission?.pending === true
+  const stopError = activeStopSubmission?.error
+
+  const settleStopSubmission = (sessionId: string, error?: string): void => {
+    stopSubmissionPendingSessionIdsRef.current.delete(sessionId)
+    setStopSubmissionsBySessionId((current) => {
+      const next = new Map(current)
+      if (error !== undefined) next.set(sessionId, { pending: false, error })
+      else next.delete(sessionId)
+      return next
+    })
+  }
+
+  const submitStop = (sessionId: string | undefined, action: () => void | Promise<void>): void => {
+    if (!sessionId || stopSubmissionPendingSessionIdsRef.current.has(sessionId)) return
+    stopSubmissionPendingSessionIdsRef.current.add(sessionId)
+    setStopSubmissionsBySessionId((current) => {
+      const next = new Map(current)
+      next.set(sessionId, { pending: true })
+      return next
+    })
     let outcome: void | Promise<void>
     try {
       outcome = action()
     } catch (error) {
-      stopSubmissionPendingRef.current = false
-      setIsStopping(false)
-      setStopError(error instanceof Error ? error.message : String(error))
+      settleStopSubmission(sessionId, error instanceof Error ? error.message : String(error))
       return
     }
     if (!outcome || typeof (outcome as Promise<void>).then !== 'function') {
-      stopSubmissionPendingRef.current = false
-      setIsStopping(false)
+      settleStopSubmission(sessionId)
       return
     }
-    void outcome
-      .catch((error: unknown) => {
-        setStopError(error instanceof Error ? error.message : String(error))
-      })
-      .finally(() => {
-        stopSubmissionPendingRef.current = false
-        setIsStopping(false)
-      })
+    void outcome.then(
+      () => settleStopSubmission(sessionId),
+      (error: unknown) =>
+        settleStopSubmission(sessionId, error instanceof Error ? error.message : String(error))
+    )
   }
 
-  const handleStop = (): void => submitStop(onCancelRun)
+  const handleStop = (): void => submitStop(activeSession?.id, onCancelRun)
 
-  const handleStopSubagents = (): void => submitStop(onStopSubagents)
+  const handleStopSubagents = (): void => submitStop(activeSession?.id, onStopSubagents)
 
   // Unconditional hook: check if the active session has any jobs (running or finished).
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)

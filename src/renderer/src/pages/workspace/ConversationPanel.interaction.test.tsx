@@ -4088,6 +4088,93 @@ describe('ConversationPanel fix loop lock', () => {
     expect(container.textContent).toContain('cascade unavailable')
   })
 
+  it('does not carry a pending Stop state or its failure into another Session', async () => {
+    let rejectFirstStop!: (error: Error) => void
+    const cancelFirstSession = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectFirstStop = reject
+        })
+    )
+    const cancelSecondSession = vi.fn()
+    const firstSession: ChatSession = {
+      ...idleSession,
+      id: 'session-a',
+      title: 'Session A',
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-a', startedAt: Date.now() }
+    }
+    const secondSession: ChatSession = {
+      ...idleSession,
+      id: 'session-b',
+      title: 'Session B',
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-b', startedAt: Date.now() }
+    }
+
+    renderPanel({
+      view: { activeSession: firstSession },
+      conversation: {
+        availability: { submit: true, submitMode: 'queue' },
+        actions: { cancel: cancelFirstSession }
+      }
+    })
+    act(() => {
+      const cancel = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+      cancel.click()
+    })
+
+    renderPanel({
+      view: { activeSession: secondSession },
+      conversation: {
+        availability: { submit: true, submitMode: 'queue' },
+        actions: { cancel: cancelSecondSession }
+      }
+    })
+
+    const secondSessionCancel = container.querySelector(
+      'section[data-session-id="session-b"] [aria-label="Cancel run"], ' +
+        'section[data-session-id="session-b"] [aria-label="Stopping run and subagents"]'
+    )
+    const secondSessionQueue = container.querySelector(
+      '[data-testid="composer-queue-submit"]'
+    ) as HTMLButtonElement
+    const secondSessionState = {
+      cancelLabel: secondSessionCancel?.getAttribute('aria-label'),
+      cancelDisabled: (secondSessionCancel as HTMLButtonElement | null)?.disabled,
+      queueDisabled: secondSessionQueue.disabled,
+      firstSessionErrorVisible: false
+    }
+
+    act(() => {
+      secondSessionCancel?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(cancelSecondSession).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      rejectFirstStop(new Error('Session A stop failed'))
+      await Promise.resolve()
+    })
+
+    secondSessionState.firstSessionErrorVisible =
+      container.textContent?.includes('Session A stop failed') ?? false
+    expect(secondSessionState).toEqual({
+      cancelLabel: 'Cancel run',
+      cancelDisabled: false,
+      queueDisabled: false,
+      firstSessionErrorVisible: false
+    })
+
+    renderPanel({
+      view: { activeSession: firstSession },
+      conversation: {
+        availability: { submit: true, submitMode: 'queue' },
+        actions: { cancel: cancelFirstSession }
+      }
+    })
+    expect(container.textContent).toContain('Session A stop failed')
+  })
+
   it('keeps the split-send width while running so adjacent hover controls do not shift', () => {
     const runningSession: ChatSession = {
       ...idleSession,
