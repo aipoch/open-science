@@ -338,6 +338,436 @@ describe('ManagedTextDiffTaskRunner', () => {
     })
   })
 
+  it('keeps an inserted line separate from the similar modified line that follows it', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'inserted-line-before-modified-line',
+      before: '## What Is This?\nOriginal paragraph old.\n',
+      after: '## What Is This?? ?\nWonderful\nOriginal paragraph new.\n'
+    })
+
+    expect(
+      lines.map((line) => ({
+        kind: line.kind,
+        oldLineNumber: line.oldLineNumber,
+        newLineNumber: line.newLineNumber,
+        text: line.segments.map((segment) => segment.text).join(''),
+        changed: line.segments
+          .filter((segment) => segment.kind === line.kind)
+          .map((segment) => segment.text)
+          .join('')
+      }))
+    ).toEqual([
+      {
+        kind: 'removed',
+        oldLineNumber: 1,
+        newLineNumber: undefined,
+        text: '## What Is This?\n',
+        changed: ''
+      },
+      {
+        kind: 'added',
+        oldLineNumber: undefined,
+        newLineNumber: 1,
+        text: '## What Is This?? ?\n',
+        changed: '? ?'
+      },
+      {
+        kind: 'added',
+        oldLineNumber: undefined,
+        newLineNumber: 2,
+        text: 'Wonderful\n',
+        changed: 'Wonderful\n'
+      },
+      {
+        kind: 'removed',
+        oldLineNumber: 2,
+        newLineNumber: undefined,
+        text: 'Original paragraph old.\n',
+        changed: 'old'
+      },
+      {
+        kind: 'added',
+        oldLineNumber: undefined,
+        newLineNumber: 3,
+        text: 'Original paragraph new.\n',
+        changed: 'new'
+      }
+    ])
+  })
+
+  it('keeps a removed line separate from the similar modified line that follows it', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'removed-line-before-modified-line',
+      before: '## What Is This?\nWonderful\nOriginal paragraph old.\n',
+      after: '## What Is This?? ?\nOriginal paragraph new.\n'
+    })
+
+    expect(
+      lines.map((line) => ({
+        kind: line.kind,
+        text: line.segments.map((segment) => segment.text).join(''),
+        changed: line.segments
+          .filter((segment) => segment.kind === line.kind)
+          .map((segment) => segment.text)
+          .join('')
+      }))
+    ).toEqual([
+      { kind: 'removed', text: '## What Is This?\n', changed: '' },
+      { kind: 'added', text: '## What Is This?? ?\n', changed: '? ?' },
+      { kind: 'removed', text: 'Wonderful\n', changed: 'Wonderful\n' },
+      { kind: 'removed', text: 'Original paragraph old.\n', changed: 'old' },
+      { kind: 'added', text: 'Original paragraph new.\n', changed: 'new' }
+    ])
+  })
+
+  it('does not force unrelated residual lines into a character replacement', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'unrelated-residual-lines',
+      before: 'abcdefghij old\n',
+      after: 'Wonderful\nuvwxyz new\n'
+    })
+
+    expect(
+      lines.map((line) => ({
+        kind: line.kind,
+        text: line.segments.map((segment) => segment.text).join(''),
+        changed: line.segments
+          .filter((segment) => segment.kind === line.kind)
+          .map((segment) => segment.text)
+          .join('')
+      }))
+    ).toEqual([
+      { kind: 'removed', text: 'abcdefghij old\n', changed: 'abcdefghij old\n' },
+      { kind: 'added', text: 'Wonderful\n', changed: 'Wonderful\n' },
+      { kind: 'added', text: 'uvwxyz new\n', changed: 'uvwxyz new\n' }
+    ])
+  })
+
+  it.each([
+    {
+      label: 'insertion',
+      before: 'Heading old.\n',
+      after: 'Heading new.\nWonderful\n',
+      trailingKind: 'added',
+      trailingText: 'Wonderful\n'
+    },
+    {
+      label: 'removal',
+      before: 'Heading old.\nWonderful\n',
+      after: 'Heading new.\n',
+      trailingKind: 'removed',
+      trailingText: 'Wonderful\n'
+    }
+  ])('keeps a line-count $label after a modified line separate', async (fixture) => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: `line-after-modification-${fixture.label}`,
+      before: fixture.before,
+      after: fixture.after
+    })
+
+    expect(lines.slice(0, 2).map((line) => line.segments.map((segment) => segment.text))).toEqual([
+      ['Heading ', 'old', '.\n'],
+      ['Heading ', 'new', '.\n']
+    ])
+    expect(lines.at(-1)).toMatchObject({
+      kind: fixture.trailingKind,
+      segments: [{ kind: fixture.trailingKind, text: fixture.trailingText }]
+    })
+  })
+
+  it('aligns repeated similar lines around a true insertion', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'repeated-lines-around-insertion',
+      before: 'Repeat alpha.\nRepeat alpha.\n',
+      after: 'Repeat beta.\nInserted\nRepeat beta.\n'
+    })
+
+    expect(
+      lines.map((line) => ({
+        kind: line.kind,
+        text: line.segments.map((segment) => segment.text).join(''),
+        changed: line.segments
+          .filter((segment) => segment.kind === line.kind)
+          .map((segment) => segment.text)
+          .join('')
+      }))
+    ).toEqual([
+      { kind: 'removed', text: 'Repeat alpha.\n', changed: 'lpha' },
+      { kind: 'added', text: 'Repeat beta.\n', changed: 'bet' },
+      { kind: 'added', text: 'Inserted\n', changed: 'Inserted\n' },
+      { kind: 'removed', text: 'Repeat alpha.\n', changed: 'lpha' },
+      { kind: 'added', text: 'Repeat beta.\n', changed: 'bet' }
+    ])
+  })
+
+  it('treats an equal-count unrelated line swap as whole-line removal and addition', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'equal-count-unrelated-line-swap',
+      before: '## Heading\nObsolete\nParagraph old.\n',
+      after: '## Heading?\nWonderful\nParagraph new.\n'
+    })
+
+    expect(
+      lines.slice(2, 4).map((line) => ({
+        kind: line.kind,
+        text: line.segments.map((segment) => segment.text).join(''),
+        changed: line.segments
+          .filter((segment) => segment.kind === line.kind)
+          .map((segment) => segment.text)
+          .join('')
+      }))
+    ).toEqual([
+      { kind: 'removed', text: 'Obsolete\n', changed: 'Obsolete' },
+      { kind: 'added', text: 'Wonderful\n', changed: 'Wonderful' }
+    ])
+  })
+
+  it.each([
+    { label: 'short Markdown heading', before: '# A\n', after: '# B\n', common: '# ' },
+    { label: 'short Chinese text', before: '你好甲\n', after: '你好乙\n', common: '你好' },
+    { label: 'short prefix extension', before: 'Name\n', after: 'Name extended\n', common: 'Name' }
+  ])('keeps the shared characters in a $label', async (fixture) => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: `short-line-${fixture.label}`,
+      before: fixture.before,
+      after: fixture.after
+    })
+
+    expect(
+      lines[0]?.segments
+        .filter((segment) => segment.kind === 'context')
+        .map((segment) => segment.text)
+        .join('')
+    ).toContain(fixture.common)
+    expect(
+      lines[1]?.segments
+        .filter((segment) => segment.kind === 'context')
+        .map((segment) => segment.text)
+        .join('')
+    ).toContain(fixture.common)
+  })
+
+  it.each([
+    {
+      label: 'split',
+      before: 'Hello world\n',
+      after: 'Hello \nworld\n',
+      removed: '',
+      added: '\n'
+    },
+    {
+      label: 'merge',
+      before: 'Hello \nworld\n',
+      after: 'Hello world\n',
+      removed: '\n',
+      added: ''
+    }
+  ])('marks only the changed line ending for a line $label', async (fixture) => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: `line-${fixture.label}`,
+      before: fixture.before,
+      after: fixture.after
+    })
+
+    expect(
+      lines
+        .filter((line) => line.kind !== 'added')
+        .flatMap((line) => line.segments)
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(fixture.before)
+    expect(
+      lines
+        .filter((line) => line.kind !== 'removed')
+        .flatMap((line) => line.segments)
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(fixture.after)
+    expect(
+      lines
+        .flatMap((line) => line.segments)
+        .filter((segment) => segment.kind === 'removed')
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(fixture.removed)
+    expect(
+      lines
+        .flatMap((line) => line.segments)
+        .filter((segment) => segment.kind === 'added')
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(fixture.added)
+  })
+
+  it('preserves context symmetrically across a one-to-many line split', async () => {
+    const before = 'StartMiddleEnd'
+    const after = 'Start\ninserted Middle\nEnd'
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'one-to-many-line-split-context',
+      before,
+      after
+    })
+
+    expect(
+      lines
+        .filter((line) => line.kind !== 'added')
+        .flatMap((line) => line.segments)
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(before)
+    expect(
+      lines
+        .filter((line) => line.kind !== 'removed')
+        .flatMap((line) => line.segments)
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(after)
+    expect(
+      lines
+        .filter((line) => line.kind === 'removed')
+        .flatMap((line) => line.segments)
+        .filter((segment) => segment.kind === 'context')
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe('StartMiddleEnd')
+    expect(
+      lines
+        .filter((line) => line.kind === 'added')
+        .flatMap((line) => line.segments)
+        .filter((segment) => segment.kind === 'context')
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe('StartMiddleEnd')
+  })
+
+  it('preserves cross-line anchors carried by an otherwise matched line', async () => {
+    const before = 'Line one\nStartMiddleEnd'
+    const after = 'New first\nMiddle\nEnd'
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'matched-line-cross-line-anchor',
+      before,
+      after
+    })
+    const beforeContext = lines
+      .filter((line) => line.kind !== 'added')
+      .flatMap((line) => line.segments)
+      .filter((segment) => segment.kind === 'context')
+      .map((segment) => segment.text)
+      .join('')
+    const afterContext = lines
+      .filter((line) => line.kind !== 'removed')
+      .flatMap((line) => line.segments)
+      .filter((segment) => segment.kind === 'context')
+      .map((segment) => segment.text)
+      .join('')
+
+    expect(beforeContext).toBe('\nMiddleEnd')
+    expect(afterContext).toBe('\nMiddleEnd')
+  })
+
+  it('propagates cross-line anchors through all connected natural-language lines', async () => {
+    const before = 'Intro\nMiddleEnd'
+    const after = 'Intro Middle\nInserted End\nDone'
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'transitive-cross-line-anchors',
+      before,
+      after
+    })
+
+    for (const [excludedKind, expected] of [
+      ['added', before],
+      ['removed', after]
+    ] as const) {
+      expect(
+        lines
+          .filter((line) => line.kind !== excludedKind)
+          .flatMap((line) => line.segments)
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(expected)
+    }
+    const beforeContext = lines
+      .filter((line) => line.kind !== 'added')
+      .flatMap((line) => line.segments)
+      .filter((segment) => segment.kind === 'context')
+      .map((segment) => segment.text)
+      .join('')
+    const afterContext = lines
+      .filter((line) => line.kind !== 'removed')
+      .flatMap((line) => line.segments)
+      .filter((segment) => segment.kind === 'context')
+      .map((segment) => segment.text)
+      .join('')
+
+    expect(beforeContext).toBe('IntroMiddleEnd')
+    expect(afterContext).toBe('IntroMiddleEnd')
+  })
+
+  it('uses conservative alignment when a changed hunk exceeds the line budget', async () => {
+    const before = 'a\n'.repeat(1_001)
+    const after = 'b\n'.repeat(1_001)
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'line-alignment-line-budget',
+      before,
+      after
+    })
+
+    expect(lines).toHaveLength(2_002)
+    expect(lines[0]).toMatchObject({
+      kind: 'removed',
+      segments: [{ kind: 'removed', text: 'a\n' }]
+    })
+    expect(lines[1_000]).toMatchObject({ kind: 'removed' })
+    expect(lines[1_001]).toMatchObject({
+      kind: 'added',
+      segments: [{ kind: 'added', text: 'b\n' }]
+    })
+  })
+
+  it('uses conservative alignment before a repeated hunk can exhaust worker memory', async () => {
+    const before = 'Repeat alpha.\n'.repeat(500)
+    const after = 'Repeat beta.\n'.repeat(500)
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'line-alignment-repeated-hunk-budget',
+      before,
+      after
+    })
+
+    expect(lines).toHaveLength(1_000)
+    expect(lines[0]).toMatchObject({
+      kind: 'removed',
+      segments: [{ kind: 'removed', text: 'Repeat alpha.\n' }]
+    })
+    expect(lines[499]).toMatchObject({ kind: 'removed' })
+    expect(lines[500]).toMatchObject({
+      kind: 'added',
+      segments: [{ kind: 'added', text: 'Repeat beta.\n' }]
+    })
+  })
+
+  it('uses conservative alignment when a changed hunk exceeds the character budget', async () => {
+    const before = 'a'.repeat(125_001)
+    const after = 'b'.repeat(125_001)
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'line-alignment-character-budget',
+      before,
+      after
+    })
+
+    expect(lines).toEqual([
+      {
+        kind: 'removed',
+        oldLineNumber: 1,
+        segments: [{ kind: 'removed', text: before }]
+      },
+      {
+        kind: 'added',
+        newLineNumber: 1,
+        segments: [{ kind: 'added', text: after }]
+      }
+    ])
+  })
+
   it('terminates an active worker when its request is cancelled', async () => {
     let terminated = false
     const runner = new ManagedTextDiffTaskRunner({

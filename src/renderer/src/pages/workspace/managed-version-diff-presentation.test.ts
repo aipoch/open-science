@@ -908,6 +908,249 @@ describe('managed version diff presentation', () => {
     ])
   })
 
+  it('keeps an inserted paragraph separate from a similar modified paragraph', async () => {
+    const blocks = await diffMarkdown(
+      '## What Is This?\nOriginal paragraph old.\n',
+      '## What Is This?? ?\nWonderful\nOriginal paragraph new.\n',
+      'inserted-paragraph-before-modified-paragraph'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `## What Is This?${escapedMarkdownChange('added', '? ?')}\n${escapedMarkdownChange('added', 'Wonderful')}\nOriginal paragraph ${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}.`,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    { label: 'split', before: 'Hello world\n', after: 'Hello \nworld\n', kind: 'added' as const },
+    { label: 'merge', before: 'Hello \nworld\n', after: 'Hello world\n', kind: 'removed' as const }
+  ])('marks only the changed newline when paragraphs $label across lines', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `rendered-paragraph-line-${fixture.label}`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: 'Hello ' },
+          { kind: fixture.kind, text: '\n' },
+          { kind: 'context', text: 'world' }
+        ],
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each(['prose', 'structured'] as const)(
+    'marks only the changed newline in %s text split and merge blocks',
+    async (presentationKind) => {
+      for (const fixture of [
+        {
+          requestId: `${presentationKind}-line-split`,
+          before: 'Hello world\n',
+          after: 'Hello \nworld\n',
+          kind: 'added' as const
+        },
+        {
+          requestId: `${presentationKind}-line-merge`,
+          before: 'Hello \nworld\n',
+          after: 'Hello world\n',
+          kind: 'removed' as const
+        }
+      ]) {
+        const lines = await new ManagedTextDiffTaskRunner().run(fixture)
+        expect(
+          toDiffPresentationBlocks(
+            { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+            presentationKind
+          )
+        ).toEqual([
+          {
+            kind: 'text',
+            changeKind: 'mixed',
+            segments: [
+              { kind: 'context', text: 'Hello ' },
+              { kind: fixture.kind, text: '\n' },
+              { kind: 'context', text: 'world\n' }
+            ],
+            startIndex: 0
+          }
+        ])
+      }
+    }
+  )
+
+  it.each(['prose', 'structured'] as const)(
+    'keeps cross-line text replacements character-precise in %s blocks',
+    async (presentationKind) => {
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `${presentationKind}-line-split-with-text-replacements`,
+        before: 'Hello old world old\n',
+        after: 'Hello new\nworld new\n'
+      })
+
+      expect(
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          presentationKind
+        )
+      ).toEqual([
+        {
+          kind: 'text',
+          changeKind: 'mixed',
+          segments: [
+            { kind: 'context', text: 'Hello ' },
+            { kind: 'removed', text: 'old ' },
+            { kind: 'added', text: 'ne' },
+            { kind: 'context', text: 'w' },
+            { kind: 'added', text: '\nw' },
+            { kind: 'context', text: 'orld ' },
+            { kind: 'removed', text: 'old' },
+            { kind: 'added', text: 'new' },
+            { kind: 'context', text: '\n' }
+          ],
+          startIndex: 0
+        }
+      ])
+    }
+  )
+
+  it.each(['prose', 'structured'] as const)(
+    'does not invent a shared newline in a multiline %s hunk ending at EOF',
+    async (presentationKind) => {
+      const before = 'old1\nkeep old\nremoved after\n'
+      const after = 'keep new'
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `${presentationKind}-multiline-eof-without-newline`,
+        before,
+        after
+      })
+      const blocks = toDiffPresentationBlocks(
+        { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+        presentationKind
+      )
+      const segments = blocks.flatMap((block) => (block.kind === 'text' ? block.segments : []))
+
+      expect(blocks).toHaveLength(1)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'added')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(before)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'removed')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(after)
+    }
+  )
+
+  it.each(['prose', 'structured'] as const)(
+    'reconstructs both sides of a one-to-many %s line split',
+    async (presentationKind) => {
+      const before = 'StartMiddleEnd'
+      const after = 'Start\ninserted Middle\nEnd'
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `${presentationKind}-one-to-many-line-split`,
+        before,
+        after
+      })
+      const blocks = toDiffPresentationBlocks(
+        { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+        presentationKind
+      )
+      const segments = blocks.flatMap((block) => (block.kind === 'text' ? block.segments : []))
+
+      expect(blocks).toHaveLength(1)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'added')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(before)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'removed')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(after)
+    }
+  )
+
+  it.each(['prose', 'structured'] as const)(
+    'reconstructs both sides when a matched line carries a cross-line anchor in %s',
+    async (presentationKind) => {
+      const before = 'Line one\nStartMiddleEnd'
+      const after = 'New first\nMiddle\nEnd'
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `${presentationKind}-matched-line-cross-line-anchor`,
+        before,
+        after
+      })
+      const blocks = toDiffPresentationBlocks(
+        { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+        presentationKind
+      )
+      const segments = blocks.flatMap((block) => (block.kind === 'text' ? block.segments : []))
+
+      expect(blocks).toHaveLength(1)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'added')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(before)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'removed')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(after)
+    }
+  )
+
+  it.each(['prose', 'structured'] as const)(
+    'reconstructs both sides of a transitive cross-line %s edit',
+    async (presentationKind) => {
+      const before = 'Intro\nMiddleEnd'
+      const after = 'Intro Middle\nInserted End\nDone'
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `${presentationKind}-transitive-cross-line-anchors`,
+        before,
+        after
+      })
+      const blocks = toDiffPresentationBlocks(
+        { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+        presentationKind
+      )
+      const segments = blocks.flatMap((block) => (block.kind === 'text' ? block.segments : []))
+
+      expect(blocks).toHaveLength(1)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'added')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(before)
+      expect(
+        segments
+          .filter((segment) => segment.kind !== 'removed')
+          .map((segment) => segment.text)
+          .join('')
+      ).toBe(after)
+    }
+  )
+
   it('keeps an inserted blank line as a visible single-column row', async () => {
     const blocks = await diffMarkdown(
       'Opening line\nclosing line\n',

@@ -1128,6 +1128,57 @@ const appendTextSegment = (segments: DiffSegment[], segment: DiffSegment): void 
   segments.push({ ...segment })
 }
 
+const toProjectedMixedTextSegments = (lines: DiffLine[]): DiffSegment[] | undefined => {
+  const before = lines.filter((line) => line.kind !== 'added').flatMap((line) => line.segments)
+  const after = lines.filter((line) => line.kind !== 'removed').flatMap((line) => line.segments)
+  const segments: DiffSegment[] = []
+  let beforeIndex = 0
+  let beforeOffset = 0
+  let afterIndex = 0
+  let afterOffset = 0
+  let changed = false
+  const remaining = (items: DiffSegment[], index: number, offset: number): string =>
+    items[index]?.text.slice(offset) ?? ''
+  const advance = (
+    items: DiffSegment[],
+    index: number,
+    offset: number,
+    count: number
+  ): [number, number] => {
+    const nextOffset = offset + count
+    return nextOffset === items[index]?.text.length ? [index + 1, 0] : [index, nextOffset]
+  }
+
+  while (beforeIndex < before.length || afterIndex < after.length) {
+    const beforeSegment = before[beforeIndex]
+    const afterSegment = after[afterIndex]
+    if (beforeSegment?.kind === 'removed') {
+      const text = remaining(before, beforeIndex, beforeOffset)
+      appendTextSegment(segments, { kind: 'removed', text })
+      ;[beforeIndex, beforeOffset] = advance(before, beforeIndex, beforeOffset, text.length)
+      changed = true
+      continue
+    }
+    if (afterSegment?.kind === 'added') {
+      const text = remaining(after, afterIndex, afterOffset)
+      appendTextSegment(segments, { kind: 'added', text })
+      ;[afterIndex, afterOffset] = advance(after, afterIndex, afterOffset, text.length)
+      changed = true
+      continue
+    }
+    if (beforeSegment?.kind !== 'context' || afterSegment?.kind !== 'context') return undefined
+
+    const beforeText = remaining(before, beforeIndex, beforeOffset)
+    const afterText = remaining(after, afterIndex, afterOffset)
+    const length = Math.min(beforeText.length, afterText.length)
+    if (beforeText.slice(0, length) !== afterText.slice(0, length)) return undefined
+    appendTextSegment(segments, { kind: 'context', text: beforeText.slice(0, length) })
+    ;[beforeIndex, beforeOffset] = advance(before, beforeIndex, beforeOffset, length)
+    ;[afterIndex, afterOffset] = advance(after, afterIndex, afterOffset, length)
+  }
+  return changed ? segments : undefined
+}
+
 const toMixedTextSegments = (lines: DiffLine[]): DiffSegment[] | undefined => {
   const segments: DiffSegment[] = []
   let outputLineCount = 0
@@ -1141,7 +1192,7 @@ const toMixedTextSegments = (lines: DiffLine[]): DiffSegment[] | undefined => {
         ? toInlineTextReplacement(line, nextLine)
         : undefined
     if (line.kind === 'removed' && nextLine?.kind === 'added' && replacement === undefined) {
-      return undefined
+      return toProjectedMixedTextSegments(lines)
     }
     if (outputLineCount > 0 && !previousLineHasExplicitEnding) {
       appendTextSegment(segments, { kind: 'context', text: '\n' })
@@ -1309,6 +1360,25 @@ const toTextRenderBlocks = (
   for (let index = 0; index < result.lines.length; index += 1) {
     const line = result.lines[index]!
     const nextLine = result.lines[index + 1]
+    if ((presentationKind === 'prose' || mergeStructuredReplacements) && line.kind !== 'context') {
+      let endIndex = index
+      while (result.lines[endIndex + 1]?.kind !== 'context' && result.lines[endIndex + 1]) {
+        endIndex += 1
+      }
+      const changedLines = result.lines.slice(index, endIndex + 1)
+      const canContainCrossLineProjection =
+        changedLines.length > 2 &&
+        changedLines.some((candidate) => candidate.kind === 'removed') &&
+        changedLines.some((candidate) => candidate.kind === 'added')
+      if (canContainCrossLineProjection) {
+        const segments = toProjectedMixedTextSegments(changedLines)
+        if (segments?.some((segment) => segment.kind !== 'context')) {
+          blocks.push({ kind: 'text', changeKind: 'mixed', segments, startIndex: index })
+          index = endIndex
+          continue
+        }
+      }
+    }
     // Raw Markdown, prose, and structured views merge only pairs with explicit changed segments.
     if (
       (presentationKind === 'prose' || mergeStructuredReplacements) &&
