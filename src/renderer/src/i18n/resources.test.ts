@@ -294,6 +294,7 @@ describe('mandatory product glossary', () => {
   it.each(['ja', 'ko'] as const)('%s keeps product and technical terms in English', (locale) => {
     const retainedProductGlossary = [
       { term: 'Open Science', source: /\bOpen Science\b/ },
+      { term: 'Anthropic', source: /\bAnthropic\b/ },
       { term: 'Claude', source: /\bClaude\b/ },
       { term: 'Codex', source: /\bCodex\b/ },
       { term: 'opencode', source: /\bOpenCode\b/ },
@@ -307,7 +308,8 @@ describe('mandatory product glossary', () => {
       { term: 'Discord', source: /\bDiscord\b/ },
       { term: 'Python', source: /\bPython\b/ },
       { term: 'Jupyter', source: /\bJupyter\b/ },
-      { term: 'Office', source: /\bOffice\b/ }
+      { term: 'Office', source: /\bOffice\b/ },
+      { term: 'Chromium', source: /\bChromium\b/ }
     ]
     const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
       const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
@@ -414,7 +416,7 @@ describe('mandatory product glossary', () => {
   const exactTechnicalIdentifierPatterns = [
     /SKILL\.md/g,
     /\b[\w.-]+\.(?:md|txt|json|zip)\b/g,
-    /\.(?:md|zip)\b/g,
+    /\.(?:md|txt|json|zip|skill|yaml|yml|toml|csv|tsv|ipynb)\b/g,
     /\.skill\b/g,
     /skill:\/\//g,
     /host\.skill\b/g,
@@ -424,7 +426,7 @@ describe('mandatory product glossary', () => {
     /\bopen-science\b/g,
     /\bRemote\.It\b/g,
     /\bZIP\b/g,
-    /\/Users\/[\w./-]+/g,
+    /(?<![:/\w])\/(?:[\w.-]+\/)+[\w.-]*[\w-]/g,
     /\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
     /\bmax_tokens\b/g,
     /\bskills\//g,
@@ -573,10 +575,26 @@ describe('Japanese safety copy', () => {
 describe('Korean safety copy', () => {
   it.each([
     ['Allow globally', '모든 프로젝트에서 허용'],
+    ['Allow for this project', '이 프로젝트에서 허용'],
+    ['Clear all session grants', '모든 세션 권한 지우기'],
+    ['Grant folder…', '폴더 권한 부여…'],
+    ['Grant this folder', '이 폴더에 권한 부여'],
     ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
     ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', '승인은 이 호출에만 적용됩니다.'],
     ['This call only', '이 호출만'],
+    [
+      'Auto-approve edits to files in the workspace. Still ask before commands, network, and MCP.',
+      '워크스페이스의 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 작업 전에는 계속 확인합니다.'
+    ],
+    [
+      'Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.',
+      '워크스페이스 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 도구를 실행하기 전에는 계속 확인합니다.'
+    ],
+    [
+      '<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder.',
+      '<em>기존 데이터(~{{size}})가 새 위치로 이동됩니다</em> — 파일도 함께 이동되며 현재 폴더에는 아무것도 남지 않습니다.'
+    ],
     [
       'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
       '개별 권한은 계속 취소할 수 있습니다. 전체 집합이 확인될 때까지 모두 취소가 비활성화됩니다.'
@@ -615,6 +633,7 @@ describe('Korean binding terminology', () => {
     { source: /\bruntimes?\b/i, expected: '런타임' },
     { source: /\benvironments?\b/i, expected: '환경' },
     { source: /\bpreviews?\b/i, expected: '미리보기' },
+    { source: /\binterpreters?\b/i, expected: '인터프리터' },
     { source: /\breasoning effort\b/i, expected: '추론 강도' },
     { source: /\bcontexts?\b/i, expected: '컨텍스트' },
     { source: /\bfiles?\b/i, expected: '파일' },
@@ -700,6 +719,32 @@ describe('Korean binding terminology', () => {
     ['Dark', '다크'],
     ['Storage', '저장소'],
     ['Archive', '보관'],
+    ['Approve', '허용'],
+    ['Retry', '다시 시도'],
+    ['Idle', '대기 중'],
+    ['Completed', '완료'],
+    ['Refreshing…', '새로고침 중…'],
+    ['Application storage', '애플리케이션 저장소'],
+    ['Anthropic approx.', 'Anthropic 근사치'],
+    ['Chromium v', 'Chromium v'],
+    ['Add interpreter…', '인터프리터 추가…'],
+    ['Could not add that interpreter.', '해당 인터프리터를 추가할 수 없습니다.'],
+    [
+      'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.',
+      '각 Notebook 언어가 실행될 수 있는 환경을 활성화합니다. 앱 관리 환경은 기본적으로 켜져 있습니다. 에이전트가 사용할 수 있도록 자체 인터프리터를 활성화하세요.'
+    ],
+    ['Token usage for this response', '이 응답의 토큰 사용량'],
+    ['Token usage unavailable for this response', '이 응답의 토큰 사용량을 확인할 수 없습니다.'],
+    ['Used tool: {{name}}', '사용한 도구: {{name}}'],
+    ['read a file', '파일을 읽었습니다'],
+    ['ran {{count}} tools_other', '도구 {{count}}개를 실행했습니다'],
+    ['Keep it in the current folder', '현재 폴더에 유지'],
+    ['Pin current folder', '현재 폴더 고정'],
+    ['Load more sessions', '세션 더 불러오기'],
+    [
+      'Choose one .json file up to {{size}}. Credentials are never imported from the file.',
+      '최대 {{size}}인 .json 파일 하나를 선택하세요. 파일에서 자격 증명은 가져오지 않습니다.'
+    ],
     ['Star on GitHub', 'GitHub에서 Star'],
     ['Star {{app}} on GitHub', 'GitHub에서 {{app}}에 Star'],
     [
@@ -712,6 +757,27 @@ describe('Korean binding terminology', () => {
     ]
   ])('preserves the exact meaning of %s', (key, expected) => {
     expect(catalog('ko')[key]).toBe(expected)
+  })
+
+  it('does not use known non-UI senses for ambiguous English words', () => {
+    const forbidden = [
+      '선택 과목',
+      '다른 가족',
+      '가까운 출처',
+      '수표',
+      '장애인',
+      '항구',
+      '요금제 세부정보',
+      '작곡가',
+      '회전 제한',
+      '단어 분석 문서',
+      '일하는 중'
+    ]
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => forbidden.some((term) => value.includes(term)))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
   })
 })
 
