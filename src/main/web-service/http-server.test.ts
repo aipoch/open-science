@@ -231,6 +231,7 @@ describe('startWebHttpServer', () => {
         subscribeProgress,
         listProjects: vi.fn(),
         createProject: vi.fn(),
+        updateProject: vi.fn(),
         listSessions: vi.fn(),
         getSession: vi.fn(),
         startRun: vi.fn(),
@@ -920,6 +921,7 @@ describe('startWebHttpServer', () => {
       subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
+      updateProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(async () => ({
@@ -1548,8 +1550,15 @@ describe('startWebHttpServer', () => {
           publishProgress = undefined
         }
       }),
-      listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
-      createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
+      listProjects: vi
+        .fn()
+        .mockResolvedValue([{ id: 'project-1', name: 'Research', hasAgentContext: false }]),
+      createProject: vi
+        .fn()
+        .mockResolvedValue({ id: 'project-2', name: 'Created', hasAgentContext: true }),
+      updateProject: vi
+        .fn()
+        .mockResolvedValue({ id: 'project-1', name: 'Research', hasAgentContext: true }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
       getSession: vi.fn().mockResolvedValue({ id: 'session/1', title: 'Review' }),
       getSessionPlan: vi.fn().mockResolvedValue({
@@ -1653,7 +1662,9 @@ describe('startWebHttpServer', () => {
     expect(projects.status).toBe(200)
     expect(projects.headers.get('content-type')).toBe('application/json; charset=utf-8')
     expect(projects.headers.get('cache-control')).toBe('no-store')
-    expect(await projects.json()).toEqual({ data: [{ id: 'project-1', name: 'Research' }] })
+    expect(await projects.json()).toEqual({
+      data: [{ id: 'project-1', name: 'Research', hasAgentContext: false }]
+    })
     expect(taskContexts[0]).toMatchObject({
       surface: 'task',
       location: 'local',
@@ -1664,13 +1675,34 @@ describe('startWebHttpServer', () => {
     const created = await fetch(`${base}/api/v1/projects`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Created', description: 'A new project' })
+      body: JSON.stringify({
+        name: 'Created',
+        description: 'A new project',
+        agentContext: 'Always cite sources.'
+      })
     })
     expect(created.status).toBe(201)
-    expect(await created.json()).toEqual({ data: { id: 'project-2', name: 'Created' } })
+    expect(await created.json()).toEqual({
+      data: { id: 'project-2', name: 'Created', hasAgentContext: true }
+    })
     expect(tasks.createProject).toHaveBeenCalledWith({
       name: 'Created',
-      description: 'A new project'
+      description: 'A new project',
+      agentContext: 'Always cite sources.'
+    })
+
+    const updated = await fetch(`${base}/api/v1/projects/project%2F1`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedUpdatedAt: 7, agentContext: 'Prefer Python.' })
+    })
+    expect(updated.status).toBe(200)
+    expect(await updated.json()).toEqual({
+      data: { id: 'project-1', name: 'Research', hasAgentContext: true }
+    })
+    expect(tasks.updateProject).toHaveBeenCalledWith('project/1', {
+      expectedUpdatedAt: 7,
+      agentContext: 'Prefer Python.'
     })
 
     const sessions = await fetch(`${base}/api/v1/sessions?project=project-1`, {
@@ -1876,6 +1908,7 @@ describe('startWebHttpServer', () => {
       subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
+      updateProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),
@@ -1944,6 +1977,7 @@ describe('startWebHttpServer', () => {
       subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
+      updateProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),

@@ -26,6 +26,7 @@ export type Project = {
   id: string
   name: string
   description: string
+  hasAgentContext: boolean
   isExample: boolean
   createdAt: number
   updatedAt: number
@@ -160,7 +161,20 @@ export class OpenScienceClient {
   })
   health(): Promise<unknown>
   listProjects(): Promise<Project[]>
-  createProject(request: { name: string; description?: string }): Promise<Project>
+  createProject(request: {
+    name: string
+    description?: string
+    agentContext?: string
+  }): Promise<Project>
+  updateProject(
+    projectId: string,
+    request: {
+      expectedUpdatedAt: number
+      name?: string
+      description?: string
+      agentContext?: string
+    }
+  ): Promise<Project>
   listSessions(projectId?: string): Promise<Session[]>
   getSession(sessionId: string): Promise<Session>
   getSessionPlan(sessionId: string): Promise<SessionPlan | null>

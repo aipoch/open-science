@@ -1,6 +1,6 @@
 import type { ArtifactFile } from './artifacts'
 import type { PermissionProfileId } from './permission-profiles'
-import type { Project } from './projects'
+import type { CreateProjectRequest, Project, UpdateProjectRequest } from './projects'
 import type { ReviewLifecycle, ReviewOutcome, ReviewRunNotStartedReason } from './reviewer'
 import type { DelegationPolicy, PersistedSessionStatus } from './session-persistence'
 import type { ActivePlanProjection } from './session-plan/contract'
@@ -95,7 +95,19 @@ export type TaskSessionSummary = {
   artifactCount: number
 }
 
-export type TaskProject = Project
+export type TaskProject = Omit<Project, 'agentContext'> & {
+  hasAgentContext: boolean
+}
+
+export type CreateTaskProjectRequest = Pick<
+  CreateProjectRequest,
+  'name' | 'description' | 'agentContext'
+>
+
+export type UpdateTaskProjectRequest = Pick<
+  UpdateProjectRequest,
+  'name' | 'description' | 'agentContext' | 'expectedUpdatedAt'
+>
 
 export type AcquiredTaskArtifact = {
   resourceId: string
@@ -108,6 +120,7 @@ export type AcquiredTaskArtifact = {
 export type TaskApiErrorCode =
   | 'invalid_request'
   | 'project_not_found'
+  | 'project_conflict'
   | 'session_not_found'
   | 'session_busy'
   | 'run_not_found'

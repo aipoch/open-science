@@ -111,12 +111,36 @@ the Debian package or a host configuration that supports Chromium sandboxing is 
 Create a project and list the projects available to task runs:
 
 ```bash
-open-science project create "Systematic review" --description "Evidence review workspace" --json
+open-science project create "Systematic review" \
+  --description "Evidence review workspace" \
+  --agent-context-file ./agent-context.md \
+  --json
 open-science project list --json
 ```
 
 Commands that accept `--project` allow either a project ID or an exact project name. The CLI resolves
 a unique display name to its ID before calling the Task API; use the ID when names are duplicated.
+
+Project Agent Context contains persistent instructions that are added when Open Science sets up an
+agent Session. Supply it directly with `--agent-context <text>` or read multiline instructions from a
+strict UTF-8 file with `--agent-context-file <path>`; the two options are mutually exclusive. The
+existing 16,000-character limit applies to both forms.
+
+Update Project metadata or replace its Agent Context later using an ID or exact name:
+
+```bash
+open-science project update "Systematic review" \
+  --description "Updated evidence review workspace" \
+  --agent-context-file ./revised-agent-context.md \
+  --json
+
+open-science project update <project-id> --clear-agent-context --json
+```
+
+`--clear-agent-context` is explicit so an omitted option keeps the existing value. An update affects
+newly created Sessions and provider Sessions that are set up again after the update. It does not
+rebuild an already attached Session. Project list, create, and update output reports only the boolean
+`hasAgentContext`; Agent Context contents are not returned through the public Task API or CLI output.
 
 ## Run a task
 

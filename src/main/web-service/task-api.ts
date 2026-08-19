@@ -12,12 +12,15 @@ import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/ses
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
+  CreateTaskProjectRequest,
   StartTaskRunRequest,
+  TaskProject,
   TaskPlanResponseRequest,
   TaskRun,
   TaskRunProgressEvent,
   TaskRunReview,
-  TaskSessionSummary
+  TaskSessionSummary,
+  UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -28,7 +31,6 @@ import {
   TaskRunner,
   TaskRunnerError,
   summarizeSession,
-  type CreateTaskProjectRequest,
   type TaskAgentPort,
   type TaskRunnerDependencies
 } from '../tasks/task-runner'
@@ -62,7 +64,8 @@ class HeadlessTaskApi {
     this.runner = new TaskRunner({
       projects: {
         list: () => this.invoke('projects:list') as Promise<Project[]>,
-        create: (request) => this.invoke('projects:create', request) as Promise<Project>
+        create: (request) => this.invoke('projects:create', request) as Promise<Project>,
+        update: (request) => this.invoke('projects:update', request) as Promise<Project>
       },
       sessions: {
         list: async () => {
@@ -143,12 +146,16 @@ class HeadlessTaskApi {
     return this.callerContexts.run(context, operation)
   }
 
-  listProjects(): Promise<Project[]> {
+  listProjects(): Promise<TaskProject[]> {
     return this.runner.listProjects()
   }
 
-  createProject(request: CreateTaskProjectRequest): Promise<Project> {
+  createProject(request: CreateTaskProjectRequest): Promise<TaskProject> {
     return this.runner.createProject(request)
+  }
+
+  updateProject(projectId: string, request: UpdateTaskProjectRequest): Promise<TaskProject> {
+    return this.runner.updateProject(projectId, request)
   }
 
   listSessions(projectId?: string): Promise<TaskSessionSummary[]> {

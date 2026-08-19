@@ -39,7 +39,12 @@ import {
 } from './application-event-projections'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { authenticateRequest, persistAuthCookie } from './auth'
-import type { StartTaskRunRequest, TaskPlanResponseRequest } from '../../shared/task-api'
+import type {
+  CreateTaskProjectRequest,
+  StartTaskRunRequest,
+  TaskPlanResponseRequest,
+  UpdateTaskProjectRequest
+} from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
@@ -85,6 +90,7 @@ type WebServerOptions = {
     HeadlessTaskApi,
     | 'listProjects'
     | 'createProject'
+    | 'updateProject'
     | 'listSessions'
     | 'getSession'
     | 'startRun'
@@ -219,7 +225,7 @@ const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_request') return 400
-  if (error.code === 'session_busy') return 409
+  if (error.code === 'session_busy' || error.code === 'project_conflict') return 409
   return 404
 }
 
@@ -391,10 +397,19 @@ const handleTaskApiRequest = async (
         return true
       }
       if (url.pathname === '/api/v1/projects' && request.method === 'POST') {
-        const body = (await readJsonBody(request)) as { name?: string; description?: string }
+        const body = (await readJsonBody(request)) as CreateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 201, {
-          data: await tasks.createProject({ name: body.name ?? '', description: body.description })
+          data: await tasks.createProject(body)
+        })
+        return true
+      }
+      const projectMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)$/)
+      if (projectMatch && request.method === 'PATCH') {
+        const body = (await readJsonBody(request)) as UpdateTaskProjectRequest
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.updateProject(decodeURIComponent(projectMatch[1]), body)
         })
         return true
       }

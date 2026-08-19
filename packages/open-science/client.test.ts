@@ -27,6 +27,7 @@ describe('OpenScienceClient', () => {
         'health',
         'listProjects',
         'createProject',
+        'updateProject',
         'listSessions',
         'getSession',
         'getSessionPlan',
@@ -284,6 +285,11 @@ describe('OpenScienceClient', () => {
       if (path === '/api/v1/projects' && init?.method === 'POST') {
         return response(201, { data: { id: 'project-1', name: 'Created' } })
       }
+      if (path === '/api/v1/projects/project%2F1' && init?.method === 'PATCH') {
+        return response(200, {
+          data: { id: 'project-1', name: 'Created', hasAgentContext: true }
+        })
+      }
       if (path === '/api/v1/projects') return response(200, { data: [] })
       if (path === '/api/v1/sessions') return response(200, { data: [] })
       if (path === '/api/v1/sessions/session%2F1') {
@@ -310,7 +316,11 @@ describe('OpenScienceClient', () => {
     })
 
     await client.listProjects()
-    await client.createProject({ name: 'Created' })
+    await client.createProject({ name: 'Created', agentContext: 'Always cite sources.' })
+    await client.updateProject('project/1', {
+      expectedUpdatedAt: 7,
+      agentContext: 'Prefer Python.'
+    })
     await client.listSessions('project-1')
     await client.getSession('session/1')
     await client.getSessionPlan('session/1')
@@ -325,11 +335,18 @@ describe('OpenScienceClient', () => {
     for (const call of fetch.mock.calls) {
       expect(call[1]?.headers).toMatchObject({ authorization: 'Bearer token-1' })
     }
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(
+      JSON.stringify({ name: 'Created', agentContext: 'Always cite sources.' })
+    )
+    expect(fetch.mock.calls[2]?.[1]?.body).toBe(
+      JSON.stringify({ expectedUpdatedAt: 7, agentContext: 'Prefer Python.' })
+    )
     expect(
       fetch.mock.calls.map(([input]) => new URL(input).pathname + new URL(input).search)
     ).toEqual([
       '/api/v1/projects',
       '/api/v1/projects',
+      '/api/v1/projects/project%2F1',
       '/api/v1/sessions?project=project-1',
       '/api/v1/sessions/session%2F1',
       '/api/v1/sessions/session%2F1/plan',

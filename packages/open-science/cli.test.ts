@@ -30,6 +30,41 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 describe('task CLI', () => {
   it('parses the first milestone run interface', () => {
     expect(
+      parseCliArgs(['project', 'create', 'Research', '--agent-context', 'Always cite sources.'])
+    ).toMatchObject({
+      command: 'project',
+      subcommand: 'create',
+      options: { agentContext: 'Always cite sources.' }
+    })
+    expect(
+      parseCliArgs([
+        'project',
+        'update',
+        'Research',
+        '--name',
+        'Evidence review',
+        '--clear-agent-context'
+      ])
+    ).toMatchObject({
+      command: 'project',
+      subcommand: 'update',
+      options: { name: 'Evidence review', clearAgentContext: true }
+    })
+    expect(() =>
+      parseCliArgs([
+        'project',
+        'create',
+        'Research',
+        '--agent-context',
+        'Inline',
+        '--agent-context-file',
+        'context.md'
+      ])
+    ).toThrow('Use only one Agent Context source.')
+    expect(() =>
+      parseCliArgs(['project', 'create', 'Research', '--agent-context', 'x'.repeat(16_001)])
+    ).toThrow('Agent Context must not exceed 16000 characters.')
+    expect(
       parseCliArgs([
         'run',
         '--project',
@@ -664,6 +699,130 @@ describe('task CLI', () => {
       }
     }
   )
+
+  it('creates, updates, and clears persistent Project Agent Context without printing it', async () => {
+    const projects = [
+      {
+        id: 'project-1',
+        name: 'Research',
+        description: '',
+        updatedAt: 7,
+        hasAgentContext: false
+      }
+    ]
+    const client = {
+      listProjects: vi.fn().mockResolvedValue(projects),
+      createProject: vi.fn().mockResolvedValue({
+        ...projects[0],
+        id: 'project-2',
+        hasAgentContext: true
+      }),
+      updateProject: vi.fn().mockResolvedValue({ ...projects[0], hasAgentContext: true })
+    }
+    const log = vi.fn()
+    const dependencies = {
+      connect: vi.fn().mockResolvedValue(client),
+      readBinaryFile: vi.fn().mockResolvedValue(new TextEncoder().encode('Prefer Python.\n')),
+      log,
+      stdinIsTTY: true
+    }
+
+    await runTaskCommand(
+      {
+        command: 'project',
+        subcommand: 'create',
+        positionals: ['Created'],
+        options: {
+          agentContext: 'Always cite sources.',
+          json: true,
+          jsonl: false
+        }
+      },
+      dependencies
+    )
+    await runTaskCommand(
+      {
+        command: 'project',
+        subcommand: 'update',
+        positionals: ['Research'],
+        options: {
+          agentContextFile: 'context.md',
+          json: true,
+          jsonl: false
+        }
+      },
+      dependencies
+    )
+    await runTaskCommand(
+      {
+        command: 'project',
+        subcommand: 'update',
+        positionals: ['project-1'],
+        options: {
+          clearAgentContext: true,
+          json: true,
+          jsonl: false
+        }
+      },
+      dependencies
+    )
+
+    expect(client.createProject).toHaveBeenCalledWith({
+      name: 'Created',
+      description: undefined,
+      agentContext: 'Always cite sources.'
+    })
+    expect(client.updateProject).toHaveBeenNthCalledWith(1, 'project-1', {
+      expectedUpdatedAt: 7,
+      agentContext: 'Prefer Python.'
+    })
+    expect(client.updateProject).toHaveBeenNthCalledWith(2, 'project-1', {
+      expectedUpdatedAt: 7,
+      agentContext: ''
+    })
+    expect(JSON.stringify(log.mock.calls)).not.toContain('Always cite sources.')
+    expect(JSON.stringify(log.mock.calls)).not.toContain('Prefer Python.')
+  })
+
+  it('rejects invalid Agent Context files before mutating a Project', async () => {
+    const client = {
+      listProjects: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'project-1', name: 'Research', updatedAt: 7, hasAgentContext: false }
+        ]),
+      updateProject: vi.fn()
+    }
+    const readBinaryFile = vi
+      .fn()
+      .mockResolvedValueOnce(Uint8Array.from([0xc3, 0x28]))
+      .mockResolvedValueOnce(new TextEncoder().encode('  \n'))
+      .mockResolvedValueOnce(new TextEncoder().encode('x'.repeat(16_001)))
+    const dependencies = {
+      connect: vi.fn().mockResolvedValue(client),
+      readBinaryFile,
+      stdinIsTTY: true
+    }
+    const updateFrom = (agentContextFile: string): Promise<void> =>
+      runTaskCommand(
+        {
+          command: 'project',
+          subcommand: 'update',
+          positionals: ['Research'],
+          options: { agentContextFile, json: true, jsonl: false }
+        },
+        dependencies
+      )
+
+    await expect(updateFrom('invalid.md')).rejects.toThrow(
+      'Agent Context file must contain valid UTF-8 text.'
+    )
+    await expect(updateFrom('empty.md')).rejects.toThrow('Agent Context must not be empty.')
+    await expect(updateFrom('oversized.md')).rejects.toThrow(
+      'Agent Context must not exceed 16000 characters.'
+    )
+    expect(client.updateProject).not.toHaveBeenCalled()
+  })
 
   it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {
     const client = {

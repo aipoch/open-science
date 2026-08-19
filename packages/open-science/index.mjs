@@ -42,10 +42,21 @@ export class OpenScienceClient {
     return this.request('/api/v1/projects')
   }
 
-  createProject({ name, description }) {
+  createProject({ name, description, agentContext }) {
     return this.request('/api/v1/projects', {
       method: 'POST',
-      body: { name, ...(description === undefined ? {} : { description }) }
+      body: {
+        name,
+        ...(description === undefined ? {} : { description }),
+        ...(agentContext === undefined ? {} : { agentContext })
+      }
+    })
+  }
+
+  updateProject(projectId, request) {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}`, {
+      method: 'PATCH',
+      body: request
     })
   }
 

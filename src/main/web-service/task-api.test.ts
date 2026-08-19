@@ -55,7 +55,9 @@ const commandsFrom = (
 
 describe('HeadlessTaskApi adapter', () => {
   it('dispatches façade operations through the narrow Task command view', async () => {
-    const commandInvoke = vi.fn(async () => [project])
+    const commandInvoke = vi.fn(async () => [
+      { ...project, agentContext: 'Do not expose this instruction.' }
+    ])
     const api = new HeadlessTaskApi({
       commands: {
         commandNames: () => ['projects:list'],
@@ -64,7 +66,9 @@ describe('HeadlessTaskApi adapter', () => {
       agent: createAgent()
     })
 
-    await expect(api.listProjects()).resolves.toEqual([project])
+    const projects = await api.listProjects()
+    expect(projects).toEqual([{ ...project, hasAgentContext: true }])
+    expect(JSON.stringify(projects)).not.toContain('Do not expose this instruction.')
     expect(commandInvoke).toHaveBeenCalledWith(
       'projects:list',
       expect.objectContaining({
@@ -191,6 +195,9 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'projects:create') {
         return { ...project, ...(args[0] as object), id: 'project-created' }
       }
+      if (channel === 'projects:update') {
+        return { ...project, ...(args[0] as object), updatedAt: 3 }
+      }
       if (channel === 'sessions:load-all') {
         return { sessions: [session], manifest: { version: 1 } }
       }
@@ -207,10 +214,19 @@ describe('HeadlessTaskApi adapter', () => {
     })
     const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
 
-    await expect(api.createProject({ name: 'Created' })).resolves.toMatchObject({
+    await expect(
+      api.createProject({ name: 'Created', agentContext: 'Always cite sources.' })
+    ).resolves.toMatchObject({
       id: 'project-created',
-      name: 'Created'
+      name: 'Created',
+      hasAgentContext: true
     })
+    await expect(
+      api.updateProject(project.id, {
+        expectedUpdatedAt: project.updatedAt,
+        agentContext: 'Prefer Python.'
+      })
+    ).resolves.toMatchObject({ id: project.id, updatedAt: 3, hasAgentContext: true })
     await expect(api.listSessions(project.id)).resolves.toEqual([
       expect.objectContaining({ id: session.id, artifactCount: 1 })
     ])
@@ -231,6 +247,13 @@ describe('HeadlessTaskApi adapter', () => {
     ])
     expect(invoke).toHaveBeenCalledWith('preview-resources:release', taskCallerContext(), [
       { resourceId: 'resource-query' }
+    ])
+    expect(invoke).toHaveBeenCalledWith('projects:update', taskCallerContext(), [
+      {
+        id: project.id,
+        expectedUpdatedAt: project.updatedAt,
+        agentContext: 'Prefer Python.'
+      }
     ])
   })
 
