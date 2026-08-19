@@ -2058,6 +2058,7 @@
   "View source": "소스 보기",
   "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "이 기기의 런타임 로그를 확인하세요. 문제를 진단할 수 있도록 앱이 수행하는 작업을 기록합니다.",
   "View {{name}}": "{{name}} 보기",
+  "View {{name}} details": "{{name}} 세부정보 보기",
   "Viewer failed": "뷰어 실패",
   "Waiting for a response…": "응답을 기다리는 중…",
   "Waiting for permission": "허가를 기다리는 중",
