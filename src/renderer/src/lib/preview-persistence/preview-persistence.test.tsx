@@ -556,11 +556,10 @@ describe('usePreviewPersistence per-project save/restore', () => {
     let durableState: PersistedPreviewState | undefined
     save.mockClear()
     save
-      .mockImplementationOnce(
-        ({ state }: { state: PersistedPreviewState }) =>
-          delayedFirstSave.promise.then(() => {
-            durableState = state
-          })
+      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) =>
+        delayedFirstSave.promise.then(() => {
+          durableState = state
+        })
       )
       .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) => {
         durableState = state
@@ -579,6 +578,68 @@ describe('usePreviewPersistence per-project save/restore', () => {
 
     await vi.waitFor(() => {
       expect(save).toHaveBeenCalledTimes(2)
+      expect(durableState?.activeItemId).toBe(secondItem.id)
+    })
+  })
+
+  it('keeps the latest state durable across a remount while an earlier save is in flight', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+
+    const firstItem = createStoredFileItem()
+    const secondItem = createStoredFileItem({
+      id: 'file:session-1:/workspace/project/results.csv',
+      title: 'results.csv',
+      path: '/workspace/project/results.csv',
+      format: 'csv',
+      name: 'results.csv'
+    })
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        panelState: 'open',
+        activeItemId: undefined,
+        items: [firstItem, secondItem]
+      })
+    })
+    await act(async () => Promise.resolve())
+
+    const delayedFirstSave = createDeferred<void>()
+    const pendingRemountLoad = createDeferred<PersistedPreviewState | undefined>()
+    let durableState: PersistedPreviewState | undefined
+    load.mockReturnValueOnce(pendingRemountLoad.promise)
+    save.mockClear()
+    save
+      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) =>
+        delayedFirstSave.promise.then(() => {
+          durableState = state
+        })
+      )
+      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) => {
+        durableState = state
+        return Promise.resolve()
+      })
+
+    act(() => {
+      usePreviewWorkbenchStore.setState({ activeItemId: firstItem.id })
+    })
+    await act(async () => {
+      root.unmount()
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+    act(() => {
+      usePreviewWorkbenchStore.setState({ activeItemId: secondItem.id })
+    })
+
+    await act(async () => {
+      delayedFirstSave.resolve()
+      await delayedFirstSave.promise
+    })
+
+    await vi.waitFor(() => {
       expect(durableState?.activeItemId).toBe(secondItem.id)
     })
   })

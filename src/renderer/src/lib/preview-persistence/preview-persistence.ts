@@ -61,6 +61,13 @@ const createPreviewSaveScheduler = (
   }
 }
 
+// WorkspacePage can unmount while an IPC save is still in flight. Keep one renderer-lifetime scheduler
+// so a later Workspace mount cannot start a competing queue for the same Project.
+const schedulePreviewSave = createPreviewSaveScheduler(
+  (request) => window.api.preview.save(request),
+  reportPersistenceError
+)
+
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
 // Subagents selection. Other tool tabs remain runtime-only and re-appear from their existing owners.
 const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewState => ({
@@ -176,15 +183,6 @@ export const usePreviewPersistence = (
   isSessionPersistenceReady: boolean
 ): void => {
   const previousProjectIdRef = useRef<string | undefined>(undefined)
-  const scheduleSaveRef = useRef<((request: SavePreviewStateRequest) => void) | undefined>(undefined)
-
-  if (!scheduleSaveRef.current) {
-    scheduleSaveRef.current = createPreviewSaveScheduler(
-      (request) => window.api.preview.save(request),
-      reportPersistenceError
-    )
-  }
-  const scheduleSave = scheduleSaveRef.current
 
   useEffect(() => {
     // Upload preview paths can only be reconciled after persisted sessions have hydrated.
@@ -204,7 +202,7 @@ export const usePreviewPersistence = (
       previousProjectId !== activeProjectId &&
       store.activeProjectId === previousProjectId
     ) {
-      scheduleSave({ projectId: previousProjectId, state: toPersistedPreviewState(store) })
+      schedulePreviewSave({ projectId: previousProjectId, state: toPersistedPreviewState(store) })
     }
 
     previousProjectIdRef.current = activeProjectId
@@ -234,14 +232,14 @@ export const usePreviewPersistence = (
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, isSessionPersistenceReady, scheduleSave])
+  }, [activeProjectId, isSessionPersistenceReady])
 
   // Write through workbench changes so a process-level restart cannot lose the selected Subagent
   // Frame (or another durable preview change) before React gets an unmount opportunity.
   useEffect(() => {
     const unsubscribe = usePreviewWorkbenchStore.subscribe((state) => {
       if (!state.activeProjectId) return
-      scheduleSave({
+      schedulePreviewSave({
         projectId: state.activeProjectId,
         state: toPersistedPreviewState(state)
       })
@@ -251,11 +249,14 @@ export const usePreviewPersistence = (
       unsubscribe()
       const state = usePreviewWorkbenchStore.getState()
       if (state.activeProjectId) {
-        scheduleSave({ projectId: state.activeProjectId, state: toPersistedPreviewState(state) })
+        schedulePreviewSave({
+          projectId: state.activeProjectId,
+          state: toPersistedPreviewState(state)
+        })
       }
       state.closeFileDialog()
     }
-  }, [scheduleSave])
+  }, [])
 }
 
 export { toPersistedPreviewState, toRestoredSlice }
