@@ -1,8 +1,54 @@
+// @vitest-environment jsdom
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
-import { refreshDelegatedWorkSessions } from './workspace-runtime-event-owner'
+import {
+  refreshDelegatedWorkSessions,
+  resetWorkspaceRuntimeEventOwnerForTests,
+  useWorkspaceRuntimeEventIngest
+} from './workspace-runtime-event-owner'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const renderHook = <Value>(
+  hook: () => Value
+): { result: { current: Value }; unmount: () => void } => {
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const result = { current: undefined as unknown as Value }
+  const HookHarness = (): null => {
+    result.current = hook()
+    return null
+  }
+  act(() => {
+    root.render(createElement(HookHarness))
+  })
+  return {
+    result,
+    unmount: () =>
+      act(() => {
+        root.unmount()
+      })
+  }
+}
+
+const createSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnapshot => ({
+  status: 'connected',
+  cwd: '/workspace',
+  sessionIds: [],
+  events: [],
+  pendingPermissions: [],
+  permissionProfiles: {},
+  permissionGrants: {},
+  contextUsageBySession: {},
+  promptInFlight: false,
+  promptInFlightSessionIds: [],
+  ...overrides
+})
 
 const createSession = (id: string, projectId: string, revision: number): PersistedChatSession => ({
   id,
@@ -53,5 +99,78 @@ describe('delegated-work Session refresh', () => {
     expect(sessions).toHaveLength(2)
     expect(sessions[0]).toMatchObject({ id: 'session-1', runtimeContext: { revision: 2 } })
     expect(sessions[1]).toMatchObject({ id: 'session-2', runtimeContext: { revision: 1 } })
+  })
+})
+
+describe('live runtime event ingest', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    resetWorkspaceRuntimeEventOwnerForTests()
+  })
+
+  afterEach(() => {
+    resetWorkspaceRuntimeEventOwnerForTests()
+  })
+
+  it('leaves snapshot-only runtimes on the legacy seam', () => {
+    const processLifecycleEvents = vi.fn()
+    const { result, unmount } = renderHook(() =>
+      useWorkspaceRuntimeEventIngest(
+        { state: createSnapshot() },
+        processLifecycleEvents,
+        true,
+        () => ({ target: 'codex-bridge' })
+      )
+    )
+
+    expect(result.current).toBe(false)
+    expect(processLifecycleEvents).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('forwards subscribed events through the lifecycle sink with snapshot overlay', () => {
+    let publish:
+      ((events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void) | undefined
+    const unsubscribe = vi.fn()
+    const processLifecycleEvents = vi.fn()
+    const snapshot = createSnapshot({
+      sessionIds: ['session-1'],
+      agentPromptInFlightSessionIds: ['session-1']
+    })
+    const event: AcpRuntimeEvent = {
+      id: 'runtime-1:message-1',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'hello'
+    }
+    const { result, unmount } = renderHook(() =>
+      useWorkspaceRuntimeEventIngest(
+        {
+          state: createSnapshot(),
+          subscribeRuntimeEvents: (listener) => {
+            publish = listener
+            return unsubscribe
+          }
+        },
+        processLifecycleEvents,
+        true,
+        () => ({ target: 'codex-bridge' })
+      )
+    )
+
+    expect(result.current).toBe(true)
+    act(() => {
+      publish?.([event], snapshot)
+    })
+    expect(processLifecycleEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ state: snapshot }),
+      [event],
+      expect.objectContaining({ supportsImageInput: true })
+    )
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 })

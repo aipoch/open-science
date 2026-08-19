@@ -12,7 +12,8 @@ import {
   type AcpStateSnapshot,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
+import type { HistoryReplayDescriptor } from '../../../../shared/history-preamble'
 import { useSessionStore } from '../../stores/session-store'
 import {
   acceptAcpRuntimeSnapshotRevision,
@@ -482,6 +483,61 @@ const processIncrementalWorkspaceRuntimeEvents = (
   events: readonly AcpRuntimeEvent[]
 ): Promise<void> => liveWorkspaceRuntimeEventProcessor.processIncremental(events)
 
+type WorkspaceRuntimeEventIngestRuntime = {
+  state: AcpStateSnapshot
+  subscribeRuntimeEvents?: (
+    listener: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+  ) => () => void
+}
+type WorkspaceRuntimeEventLifecycleOptions = {
+  supportsImageInput?: boolean
+  getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
+}
+const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
+
+// Characterization fixtures can still present the legacy snapshot-only seam. Production
+// useAcpRuntime always supplies this subscription, including when an older Main lacks onEvent.
+const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIngestRuntime>(
+  runtime: Runtime,
+  processLifecycleEvents: (
+    runtime: Runtime,
+    events: AcpRuntimeEvent[],
+    options: WorkspaceRuntimeEventLifecycleOptions
+  ) => void,
+  supportsImageInput: boolean | undefined,
+  getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
+): boolean => {
+  const subscribeRuntimeEvents = runtime.subscribeRuntimeEvents
+  const runtimeRef = useRef(runtime)
+  const optionsRef = useRef({ supportsImageInput, getHistoryReplayDescriptor })
+  const agentPromptInFlightSessionIds =
+    runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
+
+  useEffect(() => {
+    runtimeRef.current = runtime
+    optionsRef.current = { supportsImageInput, getHistoryReplayDescriptor }
+  }, [getHistoryReplayDescriptor, runtime, supportsImageInput])
+
+  useEffect(() => {
+    if (!subscribeRuntimeEvents) return
+    return subscribeRuntimeEvents((events, snapshot) => {
+      const currentRuntime = runtimeRef.current
+      const eventRuntime = snapshot ? { ...currentRuntime, state: snapshot } : currentRuntime
+      const acceptedEvents = [...events]
+      syncWorkspaceAgentFirstOutputState(eventRuntime.state.agentPromptInFlightSessionIds ?? [])
+      processLifecycleEvents(eventRuntime, acceptedEvents, optionsRef.current)
+      void processIncrementalWorkspaceRuntimeEvents(acceptedEvents)
+    })
+  }, [processLifecycleEvents, subscribeRuntimeEvents])
+
+  useEffect(() => {
+    if (!subscribeRuntimeEvents) return
+    syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
+  }, [agentPromptInFlightSessionIds, subscribeRuntimeEvents])
+
+  return Boolean(subscribeRuntimeEvents)
+}
+
 // Flags sessions with a live Agent operation as disconnected on a transition into a dropped
 // connection state. Durable permission waits are intentionally quiescent: their provider RPC can
 // disappear while the persisted card remains actionable after a later resume.
@@ -587,5 +643,6 @@ export {
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
   syncWorkspacePermissionState,
-  useWorkspaceRuntimeEventDrain
+  useWorkspaceRuntimeEventDrain,
+  useWorkspaceRuntimeEventIngest
 }

@@ -37,17 +37,16 @@ import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   markRunningSessionsDisconnectedOnDrop,
-  processIncrementalWorkspaceRuntimeEvents,
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,
   subscribeWorkspacePermissionLifecycle,
-  syncWorkspaceAgentFirstOutputState,
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
   syncWorkspacePermissionState,
-  useWorkspaceRuntimeEventDrain
+  useWorkspaceRuntimeEventDrain,
+  useWorkspaceRuntimeEventIngest
 } from './workspace-runtime-event-owner'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
 import {
@@ -70,7 +69,6 @@ type WorkspacePermissionProfileRuntime = Pick<
   'state' | 'setPermissionProfile'
 >
 type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
-const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 const setWorkspacePermissionProfile = async (
@@ -125,12 +123,6 @@ const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
 const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
-  // Characterization fixtures can still present the legacy snapshot-only seam. Production
-  // useAcpRuntime always supplies this subscription, including when an older Main lacks onEvent.
-  const subscribeRuntimeEvents = (
-    runtime as Partial<Pick<ReturnType<typeof useAcpRuntime>, 'subscribeRuntimeEvents'>>
-  ).subscribeRuntimeEvents
-  const runtimeRef = useRef(runtime)
   const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
   const subscribeToSubagentRuntimeUpdates = useCallback(
     (listener: SubagentRuntimeListener): (() => void) => {
@@ -194,18 +186,13 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     },
     [agentFrameworks, providers]
   )
-  const runtimeEventLifecycleOptionsRef = useRef({
-    supportsImageInput: supportsHistoryImageInput,
-    getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
-  })
-  useEffect(() => {
-    runtimeRef.current = runtime
-    runtimeEventLifecycleOptionsRef.current = {
-      supportsImageInput: supportsHistoryImageInput,
-      getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
-    }
-  }, [getSessionHistoryReplayDescriptor, runtime, supportsHistoryImageInput])
   const [lifecycleOwner] = useState(createWorkspaceRuntimeSessionLifecycleOwner)
+  const liveRuntimeEvents = useWorkspaceRuntimeEventIngest(
+    runtime,
+    lifecycleOwner.processRuntimeEvents,
+    supportsHistoryImageInput,
+    getSessionHistoryReplayDescriptor
+  )
   const pendingPermissions = useMemo(
     () => pendingWorkspacePermissions(restoredPermissionSessions, runtime.state.pendingPermissions),
     [restoredPermissionSessions, runtime.state.pendingPermissions]
@@ -260,7 +247,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     () => new Set(JSON.parse(durablePermissionSessionIdsKey) as string[]),
     [durablePermissionSessionIdsKey]
   )
-
   useEffect(() => {
     const subscribe = window.api?.acp?.onAgentRuntimeUpdate
     if (!subscribe) return
@@ -268,24 +254,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       for (const listener of subagentRuntimeUpdateListeners.current) listener(update)
     })
   }, [])
-
-  useEffect(() => {
-    if (!subscribeRuntimeEvents) return
-    return subscribeRuntimeEvents((events, snapshot) => {
-      const currentRuntime = runtimeRef.current
-      const eventRuntime = snapshot ? { ...currentRuntime, state: snapshot } : currentRuntime
-      const acceptedEvents = [...events]
-      syncWorkspaceAgentFirstOutputState(eventRuntime.state.agentPromptInFlightSessionIds ?? [])
-      lifecycleOwner.processRuntimeEvents(
-        eventRuntime,
-        acceptedEvents,
-        runtimeEventLifecycleOptionsRef.current
-      )
-      void processIncrementalWorkspaceRuntimeEvents(acceptedEvents)
-    })
-  }, [lifecycleOwner, subscribeRuntimeEvents])
-  const agentPromptInFlightSessionIds =
-    runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
 
   useEffect(
     () =>
@@ -295,7 +263,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       }),
     [permissionResponseAttemptOwner]
   )
-
   useEffect(() => {
     permissionResponseAttemptOwner.cleanSessions(restoredPermissionSessions)
   }, [permissionResponseAttemptOwner, restoredPermissionSessions])
@@ -305,21 +272,18 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   }, [permissionResponseAttemptOwner, runtime.state.pendingPermissions])
 
   useEffect(() => {
-    if (subscribeRuntimeEvents) {
-      syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
-      return
-    }
+    if (liveRuntimeEvents) return
     lifecycleOwner.processRuntimeEvents(runtime, runtime.state.events, {
       supportsImageInput: supportsHistoryImageInput,
       getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
     })
     void processWorkspaceRuntimeEvents(runtime.state)
   }, [
-    agentPromptInFlightSessionIds,
     getSessionHistoryReplayDescriptor,
     lifecycleOwner,
+    liveRuntimeEvents,
     runtime,
-    subscribeRuntimeEvents,
+    runtime.state,
     supportsHistoryImageInput
   ])
 
