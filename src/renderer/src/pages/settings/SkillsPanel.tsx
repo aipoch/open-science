@@ -118,12 +118,14 @@ const SOURCE_GROUPS = [
 type SkillsPanelProps = {
   view: SkillsView
   onNavigate: (view: SkillsView) => void
+  onOpenTag?: (tagId: string) => void
   canImportInstalledSkills?: boolean
 }
 
 const SkillsPanel = ({
   view,
   onNavigate,
+  onOpenTag,
   canImportInstalledSkills = true
 }: SkillsPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -281,6 +283,7 @@ const SkillsPanel = ({
         <ResourceTagSummary
           reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
           className="px-5 pt-5"
+          onOpenTag={onOpenTag}
         />
         <SkillDetailView key={view.id} skillId={view.id} />
       </div>
@@ -310,6 +313,7 @@ const SkillsPanel = ({
         <ResourceTagSummary
           reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
           className="px-5 pt-5"
+          onOpenTag={onOpenTag}
         />
         <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
       </div>
@@ -607,30 +611,37 @@ const SkillsPanel = ({
                           data-slot="settings-list-row"
                           className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
                         >
-                          <button
-                            type="button"
-                            onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                            className="min-w-0 flex-1 text-left"
-                          >
-                            <span className="block truncate text-sm text-foreground">
-                              {skill.displayName}
-                            </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {skill.description}
-                            </span>
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
+                              className="block w-full min-w-0 text-left"
+                            >
+                              <span className="block truncate text-sm text-foreground">
+                                {skill.displayName}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {skill.description}
+                              </span>
+                            </button>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              <span className="min-w-0 truncate text-xs text-muted-foreground">
+                              <button
+                                type="button"
+                                onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
+                                className="min-w-0 truncate text-left text-xs text-muted-foreground"
+                              >
                                 {usageLabel ? `${usageLabel} · ` : ''}
                                 {t(SCOPE_LABEL_KEYS[scope])}
-                              </span>
+                              </button>
                               <ResourceTagBadges
                                 reference={{
                                   resourceType: 'catalog.skill',
                                   resourceId: skill.id
                                 }}
+                                onOpenTag={onOpenTag}
                               />
                             </div>
-                          </button>
+                          </div>
                           {exportStatus?.id === skill.id ? (
                             <span role="status" className="shrink-0 text-xs text-muted-foreground">
                               {exportStatus.message}

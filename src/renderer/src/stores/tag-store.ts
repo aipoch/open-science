@@ -55,7 +55,12 @@ const stateFromSnapshot = (
 
 export const useTagStore = create<TagStore>((set, get) => ({
   ...createInitialTagState(),
-  setBrowserSelectedId: (browserSelectedId) => set({ browserSelectedId, browserScrollTop: 0 }),
+  setBrowserSelectedId: (browserSelectedId) =>
+    set((state) =>
+      state.browserSelectedId === browserSelectedId
+        ? { browserSelectedId }
+        : { browserSelectedId, browserScrollTop: 0 }
+    ),
   setBrowserTypeFilter: (browserTypeFilter) => set({ browserTypeFilter, browserScrollTop: 0 }),
   setBrowserQuery: (browserQuery) => set({ browserQuery, browserScrollTop: 0 }),
   setBrowserScrollTop: (browserScrollTop) => set({ browserScrollTop }),

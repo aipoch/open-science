@@ -128,9 +128,13 @@ const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
 
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
+  onOpenTag?: (tagId: string) => void
 }
 
-export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX.Element {
+export function ConnectorsPanel({
+  onNavigate,
+  onOpenTag
+}: ConnectorsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
   const connectors = useSettingsStore((state) => state.connectors)
@@ -452,33 +456,40 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                     className="flex min-h-14 items-center gap-3 py-2.5"
                   >
                     <ConnectorGlyph size={24} />
-                    <button
-                      type="button"
-                      onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <span className="block truncate text-sm text-foreground">
-                        {connector.displayName}
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {connector.description}
-                      </span>
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                        className="block w-full min-w-0 text-left"
+                      >
+                        <span className="block truncate text-sm text-foreground">
+                          {connector.displayName}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {connector.description}
+                        </span>
+                      </button>
                       <div
                         className="mt-0.5 flex min-w-0 items-center gap-2"
                         data-connector-metadata={connector.id}
                       >
-                        <span className="min-w-0 truncate text-xs text-muted-foreground">
+                        <button
+                          type="button"
+                          onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                          className="min-w-0 truncate text-left text-xs text-muted-foreground"
+                        >
                           {usageLabel ? `${usageLabel} · ` : ''}
                           {t(SCOPE_LABEL_KEYS[scope])}
-                        </span>
+                        </button>
                         <ResourceTagBadges
                           reference={{
                             resourceType: 'catalog.connector',
                             resourceId: connector.id
                           }}
+                          onOpenTag={onOpenTag}
                         />
                       </div>
-                    </button>
+                    </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <ResourceTagMenu
                         reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
@@ -801,6 +812,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                                 resourceType: 'catalog.connector',
                                 resourceId: server.id
                               }}
+                              onOpenTag={onOpenTag}
                             />
                           </div>
                         </div>

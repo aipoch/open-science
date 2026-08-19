@@ -23,7 +23,7 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { FocusScope } from '@radix-ui/react-focus-scope'
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -236,6 +236,7 @@ type NavLocation = {
   compute?: ComputeView
   specialists?: SpecialistsView
   archived?: ArchivedView
+  tagId?: string
 }
 
 const INITIAL_LOCATION: NavLocation = {
@@ -316,6 +317,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadTags = useTagStore((state) => state.load)
   const listenForTagChanges = useTagStore((state) => state.listen)
+  const browserSelectedTagId = useTagStore((state) => state.browserSelectedId)
+  const setSelectedTagId = useTagStore((state) => state.setBrowserSelectedId)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -488,6 +491,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
+  useEffect(() => {
+    if (currentLocation.panel === 'tags' && currentLocation.tagId) {
+      setSelectedTagId(currentLocation.tagId)
+    }
+  }, [currentLocation.panel, currentLocation.tagId, setSelectedTagId])
+
   // Pushes a new location, dropping any forward entries.
   const navigate = (location: NavLocation): void => {
     const nextConnectors = location.connectors ?? { kind: 'list' }
@@ -513,7 +522,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       JSON.stringify(nextSpecialists) === JSON.stringify(specialistsView) &&
       nextArchived.kind === archivedView.kind &&
       ('projectId' in nextArchived ? nextArchived.projectId : undefined) ===
-        ('projectId' in archivedView ? archivedView.projectId : undefined)
+        ('projectId' in archivedView ? archivedView.projectId : undefined) &&
+      location.tagId === currentLocation.tagId
     ) {
       return
     }
@@ -523,7 +533,30 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   // Internal panel transitions must use this dialog's history instead of reseeding an external
   // entry point, so Back returns to the recovery panel the user just completed.
-  const navigatePanel = (panel: SettingsPanelId): void => navigate({ ...INITIAL_LOCATION, panel })
+  const navigatePanel = (panel: SettingsPanelId): void =>
+    navigate({
+      ...INITIAL_LOCATION,
+      panel,
+      tagId: panel === 'tags' ? browserSelectedTagId : undefined
+    })
+
+  const navigateTag = (tagId: string): void => {
+    setSelectedTagId(tagId)
+    navigate({ ...currentLocation, panel: 'tags', tagId })
+  }
+
+  const recordSelectedTag = useCallback(
+    (tagId: string): void => {
+      setHistory((entries) => {
+        const entry = entries[historyIndex]
+        if (entry?.panel !== 'tags' || entry.tagId === tagId) return entries
+        return entries.map((candidate, index) =>
+          index === historyIndex ? { ...candidate, tagId } : candidate
+        )
+      })
+    },
+    [historyIndex]
+  )
 
   // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
   const navigateSkills = (skills: SkillsView): void =>
@@ -1177,12 +1210,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   <SkillsPanel
                     view={skillsView}
                     onNavigate={navigateSkills}
+                    onOpenTag={navigateTag}
                     canImportInstalledSkills={canImportInstalledSkills}
                   />
                 ) : activePanel === 'specialists' ? (
-                  <SpecialistsPanel view={specialistsView} onNavigate={navigateSpecialists} />
+                  <SpecialistsPanel
+                    view={specialistsView}
+                    onNavigate={navigateSpecialists}
+                    onOpenTag={navigateTag}
+                  />
                 ) : activePanel === 'tags' ? (
                   <TagsPanel
+                    onSelectedTagChange={recordSelectedTag}
                     onOpenResource={(reference) => {
                       if (reference.resourceType === 'catalog.skill') {
                         navigate({
@@ -1226,6 +1265,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           resourceId: connectorsView.id
                         }}
                         className="px-5 pt-5"
+                        onOpenTag={navigateTag}
                       />
                       <ConnectorDetailView
                         key={connectorsView.id}
@@ -1265,6 +1305,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           resourceId: connectorsView.id
                         }}
                         className="px-5 pt-5"
+                        onOpenTag={navigateTag}
                       />
                       <ConnectorAddForm
                         editServer={customServers.find((s) => s.id === connectorsView.id)}
@@ -1273,7 +1314,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       />
                     </div>
                   ) : (
-                    <ConnectorsPanel onNavigate={navigateConnectors} />
+                    <ConnectorsPanel onNavigate={navigateConnectors} onOpenTag={navigateTag} />
                   )
                 ) : activePanel === 'compute' ? (
                   computeView.kind === 'add' ? (

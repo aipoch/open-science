@@ -977,6 +977,25 @@ describe('SpecialistsPanel', () => {
     }
   })
 
+  it('keeps non-Tag metadata connected to specialist row navigation', async () => {
+    const onNavigate = vi.fn()
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+
+    const customMetadata = document.body.querySelector<HTMLElement>(
+      '[data-specialist-metadata-group="rna-reviewer"] [data-specialist-metadata="capabilities"]'
+    )
+    await act(async () => customMetadata?.click())
+    expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'edit', id: 'rna-reviewer' })
+
+    const builtinMetadata = document.body.querySelector<HTMLButtonElement>(
+      '[data-specialist-metadata-group="builtin-curator"] button'
+    )
+    await act(async () => builtinMetadata?.click())
+    expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'builtin', id: 'builtin-curator' })
+  })
+
   it('distinguishes a Marketplace install from a manually imported ZIP', async () => {
     const installed: SpecialistListItem = {
       ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),

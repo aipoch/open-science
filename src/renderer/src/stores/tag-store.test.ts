@@ -20,6 +20,16 @@ beforeEach(() => {
 })
 
 describe('tag store', () => {
+  it('preserves browser scroll when restoring the currently selected Tag', () => {
+    useTagStore.setState({ browserSelectedId: 'tag-favorite', browserScrollTop: 240 })
+
+    useTagStore.getState().setBrowserSelectedId('tag-favorite')
+    expect(useTagStore.getState().browserScrollTop).toBe(240)
+
+    useTagStore.getState().setBrowserSelectedId('tag-research')
+    expect(useTagStore.getState().browserScrollTop).toBe(0)
+  })
+
   it('hydrates the authoritative snapshot', async () => {
     setTagsApi({ snapshot: vi.fn().mockResolvedValue(favoriteSnapshot()) })
 

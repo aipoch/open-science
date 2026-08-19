@@ -148,16 +148,19 @@ const SEVERITY_CLASSES = {
 type SpecialistsPanelProps = {
   view: SpecialistsView
   onNavigate: (view: SpecialistsView) => void
+  onOpenTag?: (tagId: string) => void
 }
 
 type InstalledSpecialistsView = Exclude<SpecialistsView, SpecialistMarketplaceView>
 
 const InstalledSpecialistsPanel = ({
   view,
-  onNavigate
+  onNavigate,
+  onOpenTag
 }: {
   view: InstalledSpecialistsView
   onNavigate: (view: SpecialistsView) => void
+  onOpenTag?: (tagId: string) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -623,6 +626,7 @@ const InstalledSpecialistsPanel = ({
           <ResourceTagSummary
             reference={{ resourceType: 'catalog.specialist', resourceId: specialist.id }}
             className="px-5 pt-5"
+            onOpenTag={onOpenTag}
           />
           <SpecialistEditor
             key={specialist.id}
@@ -1181,6 +1185,7 @@ const InstalledSpecialistsPanel = ({
           <ResourceTagSummary
             reference={{ resourceType: 'catalog.specialist', resourceId: specialist.id }}
             className="mt-4"
+            onOpenTag={onOpenTag}
           />
           <p className="mt-4 text-sm text-foreground">{specialist.description}</p>
           <div className="mt-5 rounded-lg border border-border bg-muted/30 p-3">
@@ -1408,32 +1413,48 @@ const InstalledSpecialistsPanel = ({
                         />
 
                         {/* Click the row body to open the editor (prefilled) */}
-                        <button
-                          type="button"
-                          disabled={catalogReadOnly}
-                          onClick={() => onNavigate({ kind: 'edit', id: item.id })}
-                          aria-label={
-                            item.setupPending
-                              ? t('Continue setup for {{name}}', {
-                                  name: item.displayName ?? item.name
-                                })
-                              : t('Edit {{name}}', { name: item.displayName ?? item.name })
-                          }
-                          className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-                        >
-                          {/* Body: name + description */}
-                          <div className="min-w-0 flex-1">
-                            <span className="block truncate text-sm text-foreground">
-                              {item.displayName ?? item.name}
-                            </span>
-                            {item.description ? (
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {item.description}
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            disabled={catalogReadOnly}
+                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                            aria-label={
+                              item.setupPending
+                                ? t('Continue setup for {{name}}', {
+                                    name: item.displayName ?? item.name
+                                  })
+                                : t('Edit {{name}}', { name: item.displayName ?? item.name })
+                            }
+                            className="flex w-full min-w-0 cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                          >
+                            {/* Body: name + description */}
+                            <div className="min-w-0 flex-1">
+                              <span className="block truncate text-sm text-foreground">
+                                {item.displayName ?? item.name}
                               </span>
-                            ) : null}
-                            <span
-                              className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
-                              data-specialist-metadata-group={item.id}
+                              {item.description ? (
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {item.description}
+                                </span>
+                              ) : null}
+                            </div>
+                          </button>
+                          <span
+                            className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
+                            data-specialist-metadata-group={item.id}
+                          >
+                            <button
+                              type="button"
+                              disabled={catalogReadOnly}
+                              onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                              aria-label={
+                                item.setupPending
+                                  ? t('Continue setup for {{name}}', {
+                                      name: item.displayName ?? item.name
+                                    })
+                                  : t('Edit {{name}}', { name: item.displayName ?? item.name })
+                              }
+                              className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                             >
                               <Badge
                                 variant="outline"
@@ -1497,15 +1518,16 @@ const InstalledSpecialistsPanel = ({
                                   </Badge>
                                 </>
                               ) : null}
-                              <ResourceTagBadges
-                                reference={{
-                                  resourceType: 'catalog.specialist',
-                                  resourceId: item.id
-                                }}
-                              />
-                            </span>
-                          </div>
-                        </button>
+                            </button>
+                            <ResourceTagBadges
+                              reference={{
+                                resourceType: 'catalog.specialist',
+                                resourceId: item.id
+                              }}
+                              onOpenTag={onOpenTag}
+                            />
+                          </span>
+                        </div>
 
                         {item.setupPending ? (
                           <Button
@@ -1637,36 +1659,46 @@ const InstalledSpecialistsPanel = ({
                     data-slot="settings-list-row"
                     className="flex min-h-14 items-center gap-2 py-2.5"
                   >
-                    <button
-                      type="button"
-                      onClick={() => onNavigate({ kind: 'builtin', id: item.id })}
-                      aria-label={t('View {{name}}', { name: item.displayName ?? item.name })}
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
-                      <div className="min-w-0 flex-1">
-                        <span className="block truncate text-sm text-foreground">
-                          {item.displayName ?? item.name}
-                        </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {item.description}
-                        </span>
-                        <div
-                          className="mt-0.5 flex min-w-0 items-center gap-2"
-                          data-specialist-metadata-group={item.id}
-                        >
-                          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-                            {t('Built-in · Version {{version}}', { version: item.version })}
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => onNavigate({ kind: 'builtin', id: item.id })}
+                        aria-label={t('View {{name}}', { name: item.displayName ?? item.name })}
+                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-sm text-foreground">
+                            {item.displayName ?? item.name}
                           </span>
-                          <ResourceTagBadges
-                            reference={{
-                              resourceType: 'catalog.specialist',
-                              resourceId: item.id
-                            }}
-                          />
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {item.description}
+                          </span>
                         </div>
+                      </button>
+                      <div
+                        className="mt-0.5 ml-9 flex min-w-0 items-center gap-2"
+                        data-specialist-metadata-group={item.id}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onNavigate({ kind: 'builtin', id: item.id })}
+                          aria-label={t('View {{name}}', {
+                            name: item.displayName ?? item.name
+                          })}
+                          className="min-w-0 cursor-pointer truncate rounded-md text-left text-[11px] text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {t('Built-in · Version {{version}}', { version: item.version })}
+                        </button>
+                        <ResourceTagBadges
+                          reference={{
+                            resourceType: 'catalog.specialist',
+                            resourceId: item.id
+                          }}
+                          onOpenTag={onOpenTag}
+                        />
                       </div>
-                    </button>
+                    </div>
                     <ResourceTagMenu
                       reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                     />
@@ -1989,7 +2021,11 @@ const SpecialistsPanel = (props: SpecialistsPanelProps): React.JSX.Element =>
   props.view.kind === 'marketplace-release' ? (
     <SpecialistMarketplace view={props.view} onNavigate={props.onNavigate} />
   ) : (
-    <InstalledSpecialistsPanel view={props.view} onNavigate={props.onNavigate} />
+    <InstalledSpecialistsPanel
+      view={props.view}
+      onNavigate={props.onNavigate}
+      onOpenTag={props.onOpenTag}
+    />
   )
 
 export { SpecialistsPanel }

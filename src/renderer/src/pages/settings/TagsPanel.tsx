@@ -1,5 +1,15 @@
 import { AlertDialog, Dialog } from 'radix-ui'
-import { MoreHorizontal, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import {
+  ChevronDown,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  ScrollText,
+  Search,
+  Trash2,
+  Users,
+  X
+} from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -38,7 +48,9 @@ import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
-import { TAG_COLORS, TAG_ICONS } from './tag-presentation'
+import { ConnectorsNavIcon } from './connector-icons'
+import { SettingsIconAction } from './SettingsLayout'
+import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
 import { TagBadge } from './tag-visuals'
 
 type TagResourceRow = TagResourceRef & {
@@ -82,9 +94,11 @@ const colorLabel = (t: ReturnType<typeof useTranslation>['t'], key: TagColorKey)
 }
 
 const TagsPanel = ({
-  onOpenResource
+  onOpenResource,
+  onSelectedTagChange
 }: {
   onOpenResource(reference: TagResourceRef): void
+  onSelectedTagChange?(tagId: string): void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const tags = useTagStore((state) => state.tags)
@@ -94,6 +108,7 @@ const TagsPanel = ({
   const createTag = useTagStore((state) => state.create)
   const updateTag = useTagStore((state) => state.update)
   const deleteTag = useTagStore((state) => state.delete)
+  const setAssignment = useTagStore((state) => state.setAssignment)
   const loadTags = useTagStore((state) => state.load)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
@@ -118,6 +133,9 @@ const TagsPanel = ({
   const [deleting, setDeleting] = useState<TagView>()
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string>()
+  const [assignmentError, setAssignmentError] = useState<string>()
+  const [removingResourceKey, setRemovingResourceKey] = useState<string>()
+  const [collapsed, setCollapsed] = useState<Partial<Record<TagResourceType, boolean>>>({})
 
   useEffect(() => {
     if (status === 'idle') void loadTags()
@@ -164,6 +182,13 @@ const TagsPanel = ({
   )
   const currentSelectedId = tags.some((tag) => tag.id === selectedId) ? selectedId : tags[0]?.id
   const selectedTag = tags.find((tag) => tag.id === currentSelectedId)
+
+  useEffect(() => {
+    if (!currentSelectedId || selectedId === currentSelectedId) return
+    setSelectedId(currentSelectedId)
+    onSelectedTagChange?.(currentSelectedId)
+  }, [currentSelectedId, onSelectedTagChange, selectedId, setSelectedId])
+
   const selectedAssignments = assignments.filter(
     (assignment) => assignment.tagId === currentSelectedId
   )
@@ -232,6 +257,24 @@ const TagsPanel = ({
       setDeleteBusy(false)
     }
   }
+  const removeResource = async (resource: TagResourceRow): Promise<void> => {
+    if (!selectedTag || removingResourceKey) return
+    const key = `${resource.resourceType}:${resource.resourceId}`
+    setRemovingResourceKey(key)
+    setAssignmentError(undefined)
+    try {
+      await setAssignment({
+        tagId: selectedTag.id,
+        resourceType: resource.resourceType,
+        resourceId: resource.resourceId,
+        assigned: false
+      })
+    } catch {
+      setAssignmentError(t('Could not update Tags.'))
+    } finally {
+      setRemovingResourceKey(undefined)
+    }
+  }
 
   return (
     <div className="flex min-h-full flex-col p-5">
@@ -260,9 +303,12 @@ const TagsPanel = ({
               <button
                 type="button"
                 aria-current={tag.id === currentSelectedId ? 'page' : undefined}
-                onClick={() => setSelectedId(tag.id)}
+                onClick={() => {
+                  setSelectedId(tag.id)
+                  onSelectedTagChange?.(tag.id)
+                }}
                 className={cn(
-                  'flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
+                  'flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
                   tag.id === currentSelectedId && 'bg-muted font-medium'
                 )}
               >
@@ -279,6 +325,7 @@ const TagsPanel = ({
                       variant="ghost"
                       size="icon-sm"
                       aria-label={t('Tag actions')}
+                      className="shrink-0 opacity-100 transition-[opacity,color,background-color] duration-200 ease-out hover:!opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100"
                     >
                       <MoreHorizontal className="size-4" aria-hidden="true" />
                     </Button>
@@ -357,33 +404,85 @@ const TagsPanel = ({
                   />
                 </div>
               </div>
+              {assignmentError ? (
+                <p role="alert" className="mb-3 text-xs text-destructive">
+                  {assignmentError}
+                </p>
+              ) : null}
               {filteredResources.length > 0 ? (
                 <div className="space-y-4">
-                  {resourceGroups.map(({ resourceType, resources: groupedResources }) => (
-                    <section key={resourceType}>
-                      <h4 className="mb-1 text-xs font-medium text-muted-foreground">
-                        {resourceTypeLabel(t, resourceType)} ({groupedResources.length})
-                      </h4>
-                      <ul className="divide-y divide-border">
-                        {groupedResources.map((resource) => (
-                          <li key={`${resource.resourceType}:${resource.resourceId}`}>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-3 py-3 text-left hover:text-primary"
-                              onClick={() => onOpenResource(resource)}
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm">{resource.title}</span>
-                                <span className="block truncate text-xs text-muted-foreground">
-                                  {resource.subtitle}
-                                </span>
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  ))}
+                  {resourceGroups.map(({ resourceType, resources: groupedResources }) => {
+                    const expanded = !collapsed[resourceType]
+                    const Icon =
+                      resourceType === 'catalog.skill'
+                        ? ScrollText
+                        : resourceType === 'catalog.connector'
+                          ? ConnectorsNavIcon
+                          : Users
+                    return (
+                      <section key={resourceType}>
+                        <button
+                          type="button"
+                          data-slot="tag-resource-group"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setCollapsed((value) => ({
+                              ...value,
+                              [resourceType]: !value[resourceType]
+                            }))
+                          }
+                          className="flex w-full cursor-pointer items-center gap-1 text-left text-sm font-semibold text-foreground"
+                        >
+                          <Icon className="size-4 shrink-0 text-muted-foreground" />
+                          <span>
+                            {resourceTypeLabel(t, resourceType)} ({groupedResources.length})
+                          </span>
+                          <ChevronDown
+                            className={cn(
+                              'size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none',
+                              !expanded && '-rotate-90'
+                            )}
+                            aria-hidden="true"
+                          />
+                        </button>
+                        {expanded ? (
+                          <ul className="mt-1 divide-y divide-border">
+                            {groupedResources.map((resource) => {
+                              const key = `${resource.resourceType}:${resource.resourceId}`
+                              return (
+                                <li key={key} className="group flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary"
+                                    onClick={() => onOpenResource(resource)}
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm">
+                                        {resource.title}
+                                      </span>
+                                      <span className="block truncate text-xs text-muted-foreground">
+                                        {resource.subtitle}
+                                      </span>
+                                    </span>
+                                  </button>
+                                  <SettingsIconAction
+                                    label={t('Remove {{resource}} from {{tag}}', {
+                                      resource: resource.title,
+                                      tag: tagPresentation(selectedTag, t).name
+                                    })}
+                                    icon={X}
+                                    disabled={removingResourceKey === key}
+                                    className="pointer-events-auto shrink-0 opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                    onClick={() => void removeResource(resource)}
+                                  />
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        ) : null}
+                      </section>
+                    )
+                  })}
                 </div>
               ) : (
                 <p className="py-12 text-center text-sm text-muted-foreground">

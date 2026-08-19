@@ -12,6 +12,7 @@ import { createInitialProjectState, useProjectStore } from '@/stores/project-sto
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
@@ -183,6 +184,14 @@ const installApi = (): void => {
       create: vi.fn(),
       setEnabled: vi.fn(),
       onCatalogChanged: vi.fn(() => vi.fn())
+    },
+    tags: {
+      snapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
+        assignments: []
+      }),
+      onChanged: vi.fn(() => vi.fn())
     }
   }
 }
@@ -192,6 +201,7 @@ beforeEach(() => {
   useSettingsStore.setState(createInitialSettingsState())
   useProjectStore.setState(createInitialProjectState())
   useSessionStore.setState(createInitialSessionState())
+  useTagStore.setState(createInitialTagState())
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -226,6 +236,214 @@ const settingsSection = (title: string): HTMLElement | undefined =>
   )
 
 describe('SettingsPage layout', () => {
+  it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
+    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+      revision: 2,
+      tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'alpha',
+          createdAt: 1
+        }
+      ]
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+
+    const tag = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Favorites'
+    )
+    expect(tag).toBeDefined()
+    expect(document.body.querySelector('button button')).toBeNull()
+    await act(async () => tag?.click())
+
+    expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
+      'Tags'
+    )
+    expect(document.body.textContent).toContain('Alpha')
+    expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
+      false
+    )
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
+      'Skills'
+    )
+  })
+
+  it('restores the Tag selected by a Settings history entry', async () => {
+    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+      revision: 2,
+      tags: [
+        { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
+        {
+          id: 'tag-research',
+          name: 'Research',
+          iconKey: 'book-open',
+          colorKey: 'purple',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'alpha',
+          createdAt: 1
+        },
+        {
+          tagId: 'tag-research',
+          resourceType: 'catalog.skill',
+          resourceId: 'alpha',
+          createdAt: 2
+        }
+      ]
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+
+    const favorite = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Favorites'
+    )
+    await act(async () => favorite?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    act(() => useTagStore.getState().setBrowserSelectedId('tag-research'))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')?.click()
+    )
+
+    const selectedTag = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('aside button')
+    ).find((button) => button.getAttribute('aria-current') === 'page')
+    expect(selectedTag?.textContent).toContain('Favorites')
+  })
+
+  it('preserves an in-panel Tag selection when returning from a resource', async () => {
+    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+      revision: 2,
+      tags: [
+        { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
+        {
+          id: 'tag-research',
+          name: 'Research',
+          iconKey: 'book-open',
+          colorKey: 'purple',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'alpha',
+          createdAt: 1
+        },
+        {
+          tagId: 'tag-research',
+          resourceType: 'catalog.skill',
+          resourceId: 'alpha',
+          createdAt: 2
+        }
+      ]
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+
+    const favorite = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Favorites'
+    )
+    await act(async () => favorite?.click())
+
+    const research = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('aside button')
+    ).find((button) => button.textContent?.includes('Research'))
+    await act(async () => research?.click())
+
+    const resource = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('aside + section button')
+    ).find((button) => button.textContent?.includes('Alpha'))
+    await act(async () => resource?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+
+    const selectedTag = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('aside button')
+    ).find((button) => button.getAttribute('aria-current') === 'page')
+    expect(selectedTag?.textContent).toContain('Research')
+  })
+
+  it('records the default Tag in history before navigating through a resource', async () => {
+    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+      revision: 2,
+      tags: [
+        { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
+        {
+          id: 'tag-research',
+          name: 'Research',
+          iconKey: 'book-open',
+          colorKey: 'purple',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'alpha',
+          createdAt: 1
+        },
+        {
+          tagId: 'tag-research',
+          resourceType: 'catalog.skill',
+          resourceId: 'alpha',
+          createdAt: 2
+        }
+      ]
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Tags')?.click())
+
+    const selectedDefault = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('aside button')
+    ).find((button) => button.getAttribute('aria-current') === 'page')
+    expect(selectedDefault?.textContent).toContain('Favorites')
+
+    const resource = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('aside + section button')
+    ).find((button) => button.textContent?.includes('Alpha'))
+    await act(async () => resource?.click())
+
+    const research = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Research'
+    )
+    await act(async () => research?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+
+    const restoredDefault = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('aside button')
+    ).find((button) => button.getAttribute('aria-current') === 'page')
+    expect(restoredDefault?.textContent).toContain('Favorites')
+  })
+
   it('renders the model-dependent reasoning effort explanation naturally in Japanese', async () => {
     await i18next.changeLanguage('ja')
     try {
