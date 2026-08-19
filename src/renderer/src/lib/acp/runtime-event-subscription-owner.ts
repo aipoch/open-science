@@ -35,10 +35,11 @@ const createRuntimeEventSubscriptionOwner = (): RuntimeEventSubscriptionOwner =>
   let previousSnapshotEventIds = new Set<string>()
   let initialized = false
   let hasSubscribed = false
+  let preserveInitialReplay = false
   let arrivalSequence = 0
 
   const capRetainedEvents = (): void => {
-    if (!hasSubscribed || retainedEvents.length <= MAX_ACP_RUNTIME_EVENTS) return
+    if (preserveInitialReplay || retainedEvents.length <= MAX_ACP_RUNTIME_EVENTS) return
     const removed = retainedEvents.splice(0, retainedEvents.length - MAX_ACP_RUNTIME_EVENTS)
     for (const event of removed) retainedEventIds.delete(event.id)
   }
@@ -110,6 +111,7 @@ const createRuntimeEventSubscriptionOwner = (): RuntimeEventSubscriptionOwner =>
       const snapshotEventIds = new Set(events.map((event) => event.id))
       const pendingEvents = [...pendingInitialEvents.values()]
       const initialEvents = mergeInitialEvents(events, pendingEvents)
+      preserveInitialReplay = !hasSubscribed && pendingEvents.length > 0
       reconcileDirectEvents(events)
       previousSnapshotEventIds = snapshotEventIds
       pendingInitialEvents.clear()
@@ -155,6 +157,7 @@ const createRuntimeEventSubscriptionOwner = (): RuntimeEventSubscriptionOwner =>
       if (!hasSubscribed) {
         hasSubscribed = true
         if (initialized) publish(retainedEvents)
+        preserveInitialReplay = false
         capRetainedEvents()
       } else if (initialized && retainedEvents.length > 0) {
         listener(retainedEvents)

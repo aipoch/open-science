@@ -90,4 +90,16 @@ describe('runtime event subscription owner', () => {
     expect(replayed[0]?.id).toBe('runtime-1:acp-event-102')
     expect(replayed.at(-1)?.id).toBe('runtime-1:acp-event-601')
   })
+
+  it('bounds rolling snapshot history without an incremental subscriber', () => {
+    const owner = createRuntimeEventSubscriptionOwner()
+    const events = Array.from({ length: 600 }, (_, index) => runtimeEvent(index + 1))
+
+    owner.observeInitialSnapshot(events.slice(0, 500))
+    owner.observeSnapshot(events.slice(100))
+
+    expect(owner.currentEvents()).toHaveLength(500)
+    expect(owner.currentEvents()[0]?.id).toBe('runtime-1:acp-event-101')
+    expect(owner.currentEvents().at(-1)?.id).toBe('runtime-1:acp-event-600')
+  })
 })
