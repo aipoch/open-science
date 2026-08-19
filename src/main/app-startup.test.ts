@@ -1,3 +1,6 @@
+import { EventEmitter } from 'node:events'
+
+import type { BrowserWindow } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -5,7 +8,8 @@ import {
   createStartupWindowCloseOptions,
   createStartupWindowSecondInstanceHandler,
   orchestrateAppStartup,
-  prepareVisibleStartupRuntime
+  prepareVisibleStartupRuntime,
+  waitForStartupShell
 } from './app-startup'
 
 const deferred = <T>(): {
@@ -271,5 +275,62 @@ describe('prepareVisibleStartupRuntime', () => {
 
     expect(rollbackShell).toHaveBeenCalledOnce()
     expect(rollbackShell).toHaveBeenCalledWith({ tag: 'shell' }, failure)
+  })
+})
+
+describe('waitForStartupShell', () => {
+  const makeWindow = (): {
+    emitWindow: (event: string) => void
+    emitWebContents: (event: string, ...args: unknown[]) => void
+    window: Pick<BrowserWindow, 'once' | 'removeListener' | 'webContents'>
+  } => {
+    const windowEvents = new EventEmitter()
+    const webContentsEvents = new EventEmitter()
+    return {
+      emitWindow: (event) => windowEvents.emit(event),
+      emitWebContents: (event, ...args) => webContentsEvents.emit(event, ...args),
+      window: Object.assign(windowEvents, { webContents: webContentsEvents }) as unknown as Pick<
+        BrowserWindow,
+        'once' | 'removeListener' | 'webContents'
+      >
+    }
+  }
+
+  it('waits through subframe failures and resolves after the first paint', async () => {
+    const source = makeWindow()
+    const settled = vi.fn()
+    void waitForStartupShell(source.window).then(settled)
+
+    source.emitWebContents('did-fail-load', {}, -3, 'ABORTED', 'preview://frame', false)
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+
+    source.emitWindow('ready-to-show')
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
+  })
+
+  it.each([
+    [
+      'a main-frame load failure',
+      (source: ReturnType<typeof makeWindow>) =>
+        source.emitWebContents('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'file://index', true)
+    ],
+    [
+      'a renderer exit',
+      (source: ReturnType<typeof makeWindow>) =>
+        source.emitWebContents('render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+    ],
+    [
+      'the startup window closing',
+      (source: ReturnType<typeof makeWindow>) => source.emitWindow('closed')
+    ]
+  ])('continues startup after %s', async (_label, signal) => {
+    const source = makeWindow()
+    const settled = vi.fn()
+    void waitForStartupShell(source.window).then(settled)
+
+    signal(source)
+
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
   })
 })

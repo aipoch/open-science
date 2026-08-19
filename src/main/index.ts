@@ -116,7 +116,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       createStartupWindowCloseOptions,
       createStartupWindowSecondInstanceHandler,
       orchestrateAppStartup,
-      prepareVisibleStartupRuntime
+      prepareVisibleStartupRuntime,
+      waitForStartupShell
     }
   ] = await Promise.all([import('./single-instance'), import('./app-startup')])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
@@ -326,7 +327,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // 5 MB backend chunk immediately after BrowserWindow construction can otherwise delay
       // ready-to-show even though the window no longer depends on that chunk.
       const startupShellRendered = startupWindow
-        ? new Promise<void>((resolve) => startupWindow.once('ready-to-show', () => resolve()))
+        ? waitForStartupShell(startupWindow)
         : Promise.resolve()
       if (startupWindow) {
         if (!forwardSecondInstanceDuringStartup) {

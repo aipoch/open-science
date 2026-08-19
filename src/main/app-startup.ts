@@ -1,6 +1,9 @@
+import type { BrowserWindow, Event as ElectronEvent } from 'electron'
+
 import type { DiagnosticOperation } from './diagnostics/operation'
 
-// Startup orchestration for the UI process, kept as a dependency-injected unit (no Electron imports) so
+// Startup orchestration for the UI process, kept as a dependency-injected unit (no runtime Electron
+// imports) so
 // the single-instance gate, the second-instance-during-startup handoff, and the ordering of the
 // migration quit-guard relative to the lifecycle can be exercised together in a unit test — the real
 // combination, not just each helper in isolation.
@@ -118,6 +121,43 @@ export const prepareVisibleStartupRuntime = async <Shell, Modules, Runtime>(
     throw error
   }
 }
+
+// Resolve the first-paint barrier on terminal renderer/window events as well as success. The backend
+// and lifecycle must keep initializing even when Chromium cannot produce the first frame; windows.ts
+// owns renderer recovery and can then reload or close the failed startup window.
+export const waitForStartupShell = (
+  window: Pick<BrowserWindow, 'once' | 'removeListener' | 'webContents'>
+): Promise<void> =>
+  new Promise((resolve) => {
+    let settled = false
+
+    const cleanup = (): void => {
+      window.removeListener('ready-to-show', settle)
+      window.removeListener('closed', settle)
+      window.webContents.removeListener('did-fail-load', onDidFailLoad)
+      window.webContents.removeListener('render-process-gone', settle)
+    }
+    const settle = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    const onDidFailLoad = (
+      _event: ElectronEvent,
+      _errorCode: number,
+      _errorDescription: string,
+      _validatedURL: string,
+      isMainFrame: boolean
+    ): void => {
+      if (isMainFrame) settle()
+    }
+
+    window.once('ready-to-show', settle)
+    window.once('closed', settle)
+    window.webContents.on('did-fail-load', onDidFailLoad)
+    window.webContents.once('render-process-gone', settle)
+  })
 
 // Runs the ordered startup sequence: gate on the single-instance lock (quitting a secondary launch
 // before any backend work), prepare the backend, install the migration guard, then the lifecycle, and
