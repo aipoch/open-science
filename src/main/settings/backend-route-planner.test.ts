@@ -146,6 +146,25 @@ describe('BackendRoutePlanner route matrix', () => {
       })
     ).toThrow('unavailable with Codex subscription authentication')
   })
+
+  it.each([
+    ['claude-code', 'claude-anthropic'],
+    ['opencode', 'opencode-openai'],
+    ['codex', 'codex-native-responses']
+  ] as const)('keeps a single custom %s provider behind the %s loopback', (frameworkId, kind) => {
+    const provider = makeStoredProvider()
+    const target = makeTarget(provider)
+
+    const plan = makePlanner().planBackend({
+      settings: makeSettings(provider),
+      frameworkId,
+      target,
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport.kind).toBe(kind)
+  })
 })
 
 describe('BackendRoutePlanner provider candidates', () => {

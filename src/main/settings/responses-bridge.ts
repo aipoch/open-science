@@ -27,6 +27,11 @@ import {
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
+import {
+  DeterministicProviderErrorReplay,
+  providerErrorClientStatus,
+  providerRequestFingerprint
+} from './provider-error-replay'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -113,6 +118,10 @@ export class ResponsesBridge {
   private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
   private readonly scopedHostMessageSessionKeys = new Set<string>()
   private readonly strictHostMessageSessionKeys = new Set<string>()
+  private readonly deterministicErrors = new DeterministicProviderErrorReplay<{
+    message: string
+    upstreamStatus: number
+  }>()
 
   constructor(
     target: ResponsesBridgeTarget,
@@ -267,7 +276,10 @@ export class ResponsesBridge {
       this.target.reasoningEffortTransport !== target.reasoningEffortTransport ||
       this.target.key !== target.key
     this.target = target
-    if (changed) this.clearReasoningCache()
+    if (changed) {
+      this.clearReasoningCache()
+      this.deterministicErrors.clear()
+    }
   }
 
   setModelTarget(target: ResponsesBridgeModelTarget): void {
@@ -323,6 +335,7 @@ export class ResponsesBridge {
 
   async close(): Promise<void> {
     this.clearReasoningCache()
+    this.deterministicErrors.clear()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
     this.toolLessSessionKeys.clear()
@@ -482,6 +495,8 @@ export class ResponsesBridge {
         reasoningEffortTransport: this.target.reasoningEffortTransport
       }
     )
+    const chatRequestBody = JSON.stringify(chatRequest)
+    const replayKey = providerRequestFingerprint(this.target.baseUrl, chatRequestBody)
     this.reconcileReasoningForRequest(promptCacheKey, body.input)
 
     // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
@@ -512,22 +527,38 @@ export class ResponsesBridge {
       'content-type': 'application/json',
       ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
     }
+    const replay = this.deterministicErrors.get(replayKey)
+    if (replay) {
+      json(response, providerErrorClientStatus(replay.upstreamStatus), {
+        error: {
+          type: 'upstream_error',
+          message: replay.message,
+          status: replay.upstreamStatus
+        }
+      })
+      return
+    }
     const upstream = await this.fetchImpl(chatUrl(this.target.baseUrl), {
       method: 'POST',
       headers,
-      body: JSON.stringify(chatRequest),
+      body: chatRequestBody,
       signal: request.signal
     })
     if (!upstream.ok) {
       const errorBody = await upstream.text()
+      const message = upstreamErrorMessage(errorBody, upstream.status)
+      this.deterministicErrors.remember(replayKey, upstream.status, {
+        message,
+        upstreamStatus: upstream.status
+      })
       log.warn('bridge upstream error', {
         upstreamModel: chatRequest.model,
         status: upstream.status
       })
-      json(response, upstream.status, {
+      json(response, providerErrorClientStatus(upstream.status), {
         error: {
           type: 'upstream_error',
-          message: upstreamErrorMessage(errorBody, upstream.status),
+          message,
           status: upstream.status
         }
       })

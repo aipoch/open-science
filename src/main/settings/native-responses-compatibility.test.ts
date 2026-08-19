@@ -87,6 +87,44 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json(
+        { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
+        { status: 401 }
+      )
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://provider.example.test/v1', key: 'wrong-key', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello', stream: true })
+      })
+
+    try {
+      const first = await send()
+      const second = await send()
+
+      expect(first.status).toBe(400)
+      expect(second.status).toBe(400)
+      expect(second.headers.get('x-open-science-upstream-status')).toBe('401')
+      await expect(second.json()).resolves.toMatchObject({
+        error: { type: 'authentication_error', message: 'Incorrect API key provided' }
+      })
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('flattens namespace tools and matching history without changing plain functions', () => {
     const { request, aliases } = flattenNativeResponsesRequest({
       model: 'MiniMax-M3',

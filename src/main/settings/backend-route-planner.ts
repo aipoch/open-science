@@ -300,8 +300,7 @@ class BackendRoutePlanner {
     effortIntent: ReasoningEffort
   ): BackendTransportPlan {
     if (frameworkId === 'claude-code') {
-      if (!retargetable || active.provider.type !== 'custom')
-        return Object.freeze({ kind: 'direct' })
+      if (active.provider.type !== 'custom') return Object.freeze({ kind: 'direct' })
       const targets = candidates.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
         const model = candidate.effectiveModel ?? candidate.provider.model
         const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
@@ -328,12 +327,10 @@ class BackendRoutePlanner {
         : Object.freeze({ kind: 'direct' })
     }
     if (frameworkId === 'opencode') {
-      return retargetable
-        ? Object.freeze({
-            kind: route as 'opencode-anthropic' | 'opencode-openai',
-            targets: this.plannedTargets(candidates, frameworkId, effortIntent)
-          })
-        : Object.freeze({ kind: 'direct' })
+      return Object.freeze({
+        kind: route as 'opencode-anthropic' | 'opencode-openai',
+        targets: this.plannedTargets(candidates, frameworkId, effortIntent)
+      })
     }
     if (route === 'codex-bridge' || route === 'codex-responses-compatibility') {
       return Object.freeze({
@@ -344,7 +341,7 @@ class BackendRoutePlanner {
       })
     }
     const model = active.effectiveModel ?? active.provider.model
-    return retargetable && model
+    return model
       ? Object.freeze({
           kind: 'codex-native-responses',
           targets: this.plannedTargets(candidates, frameworkId, effortIntent),

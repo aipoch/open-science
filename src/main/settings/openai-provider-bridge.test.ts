@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
 import { OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
@@ -186,6 +186,74 @@ describe('OpenAiProviderBridge', () => {
     expect(response.status).toBe(200)
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+  })
+
+  it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json(
+        { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
+        { status: 401 }
+      )
+    )
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'wrong-key',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    const first = await send()
+    const second = await send()
+
+    expect(first.status).toBe(400)
+    expect(second.status).toBe(400)
+    expect(second.headers.get('x-open-science-upstream-status')).toBe('401')
+    await expect(second.json()).resolves.toMatchObject({
+      error: { type: 'authentication_error', message: 'Incorrect API key provided' }
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('keeps retryable 429 responses out of the deterministic replay cache', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json({ error: { message: 'Rate limited' } }, { status: 429 })
+    )
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    expect((await send()).status).toBe(429)
+    expect((await send()).status).toBe(429)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it('preserves the captured OpenCode MCP image fixture at the final Chat boundary', async () => {

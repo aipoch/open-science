@@ -8,6 +8,12 @@ import {
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
+import {
+  DeterministicProviderErrorReplay,
+  isDeterministicProviderErrorStatus,
+  providerErrorClientStatus,
+  providerRequestFingerprint
+} from './provider-error-replay'
 
 const WIRE_PATH = {
   'chat-completions': '/v1/chat/completions',
@@ -26,6 +32,13 @@ const HOP_BY_HOP_HEADERS = new Set([
   'transfer-encoding',
   'upgrade'
 ])
+const MAX_REPLAY_ERROR_BODY_BYTES = 256 * 1024
+
+type ProviderErrorSnapshot = Readonly<{
+  body: Buffer
+  headers: Record<string, string>
+  status: number
+}>
 
 export type OpenAiProviderBridgeTarget = Readonly<{
   id: string
@@ -64,10 +77,12 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
   return headers
 }
 
-const copyResponseHeaders = (source: Headers, response: ServerResponse): void => {
+const responseHeaders = (source: Headers): Record<string, string> => {
+  const headers: Record<string, string> = {}
   for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) response.setHeader(name, value)
+    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers[name] = value
   }
+  return headers
 }
 
 export class OpenAiProviderBridge {
@@ -76,6 +91,8 @@ export class OpenAiProviderBridge {
   private readonly host: ProviderLoopbackHttpHost<OpenAiProviderBridgeConnection>
   private target: OpenAiProviderBridgeTarget
   private readonly fetchImpl: typeof fetch
+  private readonly deterministicErrors =
+    new DeterministicProviderErrorReplay<ProviderErrorSnapshot>()
 
   constructor(
     targets: readonly OpenAiProviderBridgeTarget[],
@@ -115,6 +132,7 @@ export class OpenAiProviderBridge {
   setTarget(targetId: string): boolean {
     const target = this.targets.get(targetId)
     if (!target || target.wire !== this.wire) return false
+    if (this.target.id !== target.id) this.deterministicErrors.clear()
     this.target = target
     return true
   }
@@ -124,6 +142,7 @@ export class OpenAiProviderBridge {
   }
 
   async close(): Promise<void> {
+    this.deterministicErrors.clear()
     await this.host.close()
   }
 
@@ -152,6 +171,13 @@ export class OpenAiProviderBridge {
       throw new Error('The OpenAI provider target has no valid endpoint URL.')
     }
     const body = JSON.stringify({ ...parsed, model: target.model })
+    const replayKey = providerRequestFingerprint(target.id, requestUrl.pathname, body)
+    const replay = this.deterministicErrors.get(replayKey)
+    if (replay) {
+      response.writeHead(replay.status, replay.headers)
+      response.end(replay.body)
+      return
+    }
 
     const upstream = await this.fetchImpl(endpoint, {
       method: 'POST',
@@ -160,9 +186,38 @@ export class OpenAiProviderBridge {
       redirect: 'manual',
       signal: request.signal
     })
+    const headers = responseHeaders(upstream.headers)
+    if (isDeterministicProviderErrorStatus(upstream.status)) {
+      const upstreamBody = Buffer.from(await upstream.arrayBuffer())
+      delete headers['content-encoding']
+      const bodyToReplay =
+        upstreamBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
+          ? upstreamBody
+          : Buffer.from(
+              JSON.stringify({
+                error: {
+                  type: 'invalid_request_error',
+                  message: `Provider request failed with status ${upstream.status}`
+                }
+              })
+            )
+      const snapshot = {
+        body: bodyToReplay,
+        headers: {
+          ...headers,
+          'content-length': String(bodyToReplay.byteLength),
+          'x-open-science-upstream-status': String(upstream.status)
+        },
+        status: providerErrorClientStatus(upstream.status)
+      }
+      this.deterministicErrors.remember(replayKey, upstream.status, snapshot)
+      response.writeHead(snapshot.status, snapshot.headers)
+      response.end(snapshot.body)
+      return
+    }
     response.statusCode = upstream.status
     response.statusMessage = upstream.statusText
-    copyResponseHeaders(upstream.headers, response)
+    for (const [name, value] of Object.entries(headers)) response.setHeader(name, value)
     if (!upstream.body) {
       response.end()
       return

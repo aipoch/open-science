@@ -217,6 +217,100 @@ it.runIf(runLiveContract)(
 )
 
 it.runIf(runLiveContract)(
+  'does not retry a deterministic native Responses authentication failure',
+  async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'open-science-codex-native-auth-'))
+    const workspace = join(tempRoot, 'workspace')
+    await mkdir(workspace)
+
+    const upstreamFetch = vi.fn(async () =>
+      Response.json(
+        { error: { message: 'Incorrect API key provided', type: 'authentication_error' } },
+        { status: 401 }
+      )
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://vendor.invalid/v1', model: 'probe-native-model' },
+      upstreamFetch
+    )
+    const connection = await proxy.start()
+    const framework = createCodexFramework()
+    const modelConfig = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://vendor.invalid/v1',
+        model: 'probe-native-model',
+        contextWindow: 128_000
+      },
+      {
+        storageRoot: tempRoot,
+        executablePath: adapterPath!,
+        responsesBridge: connection
+      }
+    )
+    for (const file of modelConfig.configFiles ?? []) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.content, 'utf8')
+    }
+
+    const child = spawnAdapter(workspace, {
+      ...process.env,
+      ...modelConfig.env,
+      CODEX_PATH: nativeCodexPath!
+    })
+    const stderr: string[] = []
+    child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
+
+    try {
+      const stream = acp.ndJsonStream(
+        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+      )
+      await acp
+        .client({ name: 'open-science-native-auth-contract' })
+        .onRequest(acp.methods.client.session.requestPermission, (ctx) => ({
+          outcome: {
+            outcome: 'selected',
+            optionId:
+              ctx.params.options.find((option) => option.kind === 'allow_once')?.optionId ??
+              ctx.params.options[0].optionId
+          }
+        }))
+        .onRequest(acp.methods.client.fs.readTextFile, () => ({ content: '' }))
+        .onRequest(acp.methods.client.fs.writeTextFile, () => ({}))
+        .connectWith(stream, async (ctx) => {
+          await ctx.request(acp.methods.agent.initialize, {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientInfo: { name: 'open-science-native-auth-contract', version: '1.0.0' },
+            clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } }
+          })
+          await ctx.request(acp.methods.agent.providers.set, modelConfig.providerConfiguration!)
+
+          await ctx
+            .buildSession({ cwd: workspace, mcpServers: [] })
+            .withSession(async (session) => {
+              session.prompt('Confirm authentication.')
+              for (;;) {
+                const update = await session.nextUpdate()
+                if (update.kind === 'stop') return
+              }
+            })
+        })
+
+      expect(upstreamFetch).toHaveBeenCalledOnce()
+    } catch (error) {
+      throw new Error(`${String(error)}\n${stderr.join('')}`)
+    } finally {
+      await terminate(child)
+      await proxy.close()
+      await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  },
+  30_000
+)
+
+it.runIf(runLiveContract)(
   'dispatches a bridged function and reports native compaction through the real Codex MCP router',
   async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'open-science-codex-mcp-bridge-'))

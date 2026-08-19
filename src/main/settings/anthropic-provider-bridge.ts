@@ -9,6 +9,12 @@ import {
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
+import {
+  DeterministicProviderErrorReplay,
+  isDeterministicProviderErrorStatus,
+  providerErrorClientStatus,
+  providerRequestFingerprint
+} from './provider-error-replay'
 
 const ALLOWED_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens'])
 const HOP_BY_HOP_HEADERS = new Set([
@@ -24,6 +30,13 @@ const HOP_BY_HOP_HEADERS = new Set([
   'transfer-encoding',
   'upgrade'
 ])
+const MAX_REPLAY_ERROR_BODY_BYTES = 256 * 1024
+
+type ProviderErrorSnapshot = Readonly<{
+  body: Buffer
+  headers: Record<string, string>
+  status: number
+}>
 
 export type AnthropicProviderBridgeTarget = Readonly<{
   id: string
@@ -61,10 +74,12 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
   return headers
 }
 
-const copyResponseHeaders = (source: Headers, response: ServerResponse): void => {
+const responseHeaders = (source: Headers): Record<string, string> => {
+  const headers: Record<string, string> = {}
   for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) response.setHeader(name, value)
+    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers[name] = value
   }
+  return headers
 }
 
 export class AnthropicProviderBridge {
@@ -72,6 +87,8 @@ export class AnthropicProviderBridge {
   private readonly host: ProviderLoopbackHttpHost<AnthropicProviderBridgeConnection>
   private target: AnthropicProviderBridgeTarget
   private readonly fetchImpl: typeof fetch
+  private readonly deterministicErrors =
+    new DeterministicProviderErrorReplay<ProviderErrorSnapshot>()
 
   constructor(
     targets: readonly AnthropicProviderBridgeTarget[],
@@ -110,6 +127,7 @@ export class AnthropicProviderBridge {
   setTarget(targetId: string): boolean {
     const target = this.targets.get(targetId)
     if (!target) return false
+    if (this.target.id !== target.id) this.deterministicErrors.clear()
     this.target = target
     return true
   }
@@ -119,6 +137,7 @@ export class AnthropicProviderBridge {
   }
 
   async close(): Promise<void> {
+    this.deterministicErrors.clear()
     await this.host.close()
   }
 
@@ -143,6 +162,17 @@ export class AnthropicProviderBridge {
 
     const target = this.target
     const body = JSON.stringify({ ...parsed, model: target.model })
+    const replayKey = providerRequestFingerprint(
+      target.id,
+      `${requestUrl.pathname}${requestUrl.search}`,
+      body
+    )
+    const replay = this.deterministicErrors.get(replayKey)
+    if (replay) {
+      response.writeHead(replay.status, replay.headers)
+      response.end(replay.body)
+      return
+    }
     const baseUrl = normalizeAnthropicBaseUrl(target.baseUrl)
     if (!baseUrl) throw new Error('The Anthropic provider target has no valid base URL.')
     const upstream = await this.fetchImpl(`${baseUrl}${requestUrl.pathname}${requestUrl.search}`, {
@@ -152,9 +182,38 @@ export class AnthropicProviderBridge {
       redirect: 'manual',
       signal: request.signal
     })
+    const headers = responseHeaders(upstream.headers)
+    if (isDeterministicProviderErrorStatus(upstream.status)) {
+      const upstreamBody = Buffer.from(await upstream.arrayBuffer())
+      delete headers['content-encoding']
+      const bodyToReplay =
+        upstreamBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
+          ? upstreamBody
+          : Buffer.from(
+              JSON.stringify({
+                error: {
+                  type: 'invalid_request_error',
+                  message: `Provider request failed with status ${upstream.status}`
+                }
+              })
+            )
+      const snapshot = {
+        body: bodyToReplay,
+        headers: {
+          ...headers,
+          'content-length': String(bodyToReplay.byteLength),
+          'x-open-science-upstream-status': String(upstream.status)
+        },
+        status: providerErrorClientStatus(upstream.status)
+      }
+      this.deterministicErrors.remember(replayKey, upstream.status, snapshot)
+      response.writeHead(snapshot.status, snapshot.headers)
+      response.end(snapshot.body)
+      return
+    }
     response.statusCode = upstream.status
     response.statusMessage = upstream.statusText
-    copyResponseHeaders(upstream.headers, response)
+    for (const [name, value] of Object.entries(headers)) response.setHeader(name, value)
     if (!upstream.body) {
       response.end()
       return

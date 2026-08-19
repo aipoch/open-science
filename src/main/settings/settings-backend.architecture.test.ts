@@ -808,6 +808,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/native-responses-compatibility.ts',
       'src/main/settings/anthropic-provider-bridge.ts',
       'src/main/settings/openai-provider-bridge.ts',
+      'src/main/settings/provider-error-replay.ts',
       'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/responses-bridge.ts',
