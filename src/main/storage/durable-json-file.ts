@@ -36,6 +36,10 @@ export type DurableJsonFileDependencies = {
   writeFile(path: string, contents: string, options: DurableJsonWriteOptions): Promise<void>
 }
 
+// Signals that a recognized temp may contain authoritative data this release cannot interpret.
+// Recovery must preserve it and stop instead of falling back to an older decodable candidate.
+export class DurableJsonRecoveryBarrierError extends Error {}
+
 const DEFAULT_DEPENDENCIES: DurableJsonFileDependencies = {
   createTemporarySuffix: () => `${process.pid}-${randomUUID()}`,
   mkdir: (path, options) => mkdir(path, options),
@@ -249,7 +253,8 @@ export const readDurableJsonFile = async <Value>(
         let value: Value
         try {
           value = decode(candidateContents)
-        } catch {
+        } catch (error) {
+          if (error instanceof DurableJsonRecoveryBarrierError) throw error
           continue
         }
 

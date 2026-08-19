@@ -20,6 +20,7 @@ import {
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 import {
+  DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
@@ -128,7 +129,7 @@ type ProjectSessionLoadDiagnostics = {
 
 type ProjectSessionDeletionState = 'live' | 'legacy-committed' | 'prepared' | 'absent'
 
-class UnsupportedSessionFileError extends Error {}
+class UnsupportedSessionFileError extends DurableJsonRecoveryBarrierError {}
 
 type SessionDirectoryEntry = {
   name: string
