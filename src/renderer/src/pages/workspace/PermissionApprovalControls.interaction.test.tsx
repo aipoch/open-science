@@ -3,7 +3,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
+import { i18next } from '@/i18n'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
+import { PermissionScopeConfirmationDialog } from './PermissionScopeConfirmationDialog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -37,6 +39,39 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
+  it('renders broad Korean permission scopes as natural complete titles', async () => {
+    await act(async () => i18next.changeLanguage('ko'))
+    try {
+      act(() => {
+        root.render(
+          <PermissionScopeConfirmationDialog
+            confirmation={{ scope: 'project', subject: '명령 그룹', codeExecution: true }}
+            onCancel={() => undefined}
+            onConfirm={() => undefined}
+          />
+        )
+      })
+      expect(document.body.textContent).toContain(
+        '이 프로젝트에서 명령 그룹 사용을 허용하시겠습니까?'
+      )
+
+      act(() => {
+        root.render(
+          <PermissionScopeConfirmationDialog
+            confirmation={{ scope: 'global', subject: '명령 그룹', codeExecution: true }}
+            onCancel={() => undefined}
+            onConfirm={() => undefined}
+          />
+        )
+      })
+      expect(document.body.textContent).toContain(
+        '모든 프로젝트에서 명령 그룹 사용을 허용하시겠습니까?'
+      )
+    } finally {
+      await act(async () => i18next.changeLanguage('en'))
+    }
+  })
+
   it('renders delegated permission cards independently with child, action, scope, and focus labels', () => {
     const onRespond = vi.fn(() => new Promise<void>(() => undefined))
     const alpha: AcpPermissionRequest = {

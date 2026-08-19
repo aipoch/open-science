@@ -304,7 +304,6 @@ describe('mandatory product glossary', () => {
       { term: 'CLI', source: /\bCLI\b/ },
       { term: 'SSH', source: /\bSSH\b/ },
       { term: 'GitHub', source: /\bGitHub\b/ },
-      { term: 'Star', source: /\bstars?\b/i },
       { term: 'Discord', source: /\bDiscord\b/ },
       { term: 'Python', source: /\bPython\b/ },
       { term: 'Jupyter', source: /\bJupyter\b/ },
@@ -462,6 +461,22 @@ describe('mandatory product glossary', () => {
         ? []
         : [`${key}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`]
     })
+
+    expect(offenders).toEqual([])
+  })
+
+  it('ko preserves executable names, API identifiers, code spans, and data directory names', () => {
+    const patterns = [/\bOpenScience\b/g, /\b[\w.-]+\.(?:ps1|sh|mcp)\b/g, /<code>[^<]+<\/code>/g]
+    const identifiers = (text: string): string[] =>
+      patterns
+        .flatMap((pattern) => text.match(pattern) ?? [])
+        .sort((left, right) => left.localeCompare(right))
+    const offenders = Object.entries(catalog('ko'))
+      .filter(
+        ([key, value]) =>
+          JSON.stringify(identifiers(englishOf(key))) !== JSON.stringify(identifiers(value))
+      )
+      .map(([key]) => key)
 
     expect(offenders).toEqual([])
   })
@@ -765,6 +780,49 @@ describe('Korean binding terminology', () => {
     ['Keep it in the current folder', '현재 폴더에 유지'],
     ['Pin current folder', '현재 폴더 고정'],
     ['Load more sessions', '세션 더 불러오기'],
+    ['for this project', '이 프로젝트에서'],
+    ['globally', '모든 프로젝트에서'],
+    ['Allow {{subject}} {{scope}}?', '{{scope}} {{subject}} 사용을 허용하시겠습니까?'],
+    [
+      'Skills and connectors this specialist can use. Anything not chosen here stays invisible and unreachable in its sessions, even when enabled globally.',
+      '이 스페셜리스트가 사용할 수 있는 스킬과 커넥터입니다. 여기에서 선택하지 않은 항목은 전역으로 활성화되어 있어도 해당 세션에서 보이지 않으며 접근할 수 없습니다.'
+    ],
+    ['Move to OpenScience', 'OpenScience로 이동'],
+    ['Official install.ps1', '공식 install.ps1'],
+    [
+      'One <code>Name: Value</code> per line (not JSON).',
+      '줄마다 <code>Name: Value</code> 하나씩 입력하세요(JSON 형식 아님).'
+    ],
+    [
+      'Used by host.mcp("{{name}}", …), Specialists, and the generated MCP skill.',
+      'host.mcp("{{name}}", …), 스페셜리스트 및 생성된 MCP 스킬에서 사용됩니다.'
+    ],
+    [
+      'Two-step verification uses a six-digit code. Approve a new remote session only when its code matches the request shown here.',
+      '2단계 인증은 6자리 코드를 사용합니다. 코드가 여기에 표시된 요청과 일치할 때만 새 원격 세션을 승인하세요.'
+    ],
+    ['Library', '라이브러리'],
+    ['{{count}} jobs_other', '작업 {{count}}개'],
+    ['{{count}} repl_other', 'REPL {{count}}개'],
+    ['{{count}} steps_other', '{{count}}단계'],
+    ['{{count}} turns_other', '{{count}}턴'],
+    [
+      'Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other',
+      '이 편집된 프롬프트를 보내면 여기에서 새 브랜치가 시작됩니다. 현재 뒤따르는 {{count}}개 턴은 메시지 수정 컨트롤에서 계속 사용할 수 있습니다.'
+    ],
+    [
+      'Saved conversations loaded, but the project index could not be rebuilt. Repair the index before archiving projects.',
+      '저장된 대화는 로드되었지만 프로젝트 색인을 다시 빌드할 수 없습니다. 프로젝트를 보관하기 전에 색인을 복구하세요.'
+    ],
+    [
+      'Some saved conversations could not be indexed. Repair the index before archiving projects.',
+      '일부 저장된 대화의 색인을 생성할 수 없습니다. 프로젝트를 보관하기 전에 색인을 복구하세요.'
+    ],
+    [
+      'Project archive is unavailable because a damaged conversation cannot be verified.',
+      '손상된 대화를 확인할 수 없어 프로젝트 보관 기능을 사용할 수 없습니다.'
+    ],
+    ['Star', '별표'],
     [
       'Choose one .json file up to {{size}}. Credentials are never imported from the file.',
       '최대 {{size}}인 .json 파일 하나를 선택하세요. 파일에서 자격 증명은 가져오지 않습니다.'
