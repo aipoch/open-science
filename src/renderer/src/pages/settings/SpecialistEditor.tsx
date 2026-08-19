@@ -4,7 +4,14 @@ import { ChevronDown, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import {
@@ -22,7 +29,8 @@ import {
   type SpecialistProfileView
 } from '../../../../shared/specialist'
 import { SpecialistAvatar } from './specialist-avatar'
-import { AVATAR_COLORS, AVATAR_ICONS } from './specialist-icons'
+import { AVATAR_COLORS } from './specialist-icons'
+import { APP_ICON_GROUPS, APP_ICONS, DEFAULT_APP_ICON } from '@/components/app-icons/registry'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useTagStore } from '@/stores/tag-store'
 import { SettingsIconAction } from './SettingsLayout'
@@ -85,14 +93,8 @@ type SkillRow = {
   missing: boolean
 }
 
-const ICON_OPTIONS = [
-  { key: 'brain', label: 'Brain' },
-  { key: 'beaker', label: 'Beaker' },
-  { key: 'book-open', label: 'Book' },
-  { key: 'flask-conical', label: 'Flask' },
-  { key: 'microscope', label: 'Microscope' },
-  { key: 'search', label: 'Search' }
-] as const
+// Flat view of the grouped registry for selected-value lookups (trigger label, previews).
+const ICON_ENTRIES = APP_ICON_GROUPS.flatMap((group) => group.icons)
 
 const COLOR_OPTIONS = [
   { key: 'blue', label: 'Blue' },
@@ -114,6 +116,15 @@ const SpecialistEditor = ({
   initialInput
 }: SpecialistEditorProps): React.JSX.Element => {
   const { t } = useTranslation()
+
+  // Group headers for the icon picker. Literal t() call sites keep the i18n catalog
+  // guard able to see them; a dynamic t(group.label) lookup would be invisible to it.
+  const iconGroupLabels: Record<string, string> = {
+    science: t('Science'),
+    research: t('Research'),
+    roles: t('Roles'),
+    engineering: t('Engineering')
+  }
 
   const isEdit = editSpecialist !== undefined
   const connectors = useSettingsStore((state) => state.connectors)
@@ -660,24 +671,26 @@ const SpecialistEditor = ({
                 <SelectTrigger aria-label={t('Specialist icon')}>
                   <span className="flex items-center gap-2">
                     {(() => {
-                      const Icon = AVATAR_ICONS[form.iconKey] ?? AVATAR_ICONS.brain
+                      const Icon = APP_ICONS[form.iconKey] ?? DEFAULT_APP_ICON
                       return <Icon className="size-4 shrink-0" aria-hidden="true" />
                     })()}
-                    <span>{ICON_OPTIONS.find((option) => option.key === form.iconKey)?.label}</span>
+                    <span>{ICON_ENTRIES.find((option) => option.key === form.iconKey)?.label}</span>
                   </span>
                 </SelectTrigger>
                 <SelectContent>
-                  {ICON_OPTIONS.map((option) => {
-                    const Icon = AVATAR_ICONS[option.key] ?? AVATAR_ICONS.brain
-                    return (
-                      <SelectItem key={option.key} value={option.key}>
-                        <span className="flex items-center gap-2">
-                          <Icon className="size-4 shrink-0" aria-hidden="true" />
-                          {option.label}
-                        </span>
-                      </SelectItem>
-                    )
-                  })}
+                  {APP_ICON_GROUPS.map((group) => (
+                    <SelectGroup key={group.key}>
+                      <SelectLabel>{iconGroupLabels[group.key] ?? group.label}</SelectLabel>
+                      {group.icons.map((option) => (
+                        <SelectItem key={option.key} value={option.key}>
+                          <span className="flex items-center gap-2">
+                            <option.Icon className="size-4 shrink-0" aria-hidden="true" />
+                            {option.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
