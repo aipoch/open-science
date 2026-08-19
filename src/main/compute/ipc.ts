@@ -442,7 +442,10 @@ const createComputeHandlers = (
       }
       return result
     },
-    detailsGet: (providerId) => service.getDetails(providerId),
+    detailsGet: async (providerId) => {
+      const { doc, isSkeleton } = await service.getDetails(providerId)
+      return { doc, isSkeleton }
+    },
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),

@@ -473,7 +473,12 @@ describe('computeCall RPC', () => {
 
   it('routes computeCall op=list to the compute service', async () => {
     const fakeHosts = [
-      { providerId: 'ssh:biowulf', displayName: 'biowulf', shape: 'direct_ssh', probeResult: null }
+      {
+        providerId: 'ssh:biowulf',
+        displayName: 'biowulf',
+        shape: 'direct_ssh',
+        probeResult: undefined
+      }
     ]
     const fakeCompute = {
       callCommand: async () => ({}),
@@ -493,8 +498,16 @@ describe('computeCall RPC', () => {
       body: JSON.stringify({ method: 'computeCall', params: { op: 'list' } })
     })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { result: typeof fakeHosts }
-    expect(body.result).toEqual(fakeHosts)
+    // The agent channel answers with the summary projection, never the full host objects.
+    const body = (await res.json()) as { result: unknown[] }
+    expect(body.result).toEqual([
+      {
+        provider_id: 'ssh:biowulf',
+        display_name: 'biowulf',
+        shape: 'direct_ssh',
+        status: 'not_probed'
+      }
+    ])
   })
 
   it('routes computeCall op=details mode=read to getDetails', async () => {

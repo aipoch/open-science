@@ -114,14 +114,14 @@ gate('repl kernel host.compute', () => {
     expect(stub.received()[0]?.params?.project_id).toBe('proj-x')
   })
 
-  it('maps listCompute, details, submitJob, attachJob, and setConcurrencyLimit to unchanged wire params', async () => {
+  it('maps listEnabled, details, submitJob, attachJob, and setConcurrencyLimit to unchanged wire params', async () => {
     const stub = await startStub()
     const exec = makeExecutor()
     const result = await exec.execute(
       baseRequest({
         code:
           "const c = host.compute.create('ssh:x'); " +
-          'await host.compute.listCompute(); ' +
+          'await host.compute.listEnabled(); ' +
           "await host.compute.details('ssh:x', { mode: 'replace', text: 'new', oldText: 'old' }); " +
           "const job = await c.submitJob('analyze', 'run', { timeoutSeconds: 60, " +
           "inputs: [{ src: 'in.dat', dstFilename: 'input.dat' }, { remotePath: '/remote/ref.dat', dstFilename: 'ref.dat' }], " +

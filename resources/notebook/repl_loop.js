@@ -3203,14 +3203,17 @@ function computeError(raw) {
 // host.compute namespace. Public methods and input keys are camelCase; the adapter immediately maps
 // them to the existing snake_case computeCall RPC contract.
 const hostCompute = {
-  // Enumerate registered compute hosts for discovery. No approval, no session context.
-  async list() {
+  // Enumerate ALL registered compute hosts as summaries (provider_id/display_name/shape/status).
+  // No approval, no session context. Heavy fields live behind details(); listRegistered() itself
+  // stays small so the repl_execute tool result is never truncated.
+  async listRegistered() {
     return computeRpc({ op: 'list' })
   },
 
-  // Returns session-enabled compute hosts (≠ list() which returns all registered hosts).
-  // Uses COMPUTE_SESSION_ID from spawn env so the registry lookup is always session-scoped.
-  async listCompute() {
+  // Returns the session-enabled compute hosts (≠ listRegistered() which returns all registered
+  // hosts) as the same summary objects. Uses COMPUTE_SESSION_ID from spawn env so the registry
+  // lookup is always session-scoped.
+  async listEnabled() {
     return computeRpc({ op: 'list_compute', session_id: COMPUTE_SESSION_ID })
   },
   // Bind a thin handle to one provider (no network call). callCommand runs one short remote command;

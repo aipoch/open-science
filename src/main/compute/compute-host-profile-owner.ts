@@ -233,12 +233,24 @@ export class ComputeHostProfileOwner {
     return result
   }
 
-  async getDetails(providerId: string): Promise<{ doc: string; isSkeleton: boolean }> {
+  async getDetails(providerId: string): Promise<{
+    doc: string
+    isSkeleton: boolean
+    probeResult: ProbeResult | undefined
+  }> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
-    if (host.detailsDoc) return { doc: host.detailsDoc, isSkeleton: false }
-    if (!host.probeResult?.ok) return { doc: '', isSkeleton: false }
-    return { doc: buildDetailsSkeleton(host.probeResult), isSkeleton: true }
+    if (host.detailsDoc) {
+      return { doc: host.detailsDoc, isSkeleton: false, probeResult: host.probeResult }
+    }
+    if (!host.probeResult?.ok) {
+      return { doc: '', isSkeleton: false, probeResult: host.probeResult }
+    }
+    return {
+      doc: buildDetailsSkeleton(host.probeResult),
+      isSkeleton: true,
+      probeResult: host.probeResult
+    }
   }
 
   async replaceDetails(

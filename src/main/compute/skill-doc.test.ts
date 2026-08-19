@@ -53,7 +53,7 @@ const writeCanonicalDocument = async (
       '## Registered hosts',
       '',
       '<!-- open-science:compute-hosts:start -->',
-      'Run `await host.compute.list()` to see all registered hosts.',
+      'Run `await host.compute.listRegistered()` to see all registered hosts.',
       '<!-- open-science:compute-hosts:end -->',
       '',
       '## API reference',
@@ -72,7 +72,8 @@ describe('syncComputeSkillDoc', () => {
     )
 
     for (const name of [
-      'listCompute',
+      'listRegistered',
+      'listEnabled',
       'callCommand',
       'submitJob',
       'attachJob',
@@ -92,6 +93,8 @@ describe('syncComputeSkillDoc', () => {
     expect(doc).not.toMatch(
       /\b(?:list_compute|call_command|submit_job|attach_job|set_concurrency_limit|login_shell|timeout_seconds|old_text|dst_filename|remote_path|max_file_mb|max_total_mb)\b/
     )
+    // The retired enumeration names must not resurface in shipped guidance.
+    expect(doc).not.toMatch(/\bhost\.compute\.(?:list|listCompute)\(/)
   })
 
   it('keeps bundled model-compute examples on the camelCase contract', async () => {

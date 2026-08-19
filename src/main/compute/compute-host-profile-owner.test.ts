@@ -563,6 +563,7 @@ describe('ComputeHostProfileOwner.getDetails', () => {
     const result = await service.getDetails('ssh:biowulf')
     expect(result.doc).toBe('## Resources\ncpus: 8')
     expect(result.isSkeleton).toBe(false)
+    expect(result.probeResult).toBeUndefined()
   })
 
   it('returns a skeleton from probeResult when detailsDoc is empty', async () => {
@@ -585,6 +586,7 @@ describe('ComputeHostProfileOwner.getDetails', () => {
     expect(result.doc).toContain('mem:')
     expect(result.doc).toContain('gpus:')
     expect(result.doc).toContain('scheduler:')
+    expect(result.probeResult).toEqual(probeResult)
   })
 
   it('returns a skeleton with only available fields when some are missing', async () => {

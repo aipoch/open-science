@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
+import type { ComputeHost } from '../../shared/compute'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from './local-rpc-server'
@@ -37,6 +38,31 @@ const createDeferred = <Value = void>(): {
     resolve = promiseResolve
   })
   return { promise, resolve }
+}
+
+function computeHostFixture(
+  overrides: Pick<ComputeHost, 'providerId'> & Partial<ComputeHost>
+): ComputeHost {
+  const { providerId, ...rest } = overrides
+  const sshAlias = providerId.replace(/^ssh:/, '')
+  return {
+    id: `host-${sshAlias}`,
+    providerId,
+    displayName: sshAlias,
+    shape: 'direct_ssh',
+    sshAlias,
+    sshOverrides: undefined,
+    scratchRoot: undefined,
+    scratchPinned: false,
+    concurrencyLimit: undefined,
+    probeResult: undefined,
+    detailsDoc: '',
+    detailsUpdatedAt: undefined,
+    detailsUpdatedBy: undefined,
+    createdAt: 1,
+    updatedAt: 2,
+    ...rest
+  }
 }
 
 const registeredInput = {
@@ -2832,18 +2858,25 @@ describe('notebook local RPC server', () => {
     }
   })
 
-  it('list_compute op returns the enabled hosts for the given session', async () => {
-    const root = await createStorageRoot()
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    // Inject a fake compute service with the minimal surface the dispatch needs.
+  it('list_compute op returns enabled-host summaries, skipping ids with no registered host', async () => {
+    // Inject a fake compute service with the minimal surface the dispatch needs. The enabled set
+    // names a ghost id with no registered host — it must be skipped, not surfaced.
     const fakeComputeService = {
       callCommand: async () => ({}),
-      list: async () => [],
+      list: async (): Promise<ComputeHost[]> => [
+        computeHostFixture({
+          providerId: 'ssh:cluster-1',
+          displayName: 'Cluster One',
+          shape: 'scheduler_cluster',
+          probeResult: {
+            ok: false,
+            probedAt: '2026-01-01T00:00:00.000Z',
+            exitCode: 255,
+            errorTail: 'boom'
+          }
+        }),
+        computeHostFixture({ providerId: 'ssh:alpha' })
+      ],
       getDetails: async () => ({ doc: '', isSkeleton: true }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
@@ -2851,9 +2884,12 @@ describe('notebook local RPC server', () => {
       submitJob: async () => ({}),
       getJobStatus: async () => ({}),
       getJobResult: async () => ({}),
-      // Returns pre-configured enabled hosts for the session under test.
+      // Enabled order intentionally differs from list() order; the join must preserve this registry
+      // order while silently dropping the ghost id.
       getEnabledComputeHosts: (sessionId: string): string[] => {
-        if (sessionId === 'my-session') return ['ssh:cluster-1']
+        if (sessionId === 'my-session') {
+          return ['ssh:alpha', 'ssh:ghost', 'ssh:cluster-1']
+        }
         return []
       },
       setSessionConcurrencyLimit: async () => {},
@@ -2864,7 +2900,7 @@ describe('notebook local RPC server', () => {
         provider_ceilings: {}
       })
     }
-    const server = new NotebookLocalRpcServer(service, {
+    const server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       token: 'secret-token',
       computeService: fakeComputeService
@@ -2888,10 +2924,24 @@ describe('notebook local RPC server', () => {
           params: { op: 'list_compute', session_id: 'forged-session' }
         })
       })
-      const withHostsPayload = (await withHosts.json()) as { result: string[] }
+      const withHostsPayload = (await withHosts.json()) as { result: unknown[] }
 
       expect(withHosts.status).toBe(200)
-      expect(withHostsPayload.result).toEqual(['ssh:cluster-1'])
+      // Both registered hosts are summaries in enabled-registry order; the ghost id is absent.
+      expect(withHostsPayload.result).toEqual([
+        {
+          provider_id: 'ssh:alpha',
+          display_name: 'alpha',
+          shape: 'direct_ssh',
+          status: 'not_probed'
+        },
+        {
+          provider_id: 'ssh:cluster-1',
+          display_name: 'Cluster One',
+          shape: 'scheduler_cluster',
+          status: 'probe_failed'
+        }
+      ])
 
       // Unknown session → empty array.
       const otherConnection = await server.issueSessionConnection(
@@ -2910,10 +2960,130 @@ describe('notebook local RPC server', () => {
           params: { op: 'list_compute', session_id: 'other-session' }
         })
       })
-      const noHostsPayload = (await noHosts.json()) as { result: string[] }
+      const noHostsPayload = (await noHosts.json()) as { result: unknown[] }
 
       expect(noHosts.status).toBe(200)
       expect(noHostsPayload.result).toEqual([])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('keeps enumeration compact and serves probe snapshots through details', async () => {
+    const probeResult: ComputeHost['probeResult'] = {
+      ok: true,
+      probedAt: '2026-01-01T00:00:00.000Z',
+      exitCode: 0,
+      errorTail: null,
+      os: 'Linux',
+      cpus: 64,
+      memMib: 257_000,
+      gpus: [{ type: 'A100', count: 8 }],
+      detectedScheduler: 'slurm'
+    }
+    // Full ComputeHost fixtures — detailsDoc and probe internals are exactly the heavy fields the
+    // agent channel must not carry (the dedicated details op serves them on demand).
+    const fakeComputeService = {
+      callCommand: async () => ({}),
+      list: async (): Promise<ComputeHost[]> => [
+        computeHostFixture({
+          providerId: 'ssh:alpha',
+          displayName: 'Alpha Cluster',
+          shape: 'scheduler_cluster',
+          probeResult,
+          detailsDoc: '# Alpha knowledge\n'.repeat(500),
+          detailsUpdatedAt: 1,
+          detailsUpdatedBy: 'agent'
+        }),
+        computeHostFixture({ providerId: 'ssh:beta' })
+      ],
+      getDetails: async () => ({
+        doc: '# Alpha knowledge',
+        isSkeleton: false,
+        probeResult
+      }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {},
+      download: async () => ({}),
+      submitJob: async () => ({}),
+      getJobStatus: async () => ({}),
+      getJobResult: async () => ({}),
+      getEnabledComputeHosts: () => [],
+      setSessionConcurrencyLimit: async () => {},
+      getSessionConcurrencyStatus: async () => ({
+        session_limit: null,
+        active_count: 0,
+        queued_count: 0,
+        provider_ceilings: {}
+      })
+    }
+    const server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      token: 'secret-token',
+      computeService: fakeComputeService
+    })
+    const connection = await server.issueSessionConnection(
+      'my-session',
+      'default-project',
+      'root-frame-my-session'
+    )
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'computeCall', params: { op: 'list' } })
+      })
+      const payload = (await response.json()) as { result: unknown[] }
+
+      expect(response.status).toBe(200)
+      expect(payload.result).toEqual([
+        {
+          provider_id: 'ssh:alpha',
+          display_name: 'Alpha Cluster',
+          shape: 'scheduler_cluster',
+          status: 'connected'
+        },
+        {
+          provider_id: 'ssh:beta',
+          display_name: 'beta',
+          shape: 'direct_ssh',
+          status: 'not_probed'
+        }
+      ])
+
+      const detailsResponse = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: { op: 'details', provider_id: 'ssh:alpha', mode: 'read' }
+        })
+      })
+      const detailsPayload = (await detailsResponse.json()) as { result: unknown }
+
+      expect(detailsResponse.status).toBe(200)
+      expect(detailsPayload.result).toEqual({
+        doc: '# Alpha knowledge',
+        isSkeleton: false,
+        probe: {
+          ok: true,
+          probed_at: '2026-01-01T00:00:00.000Z',
+          exit_code: 0,
+          error_tail: null,
+          os: 'Linux',
+          cpus: 64,
+          mem_mib: 257_000,
+          gpus: [{ type: 'A100', count: 8 }],
+          detected_scheduler: 'slurm'
+        }
+      })
     } finally {
       await server.close()
     }

@@ -56,7 +56,7 @@ Interpret every key narrowly:
 ```javascript
 const caps = await host.capabilities()
 if (caps.compute === true) {
-  const availableHosts = await host.compute.list()
+  const availableHosts = await host.compute.listRegistered()
 }
 
 if (caps.llm === true) {

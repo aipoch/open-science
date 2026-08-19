@@ -17,15 +17,12 @@ the sandbox workspace); calling it from a python/r cell will fail with `host.com
 
 <!-- open-science:compute-hosts:start -->
 
-Run `await host.compute.list()` to see all registered hosts.
+Run `await host.compute.listRegistered()` to see all registered hosts.
 <!-- open-science:compute-hosts:end -->
 
-Each host entry shows:
-
-- Display name
-- Provider ID (e.g., `ssh:biowulf`, `ssh:192.168.1.100`)
-- Shape (e.g., `direct_ssh`, `slurm`, `pbs`)
-- Connection status
+Each host entry is a small summary — `provider_id`, `display_name`, `shape`, and `status`
+(`connected`, `probe_failed`, or `not_probed`). Heavy details (knowledge doc, probe snapshot)
+are NOT included; read them on demand with `details()`.
 
 ## Session-active host
 
@@ -33,20 +30,20 @@ The user may enable one host for this conversation via the `≡` panel in the co
 Always check which host is active before creating a handle:
 
 ```javascript
-// Returns the session-enabled host provider_ids (a string[] subset of all registered hosts).
+// Returns the session-enabled hosts as summaries (a subset of all registered hosts).
 // Empty array means the user hasn't chosen a host for this conversation yet.
-const activeHosts = await host.compute.listCompute()
-const c = activeHosts[0] ? host.compute.create(activeHosts[0]) : null
+const activeHosts = await host.compute.listEnabled()
+const c = activeHosts[0] ? host.compute.create(activeHosts[0].provider_id) : null
 ```
 
 ## API reference
 
 ```javascript
-// List ALL registered hosts
-const hosts = await host.compute.list()
+// List ALL registered hosts (summaries: provider_id, display_name, shape, status)
+const hosts = await host.compute.listRegistered()
 
 // List session-enabled hosts (user's active selection for this conversation)
-const activeHosts = await host.compute.listCompute()
+const activeHosts = await host.compute.listEnabled()
 
 // Create a handle to a specific host (no network call)
 const c = host.compute.create('ssh:<alias>')
@@ -58,7 +55,9 @@ const result = await c.callCommand('<shell command>', '<one-line intent for the 
 })
 // result → { exit_code, stdout, stderr, truncated }
 
-// Read the host knowledge doc (returns { doc, isSkeleton })
+// Read the host knowledge doc and probe snapshot.
+// Returns { doc, isSkeleton, probe }; probe is null when the host has not been probed.
+// probe → { ok, probed_at, exit_code, error_tail, os?, cpus?, mem_mib?, gpus?, detected_scheduler? }
 const info = await host.compute.details('ssh:<alias>', { mode: 'read' })
 
 // Append a note to the host knowledge doc (agent writes; 32 KB cap enforced)
@@ -89,8 +88,8 @@ automatically harvests the outputs and initiates a new analysis turn — **you n
 
 ```javascript
 // List the session's active compute hosts (set via the ≡ host selector)
-const activeHosts = await host.compute.listCompute()
-// returns ['ssh:<alias>', ...] — the provider_ids currently enabled for this session
+const activeHosts = await host.compute.listEnabled()
+// returns [{ provider_id, display_name, shape, status }, ...] — the hosts enabled for this session
 
 // Submit a non-blocking job — returns immediately after the user approves
 const c = host.compute.create('ssh:<alias>')

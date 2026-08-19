@@ -289,7 +289,7 @@ describe('ClaudeCodeSkillMaterializer', () => {
         '## Registered hosts',
         '',
         '<!-- open-science:compute-hosts:start -->',
-        'Run `await host.compute.list()` to see all registered hosts.',
+        'Run `await host.compute.listRegistered()` to see all registered hosts.',
         '<!-- open-science:compute-hosts:end -->',
         '',
         '## API reference',
