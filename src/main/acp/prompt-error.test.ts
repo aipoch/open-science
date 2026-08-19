@@ -126,6 +126,46 @@ describe('isProviderPromptError', () => {
     expect(isProviderPromptError(error)).toBe(true)
   })
 
+  it.each([400, 401, 422, 499])(
+    'flags a Claude Code RequestError with an explicit provider %i status',
+    (status) => {
+      const error = agentError(`Internal error: API Error: ${status} Authentication Fails`, {
+        errorKind: 'unknown'
+      })
+
+      expect(isProviderPromptError(error)).toBe(true)
+    }
+  )
+
+  it('does not infer a provider error from nearby but non-equivalent text', () => {
+    expect(
+      isProviderPromptError(
+        agentError('Internal error: API Error: 500 Provider unavailable', {
+          errorKind: 'unknown'
+        })
+      )
+    ).toBe(false)
+    expect(
+      isProviderPromptError(
+        agentError('Internal error: validation failed with status 400', {
+          errorKind: 'unknown'
+        })
+      )
+    ).toBe(false)
+    expect(
+      isProviderPromptError(
+        Object.assign(new Error('Internal error: API Error: 400 Invalid request'), {
+          code: -32002,
+          data: { errorKind: 'unknown' },
+          name: 'RequestError'
+        })
+      )
+    ).toBe(false)
+    expect(isProviderPromptError(new Error('Internal error: API Error: 400 Invalid request'))).toBe(
+      false
+    )
+  })
+
   it('flags a provider resource-not-found (wrong model id / endpoint)', () => {
     const error = agentError(
       'Internal error: Not Found: {"error":{"message":"unknown model","type":"resource_not_found_error"}}'

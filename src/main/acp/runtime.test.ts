@@ -20808,31 +20808,45 @@ describe('ACP runtime session management', () => {
     expect(errorEvent?.recoverable).toBeUndefined()
   })
 
-  it('tags a provider-relayed prompt failure with providerError so the renderer hides Report', async () => {
-    const process = new FakeAgentProcess()
-    const events: Array<{ kind: string; providerError?: boolean }> = []
-    startFakeAgent(process, ['remote-session-1'], {
-      onPrompt: () => {
-        // An upstream provider rejection the agent relays as an APIError — the user's to fix, not a bug.
-        throw acp.RequestError.internalError({ errorName: 'APIError' }, 'Invalid API key')
-      }
-    })
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      callbacks: {
-        onEvent: (event) => events.push({ kind: event.kind, providerError: event.providerError })
-      }
-    })
+  it.each([
+    ['OpenCode APIError', { errorName: 'APIError' }, 'Invalid API key'],
+    [
+      'Claude Code explicit 4xx',
+      { errorKind: 'unknown' },
+      'API Error: 400 Authentication Fails, Your api key: ****e52d is invalid'
+    ],
+    [
+      'provider bridge error kind',
+      { errorKind: 'provider-error' },
+      '{"error":{"message":"Authentication failed","type":"authentication_error"}}'
+    ]
+  ] as const)(
+    'tags a provider-relayed %s prompt failure so the renderer hides Report',
+    async (_name, data, message) => {
+      const process = new FakeAgentProcess()
+      const events: Array<{ kind: string; providerError?: boolean }> = []
+      startFakeAgent(process, ['remote-session-1'], {
+        onPrompt: () => {
+          throw acp.RequestError.internalError(data, message)
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        callbacks: {
+          onEvent: (event) => events.push({ kind: event.kind, providerError: event.providerError })
+        }
+      })
 
-    await runtime.createSession({ cwd: '/workspace' })
-    await expect(
-      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
-    ).rejects.toThrow()
+      await runtime.createSession({ cwd: '/workspace' })
+      await expect(
+        runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+      ).rejects.toThrow()
 
-    expect(events).toContainEqual({ kind: 'error', providerError: true })
-  })
+      expect(events).toContainEqual({ kind: 'error', providerError: true })
+    }
+  )
 
   it('does not tag an ACP-layer prompt failure as providerError (stays reportable)', async () => {
     const process = new FakeAgentProcess()
