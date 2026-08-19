@@ -217,6 +217,22 @@ describe('saveIpynbAll', () => {
     expect(readFileSync(firstPath, 'utf8')).toBe('"old python"')
   })
 
+  it('delegates conflict grammar to the native translator', async () => {
+    const firstPath = join(directory, FILES[0]!.name)
+    await writeFile(firstPath, '"old python"', 'utf8')
+    const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 1 })
+    const translate = vi.fn(
+      (key: string, values?: Record<string, string | number>) => `${key}:${values?.count ?? ''}`
+    )
+
+    await saveIpynbAll([FILES[0]!], { electron, fsCheck: realFsCheck, fsOps: realFsOps }, translate)
+
+    expect(translate).toHaveBeenCalledWith(
+      '{{count}} notebooks already exist in the chosen directory.',
+      { count: 1 }
+    )
+  })
+
   it('overwrites when user confirms', async () => {
     const firstPath = join(directory, FILES[0]!.name)
     const secondPath = join(directory, FILES[1]!.name)

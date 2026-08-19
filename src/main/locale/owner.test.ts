@@ -73,5 +73,17 @@ describe('LocalePreferenceOwner', () => {
         }
       )
     ).toContain('3')
+    expect(
+      [1, 2, 5, 21].map((count) =>
+        translateNativeMessage('ru', '{{count}} notebooks already exist in the chosen directory.', {
+          count
+        })
+      )
+    ).toEqual([
+      'В выбранной папке уже существует 1 Notebook.',
+      'В выбранной папке уже существуют 2 Notebook.',
+      'В выбранной папке уже существуют 5 Notebook.',
+      'В выбранной папке уже существует 21 Notebook.'
+    ])
   })
 })

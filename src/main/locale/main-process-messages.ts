@@ -362,11 +362,19 @@ export const translateNativeMessage = (
   locale: Locale,
   key: NativeMessageKey,
   values: Record<string, string | number> = {}
-): string =>
-  Object.entries(values).reduce(
+): string => {
+  const selectedKey =
+    key === '{{count}} notebooks already exist in the chosen directory.' &&
+    typeof values.count === 'number' &&
+    new Intl.PluralRules(locale).select(values.count) === 'one'
+      ? '{{count}} notebook already exists in the chosen directory.'
+      : key
+
+  return Object.entries(values).reduce(
     (message, [name, value]) => message.replaceAll(`{{${name}}}`, String(value)),
-    messages[locale][key]
+    messages[locale][selectedKey]
   )
+}
 
 export const englishNativeTranslator: NativeTranslator = (key, values) =>
   translateNativeMessage('en', key, values)

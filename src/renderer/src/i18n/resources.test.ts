@@ -335,6 +335,31 @@ describe('dynamic counted lookup translations', () => {
       '5 файлов',
       '1.5 файла'
     ])
+
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} agents', { count }))).toEqual([
+      '1 агент',
+      '2 агента',
+      '5 агентов',
+      '1.5 агента'
+    ])
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} steps', { count }))).toEqual([
+      '1 шаг',
+      '2 шага',
+      '5 шагов',
+      '1.5 шага'
+    ])
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} jobs', { count }))).toEqual([
+      '1 задание',
+      '2 задания',
+      '5 заданий',
+      '1.5 задания'
+    ])
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} subagents', { count }))).toEqual([
+      '1 субагент',
+      '2 субагента',
+      '5 субагентов',
+      '1.5 субагента'
+    ])
   })
 })
 
@@ -668,6 +693,254 @@ describe('mandatory product glossary', () => {
     })
 
     expect(offenders).toEqual([])
+  })
+
+  it('uses Russian glossary terms throughout user-visible prose', () => {
+    const entries = Object.entries(catalog('ru'))
+    const connectorOffenders = entries
+      .filter(([key]) => /\bConnectors?\b/i.test(withoutTechnicalIdentifiers(englishOf(key))))
+      .filter(([, value]) => !/коннектор/iu.test(withoutTechnicalIdentifiers(value)))
+      .map(([key]) => key)
+    const credentialOffenders = entries
+      .filter(([key]) => /\bcredentials?\b/i.test(withoutTechnicalIdentifiers(englishOf(key))))
+      .filter(([, value]) => !/уч[её]тн[а-яё]*\s+данн/iu.test(withoutTechnicalIdentifiers(value)))
+      .map(([key]) => key)
+
+    expect({ connectorOffenders, credentialOffenders }).toEqual({
+      connectorOffenders: [],
+      credentialOffenders: []
+    })
+  })
+
+  it('preserves Russian networking and product literals', () => {
+    const literals = ['Claude Code', 'Wi-Fi', '*.internal.example', '10.0.0.0/8']
+    const offenders = Object.entries(catalog('ru')).flatMap(([key, value]) =>
+      literals
+        .filter((literal) => englishOf(key).includes(literal) && !value.includes(literal))
+        .map((literal) => `${key}: ${literal}`)
+    )
+
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('Russian catalog quality', () => {
+  it('does not leave generic English implementation terms in Russian prose', () => {
+    const retained = [
+      /\{\{\w+\}\}/g,
+      /<(?:code|path)>.*?<\/(?:code|path)>/g,
+      /Specialist Marketplace protocol/g,
+      /ssh-agent/g
+    ]
+    const offenders = Object.entries(catalog('ru'))
+      .filter(([, value]) => {
+        const prose = retained.reduce((text, pattern) => text.replace(pattern, ''), value)
+        return /\b(?:account|alias|backend|framework|frontmatter|module|output|partition|runtimes?|Write)\b/i.test(
+          prose
+        )
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not contain unrelated writing systems or inconsistent Side chat terminology', () => {
+    const entries = Object.entries(catalog('ru'))
+    const unrelatedScripts = entries
+      .filter(([, value]) => /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(value))
+      .map(([key]) => key)
+    const sideChat = entries
+      .filter(([key]) => englishOf(key).includes('Side chat'))
+      .filter(([, value]) => !/боков[а-яё]*\s+(?:чат|чате|чата)/iu.test(value))
+      .map(([key]) => key)
+
+    expect({ unrelatedScripts, sideChat }).toEqual({ unrelatedScripts: [], sideChat: [] })
+  })
+
+  it.each([
+    [
+      ".md files need a name and description in YAML frontmatter. .zip or .skill bundles must contain a SKILL.md. You'll confirm before anything is added.",
+      'Файлы .md должны содержать имя и описание в метаданных YAML. Архивы .zip и пакеты .skill должны содержать SKILL.md. Перед добавлением потребуется подтверждение.'
+    ],
+    [
+      'A reviewer agent checks every change before it lands.',
+      'Агент-рецензент проверяет каждое изменение перед его внесением.'
+    ],
+    ['Agent/framework overhead', 'Накладные расходы агента и фреймворка'],
+    [
+      'Base URL, key, and model for a Messages or Chat Completions endpoint',
+      'Базовый URL, ключ и модель для конечной точки Messages или Chat Completions'
+    ],
+    [
+      'Imported {{imported}} · skipped {{skipped}} · failed {{failed}}',
+      'Импортировано: {{imported}} · пропущено: {{skipped}} · с ошибкой: {{failed}}'
+    ],
+    [
+      'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.',
+      'Текущие локальные изменения невозможно восстановить после успешной перезаписи. При неудачной атомарной установке сохраняется текущая версия.'
+    ],
+    [
+      'Your local edits are preserved. Reload to get the latest version (your unsaved changes will be discarded), or cancel and try again.',
+      'Ваши локальные изменения сохранены. Перезагрузите страницу, чтобы получить последнюю версию (несохранённые изменения будут потеряны), или отмените действие и повторите попытку.'
+    ],
+    [
+      'Preview uploaded attachment {{name}}',
+      'Предварительный просмотр загруженного вложения {{name}}'
+    ],
+    [
+      "Open Science will recreate the folder as you use it. Files from the old location won't be available until it's reconnected.",
+      'Open Science воссоздаст папку при следующем обращении к ней. Файлы из прежнего расположения будут недоступны, пока подключение не восстановится.'
+    ],
+    [
+      'Open Science could not finish recovering a previous project deletion. Retry recovery before archiving or deleting projects.',
+      'Open Science не удалось завершить восстановление после предыдущего удаления проекта. Повторите восстановление перед архивированием или удалением проектов.'
+    ],
+    ['SSH alias', 'Псевдоним SSH'],
+    [
+      'The Compute Host connection timed out.',
+      'Истекло время ожидания подключения к вычислительному узлу.'
+    ],
+    [
+      'Port must be an integer from 1 through 65535.',
+      'Порт должен быть целым числом от 1 до 65535.'
+    ],
+    [
+      ' (control tab falls back to most recent data kernel)',
+      '(вкладка управления возвращается к последнему ядру данных)'
+    ],
+    [
+      'A custom Connector with this name already exists.',
+      'Пользовательский коннектор с таким именем уже существует.'
+    ],
+    ['Agent installation blockers', 'Причины блокировки установки агента'],
+    ['Agent runtime', 'Среда выполнения агента'],
+    ['Agent runtime repair issues', 'Проблемы восстановления среды выполнения агента'],
+    ['Auto-discover from MCP server', 'Автоматически обнаруживать на сервере MCP'],
+    ['Auto-review', 'Автопроверка'],
+    [
+      'Claude sign-out did not complete. Try again.',
+      'Не удалось выйти из Claude. Повторите попытку.'
+    ],
+    ['Collapse sidebar panel', 'Свернуть боковую панель'],
+    [
+      'Current composition and terminal-run history for the active branch. Category values are estimates.',
+      'Текущая структура и история запусков в терминале для активной ветви. Значения категорий приблизительны.'
+    ],
+    ['Custom command', 'Пользовательская команда'],
+    ['Idle', 'Бездействует'],
+    ['Invalid JSON', 'Некорректный JSON'],
+    ['Invalid JSON: {{error}}', 'Некорректный JSON: {{error}}'],
+    ['API format', 'Формат API'],
+    ['API key', 'Ключ API'],
+    ['API key is required.', 'Требуется ключ API.'],
+    ['Offline', 'Офлайн'],
+    ['Runtimes', 'Среды выполнения'],
+    [
+      'Preview — matches the list and picker.',
+      'Предварительный просмотр соответствует списку и средству выбора.'
+    ],
+    [
+      'Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.',
+      'Рекомендуется. Использует существующий вход Claude из ~/.claude. Один раз войдите через OAuth в браузере и используйте этот вход во всех инструментах Claude.'
+    ],
+    ['The selected folder is not usable.', 'Выбранную папку нельзя использовать.'],
+    [
+      'The source session was deleted before an applicable review was captured.',
+      'Исходная сессия была удалена до сохранения применимой проверки.'
+    ],
+    ['Used by Auto-review', 'Используется автопроверкой'],
+    [
+      'Deletion failed and was rolled back.',
+      'Удаление завершилось ошибкой, и изменения были отменены.'
+    ],
+    [
+      'Owned Skill · v{{version}} · bundled by default.',
+      'Собственный навык · v{{version}} · включён по умолчанию.'
+    ],
+    [
+      'Saves a file as an artifact for this conversation.',
+      'Сохраняет файл как артефакт этого диалога.'
+    ],
+    [
+      'Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.',
+      'Удалённый доступ отключён на домашнем компьютере. Снова включите режим удалённого доступа в Open Science и повторите попытку.'
+    ],
+    [
+      'That folder already contains Open Science data. Pick an empty folder, or use the default location.',
+      'Эта папка уже содержит данные Open Science. Выберите пустую папку или используйте расположение по умолчанию.'
+    ],
+    [
+      'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.',
+      'Эта модель не поддерживается мостом Codex Chat Completions. Выберите другую модель для сессии Codex.'
+    ],
+    [
+      'Leave empty to use User from ~/.ssh/config.',
+      'Оставьте пустым, чтобы использовать имя пользователя из ~/.ssh/config.'
+    ],
+    [
+      'A password must be configured before this Compute Host can connect.',
+      'Перед подключением к этому вычислительному хосту необходимо настроить пароль.'
+    ],
+    [
+      'Configure a password for this Compute Host before trying again.',
+      'Настройте пароль для этого вычислительного хоста и повторите попытку.'
+    ],
+    [
+      'Choose the exact effort levels accepted by this model. Open Science maps five relative strengths onto them, then sends the selected level using the request format below. Disable when the model does not accept an effort parameter.',
+      'Выберите точные уровни усилий, поддерживаемые этой моделью. Open Science сопоставляет с ними пять относительных уровней, а затем отправляет выбранный уровень в указанном ниже формате запроса. Отключите этот параметр, если модель его не принимает.'
+    ],
+    [
+      'Installed Skill · v{{version}} · include it to bundle a copy.',
+      'Установленный навык · v{{version}} · включите его, чтобы добавить копию в пакет.'
+    ],
+    [
+      'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
+      'Скачано артефактов: {{downloaded}} из {{total}}. Ошибок: {{failed}}.'
+    ],
+    [
+      'Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.',
+      'Open Science завершил работу до окончания копирования. Текущие данные не изменены. Удалите неполную копию, чтобы снова использовать это расположение.'
+    ],
+    ['By {{publisher}}', 'Автор: {{publisher}}'],
+    ['{{agent}} cannot be accessed.', '{{agent}} недоступен.'],
+    [
+      '{{fileName}}: unsupported file — upload a .md file or a .zip / .skill bundle.',
+      '{{fileName}}: неподдерживаемый файл — загрузите файл .md либо пакет .zip или .skill.'
+    ],
+    ['remote commands on {{host}}', 'удалённые команды на {{host}}'],
+    ['e.g. My gateway', 'например, мой шлюз'],
+    ['scheduler', 'планировщик'],
+    ['Cache share', 'Доля кэша'],
+    ['Signing key fingerprint: {{fingerprint}}', 'Отпечаток ключа подписи: {{fingerprint}}'],
+    ['Molecule renderer failed to load', 'Не удалось загрузить визуализатор молекул'],
+    ['Amber', 'Янтарный'],
+    ['Teal', 'Бирюзовый'],
+    ['Slate', 'Сланцевый']
+  ])('keeps proofread Russian copy for %s', (key, expected) => {
+    expect(catalog('ru')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.",
+      'Диалоги, по-прежнему связанные с <name>{{name}}</name>, станут <em>недоступны</em> и <em>не</em> будут автоматически переключены на главного агента. Для каждого затронутого диалога потребуется явно выбрать нового специалиста или главного агента, прежде чем снова можно будет отправлять сообщения.'
+    ],
+    ['FIRST-TIME SETUP', 'ПЕРВОНАЧАЛЬНАЯ НАСТРОЙКА'],
+    [
+      'Pick the agent Open Science drives, then install it. Only this agent needs to be installed to continue.',
+      'Выберите агента, которым будет управлять Open Science, затем установите его. Для продолжения достаточно установить только этого агента.'
+    ],
+    ['Read-only', 'Только чтение'],
+    [
+      'Creates Plans and records decisions you make during review. This Permission Grant never approves a Plan; you must approve each Plan separately.',
+      'Создаёт планы и записывает решения, принятые во время проверки. Это разрешение не утверждает план: каждый план необходимо утверждать отдельно.'
+    ],
+    [
+      'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.',
+      'Remote.It — сторонний сервис. Open Science лишь вызывает установленный пользователем настольный CLI-клиент и не включает его в поставку, не распространяет, не регистрирует и не создаёт для него учётную запись.'
+    ]
+  ])('keeps reviewed high-risk copy for %s', (key, expected) => {
+    expect(catalog('ru')[key]).toBe(expected)
   })
 })
 
