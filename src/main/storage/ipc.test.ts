@@ -403,6 +403,18 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.dismissLegacyDataMovePrompt).toHaveBeenCalledTimes(1)
   })
 
+  it('reports a legacy-move prompt dismissal persistence failure to the renderer', async () => {
+    const deps = fakeDeps()
+    vi.mocked(deps.settingsService.dismissLegacyDataMovePrompt).mockRejectedValue(
+      new Error('settings write failed')
+    )
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:dismiss-legacy-move-prompt')).rejects.toThrow(
+      'settings write failed'
+    )
+  })
+
   it('get-info reports isDefault false and real usage/availableBytes for a relocated data root', async () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())

@@ -247,6 +247,60 @@ describe('LegacyDataMoveDialog', () => {
     expect(moveButton?.disabled).toBe(false)
   })
 
+  it('does not remain stuck resolving when the default destination inspection fails', async () => {
+    const api = installApi({
+      inspectDataRoot: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('inspection unavailable'))
+        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/OpenScience' })
+    })
+    await renderDialog()
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Resolving…')
+    expect(document.body.textContent).toContain('Unavailable')
+    expect(document.body.textContent).toContain('Could not check the data folder. Try again.')
+
+    await act(async () => {
+      clickButton(/^Try again$/)
+      await Promise.resolve()
+    })
+
+    expect(api.inspectDataRoot).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('/home/u/OpenScience')
+  })
+
+  it('does not dismiss the prompt when persisting the keep-here choice fails', async () => {
+    const api = installApi({
+      dismissLegacyMovePrompt: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('settings write failed'))
+        .mockResolvedValueOnce(undefined)
+    })
+    const onDismiss = vi.fn()
+    await renderDialog(onDismiss)
+
+    await act(async () => {
+      clickButton(/Keep it in the current/)
+      await Promise.resolve()
+    })
+
+    expect(api.dismissLegacyMovePrompt).toHaveBeenCalledTimes(1)
+    expect(onDismiss).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Could not save changes.')
+
+    await act(async () => {
+      clickButton(/Keep it in the current/)
+      await Promise.resolve()
+    })
+
+    expect(api.dismissLegacyMovePrompt).toHaveBeenCalledTimes(2)
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+  })
+
   it('offers discard-only recovery for an interrupted chosen-folder copy', async () => {
     const api = installApi({
       pickDirectory: vi.fn().mockResolvedValue('/mnt/interrupted'),
@@ -292,5 +346,27 @@ describe('LegacyDataMoveDialog', () => {
     expect(document.body.textContent).toContain('Nope.')
     // An invalid pick must not start a migration.
     expect(api.detectActive).not.toHaveBeenCalled()
+  })
+
+  it('reports a chosen-folder inspection failure and re-enables every action', async () => {
+    installApi({
+      pickDirectory: vi.fn().mockResolvedValue('/mnt/unavailable'),
+      inspectDataRoot: vi
+        .fn()
+        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/OpenScience' })
+        .mockRejectedValueOnce(new Error('inspection unavailable'))
+    })
+    await renderDialog()
+
+    await act(async () => {
+      clickButton(/Choose another folder/)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Could not check the data folder. Try again.')
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+    expect(buttons).toHaveLength(3)
+    expect(buttons.every((button) => !button.disabled)).toBe(true)
   })
 })

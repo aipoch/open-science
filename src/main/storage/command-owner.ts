@@ -195,6 +195,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       await deps.settingsService.dismissLegacyDataMovePrompt()
     } catch (err) {
       logger.warn('legacy move prompt dismissal failed', diagnosticErrorFields(err))
+      throw err
     }
   }
 
