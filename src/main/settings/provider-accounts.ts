@@ -111,6 +111,12 @@ class ProviderAccountsModule {
 
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
     const settings = await this.repository.getSettings()
+    if (
+      request.requireExisting &&
+      (!request.id || !settings.providers.some((provider) => provider.id === request.id))
+    ) {
+      throw new Error('Provider no longer exists.')
+    }
     const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
       ? codexSubscriptionProviderIdentity()
       : request.type === 'claude-isolated'

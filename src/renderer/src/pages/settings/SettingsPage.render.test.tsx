@@ -6,6 +6,7 @@ import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
+import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -24,6 +25,15 @@ if (!Element.prototype.hasPointerCapture) {
 
 let container: HTMLDivElement
 let root: Root
+const originalSettingsActions = (() => {
+  const state = useSettingsStore.getState()
+  return {
+    persistProvider: state.persistProvider,
+    validateProvider: state.validateProvider,
+    addCustomServer: state.addCustomServer,
+    updateCustomServer: state.updateCustomServer
+  }
+})()
 
 // Minimal window.api surface the settings store touches when the dialog opens. Attached onto the
 // real jsdom window so DOM globals radix relies on (getComputedStyle, etc.) stay intact.
@@ -211,6 +221,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  useSettingsStore.setState(originalSettingsActions)
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
@@ -236,6 +247,40 @@ const settingsSection = (title: string): HTMLElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')).find(
     (section) => section.querySelector('h3')?.textContent?.trim() === title
   )
+
+const installCustomProviderSnapshot = (): ProviderView => {
+  const provider: ProviderView = {
+    id: 'custom-messages',
+    type: 'custom',
+    name: 'Messages gateway',
+    baseUrl: 'https://gateway.example',
+    model: 'model-a',
+    models: ['model-a'],
+    apiEndpoints: ['anthropic'],
+    supportsImageInput: false,
+    hasKey: true,
+    maskedKey: 'sk-…test',
+    needsKey: false
+  }
+  window.api.settings.getSettings = vi.fn().mockResolvedValue({
+    claude: {},
+    opencode: { resolvedPath: '/x/opencode' },
+    codex: {},
+    providers: [provider],
+    activeProviderId: provider.id,
+    activeModel: provider.model,
+    agentFrameworkId: 'opencode',
+    agentFrameworks: [
+      {
+        id: 'opencode',
+        displayName: 'OpenCode',
+        supportedApiTypes: ['anthropic', 'openai'],
+        supportsSkills: true
+      }
+    ]
+  })
+  return provider
+}
 
 describe('SettingsPage layout', () => {
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
@@ -1346,6 +1391,62 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('blocks Provider save and preserves the draft when a live refresh removes the target', async () => {
+    const provider = installCustomProviderSnapshot()
+    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    useSettingsStore.setState({
+      persistProvider,
+      validateProvider: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    })
+
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'replacement-key' }
+    })
+    act(() => useSettingsStore.setState({ providers: [] }))
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    expect(document.body.textContent).toContain(
+      'This Provider no longer exists. Your draft has not been saved.'
+    )
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')?.value).toBe(
+      'replacement-key'
+    )
+    expect(save?.disabled).toBe(true)
+    expect(persistProvider).not.toHaveBeenCalled()
+  })
+
+  it('marks a Provider edit save as requiring the existing target', async () => {
+    const provider = installCustomProviderSnapshot()
+    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    useSettingsStore.setState({
+      persistProvider,
+      validateProvider: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+
+    expect(persistProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ id: provider.id, requireExisting: true })
+    )
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2191,6 +2292,51 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalled()
     expect(document.body.textContent).toContain('Chemistry')
     expect(document.body.textContent).toContain('Contact email')
+  })
+
+  it('blocks Connector save and preserves the draft when a live refresh removes the target', async () => {
+    const customServer = {
+      id: 'custom-server-uuid',
+      name: 'my-mcp',
+      displayName: 'My MCP',
+      description: 'A custom MCP server.',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx',
+      args: ['-y', '@example/my-mcp']
+    }
+    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+      connectors: [],
+      customServers: [customServer],
+      ncbi: { hasApiKey: false }
+    })
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    const addCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer, addCustomServer })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Connectors')?.click())
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')?.click()
+    })
+
+    act(() => useSettingsStore.setState({ customServers: [] }))
+
+    const submit = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => ['Save changes', 'Add connector'].includes(button.textContent?.trim() ?? '')
+    )
+    expect(submit?.textContent?.trim()).toBe('Save changes')
+    expect(document.body.textContent).toContain(
+      'This Connector no longer exists. Your draft has not been saved.'
+    )
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
+    ).toBe('My MCP')
+    expect(submit?.disabled).toBe(true)
+    expect(updateCustomServer).not.toHaveBeenCalled()
+    expect(addCustomServer).not.toHaveBeenCalled()
   })
 
   it('switches to the Network panel, configures a mirror, and saves it', async () => {

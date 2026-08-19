@@ -1898,6 +1898,8 @@
   "This folder already contains Open Science data. It will be <em>used as-is (not merged)</em> — <em>your current data folder is kept, so you can switch back</em>. The app will restart.": "このフォルダーにはすでに Open Science データが含まれています。 <em>そのまま使用されます（統合されません）</em> - <em>現在のデータ フォルダーは保持されるため、元に戻すことができます</em>。アプリが再起動されます。",
   "This folder may contain credentials or secrets. Open it only if you trust its contents.": "このフォルダーには認証情報や機密情報が含まれている可能性があります。内容を信頼できる場合にのみ開いてください。",
   "This host no longer exists.": "このホストはもう存在しません。",
+  "This Connector no longer exists. Your draft has not been saved.": "このコネクタはもう存在しません。下書きは保存されていません。",
+  "This Provider no longer exists. Your draft has not been saved.": "このプロバイダーはもう存在しません。下書きは保存されていません。",
   "This imported Specialist is saved but disabled. Save changes to complete setup and enable it.": "このインポートされたスペシャリストは保存されていますが、無効になっています。変更を保存してセットアップを完了し、有効にします。",
   "This is how the agent decides when to use the skill — be specific.": "これは、エージェントがスキルをいつ使用するかを決定する方法です。具体的に指定してください。",
   "This machine is offline.": "このマシンはオフラインです。",

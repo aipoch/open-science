@@ -135,6 +135,25 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it('rejects a stale update without recreating the deleted provider', async () => {
+    const draft = {
+      type: 'custom' as const,
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key',
+      apiEndpoints: ['openai' as const]
+    }
+    await module.upsertProvider(draft)
+    const providerId = (await repository.getSettings()).providers[0].id
+    await module.deleteProvider(providerId)
+
+    await expect(
+      module.upsertProvider({ ...draft, id: providerId, requireExisting: true })
+    ).rejects.toThrow('Provider no longer exists.')
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
   it('projects an ephemeral runtime target without changing the stored provider selection', async () => {
     await module.upsertProvider({
       type: 'custom',

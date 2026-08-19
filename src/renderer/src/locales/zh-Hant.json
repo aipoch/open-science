@@ -1956,6 +1956,8 @@
   "This folder already contains Open Science data. It will be <em>used as-is (not merged)</em> — <em>your current data folder is kept, so you can switch back</em>. The app will restart.": "該資料夾已包含 Open Science 資料，將<em>按原樣使用（不合併）</em>——<em>你目前的資料夾會保留，可以隨時切換回去</em>。應用將重新啟動。",
   "This folder may contain credentials or secrets. Open it only if you trust its contents.": "此資料夾可能包含憑證或機密資訊。請僅在你信任其中內容時開啟。",
   "This host no longer exists.": "這台主機已不存在。",
+  "This Connector no longer exists. Your draft has not been saved.": "此連接器已不存在。您的草稿尚未儲存。",
+  "This Provider no longer exists. Your draft has not been saved.": "此服務商已不存在。您的草稿尚未儲存。",
   "This imported Specialist is saved but disabled. Save changes to complete setup and enable it.": "這個匯入的專家已儲存但處於停用狀態。儲存變更以完成設定並啟用它。",
   "This is how the agent decides when to use the skill — be specific.": "智能體依據這句話判斷何時使用該技能 —— 寫具體些。",
   "This machine is offline.": "此裝置已離線。",
