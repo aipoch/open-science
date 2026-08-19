@@ -4,7 +4,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { closeSync, createWriteStream, openSync } from 'node:fs'
-import { mkdir, readFile, rename, rm } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -588,12 +588,23 @@ export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
 
 const writeDownload = async (response, output) => {
   if (!response.body) throw new Error('Artifact download returned no data.')
+  const existingMode = await stat(output).then(
+    ({ mode }) => mode & 0o777,
+    (error) => {
+      if (error?.code === 'ENOENT') return undefined
+      throw error
+    }
+  )
   const temporaryOutput = `${output}.${process.pid}-${randomUUID()}.tmp`
   try {
     await pipeline(
       Readable.fromWeb(response.body),
-      createWriteStream(temporaryOutput, { flags: 'wx' })
+      createWriteStream(temporaryOutput, {
+        flags: 'wx',
+        ...(existingMode === undefined ? {} : { mode: existingMode })
+      })
     )
+    if (existingMode !== undefined) await chmod(temporaryOutput, existingMode)
     await rename(temporaryOutput, output)
   } finally {
     await rm(temporaryOutput, { force: true }).catch(() => undefined)

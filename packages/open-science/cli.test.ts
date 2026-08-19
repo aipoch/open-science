@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -531,6 +531,35 @@ describe('task CLI', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  it.runIf(process.platform !== 'win32')(
+    'preserves existing artifact output permissions after replacement',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+      const output = join(directory, 'report.md')
+      await writeFile(output, 'existing report')
+      await chmod(output, 0o600)
+      const client = {
+        downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+      }
+
+      try {
+        await runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+
+        expect((await stat(output)).mode & 0o777).toBe(0o600)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {
     const client = {
