@@ -8,7 +8,6 @@ import { AlertCircle, Check, CheckCircle2, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { APP_ICON_GROUPS } from '@/components/app-icons/registry'
 import { cn } from '@/lib/utils'
 import { SpecialistAvatar } from './specialist-avatar'
@@ -193,7 +192,12 @@ const SpecialistAppearancePicker = ({
           <p id={iconHeadingId} className="text-xs font-medium text-muted-foreground">
             {t('Icon')}
           </p>
-          <ScrollArea className="mt-1 h-44">
+          <div
+            data-slot="specialist-icon-picker-scroll"
+            tabIndex={0}
+            aria-labelledby={iconHeadingId}
+            className="mt-1 h-44 overflow-y-auto overscroll-contain rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
             <div className="pe-2.5">
               {APP_ICON_GROUPS.map((group, groupIndex) => (
                 <div
@@ -232,7 +236,7 @@ const SpecialistAppearancePicker = ({
                 </div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </div>
 
         {saveState !== 'idle' ? (
