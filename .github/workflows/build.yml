@@ -31,6 +31,12 @@ on:
           notarization in isolation; release/nightly leave it false so builds stay gated on tests.
         type: boolean
         default: false
+      platform_name:
+        description: >-
+          If set, emit only this matrix name (macos-arm64, macos-x64, linux-x64, or windows-x64).
+          Used by the Nightly macos-x64 packaging dry-run; release/nightly leave it empty.
+        type: string
+        default: ''
 jobs:
   # Run the quality suite once on Apple Silicon beside the native package matrix. The reusable
   # workflow still fails when this job fails, so every caller's publish boundary remains fail closed
@@ -81,6 +87,8 @@ jobs:
     steps:
       - id: set
         shell: bash
+        env:
+          PLATFORM_NAME: ${{ inputs.platform_name }}
         run: |
           # Build each macOS package on its native macOS 26 architecture while Xcode 26 compiles
           # build/icon.icon. Downstream validation uses the same native runner mapping. Windows'
@@ -101,6 +109,13 @@ jobs:
             include=$(jq -c '.' <<<"$mac")
           else
             include=$(jq -c '. + $rest' --argjson rest "$rest" <<<"$mac")
+          fi
+          if [ -n "$PLATFORM_NAME" ]; then
+            include=$(jq -c --arg name "$PLATFORM_NAME" '[.[] | select(.name == $name)]' <<<"$include")
+            if [ "$include" = "[]" ]; then
+              echo "::error::unknown platform_name '$PLATFORM_NAME'"
+              exit 1
+            fi
           fi
           echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
 
@@ -269,6 +284,9 @@ jobs:
           # Windows remains unsigned until a code-signing certificate is provisioned. Stable macOS
           # jobs consume the explicitly prepared keychain without exposing CSC_LINK to electron-builder.
           CSC_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
+          # macos-26-intel Node 22 x64 defaults to a ~2 GB old-space. The renderer production graph
+          # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           npm run build:e2e
           npm run build:web

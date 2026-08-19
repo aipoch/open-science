@@ -119,7 +119,8 @@ describe('post-merge Windows validation', () => {
     expect(prepareMacSigning.run).toContain('-k "$keychain_password"')
     expect(prepareMacSigning.run).toContain("grep -q 'Developer ID Application:'")
     expect(packageStep.env).toEqual({
-      CSC_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}'
+      CSC_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}',
+      NODE_OPTIONS: '--max-old-space-size=8192'
     })
     expect(packageStep.run).toContain(
       'if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then'
@@ -164,8 +165,13 @@ describe('post-merge Windows validation', () => {
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
     const refreshedMacosEvidence = findStep(notarize, 'Refresh macOS certification evidence')
 
+    expect(setup.env).toEqual({ PLATFORM_NAME: '${{ inputs.platform_name }}' })
     expect(setup.run).toContain('"name":"macos-arm64","os":"macos-26"')
     expect(setup.run).toContain('"name":"macos-x64","os":"macos-26-intel"')
+    expect(setup.run).toContain(
+      'include=$(jq -c --arg name "$PLATFORM_NAME" \'[.[] | select(.name == $name)]\' <<<"$include")'
+    )
+    expect(setup.run).toContain("unknown platform_name '$PLATFORM_NAME'")
     expect(build.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
       "${{ matrix.platform == 'mac' && '12.0' || '' }}"
     )
@@ -261,6 +267,7 @@ describe('post-merge Windows validation', () => {
     expect(nightly.jobs.build.uses).toBe('./.github/workflows/build.yml')
     expect(nightly.jobs['package-smoke']).toMatchObject({
       needs: 'build',
+      if: "inputs.dry_run != 'macos-x64'",
       uses: './.github/workflows/package-smoke.yml'
     })
     expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
@@ -291,6 +298,7 @@ describe('post-merge Windows validation', () => {
 
     expect(verifyTypecheck.run).toBe('npm run typecheck')
     expect(verifyTypecheck.env).toEqual({ NODE_OPTIONS: '--max-old-space-size=4096' })
+    expect(build.env).toMatchObject({ NODE_OPTIONS: '--max-old-space-size=8192' })
     expect(commands).toContain('npm run build:e2e')
     expect(commands).toContain('npm run build:web')
     expect(commands).not.toContain('npm run build')
