@@ -581,6 +581,15 @@ describe('Korean safety copy', () => {
   })
 })
 
+describe('Korean language endonyms', () => {
+  it('keeps Chinese language names in their own script', () => {
+    expect(catalog('ko')).toMatchObject({
+      简体中文: '简体中文',
+      繁體中文: '繁體中文'
+    })
+  })
+})
+
 // The suffix convention above is only unambiguous while no English string contains an underscore.
 // If a future string does, englishOf() would truncate it and every guard here would quietly compare
 // the wrong text, so this is asserted rather than assumed.
