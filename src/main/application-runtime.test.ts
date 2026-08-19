@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS,
   composeApplicationRuntime,
   composeApplicationRuntimeWithAdapters,
   shutdownApplicationSurfaces,
@@ -275,6 +276,28 @@ describe('application runtime composition', () => {
 })
 
 describe('application surface shutdown', () => {
+  it('returns a timeout when an application surface never settles', async () => {
+    vi.useFakeTimers()
+    let outcome: Awaited<ReturnType<typeof shutdownApplicationSurfaces>> | undefined
+
+    try {
+      void shutdownApplicationSurfaces({
+        disposeApplicationRuntime: vi.fn(),
+        shutdownRemoteAccess: vi.fn(),
+        disposeWebController: () => new Promise<void>(() => undefined),
+        disposeIpcHandlers: vi.fn()
+      }).then((result) => {
+        outcome = result
+      })
+
+      await vi.advanceTimersByTimeAsync(APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS)
+
+      expect(outcome).toBe('timeout')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps one ordered quit path from the composed backend through web surfaces', async () => {
     const order: string[] = []
 

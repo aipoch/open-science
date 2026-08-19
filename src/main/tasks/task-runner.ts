@@ -187,6 +187,7 @@ class PartialTaskCompletionError extends Error {
 
 const MAX_RETAINED_RUNS = 200
 const TASK_RUN_HEARTBEAT_INTERVAL_MS = 10_000
+export const TASK_REVIEW_DISPOSAL_BUDGET_MS = 1000
 const VISIBLE_PROVIDER_EVENT_KINDS = new Set<AcpRuntimeEvent['kind']>([
   'message',
   'thought',
@@ -393,7 +394,15 @@ class TaskRunner {
       activeReviewCompletions.push(run.completion)
     }
     this.progressListeners.clear()
-    this.disposal = Promise.allSettled(activeReviewCompletions).then(() => undefined)
+    const settleReviews = Promise.allSettled(activeReviewCompletions).then(() => undefined)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, TASK_REVIEW_DISPOSAL_BUDGET_MS)
+      timer.unref?.()
+    })
+    this.disposal = Promise.race([settleReviews, deadline]).finally(() => {
+      if (timer) clearTimeout(timer)
+    })
     return this.disposal
   }
 

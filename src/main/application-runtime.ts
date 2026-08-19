@@ -4,6 +4,7 @@ import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecyc
 type Awaitable<T> = T | Promise<T>
 
 export const APPLICATION_MODULE_DISPOSAL_BUDGET_MS = 1000
+export const APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS = 5000
 
 export class ApplicationModuleDisposalTimeoutError extends Error {
   constructor(
@@ -60,7 +61,8 @@ export type ApplicationLifecycleShutdownDependencies = {
 
 // Direct Web/Task adapters close before the application command router, which in turn closes before
 // its underlying RemoteAccess owner. Closing Web first can publish RemoteAccess's stopped state, but
-// this path runs only while the app is quitting. A failed surface still cannot strand a later one.
+// this path runs only while the app is quitting. A failed surface still cannot strand a later one, and
+// the enclosing deadline guarantees a surface that never settles cannot strand app.exit().
 export const shutdownApplicationSurfaces = async ({
   disposeApplicationRuntime,
   shutdownRemoteAccess,
@@ -88,7 +90,9 @@ export const shutdownApplicationSurfaces = async ({
     return priority[next] > priority[current] ? next : current
   }
   let overallOutcome: ShutdownStepOutcome = 'completed'
+  let activeSurface: string | undefined
   const dispose = async (surface: string, operation: () => Awaitable<void>): Promise<void> => {
+    activeSurface = surface
     try {
       await operation()
     } catch (error) {
@@ -108,10 +112,31 @@ export const shutdownApplicationSurfaces = async ({
     }
   }
 
-  await dispose('web-controller', disposeWebController)
-  await dispose('application-runtime', disposeApplicationRuntime)
-  await dispose('remote-access', shutdownRemoteAccess)
-  await dispose('ipc-handlers', disposeIpcHandlers)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS)
+    timer.unref?.()
+  })
+  const disposal = (async () => {
+    await dispose('web-controller', disposeWebController)
+    await dispose('application-runtime', disposeApplicationRuntime)
+    await dispose('remote-access', shutdownRemoteAccess)
+    await dispose('ipc-handlers', disposeIpcHandlers)
+  })()
+  const result = await Promise.race([disposal.then(() => 'completed' as const), deadline])
+  if (timer) clearTimeout(timer)
+  if (result === 'timeout') {
+    overallOutcome = combineOutcomes(overallOutcome, 'timeout')
+    try {
+      log?.error('application surface shutdown failed', {
+        surface: activeSurface ?? 'unknown',
+        result: 'timeout',
+        errorCategory: 'timeout'
+      })
+    } catch {
+      // The hard deadline remains authoritative when the diagnostic sink also fails.
+    }
+  }
   return overallOutcome
 }
 
