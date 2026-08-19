@@ -246,7 +246,7 @@ export function ComputeHostAuthenticationDetail({
                   : host.authentication?.credentialStatus === 'unavailable'
                     ? t('Saved credential unavailable')
                     : t('Password required')
-                : t('System SSH configuration and agent')}
+                : t('System SSH configuration and ssh-agent')}
             </dd>
             <dd>
               {currentMode === 'password' ? (

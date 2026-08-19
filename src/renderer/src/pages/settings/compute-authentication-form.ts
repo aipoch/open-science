@@ -32,18 +32,10 @@ type ComputeHostCreationCommon = Readonly<{
   operationId: string
 }>
 
-type ComputeAuthenticationIntroduction =
-  | Readonly<{
-      kind: 'ssh_config_trans'
-      i18nKey: 'Pick a host alias from your <path>~/.ssh/config</path>, or type one. Open Science will use it as a compute provider via your existing SSH key — no credentials are copied.'
-    }>
-  | Readonly<{ kind: 'text'; copy(t: TFunction): string }>
-
 type ComputeAuthenticationFieldSet = 'ssh_config' | 'password'
 
 type ComputeAuthenticationStrategy = Readonly<{
   mode: ComputeAuthenticationMode
-  introduction: ComputeAuthenticationIntroduction
   fieldSet: ComputeAuthenticationFieldSet
   usesPassword: boolean
   isAvailable(capability: ComputePasswordCapability | undefined): boolean
@@ -94,28 +86,18 @@ const createPasswordHost = (
 const COMPUTE_AUTHENTICATION_STRATEGIES = {
   ssh_config: {
     mode: 'ssh_config',
-    introduction: {
-      kind: 'ssh_config_trans',
-      i18nKey:
-        'Pick a host alias from your <path>~/.ssh/config</path>, or type one. Open Science will use it as a compute provider via your existing SSH key — no credentials are copied.'
-    },
     fieldSet: 'ssh_config',
     usesPassword: false,
     isAvailable: () => true,
     choiceLabel: (t) => t('SSH configuration'),
     choiceDescription: (t) =>
-      t('Recommended. Uses your existing SSH configuration, keys, and agent.'),
+      t('Recommended. Uses your existing SSH configuration, keys, and ssh-agent.'),
     progressLabel: (t) => t('Adding host…'),
     isValid: () => true,
     create: createSshConfigHost
   },
   password: {
     mode: 'password',
-    introduction: {
-      kind: 'text',
-      copy: (t) =>
-        t('Enter a host alias and the account used for password-only SSH authentication.')
-    },
     fieldSet: 'password',
     usesPassword: true,
     isAvailable: (capability) => capability?.available === true,

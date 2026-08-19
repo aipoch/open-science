@@ -141,18 +141,9 @@ const AUTHENTICATION_FIELDS = {
   password: PasswordAuthenticationFields
 } satisfies Record<ComputeAuthenticationFieldSet, ComponentType<AuthenticationFieldProps>>
 
-const ComputeAuthenticationIntroduction = ({
-  strategy
-}: Readonly<{ strategy: ComputeAuthenticationStrategy }>): React.JSX.Element => {
+const ComputeAuthenticationIntroduction = (): React.JSX.Element => {
   const { t } = useTranslation()
-  return strategy.introduction.kind === 'ssh_config_trans' ? (
-    <Trans
-      i18nKey={strategy.introduction.i18nKey}
-      components={{ path: <code className="font-mono text-xs" /> }}
-    />
-  ) : (
-    <>{strategy.introduction.copy(t)}</>
-  )
+  return <>{t('Connect a server or cluster using SSH configuration or a username and password.')}</>
 }
 
 type ComputeAuthenticationSectionProps = Readonly<{

@@ -115,7 +115,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   return (
     <div className="p-5">
       <p className="mb-5 text-[13px] leading-5 text-muted-foreground">
-        <ComputeAuthenticationIntroduction strategy={authenticationStrategy} />
+        <ComputeAuthenticationIntroduction />
       </p>
 
       <div className="flex flex-col gap-5">
