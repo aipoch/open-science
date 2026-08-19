@@ -67,6 +67,7 @@ class ProviderAuthLifecycleOwner {
   private readonly codexAuth: CodexAuthControllerPort
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
+  private accountMutationTail: Promise<void> = Promise.resolve()
   private claudeSharedAuthStatusCache: { authenticated: boolean; checkedAt: number } | undefined
   private claudeSharedAuthStatusGeneration = 0
   private claudeSharedAuthStatusPromise:
@@ -115,6 +116,15 @@ class ProviderAuthLifecycleOwner {
         },
         configDir: options.userClaudeDir
       })
+  }
+
+  serializeAccountMutation<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const result = this.accountMutationTail.then(operation)
+    this.accountMutationTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 
   private async loadClaudeIsolatedToken(): Promise<string | undefined> {

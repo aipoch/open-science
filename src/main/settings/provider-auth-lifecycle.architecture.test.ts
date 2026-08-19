@@ -115,6 +115,7 @@ describe('Provider authentication lifecycle ownership', () => {
       'logoutIsolatedClaude',
       'logoutIsolatedCodex',
       'prepareCodexProviderUpsert',
+      'serializeAccountMutation',
       'validateProviderAuth'
     ])
 
