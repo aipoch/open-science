@@ -48,6 +48,19 @@ import type { MarketplaceService } from './marketplace/service'
 
 const log = createLogger('specialist:ipc')
 
+const APPEARANCE_UPDATE_KEYS = new Set<keyof UpdateSpecialistRequest>([
+  'id',
+  'revision',
+  'iconKey',
+  'colorKey'
+])
+
+const isAppearanceOnlyUpdate = (request: UpdateSpecialistRequest): boolean =>
+  (request.iconKey !== undefined || request.colorKey !== undefined) &&
+  (Object.keys(request) as Array<keyof UpdateSpecialistRequest>).every((key) =>
+    APPEARANCE_UPDATE_KEYS.has(key)
+  )
+
 type PackageImportIpc = {
   service: Pick<
     SpecialistPackageService,
@@ -409,7 +422,7 @@ export const registerSpecialistIpcHandlers = (
         const updated = await service.update(request)
         // A capability edit (skills/connectors) must reach live sessions: trigger a reconnect so the
         // next turn re-provisions skills and re-applies the updated specialist whitelist.
-        onProfilesChanged?.()
+        if (!isAppearanceOnlyUpdate(request)) onProfilesChanged?.()
         return updated
       } catch (error) {
         log.error('specialist:update failed', { error })
