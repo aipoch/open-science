@@ -18,11 +18,13 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 import ja from '../locales/ja.json'
+import ko from '../locales/ko.json'
 import zhHans from '../locales/zh-Hans.json'
 import zhHant from '../locales/zh-Hant.json'
 import {
   englishSourceFallbackPostProcessor,
   hasValidTagStructure,
+  resources,
   sanitizeCatalog
 } from './resources'
 
@@ -30,6 +32,7 @@ type Catalog = Record<string, string>
 
 const sourceCatalogs = {
   ja,
+  ko,
   'zh-Hans': zhHans,
   'zh-Hant': zhHant
 } as const
@@ -62,6 +65,12 @@ const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other']
 // itself has no interpolation marker. Keep the exceptional contract explicit; every other counted
 // key is discovered by its {{count}} marker below.
 const COUNTED_KEYS_WITHOUT_MARKER = ['probed just now'] as const
+
+describe('supported catalog registration', () => {
+  it('ships a Korean catalog in the synchronous first-paint resources', () => {
+    expect(resources).toHaveProperty('ko')
+  })
+})
 
 describe('runtime catalog fallback', () => {
   it('keeps valid translations without copying the catalog', () => {
@@ -200,7 +209,7 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     expect(malformed).toEqual([])
   })
 
-  // Chinese and Japanese have a single plural category, so a `_one` entry is copy that can never
+  // Chinese, Japanese, and Korean have a single plural category, so a `_one` entry is copy that can never
   // render. English needs no catalog entry at all: the key carries the plural form and the call site
   // passes the singular as `defaultValue_one`.
   it('uses only the plural categories the translated grammar has', () => {
@@ -243,6 +252,10 @@ describe('dynamic counted lookup translations', () => {
     {
       locale: 'ja' as const,
       expected: ['たった今確認', '3時間前に確認', '3日前', '3日前']
+    },
+    {
+      locale: 'ko' as const,
+      expected: ['방금 확인함', '3시간 전에 확인함', '3일 전', '3일 전']
     }
   ])('resolves $locale lookup-table keys through _other', async ({ locale, expected }) => {
     const instance = i18next.createInstance()
@@ -278,8 +291,8 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
-  it('keeps Japanese product and technical terms in English', () => {
-    const japaneseOnlyGlossary = [
+  it.each(['ja', 'ko'] as const)('%s keeps product and technical terms in English', (locale) => {
+    const retainedProductGlossary = [
       { term: 'Open Science', source: /\bOpen Science\b/ },
       { term: 'Claude', source: /\bClaude\b/ },
       { term: 'Codex', source: /\bCodex\b/ },
@@ -295,9 +308,9 @@ describe('mandatory product glossary', () => {
       { term: 'Python', source: /\bPython\b/ },
       { term: 'Jupyter', source: /\bJupyter\b/ }
     ]
-    const offenders = Object.entries(catalog('ja')).flatMap(([key, value]) => {
+    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
       const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
-      return japaneseOnlyGlossary
+      return retainedProductGlossary
         .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
         .map(({ term }) => `${key}: ${term}`)
     })
@@ -344,6 +357,19 @@ describe('mandatory product glossary', () => {
       'Token usage': 'トークン使用量',
       'Claude setup token': 'Claude セットアップトークン',
       'Token: {{masked}}': 'トークン：{{masked}}'
+    },
+    ko: {
+      Agent: '에이전트',
+      Skills: '스킬',
+      Specialist: '스페셜리스트',
+      Specialists: '스페셜리스트',
+      Marketplace: '마켓플레이스',
+      Connector: '커넥터',
+      Main: '메인 에이전트',
+      Shell: '셸',
+      'Token usage': '토큰 사용량',
+      'Claude setup token': 'Claude 설정 토큰',
+      'Token: {{masked}}': '토큰: {{masked}}'
     }
   } satisfies Record<TranslatedLocale, Record<string, string>>
 
@@ -357,7 +383,7 @@ describe('mandatory product glossary', () => {
   })
 
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
-    const expected = { 'zh-Hans': '命令行', 'zh-Hant': '命令列', ja: 'シェル' }[locale]
+    const expected = { 'zh-Hans': '命令行', 'zh-Hant': '命令列', ja: 'シェル', ko: '셸' }[locale]
     const offenders = Object.entries(catalog(locale))
       .filter(([key]) => /\bshell\b/i.test(englishOf(key)))
       .filter(([, value]) => !value.includes(expected))
@@ -372,7 +398,8 @@ describe('mandatory product glossary', () => {
       const expected = {
         'zh-Hans': '主智能体',
         'zh-Hant': '主智能體',
-        ja: 'メインエージェント'
+        ja: 'メインエージェント',
+        ko: '메인 에이전트'
       }[locale]
       const offenders = Object.entries(catalog(locale))
         .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
@@ -434,7 +461,8 @@ describe('mandatory product glossary', () => {
   const localizedFeatureTerms = {
     'zh-Hans': { agent: '智能体', skill: '技能' },
     'zh-Hant': { agent: '智能體', skill: '技能' },
-    ja: { agent: 'エージェント', skill: 'スキル' }
+    ja: { agent: 'エージェント', skill: 'スキル' },
+    ko: { agent: '에이전트', skill: '스킬' }
   } satisfies Record<TranslatedLocale, { agent: string; skill: string }>
 
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
@@ -469,7 +497,8 @@ describe('mandatory product glossary', () => {
   const localizedTokenTerms = {
     'zh-Hans': { credential: '令牌', model: '词元' },
     'zh-Hant': { credential: '權杖', model: '詞元' },
-    ja: { credential: 'トークン', model: 'トークン' }
+    ja: { credential: 'トークン', model: 'トークン' },
+    ko: { credential: '토큰', model: '토큰' }
   } satisfies Record<TranslatedLocale, { credential: string; model: string }>
 
   it.each(TRANSLATED)('%s translates token according to credential or model context', (locale) => {
@@ -532,6 +561,23 @@ describe('Japanese safety copy', () => {
     ['{{count}} allowed this session_other', 'このセッションで {{count}} 件を許可済み']
   ])('preserves the scope of %s', (key, expected) => {
     expect(catalog('ja')[key]).toBe(expected)
+  })
+})
+
+describe('Korean safety copy', () => {
+  it.each([
+    ['Allow globally', '모든 프로젝트에서 허용'],
+    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
+    ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
+    ['Approval applies to this call only.', '승인은 이 호출에만 적용됩니다.'],
+    ['This call only', '이 호출만'],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      '개별 권한은 계속 취소할 수 있습니다. 전체 집합이 확인될 때까지 모두 취소가 비활성화됩니다.'
+    ],
+    ['{{count}} allowed this session_other', '이번 세션에서 {{count}}개 허용됨']
+  ])('preserves the scope of %s', (key, expected) => {
+    expect(catalog('ko')[key]).toBe(expected)
   })
 })
 

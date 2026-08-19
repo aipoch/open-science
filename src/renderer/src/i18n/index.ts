@@ -21,6 +21,7 @@ import { DEFAULT_NAMESPACE, englishSourceFallbackPostProcessor, resources } from
 // gap from reviewers.
 const fallbackLng: Record<string, string[]> = {
   ja: [DEFAULT_LOCALE],
+  ko: [DEFAULT_LOCALE],
   'zh-Hant': [DEFAULT_LOCALE],
   'zh-Hans': [DEFAULT_LOCALE],
   default: [DEFAULT_LOCALE]

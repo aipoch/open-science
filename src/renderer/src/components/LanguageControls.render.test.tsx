@@ -57,7 +57,7 @@ describe('LanguageSelect', () => {
 
     // Language names are never translated — a reader stranded in the wrong language must still be
     // able to recognize their own.
-    expect(options).toEqual(['System', 'English', '简体中文', '繁體中文', '日本語'])
+    expect(options).toEqual(['System', 'English', '简体中文', '繁體中文', '日本語', '한국어'])
   })
 
   it('switches the interface language and persists the choice', () => {
@@ -101,6 +101,22 @@ describe('LanguageSelect', () => {
     expect(i18next.language).toBe('ja')
     expect(document.documentElement.lang).toBe('ja')
     expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('表示言語')
+  })
+
+  it('switches to Korean copy from the language picker', () => {
+    render(<LanguageSelect />)
+    openRadixMenu(container.querySelector('button'))
+
+    const korean = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
+      option.textContent?.includes('한국어')
+    )
+    clickRadixMenuItem(korean as HTMLElement)
+
+    expect(useLocaleStore.getState().preference).toBe('ko')
+    expect(useLocaleStore.getState().locale).toBe('ko')
+    expect(i18next.language).toBe('ko')
+    expect(document.documentElement.lang).toBe('ko')
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('인터페이스 언어')
   })
 })
 

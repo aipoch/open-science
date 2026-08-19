@@ -24,6 +24,12 @@ const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
 test('persists the selected theme after closing settings and relaunching', async ({ app }) => {
   let page = await app.completeOnboarding()
 
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: 'English', exact: true }).click()
+
   await page.getByRole('button', { name: 'Model settings' }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   await settings
@@ -81,6 +87,47 @@ test('switches to Japanese without clipping localized controls', async ({ app })
   await closeButton.hover()
   const tooltip = page.locator('[data-slot="tooltip-content"]:visible')
   await expect(tooltip).toContainText('設定を閉じる')
+  await expect(tooltip).toHaveCSS('white-space', 'normal')
+  const tooltipBox = await tooltip.boundingBox()
+  expect(tooltipBox).not.toBeNull()
+  expect(tooltipBox?.x).toBeGreaterThanOrEqual(0)
+  expect((tooltipBox?.x ?? 0) + (tooltipBox?.width ?? 0)).toBeLessThanOrEqual(640)
+})
+
+test('switches to Korean without clipping localized controls', async ({ app }) => {
+  const page = await app.completeOnboarding()
+  await page.setViewportSize({ width: 640, height: 800 })
+
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: '한국어', exact: true }).click()
+
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ko')
+  await expect(page.getByRole('region', { name: '프로젝트' })).toBeVisible()
+  await expectVisibleTextButtonsToFit(page)
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+      )
+    )
+    .toBe(true)
+
+  await page.getByRole('button', { name: '모델 설정' }).click()
+  const settings = page.getByRole('dialog', { name: '설정' })
+  await settings.getByRole('button', { name: '설정 탐색 열기' }).click()
+  await settings.getByRole('button', { name: '일반', exact: true }).click()
+
+  await expect(settings.getByRole('heading', { name: '외관' })).toBeVisible()
+  await expect(settings.getByRole('combobox', { name: '인터페이스 언어' })).toContainText('한국어')
+  await expectVisibleTextButtonsToFit(page)
+
+  const closeButton = settings.getByRole('button', { name: '설정 닫기' })
+  await closeButton.hover()
+  const tooltip = page.locator('[data-slot="tooltip-content"]:visible')
+  await expect(tooltip).toContainText('설정 닫기')
   await expect(tooltip).toHaveCSS('white-space', 'normal')
   const tooltipBox = await tooltip.boundingBox()
   expect(tooltipBox).not.toBeNull()

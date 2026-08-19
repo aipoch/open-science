@@ -9,6 +9,7 @@
 // visible key path.
 
 import ja from '../locales/ja.json'
+import ko from '../locales/ko.json'
 import zhHans from '../locales/zh-Hans.json'
 import zhHant from '../locales/zh-Hant.json'
 
@@ -73,9 +74,9 @@ const interpolateEnglish = (value: string, options: Record<string, unknown>): st
     Object.hasOwn(options, name) ? String(options[name]) : marker
   )
 
-// Chinese and Japanese resolve only the `_other` plural category. When that entry is missing or
-// sanitized to its English source, i18next would otherwise ignore defaultValue_one and render
-// "1 files". Correct only genuine English-source fallbacks; valid translations remain untouched.
+// Chinese, Japanese, and Korean resolve only the `_other` plural category. When that entry is
+// missing or sanitized to its English source, i18next would otherwise ignore defaultValue_one and
+// render "1 files". Correct only genuine English-source fallbacks; valid translations remain untouched.
 export const englishSourceFallbackPostProcessor = {
   type: 'postProcessor' as const,
   name: 'englishSourceFallback',
@@ -119,6 +120,7 @@ export const DEFAULT_NAMESPACE = 'translation'
 
 export const resources = {
   ja: { [DEFAULT_NAMESPACE]: sanitizeCatalog(ja) },
+  ko: { [DEFAULT_NAMESPACE]: sanitizeCatalog(ko) },
   'zh-Hans': { [DEFAULT_NAMESPACE]: sanitizeCatalog(zhHans) },
   'zh-Hant': { [DEFAULT_NAMESPACE]: sanitizeCatalog(zhHant) }
 } as const

@@ -81,8 +81,13 @@ describe('resolveInitialLocale', () => {
     expect(resolveInitialLocale()).toBe('ja')
   })
 
+  it('detects Korean from the device when no choice is stored', () => {
+    stubLanguages(['ko-KR', 'ja', 'en'])
+    expect(resolveInitialLocale()).toBe('ko')
+  })
+
   it('falls back to English when the device language is unsupported', () => {
-    stubLanguages(['fr-FR', 'ko-KR'])
+    stubLanguages(['fr-FR', 'vi-VN'])
     expect(resolveInitialLocale()).toBe('en')
   })
 
