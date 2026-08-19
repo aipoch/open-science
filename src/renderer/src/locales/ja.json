@@ -3064,7 +3064,6 @@
   "Deleted Skills are removed from this device and cannot be recovered.": "削除したスキルはこのデバイスから消去され、復元できません。",
   "{{count}} selected Skills can be deleted._other": "選択したスキルのうち {{count}} 件を削除できます。",
   "{{count}} protected Skills will be kept._other": "保護されているスキル {{count}} 件は保持されます。",
-  "No selected Skills can be deleted.": "選択したスキルは削除できません。",
   "Owned by a Specialist.": "スペシャリストが所有しています。",
   "Used by a Specialist.": "スペシャリストが使用しています。",
   "Delete {{count}} Skills_other": "スキルを {{count}} 件削除",

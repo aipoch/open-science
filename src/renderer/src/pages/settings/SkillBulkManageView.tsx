@@ -433,66 +433,83 @@ const SkillBulkManageView = (): React.JSX.Element => {
           <AlertDialog.Content
             className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] max-h-[85vh] p-0')}
           >
-            <div className={dialogHeaderClassName}>
+            <div data-slot="skill-bulk-delete-header" className={dialogHeaderClassName}>
               <AlertDialog.Title className={dialogTitleClassName}>
                 {t('Delete selected Skills?')}
               </AlertDialog.Title>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t('Deleted Skills are removed from this device and cannot be recovered.')}
-              </AlertDialog.Description>
             </div>
 
-            <div className={`${dialogBodyClassName} max-h-[55vh] space-y-4 overflow-y-auto`}>
-              <section>
-                <h3 className="text-xs font-semibold text-foreground">
-                  {t('{{count}} selected Skills can be deleted.', {
-                    count: deletableSkills.length,
-                    defaultValue_one: '{{count}} selected Skill can be deleted.'
-                  })}
-                </h3>
-                {deletableSkills.length > 0 ? (
-                  <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                    {deletableSkills.map(({ skill }) => (
-                      <li key={skill.id} className="truncate">
-                        {skill.displayName}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {t('No selected Skills can be deleted.')}
-                  </p>
-                )}
-              </section>
+            <div className={`${dialogBodyClassName} max-h-[55vh] overflow-y-auto`}>
+              <AlertDialog.Description
+                data-slot="skill-bulk-delete-description"
+                className={dialogDescriptionClassName}
+              >
+                {t('Deleted Skills are removed from this device and cannot be recovered.')}
+              </AlertDialog.Description>
 
-              {protectedSkills.length > 0 ? (
-                <section className="border-t border-border pt-3">
-                  <h3 className="text-xs font-semibold text-foreground">
-                    {t('{{count}} protected Skills will be kept.', {
-                      count: protectedSkills.length,
-                      defaultValue_one: '{{count}} protected Skill will be kept.'
+              <div className="mt-5 space-y-5">
+                <section>
+                  <h3
+                    data-slot="skill-bulk-delete-primary-summary"
+                    className="text-base font-semibold leading-6 text-foreground"
+                  >
+                    {t('{{count}} selected Skills can be deleted.', {
+                      count: deletableSkills.length,
+                      defaultValue_one: '{{count}} selected Skill can be deleted.'
                     })}
                   </h3>
-                  <ul className="mt-2 space-y-2">
-                    {protectedSkills.map(({ skill, owners, usages }) => (
-                      <li key={skill.id} className="text-xs">
-                        <p className="truncate text-foreground">{skill.displayName}</p>
-                        <p className="text-muted-foreground">
-                          {owners.length > 0
-                            ? t('Owned by a Specialist.')
-                            : t('Used by a Specialist.')}
-                          {owners.length + usages.length > 0
-                            ? ` ${[...owners, ...usages]
-                                .map((item) => item.name)
-                                .filter((name, index, names) => names.indexOf(name) === index)
-                                .join(', ')}`
-                            : ''}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
+                  {deletableSkills.length > 0 ? (
+                    <ul
+                      data-slot="skill-bulk-delete-deletable-list"
+                      className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground"
+                    >
+                      {deletableSkills.map(({ skill }) => (
+                        <li key={skill.id} className="truncate">
+                          {skill.displayName}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </section>
-              ) : null}
+
+                {protectedSkills.length > 0 ? (
+                  <section
+                    data-slot="skill-bulk-delete-protected-section"
+                    className="border-t border-border pt-5"
+                  >
+                    <h3
+                      data-slot="skill-bulk-delete-protected-summary"
+                      className="text-base font-semibold leading-6 text-foreground"
+                    >
+                      {t('{{count}} protected Skills will be kept.', {
+                        count: protectedSkills.length,
+                        defaultValue_one: '{{count}} protected Skill will be kept.'
+                      })}
+                    </h3>
+                    <ul
+                      data-slot="skill-bulk-delete-protected-list"
+                      className="mt-2 space-y-2 text-xs leading-5"
+                    >
+                      {protectedSkills.map(({ skill, owners, usages }) => (
+                        <li key={skill.id}>
+                          <p className="truncate text-foreground">{skill.displayName}</p>
+                          <p className="text-muted-foreground">
+                            {owners.length > 0
+                              ? t('Owned by a Specialist.')
+                              : t('Used by a Specialist.')}
+                            {owners.length + usages.length > 0
+                              ? ` ${[...owners, ...usages]
+                                  .map((item) => item.name)
+                                  .filter((name, index, names) => names.indexOf(name) === index)
+                                  .join(', ')}`
+                              : ''}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+              </div>
             </div>
 
             <div className={dialogFooterClassName}>

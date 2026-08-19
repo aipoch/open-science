@@ -3064,7 +3064,6 @@
   "Deleted Skills are removed from this device and cannot be recovered.": "删除后，技能将从此设备移除且无法恢复。",
   "{{count}} selected Skills can be deleted._other": "可以删除 {{count}} 个所选技能。",
   "{{count}} protected Skills will be kept._other": "将保留 {{count}} 个受保护的技能。",
-  "No selected Skills can be deleted.": "所选技能均无法删除。",
   "Owned by a Specialist.": "由专家所有。",
   "Used by a Specialist.": "正由专家使用。",
   "Delete {{count}} Skills_other": "删除 {{count}} 个技能",

@@ -275,4 +275,65 @@ describe('SkillBulkManageView', () => {
       document.body.querySelector<HTMLInputElement>('[aria-label="Select Mine"]')?.checked
     ).toBe(true)
   })
+
+  it('uses the project dialog hierarchy for a protected-only deletion impact', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'researcher',
+          name: 'RESEARCHER',
+          displayName: 'Research Specialist',
+          description: '',
+          systemPrompt: '',
+          enabled: true,
+          capabilityMode: 'selected',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: {
+            skillIds: ['personal-mine'],
+            connectorIds: [],
+            connectorTools: []
+          },
+          revision: 1
+        }
+      ]
+    })
+    act(() => root.render(<SkillBulkManageView />))
+    act(() => document.body.querySelector<HTMLInputElement>('[aria-label="Select Mine"]')?.click())
+    act(() => button('Delete selected (1)')?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const header = dialog?.querySelector<HTMLElement>('[data-slot="skill-bulk-delete-header"]')
+    const description = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-description"]'
+    )
+    const primarySummary = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-primary-summary"]'
+    )
+    const protectedSummary = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-protected-summary"]'
+    )
+    const protectedSection = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-protected-section"]'
+    )
+    const protectedList = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-protected-list"]'
+    )
+
+    expect(header?.textContent).toBe('Delete selected Skills?')
+    expect(header?.contains(description ?? null)).toBe(false)
+    expect(description?.textContent).toBe(
+      'Deleted Skills are removed from this device and cannot be recovered.'
+    )
+    expect(primarySummary?.textContent).toBe('0 selected Skills can be deleted.')
+    expect(primarySummary?.className).toContain('text-base')
+    expect(dialog?.textContent).not.toContain('No selected Skills can be deleted.')
+    expect(protectedSummary?.className).toContain('text-base')
+    expect(protectedSummary?.className).toBe(primarySummary?.className)
+    expect(protectedSection?.className).toContain('border-t')
+    expect(protectedSection?.className).toContain('pt-5')
+    expect(protectedList?.className).toContain('text-xs')
+    expect(protectedList?.textContent).toContain('Mine')
+    expect(protectedList?.textContent).toContain('Research Specialist')
+  })
 })
