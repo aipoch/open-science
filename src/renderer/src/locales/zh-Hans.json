@@ -53,6 +53,7 @@
   "API key is required.": "必须填写 API 密钥。",
   "API key — models provided": "API 密钥 —— 已内置模型列表",
   "About": "关于",
+  "Access level": "访问级别",
   "Action needed": "需要处理",
   "Actions for {{name}}": "{{name}} 的操作",
   "Active": "活跃",

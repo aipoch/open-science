@@ -3,7 +3,7 @@
 // level, and grants the current folder. The breadcrumb bar doubles as a path field (click its
 // empty area to type a path), and its leading drive crumb opens a drive/volume switcher.
 import { ChevronDown, CircleAlert, Folder, Home, Info, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import { Dialog, RadioGroup } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -50,20 +50,14 @@ type ListingState =
 // One custom-dot radio option for the access-level choice in the footer.
 const AccessRadio = ({
   label,
-  selected,
-  onSelect
+  value,
+  selected
 }: {
   label: string
+  value: GrantedLocalRootAccess
   selected: boolean
-  onSelect: () => void
 }): React.JSX.Element => (
-  <button
-    type="button"
-    role="radio"
-    aria-checked={selected}
-    onClick={onSelect}
-    className="flex items-center gap-1.5 text-[13px] text-text-000"
-  >
+  <RadioGroup.Item value={value} className="flex items-center gap-1.5 text-[13px] text-text-000">
     <span
       className={cn(
         'flex size-3.5 items-center justify-center rounded-full border-[1.5px]',
@@ -74,7 +68,7 @@ const AccessRadio = ({
       {selected ? <span className="size-[7px] rounded-full bg-primary" /> : null}
     </span>
     {label}
-  </button>
+  </RadioGroup.Item>
 )
 
 // The path input that replaces the breadcrumb while editing. Enter or blur submits, Escape
@@ -568,16 +562,16 @@ const GrantFolderAccessDialogContent = ({
             </div>
           ) : null}
           <div className="flex items-center gap-2.5">
-            <AccessRadio
-              label={t('Read-only')}
-              selected={access === 'ro'}
-              onSelect={() => setAccess('ro')}
-            />
-            <AccessRadio
-              label={t('Read & write')}
-              selected={access === 'rw'}
-              onSelect={() => setAccess('rw')}
-            />
+            <RadioGroup.Root
+              aria-label={t('Access level')}
+              value={access}
+              onValueChange={(value) => setAccess(value as GrantedLocalRootAccess)}
+              orientation="horizontal"
+              className="flex items-center gap-2.5"
+            >
+              <AccessRadio label={t('Read-only')} value="ro" selected={access === 'ro'} />
+              <AccessRadio label={t('Read & write')} value="rw" selected={access === 'rw'} />
+            </RadioGroup.Root>
             <span className="flex-1" />
             <Button
               type="button"

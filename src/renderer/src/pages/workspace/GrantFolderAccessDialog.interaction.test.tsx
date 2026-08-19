@@ -497,6 +497,42 @@ describe('GrantFolderAccessDialog', () => {
     expect(grantButton?.className).toContain('disabled:opacity-40')
   })
 
+  it('uses one access-level Tab stop and wraps selection with horizontal arrow keys', async () => {
+    renderDialog()
+    await flush()
+
+    const group = document.body.querySelector<HTMLElement>('[role="radiogroup"]')
+    const radios = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+
+    expect(group).not.toBeNull()
+    expect(group?.getAttribute('aria-label')).toBe('Access level')
+    expect(group?.tabIndex).toBe(0)
+    expect(radios.map((radio) => radio.tabIndex)).toEqual([-1, -1])
+
+    act(() => group?.focus())
+    expect(document.activeElement).toBe(radios[0])
+
+    await act(async () => {
+      radios[0].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(radios.map((radio) => radio.getAttribute('aria-checked'))).toEqual(['false', 'true'])
+    expect(document.activeElement).toBe(radios[1])
+
+    await act(async () => {
+      radios[1].dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(radios.map((radio) => radio.getAttribute('aria-checked'))).toEqual(['true', 'false'])
+    expect(document.activeElement).toBe(radios[0])
+  })
+
   it('shows "Directory could not be accessed." when the grant is rejected', async () => {
     grantRoot.mockRejectedValue(new Error('Directory is outside the granted scope.'))
     renderDialog()

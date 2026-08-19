@@ -53,6 +53,7 @@
   "API key is required.": "必須填寫 API 金鑰。",
   "API key — models provided": "API 金鑰 —— 已內建模型清單",
   "About": "關於",
+  "Access level": "存取層級",
   "Action needed": "需要處理",
   "Actions for {{name}}": "{{name}} 的操作",
   "Active": "活躍",
