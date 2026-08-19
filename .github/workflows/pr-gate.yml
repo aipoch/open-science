@@ -716,8 +716,6 @@ jobs:
       - name: Build Electron application
         id: build_electron
         continue-on-error: true
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run build:e2e
       - name: Build web application
         id: build_web

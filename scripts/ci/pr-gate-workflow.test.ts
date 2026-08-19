@@ -431,9 +431,6 @@ describe('PR Gate workflow', () => {
 
     const macosRuns = workflow.jobs.macos_e2e.steps?.map(({ run }) => run).filter(Boolean)
     expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
-    expect(
-      workflow.jobs.macos_e2e.steps?.find(({ id }) => id === 'build_electron')?.env
-    ).toMatchObject({ NODE_OPTIONS: '--max-old-space-size=4096' })
     expect(macosRuns).toEqual(
       expect.arrayContaining([
         'npm run test:e2e:journey',
