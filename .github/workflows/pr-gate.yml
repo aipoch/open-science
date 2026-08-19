@@ -830,7 +830,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit --fund=false
       - name: Build Electron application
         id: build_electron
         continue-on-error: true
@@ -839,7 +839,7 @@ jobs:
         id: e2e_functional_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:journey
+        run: npm run test:e2e:journey -- --workers=2
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -855,7 +855,7 @@ jobs:
         id: e2e_workspace_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:workspace
+        run: npm run test:e2e:workspace -- --workers=2
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
         continue-on-error: true

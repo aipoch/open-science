@@ -229,14 +229,18 @@ const openMainWindow = async (
   if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
   await rendererFailures.observe(page)
   await page.waitForLoadState('domcontentloaded')
+  // A fresh Windows profile can spend longer than the general assertion budget applying the real
+  // schema manifest under runner I/O contention. Keep the startup gate aligned with settings load.
   await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        const bridge = globalThis as unknown as {
-          api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
-        }
-        return (await bridge.api.databaseStartup.getState()).phase
-      })
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const bridge = globalThis as unknown as {
+            api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
+          }
+          return (await bridge.api.databaseStartup.getState()).phase
+        }),
+      { timeout: 60_000 }
     )
     .toBe('ready')
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
