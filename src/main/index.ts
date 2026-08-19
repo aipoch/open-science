@@ -231,6 +231,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
       startupDiagnostics?.phase('load-startup-shell-modules')
       const [
+        { createManagedPreviewProtocolBridge },
         { configureMainWindow, createMainWindow },
         { LocalePreferenceOwner },
         { registerLocalePreferenceIpc },
@@ -245,6 +246,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { SettingsRepository },
         { parseWebModeOptions }
       ] = await Promise.all([
+        import('./managed-preview-protocol'),
         import('./windows'),
         import('./locale/owner'),
         import('./locale/ipc'),
@@ -263,6 +265,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
       startupDiagnostics?.phase('prepare-shell')
+      // The bridge is lightweight, but its protocol handler must exist before the first BrowserWindow
+      // creates the default session. macOS otherwise treats later managed-preview requests as an
+      // unknown scheme even though the privileged scheme itself was registered before app ready.
+      const managedPreviewProtocolBridge = createManagedPreviewProtocolBridge(protocol)
       // Create the settings document owner before any native surface. The startup locale repository
       // and the later application Settings repository share this store, so every settings.json
       // mutation uses one serialization queue and one atomic-write implementation.
@@ -360,7 +366,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           await startupShellRendered
           return Promise.all([
             import('./ipc'),
-            import('./managed-preview-protocol'),
             import('./storage/migration-state'),
             import('./tray'),
             import('./app-lifecycle'),
@@ -381,7 +386,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           _,
           [
             { registerIpcHandlers },
-            { createManagedPreviewProtocolBridge },
             { installMigrationQuitGuard, isMigrationInProgress },
             { createAppTray, refreshAppTrayLocale, setTrayIconVariant },
             { installAppLifecycle },
@@ -399,7 +403,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           ]
         ) => {
           startupDiagnostics?.phase('compose-runtime')
-          const managedPreviewProtocolBridge = createManagedPreviewProtocolBridge(protocol)
 
           try {
             // Held in a box (not a bare let) so the settings IPC callback registered below can reach the icon
@@ -588,6 +591,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         rollbackShell: () => {
           disposeLocalePreferenceIpc()
           databaseStartupQuitGuard.dispose()
+          managedPreviewProtocolBridge.dispose()
           disposeDatabaseStartupIpc()
           if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
           app.quit()
