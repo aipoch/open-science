@@ -952,7 +952,11 @@ describe('Russian catalog quality', () => {
     [
       'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.',
       'Ваши исследовательские данные находятся в скрытой папке. Перемещение их в видимую папку OpenScience упростит поиск и резервное копирование — настройки и история останутся на прежнем месте.'
-    ]
+    ],
+    ['System Tags stay first', 'Системные теги всегда остаются в начале'],
+    ['Reorder {{tag}}', 'Изменить порядок тега {{tag}}'],
+    ['Moved {{tag}} to position {{position}}.', 'Тег {{tag}} перемещён на позицию {{position}}.'],
+    ['Could not reorder Tags. Try again.', 'Не удалось изменить порядок тегов. Попробуйте снова.']
   ])('keeps proofread Russian copy for %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
   })

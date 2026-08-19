@@ -3437,5 +3437,9 @@
   "Slate": "Сланцевый",
   "Change appearance for {{name}}": "Изменить внешний вид для {{name}}",
   "Appearance wasn’t saved. Try again.": "Внешний вид не сохранён. Попробуйте снова.",
-  "Specialist appearance picker — 8 states": "Выбор внешнего вида специалиста — 8 состояний"
+  "Specialist appearance picker — 8 states": "Выбор внешнего вида специалиста — 8 состояний",
+  "System Tags stay first": "Системные теги всегда остаются в начале",
+  "Reorder {{tag}}": "Изменить порядок тега {{tag}}",
+  "Moved {{tag}} to position {{position}}.": "Тег {{tag}} перемещён на позицию {{position}}.",
+  "Could not reorder Tags. Try again.": "Не удалось изменить порядок тегов. Попробуйте снова."
 }
