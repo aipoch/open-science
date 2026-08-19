@@ -17,6 +17,12 @@ describe('resolveLocaleFromTags', () => {
     expect(resolveLocaleFromTags(['KO_kr'])).toBe('ko')
   })
 
+  it('matches Russian and its regional tags', () => {
+    expect(resolveLocaleFromTags(['ru'])).toBe('ru')
+    expect(resolveLocaleFromTags(['ru-RU'])).toBe('ru')
+    expect(resolveLocaleFromTags(['RU_ru'])).toBe('ru')
+  })
+
   it('matches Japanese and its regional tags', () => {
     expect(resolveLocaleFromTags(['ja'])).toBe('ja')
     expect(resolveLocaleFromTags(['ja-JP'])).toBe('ja')
@@ -84,12 +90,14 @@ describe('resolveLocale', () => {
     expect(resolveLocale('system', ['zh-TW'])).toBe('zh-Hant')
     expect(resolveLocale('system', ['ja-JP'])).toBe('ja')
     expect(resolveLocale('system', ['ko-KR'])).toBe('ko')
+    expect(resolveLocale('system', ['ru-RU'])).toBe('ru')
   })
 
   it('returns an explicit preference verbatim, ignoring the host list', () => {
     expect(resolveLocale('en', ['zh-TW'])).toBe('en')
     expect(resolveLocale('ja', ['en-US'])).toBe('ja')
     expect(resolveLocale('ko', ['en-US'])).toBe('ko')
+    expect(resolveLocale('ru', ['en-US'])).toBe('ru')
     expect(resolveLocale('zh-Hant', ['en-US'])).toBe('zh-Hant')
     expect(resolveLocale('zh-Hans', [])).toBe('zh-Hans')
   })
@@ -100,6 +108,7 @@ describe('guards and constants', () => {
     expect(isLocale('zh-Hans')).toBe(true)
     expect(isLocale('ja')).toBe(true)
     expect(isLocale('ko')).toBe(true)
+    expect(isLocale('ru')).toBe(true)
     expect(isLocale('zh-CN')).toBe(false)
     expect(isLocale('system')).toBe(false)
     expect(isLocale(undefined)).toBe(false)
@@ -107,6 +116,7 @@ describe('guards and constants', () => {
     expect(isLanguagePreference('zh-Hant')).toBe(true)
     expect(isLanguagePreference('ja')).toBe(true)
     expect(isLanguagePreference('ko')).toBe(true)
+    expect(isLanguagePreference('ru')).toBe(true)
     expect(isLanguagePreference('fr')).toBe(false)
   })
 
@@ -119,6 +129,7 @@ describe('guards and constants', () => {
     expect(htmlLang('en')).toBe('en')
     expect(htmlLang('ja')).toBe('ja')
     expect(htmlLang('ko')).toBe('ko')
+    expect(htmlLang('ru')).toBe('ru')
     expect(htmlLang('zh-Hans')).toBe('zh-Hans')
     expect(htmlLang('zh-Hant')).toBe('zh-Hant')
   })

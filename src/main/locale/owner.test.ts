@@ -63,6 +63,7 @@ describe('LocalePreferenceOwner', () => {
     expect(() => owner.setPreference('fr')).toThrow('Invalid language preference')
     expect(translateNativeMessage('ja', 'Quit')).toBe('終了')
     expect(translateNativeMessage('ko', 'Quit')).toBe('종료')
+    expect(translateNativeMessage('ru', 'Quit')).toBe('Выйти')
     expect(
       translateNativeMessage(
         'zh-Hans',

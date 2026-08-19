@@ -79,6 +79,19 @@ const localizedSettingsCases = [
     appearance: '외관',
     interfaceLanguage: '인터페이스 언어',
     closeSettings: '설정 닫기'
+  },
+  {
+    language: 'Russian',
+    pickerLabel: 'Русский',
+    locale: 'ru',
+    projects: 'Проекты',
+    modelSettings: 'Настройки модели',
+    settings: 'Настройки',
+    openNavigation: 'Открыть навигацию по настройкам',
+    general: 'Общие',
+    appearance: 'Внешний вид',
+    interfaceLanguage: 'Язык интерфейса',
+    closeSettings: 'Закрыть настройки'
   }
 ] as const
 

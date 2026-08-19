@@ -2,15 +2,16 @@
 
 ## i18n — translating new user-visible strings
 
-The renderer ships four translated locales: **zh-Hans** (Simplified Chinese), **zh-Hant**
-(Traditional Chinese), **ja** (Japanese), and **ko** (Korean). Every user-visible string added to the
-renderer must have a corresponding entry in all catalog files:
+The renderer ships five translated locales: **zh-Hans** (Simplified Chinese), **zh-Hant**
+(Traditional Chinese), **ja** (Japanese), **ko** (Korean), and **ru** (Russian). Every user-visible
+string added to the renderer must have a corresponding entry in all catalog files:
 
 ```
 src/renderer/src/locales/zh-Hans.json
 src/renderer/src/locales/zh-Hant.json
 src/renderer/src/locales/ja.json
 src/renderer/src/locales/ko.json
+src/renderer/src/locales/ru.json
 ```
 
 The guard suite in `src/renderer/src/i18n/resources.test.ts` runs on every `npm test` and **will
@@ -52,13 +53,16 @@ an i18next suffix appended). Entries are plain JSON strings at the top level —
 "Data folder not found": "未找到数据文件夹",
 
 // zh-Hant.json
-"Data folder not found": "找不到資料夾"
+"Data folder not found": "找不到資料夾",
 
 // ja.json
-"Data folder not found": "データフォルダーが見つかりません"
+"Data folder not found": "データフォルダーが見つかりません",
 
 // ko.json
-"Data folder not found": "데이터 폴더를 찾을 수 없습니다"
+"Data folder not found": "데이터 폴더를 찾을 수 없습니다",
+
+// ru.json
+"Data folder not found": "Папка данных не найдена"
 ```
 
 Each catalog must be updated independently. **Every translated locale falls back directly to
@@ -67,8 +71,9 @@ English**, so a missing key renders in English instead of borrowing another tran
 ### Plurals
 
 Chinese, Japanese, and Korean have a single plural category. Use the `_other` suffix only — never
-`_one`, `_few`, etc. The English singular is passed as `defaultValue_one` at the call site; it never
-needs a catalog entry.
+`_one`, `_few`, etc. Russian uses `_one`, `_few`, `_many`, and `_other`; every counted Russian key
+must provide all four forms. The English singular is passed as `defaultValue_one` at the call site
+and never needs a catalog entry.
 
 ```tsx
 // Call site — English needs no catalog entry
@@ -79,6 +84,12 @@ t('{{count}} files', { count: n, defaultValue_one: '{{count}} file' })
 "{{count}} files_other": "{{count}} 個檔案"   // zh-Hant
 "{{count}} files_other": "{{count}}個のファイル" // ja
 "{{count}} files_other": "파일 {{count}}개" // ko
+
+// ru uses all four CLDR categories
+"{{count}} files_one": "{{count}} файл",
+"{{count}} files_few": "{{count}} файла",
+"{{count}} files_many": "{{count}} файлов",
+"{{count}} files_other": "{{count}} файла"
 ```
 
 ### Context suffixes
@@ -100,19 +111,19 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term                 | zh-Hans      | zh-Hant      | ja                     | ko                | Note                                              |
-| -------------------- | ------------ | ------------ | ---------------------- | ----------------- | ------------------------------------------------- |
-| Skill / Skills       | **技能**     | **技能**     | **スキル**             | **스킬**          | Translate user-visible prose                      |
-| Agent / Agents       | **智能体**   | **智能體**   | **エージェント**       | **에이전트**      | Translate user-visible prose                      |
-| Notebook             | **Notebook** | **Notebook** | **Notebook**           | **Notebook**      | Keep as-is                                        |
-| token (model usage)  | **词元**     | **詞元**     | **トークン**           | **토큰**          | Model input, output, context, and usage counts    |
-| token (credential)   | **令牌**     | **權杖**     | **トークン**           | **토큰**          | Authentication and personal access credentials    |
-| Specialist           | **专家**     | **專家**     | **スペシャリスト**     | **스페셜리스트**  | Generic role; translate                           |
-| Marketplace          | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | Generic surface; retain third-party product names |
-| Connector            | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | Generic noun; retain exact directory names        |
-| Main Agent           | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | Translate as a complete compound                  |
-| Subagent / Subagents | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | Translate as a complete compound                  |
-| Shell                | **命令行**   | **命令列**   | **シェル**             | **셸**            | User-facing label; `Notebook` remains English     |
+| Term                 | zh-Hans      | zh-Hant      | ja                     | ko                | ru                       | Note                                              |
+| -------------------- | ------------ | ------------ | ---------------------- | ----------------- | ------------------------ | ------------------------------------------------- |
+| Skill / Skills       | **技能**     | **技能**     | **スキル**             | **스킬**          | **Навык / Навыки**       | Translate user-visible prose                      |
+| Agent / Agents       | **智能体**   | **智能體**   | **エージェント**       | **에이전트**      | **Агент / Агенты**       | Translate user-visible prose                      |
+| Notebook             | **Notebook** | **Notebook** | **Notebook**           | **Notebook**      | **Notebook**             | Keep as-is                                        |
+| token (model usage)  | **词元**     | **詞元**     | **トークン**           | **토큰**          | **токен**                | Model input, output, context, and usage counts    |
+| token (credential)   | **令牌**     | **權杖**     | **トークン**           | **토큰**          | **токен**                | Authentication and personal access credentials    |
+| Specialist           | **专家**     | **專家**     | **スペシャリスト**     | **스페셜리스트**  | **Специалист**           | Generic role; translate                           |
+| Marketplace          | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | **Маркетплейс**          | Generic surface; retain third-party product names |
+| Connector            | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | **Коннектор**            | Generic noun; retain exact directory names        |
+| Main Agent           | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | **Главный агент**        | Translate as a complete compound                  |
+| Subagent / Subagents | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | **Субагент / Субагенты** | Translate as a complete compound                  |
+| Shell                | **命令行**   | **命令列**   | **シェル**             | **셸**            | **Командная строка**     | User-facing label; `Notebook` remains English     |
 
 Exact technical identifiers are exempt from prose translation. Keep file names, extensions,
 commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`, `.skill`,

@@ -7,7 +7,7 @@
 // resolving to nothing. That is the one failure mode natural-language keys add, and it is the reason
 // this file grew a source scan.
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import i18next from 'i18next'
@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest'
 
 import ja from '../locales/ja.json'
 import ko from '../locales/ko.json'
+import ru from '../locales/ru.json'
 import zhHans from '../locales/zh-Hans.json'
 import zhHant from '../locales/zh-Hant.json'
 import {
@@ -33,6 +34,7 @@ type Catalog = Record<string, string>
 const sourceCatalogs = {
   ja,
   ko,
+  ru,
   'zh-Hans': zhHans,
   'zh-Hant': zhHant
 } as const
@@ -61,6 +63,23 @@ const markers = (text: string): string[] =>
 const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
+const PLURAL_CATEGORIES_BY_LOCALE = {
+  ja: ['other'],
+  ko: ['other'],
+  ru: ['one', 'few', 'many', 'other'],
+  'zh-Hans': ['other'],
+  'zh-Hant': ['other']
+} as const satisfies Record<TranslatedLocale, readonly string[]>
+
+const pluralCategoryOf = (key: string): string | undefined => {
+  const suffix = key.split('_').at(-1)
+  return suffix && PLURAL_CATEGORIES.has(suffix) ? suffix : undefined
+}
+
+const withoutPluralCategory = (key: string): string => {
+  const category = pluralCategoryOf(key)
+  return category ? key.slice(0, -(category.length + 1)) : key
+}
 // This key is selected by a lookup table whose caller always supplies count=0, even though the copy
 // itself has no interpolation marker. Keep the exceptional contract explicit; every other counted
 // key is discovered by its {{count}} marker below.
@@ -73,6 +92,11 @@ describe('supported catalog registration', () => {
 })
 
 describe('runtime catalog fallback', () => {
+  it('ships and registers the Russian catalog', () => {
+    expect(existsSync(join(__dirname, '..', 'locales', 'ru.json'))).toBe(true)
+    expect('ru' in resources).toBe(true)
+  })
+
   it('keeps valid translations without copying the catalog', () => {
     const valid = {
       'Hello {{name}}': '你好，{{name}}',
@@ -209,31 +233,45 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     expect(malformed).toEqual([])
   })
 
-  // Chinese, Japanese, and Korean have a single plural category, so a `_one` entry is copy that can never
-  // render. English needs no catalog entry at all: the key carries the plural form and the call site
-  // passes the singular as `defaultValue_one`.
+  // Chinese, Japanese, and Korean have a single plural category, while Russian uses four. English
+  // needs no catalog entry: the key carries the plural form and the call site passes the singular
+  // as `defaultValue_one`.
   it('uses only the plural categories the translated grammar has', () => {
+    const allowed = new Set<string>(PLURAL_CATEGORIES_BY_LOCALE[locale])
     const wrong = Object.keys(catalog(locale))
-      .map((key) => ({ key, suffix: key.split('_').at(-1) ?? '' }))
-      .filter(({ suffix }) => PLURAL_CATEGORIES.has(suffix) && suffix !== 'other')
+      .map((key) => ({ key, suffix: pluralCategoryOf(key) }))
+      .filter(({ suffix }) => suffix && !allowed.has(suffix))
       .map(({ key }) => key)
 
     expect(wrong).toEqual([])
   })
 
-  it('stores every counted translation under the locale _other category', () => {
-    const bareCountedKeys = Object.keys(catalog(locale)).filter(
-      (key) => englishOf(key).includes('{{count}}') && !key.endsWith('_other')
+  it('stores every counted translation under every category the locale selects', () => {
+    const entries = catalog(locale)
+    const categories = PLURAL_CATEGORIES_BY_LOCALE[locale]
+    const countedKeys = Object.keys(entries).filter((key) => englishOf(key).includes('{{count}}'))
+    const stems = new Set(countedKeys.map(withoutPluralCategory))
+    const invalid = countedKeys.filter((key) => {
+      const category = pluralCategoryOf(key)
+      return !category || !categories.includes(category as never)
+    })
+    const missing = [...stems].flatMap((stem) =>
+      categories.flatMap((category) =>
+        entries[`${stem}_${category}`] ? [] : [`${stem}_${category}`]
+      )
     )
 
-    expect(bareCountedKeys).toEqual([])
+    expect([...invalid, ...missing]).toEqual([])
   })
 
   it('suffixes dynamic counted keys that have no interpolation marker', () => {
     const entries = catalog(locale)
-    const invalid = COUNTED_KEYS_WITHOUT_MARKER.filter(
-      (key) => entries[key] !== undefined || entries[`${key}_other`] === undefined
-    )
+    const invalid = COUNTED_KEYS_WITHOUT_MARKER.flatMap((key) => [
+      ...(entries[key] === undefined ? [] : [key]),
+      ...PLURAL_CATEGORIES_BY_LOCALE[locale].flatMap((category) =>
+        entries[`${key}_${category}`] === undefined ? [`${key}_${category}`] : []
+      )
+    ])
 
     expect(invalid).toEqual([])
   })
@@ -256,6 +294,10 @@ describe('dynamic counted lookup translations', () => {
     {
       locale: 'ko' as const,
       expected: ['방금 확인함', '3시간 전에 확인함', '3일 전', '3일 전']
+    },
+    {
+      locale: 'ru' as const,
+      expected: ['проверено только что', 'проверено 3 ч назад', '3 дн. назад', '3 дн. назад']
     }
   ])('resolves $locale lookup-table keys through _other', async ({ locale, expected }) => {
     const instance = i18next.createInstance()
@@ -274,6 +316,25 @@ describe('dynamic counted lookup translations', () => {
       instance.t('{{count}}d ago', { count: 3 }),
       instance.t('{{count}} days ago', { count: 3 })
     ]).toEqual(expected)
+  })
+
+  it('selects Russian one, few, many, and other forms', async () => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'ru',
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { ru: { translation: catalog('ru') } }
+    })
+
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} files', { count }))).toEqual([
+      '1 файл',
+      '2 файла',
+      '5 файлов',
+      '1.5 файла'
+    ])
   })
 })
 
@@ -372,6 +433,19 @@ describe('mandatory product glossary', () => {
       'Token usage': '토큰 사용량',
       'Claude setup token': 'Claude 설정 토큰',
       'Token: {{masked}}': '토큰: {{masked}}'
+    },
+    ru: {
+      Agent: 'Агент',
+      Skills: 'Навыки',
+      Specialist: 'Специалист',
+      Specialists: 'Специалисты',
+      Marketplace: 'Маркетплейс',
+      Connector: 'Коннектор',
+      Main: 'Главный агент',
+      Shell: 'Командная строка',
+      'Token usage': 'Использование токенов',
+      'Claude setup token': 'Токен настройки Claude',
+      'Token: {{masked}}': 'Токен: {{masked}}'
     }
   } satisfies Record<TranslatedLocale, Record<string, string>>
 
@@ -385,10 +459,20 @@ describe('mandatory product glossary', () => {
   })
 
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
-    const expected = { 'zh-Hans': '命令行', 'zh-Hant': '命令列', ja: 'シェル', ko: '셸' }[locale]
+    const expected = {
+      'zh-Hans': '命令行',
+      'zh-Hant': '命令列',
+      ja: 'シェル',
+      ko: '셸',
+      ru: 'командн'
+    }[locale]
     const offenders = Object.entries(catalog(locale))
       .filter(([key]) => /\bshell\b/i.test(englishOf(key)))
-      .filter(([, value]) => !value.includes(expected))
+      .filter(([, value]) =>
+        locale === 'ru'
+          ? !value.toLocaleLowerCase('ru').includes(expected)
+          : !value.includes(expected)
+      )
       .map(([key]) => key)
 
     expect(offenders).toEqual([])
@@ -401,11 +485,16 @@ describe('mandatory product glossary', () => {
         'zh-Hans': '主智能体',
         'zh-Hant': '主智能體',
         ja: 'メインエージェント',
-        ko: '메인 에이전트'
+        ko: '메인 에이전트',
+        ru: 'главн'
       }[locale]
       const offenders = Object.entries(catalog(locale))
         .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
-        .filter(([, value]) => !value.includes(expected))
+        .filter(([, value]) =>
+          locale === 'ru'
+            ? !value.toLocaleLowerCase('ru').includes(expected) || !/агент/iu.test(value)
+            : !value.includes(expected)
+        )
         .map(([key]) => key)
 
       expect(offenders).toEqual([])
@@ -491,8 +580,9 @@ describe('mandatory product glossary', () => {
     'zh-Hans': { agent: '智能体', skill: '技能' },
     'zh-Hant': { agent: '智能體', skill: '技能' },
     ja: { agent: 'エージェント', skill: 'スキル' },
-    ko: { agent: '에이전트', skill: '스킬' }
-  } satisfies Record<TranslatedLocale, { agent: string; skill: string }>
+    ko: { agent: '에이전트', skill: '스킬' },
+    ru: { agent: /агент/iu, skill: /навык/iu }
+  } satisfies Record<TranslatedLocale, { agent: string | RegExp; skill: string | RegExp }>
 
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
     const expected = localizedFeatureTerms[locale]
@@ -509,9 +599,11 @@ describe('mandatory product glossary', () => {
       ]
         .filter(
           ({ source: pattern, untranslated, expected: term }) =>
-            pattern.test(source) && (!prose.includes(term) || untranslated.test(prose))
+            pattern.test(source) &&
+            (!(typeof term === 'string' ? prose.includes(term) : term.test(prose)) ||
+              untranslated.test(prose))
         )
-        .map(({ expected: term }) => `${key}: ${term}`)
+        .map(({ expected: term }) => `${key}: ${String(term)}`)
     })
 
     expect(offenders).toEqual([])
@@ -527,7 +619,8 @@ describe('mandatory product glossary', () => {
     'zh-Hans': { credential: '令牌', model: '词元' },
     'zh-Hant': { credential: '權杖', model: '詞元' },
     ja: { credential: 'トークン', model: 'トークン' },
-    ko: { credential: '토큰', model: '토큰' }
+    ko: { credential: '토큰', model: '토큰' },
+    ru: { credential: 'токен', model: 'токен' }
   } satisfies Record<TranslatedLocale, { credential: string; model: string }>
 
   it.each(TRANSLATED)('%s translates token according to credential or model context', (locale) => {
@@ -540,7 +633,9 @@ describe('mandatory product glossary', () => {
       const term = credentialTokenSource.some((pattern) => pattern.test(source))
         ? expected.credential
         : expected.model
-      return !prose.includes(term) || /\btokens?\b/i.test(prose) ? [`${key}: ${term}`] : []
+      return !prose.toLocaleLowerCase(locale).includes(term) || /\btokens?\b/i.test(prose)
+        ? [`${key}: ${term}`]
+        : []
     })
 
     expect(offenders).toEqual([])
@@ -1092,6 +1187,20 @@ describe('Korean binding terminology', () => {
       .map(([key]) => key)
 
     expect(offenders).toEqual([])
+  })
+})
+
+describe('Russian safety copy', () => {
+  it.each([
+    ['Allow globally', 'Разрешить глобально'],
+    ['Approval applies to this call only.', 'Разрешение действует только для этого вызова.'],
+    ['This call only', 'Только этот вызов'],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      'Отдельные разрешения по-прежнему можно отзывать; действие «Отозвать все» недоступно, пока не известен полный набор.'
+    ]
+  ])('preserves the scope of %s', (key, expected) => {
+    expect(catalog('ru')[key]).toBe(expected)
   })
 })
 

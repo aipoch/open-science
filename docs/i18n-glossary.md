@@ -1,7 +1,7 @@
 # Localization Glossary
 
-The binding reference for `src/renderer/src/locales/ja.json`, `ko.json`, `zh-Hans.json`, and
-`zh-Hant.json`.
+The binding reference for `src/renderer/src/locales/ja.json`, `ko.json`, `ru.json`,
+`zh-Hans.json`, and `zh-Hant.json`.
 There is no English catalog: **the key is the English source text**. `t('Data folder not found')`
 renders that sentence verbatim in English and looks it up in the localized catalogs, so a missing
 translation falls back to correct English rather than a raw key path. This keeps the English legible
@@ -11,8 +11,8 @@ Traditional Chinese is a **separate translation**, not a character conversion of
 software vocabulary genuinely differs (`file` is 文件 in Simplified but 檔案 in Traditional, where
 文件 means _document_), so running a converter over `zh-Hans` produces wrong copy. Translate from the
 English key and consult the tables below. Japanese is also translated independently from the
-English key; do not derive it from either Chinese catalog. Korean is likewise translated directly
-from English rather than through another locale.
+English key; do not derive it from either Chinese catalog. Korean and Russian are likewise
+translated directly from English rather than through another locale.
 
 ## Key conventions
 
@@ -25,9 +25,11 @@ periods and colons inside an English sentence stay part of the key.
 - **Plurals**: the key is the English _plural_ form and the call site passes the singular:
   `t('{{count}} files selected', { count, defaultValue_one: '{{count}} file selected' })`. Chinese,
   Japanese, and Korean have one plural category, so their entries take the `_other` suffix and
-  `_one` entries are rejected.
-- **Context** disambiguates two different meanings that share one English string — `t('Compute', {
-context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the suffixed entry;
+  `_one` entries are rejected. Russian requires the complete `_one`, `_few`, `_many`, and `_other`
+  set for every counted key.
+- **Context** disambiguates two different meanings that share one English string —
+  `t('Compute', { context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the
+  suffixed entry;
   English ignores context and renders the base key.
 - **Placeholders and `<tag>` markers must survive translation.** A dropped `{{name}}` renders a
   blank where a value belongs, and a dropped tag makes `Trans` discard the wrapped element. Never
@@ -49,48 +51,48 @@ Never translated, in any catalog:
   names, commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`,
   `.skill`, `skill://`, `skills/`, `.agents/skills`, `AGENTS.md`, `ssh-agent`, and `setup-token`.
 - Translate `token` by meaning: model input, output, context, and usage counts use 词元 / 詞元 /
-  トークン / 토큰; authentication credentials use 令牌 / 權杖 / トークン / 토큰. API field names such as
-  `max_tokens` remain unchanged.
+  トークン / 토큰 / токен; authentication credentials use 令牌 / 權杖 / トークン / 토큰 / токен.
+  API field names such as `max_tokens` remain unchanged.
 - The `Open Science` name is fixed by `docs/design.md`, but the home tagline beneath it **is**
   translated.
 
 ## Core domain nouns
 
-| en                 | ja                         | ko                  | zh-Hans    | zh-Hant    |
-| ------------------ | -------------------------- | ------------------- | ---------- | ---------- |
-| project            | プロジェクト               | 프로젝트            | 项目       | 專案       |
-| session            | セッション                 | 세션                | 会话       | 會話       |
-| conversation       | 会話                       | 대화                | 对话       | 對話       |
-| workspace          | ワークスペース             | 워크스페이스        | 工作区     | 工作區     |
-| message            | メッセージ                 | 메시지              | 消息       | 訊息       |
-| task               | タスク                     | 작업                | 任务       | 任務       |
-| run                | 実行                       | 실행                | 运行       | 執行       |
-| turn               | ターン                     | 턴                  | 轮次       | 輪次       |
-| agent              | エージェント               | 에이전트            | 智能体     | 智能體     |
-| subagent           | サブエージェント           | 서브에이전트        | 子智能体   | 子智能體   |
-| agent framework    | エージェントフレームワーク | 에이전트 프레임워크 | 智能体框架 | 智能體框架 |
-| model              | モデル                     | 모델                | 模型       | 模型       |
-| provider           | プロバイダー               | 모델 제공업체       | 模型服务商 | 模型服務商 |
-| subscription       | サブスクリプション         | 구독                | 订阅       | 訂閱       |
-| skill              | スキル                     | 스킬                | 技能       | 技能       |
-| specialist         | スペシャリスト             | 스페셜리스트        | 专家       | 專家       |
-| marketplace        | マーケットプレイス         | 마켓플레이스        | 市场       | 市集       |
-| connector          | コネクタ                   | 커넥터              | 连接器     | 連接器     |
-| shell              | シェル                     | 셸                  | 命令行     | 命令列     |
-| main agent         | メインエージェント         | 메인 에이전트       | 主智能体   | 主智能體   |
-| token (model)      | トークン                   | 토큰                | 词元       | 詞元       |
-| token (credential) | トークン                   | 토큰                | 令牌       | 權杖       |
-| kernel             | カーネル                   | 커널                | 内核       | 核心       |
-| artifact           | アーティファクト           | 아티팩트            | 产物       | 產物       |
-| activity group     | アクティビティグループ     | 활동 그룹           | 活动分组   | 活動分組   |
-| tool               | ツール                     | 도구                | 工具       | 工具       |
-| compute host       | コンピュートホスト         | 컴퓨팅 호스트       | 计算主机   | 運算主機   |
-| runtime            | ランタイム                 | 런타임              | 运行时     | 執行環境   |
-| environment        | 環境                       | 환경                | 环境       | 環境       |
-| preview            | プレビュー                 | 미리보기            | 预览       | 預覽       |
-| reasoning effort   | 推論の強度                 | 추론 강도           | 推理强度   | 推理強度   |
-| context            | コンテキスト               | 컨텍스트            | 上下文     | 上下文     |
-| context compaction | コンテキスト圧縮           | 컨텍스트 압축       | 上下文压缩 | 上下文壓縮 |
+| en                 | ja                         | ko                  | ru                   | zh-Hans    | zh-Hant    |
+| ------------------ | -------------------------- | ------------------- | -------------------- | ---------- | ---------- |
+| project            | プロジェクト               | 프로젝트            | проект               | 项目       | 專案       |
+| session            | セッション                 | 세션                | сессия               | 会话       | 會話       |
+| conversation       | 会話                       | 대화                | диалог               | 对话       | 對話       |
+| workspace          | ワークスペース             | 워크스페이스        | рабочее пространство | 工作区     | 工作區     |
+| message            | メッセージ                 | 메시지              | сообщение            | 消息       | 訊息       |
+| task               | タスク                     | 작업                | задача               | 任务       | 任務       |
+| run                | 実行                       | 실행                | выполнение           | 运行       | 執行       |
+| turn               | ターン                     | 턴                  | ход                  | 轮次       | 輪次       |
+| agent              | エージェント               | 에이전트            | агент                | 智能体     | 智能體     |
+| subagent           | サブエージェント           | 서브에이전트        | субагент             | 子智能体   | 子智能體   |
+| agent framework    | エージェントフレームワーク | 에이전트 프레임워크 | фреймворк агентов    | 智能体框架 | 智能體框架 |
+| model              | モデル                     | 모델                | модель               | 模型       | 模型       |
+| provider           | プロバイダー               | 모델 제공업체       | поставщик моделей    | 模型服务商 | 模型服務商 |
+| subscription       | サブスクリプション         | 구독                | подписка             | 订阅       | 訂閱       |
+| skill              | スキル                     | 스킬                | навык                | 技能       | 技能       |
+| specialist         | スペシャリスト             | 스페셜리스트        | специалист           | 专家       | 專家       |
+| marketplace        | マーケットプレイス         | 마켓플레이스        | маркетплейс          | 市场       | 市集       |
+| connector          | コネクタ                   | 커넥터              | коннектор            | 连接器     | 連接器     |
+| shell              | シェル                     | 셸                  | командная строка     | 命令行     | 命令列     |
+| main agent         | メインエージェント         | 메인 에이전트       | главный агент        | 主智能体   | 主智能體   |
+| token (model)      | トークン                   | 토큰                | токен                | 词元       | 詞元       |
+| token (credential) | トークン                   | 토큰                | токен                | 令牌       | 權杖       |
+| kernel             | カーネル                   | 커널                | ядро                 | 内核       | 核心       |
+| artifact           | アーティファクト           | 아티팩트            | артефакт             | 产物       | 產物       |
+| activity group     | アクティビティグループ     | 활동 그룹           | группа действий      | 活动分组   | 活動分組   |
+| tool               | ツール                     | 도구                | инструмент           | 工具       | 工具       |
+| compute host       | コンピュートホスト         | 컴퓨팅 호스트       | вычислительный узел  | 计算主机   | 運算主機   |
+| runtime            | ランタイム                 | 런타임              | среда выполнения     | 运行时     | 執行環境   |
+| environment        | 環境                       | 환경                | окружение            | 环境       | 環境       |
+| preview            | プレビュー                 | 미리보기            | предпросмотр         | 预览       | 預覽       |
+| reasoning effort   | 推論の強度                 | 추론 강도           | глубина рассуждений  | 推理强度   | 推理強度   |
+| context            | コンテキスト               | 컨텍스트            | контекст             | 上下文     | 上下文     |
+| context compaction | コンテキスト圧縮           | 컨텍스트 압축       | сжатие контекста     | 上下文压缩 | 上下文壓縮 |
 
 Translate generic Open Science roles, surfaces, and domain nouns according to the table. Keep exact
 third-party names and technical identifiers, including `Claude Connectors Directory`,
@@ -98,78 +100,78 @@ third-party names and technical identifiers, including `Claude Connectors Direct
 
 ## Simplified / Traditional divergences
 
-The highest-risk table. A character converter gets most of the Chinese pairs wrong; the Japanese
-column records the corresponding independent translation; Korean is recorded independently too.
+The highest-risk table. A character converter gets most of the Chinese pairs wrong; the Japanese,
+Korean, and Russian columns record their corresponding independent translations.
 
-| en                 | ja           | ko          | zh-Hans | zh-Hant  |
-| ------------------ | ------------ | ----------- | ------- | -------- |
-| file               | ファイル     | 파일        | 文件    | 檔案     |
-| document           | ドキュメント | 문서        | 文档    | 文件     |
-| folder             | フォルダー   | 폴더        | 文件夹  | 資料夾   |
-| data               | データ       | 데이터      | 数据    | 資料     |
-| information        | 情報         | 정보        | 信息    | 資訊     |
-| software           | ソフトウェア | 소프트웨어  | 软件    | 軟體     |
-| program            | プログラム   | 프로그램    | 程序    | 程式     |
-| default            | デフォルト   | 기본값      | 默认    | 預設     |
-| settings           | 設定         | 설정        | 设置    | 設定     |
-| network            | ネットワーク | 네트워크    | 网络    | 網路     |
-| cache              | キャッシュ   | 캐시        | 缓存    | 快取     |
-| process            | プロセス     | 프로세스    | 进程    | 行程     |
-| thread             | スレッド     | 스레드      | 线程    | 執行緒   |
-| queue              | キュー       | 대기열      | 队列    | 佇列     |
-| storage            | ストレージ   | 저장소      | 存储    | 儲存     |
-| credential         | 認証情報     | 자격 증명   | 凭据    | 憑證     |
-| log                | ログ         | 로그        | 日志    | 記錄檔   |
-| mirror             | ミラー       | 미러        | 镜像源  | 鏡像來源 |
-| tray               | トレイ       | 트레이      | 托盘    | 系統匣   |
-| bookmark           | ブックマーク | 북마크      | 书签    | 書籤     |
-| archive (verb)     | アーカイブ   | 보관        | 归档    | 封存     |
-| approve / approval | 許可 / 承認  | 허용 / 승인 | 批准    | 核准     |
+| en                 | ja           | ko          | ru                      | zh-Hans | zh-Hant  |
+| ------------------ | ------------ | ----------- | ----------------------- | ------- | -------- |
+| file               | ファイル     | 파일        | файл                    | 文件    | 檔案     |
+| document           | ドキュメント | 문서        | документ                | 文档    | 文件     |
+| folder             | フォルダー   | 폴더        | папка                   | 文件夹  | 資料夾   |
+| data               | データ       | 데이터      | данные                  | 数据    | 資料     |
+| information        | 情報         | 정보        | информация              | 信息    | 資訊     |
+| software           | ソフトウェア | 소프트웨어  | программное обеспечение | 软件    | 軟體     |
+| program            | プログラム   | 프로그램    | программа               | 程序    | 程式     |
+| default            | デフォルト   | 기본값      | по умолчанию            | 默认    | 預設     |
+| settings           | 設定         | 설정        | настройки               | 设置    | 設定     |
+| network            | ネットワーク | 네트워크    | сеть                    | 网络    | 網路     |
+| cache              | キャッシュ   | 캐시        | кэш                     | 缓存    | 快取     |
+| process            | プロセス     | 프로세스    | процесс                 | 进程    | 行程     |
+| thread             | スレッド     | 스레드      | поток                   | 线程    | 執行緒   |
+| queue              | キュー       | 대기열      | очередь                 | 队列    | 佇列     |
+| storage            | ストレージ   | 저장소      | хранилище               | 存储    | 儲存     |
+| credential         | 認証情報     | 자격 증명   | учётные данные          | 凭据    | 憑證     |
+| log                | ログ         | 로그        | журнал                  | 日志    | 記錄檔   |
+| mirror             | ミラー       | 미러        | зеркало                 | 镜像源  | 鏡像來源 |
+| tray               | トレイ       | 트레이      | трей                    | 托盘    | 系統匣   |
+| bookmark           | ブックマーク | 북마크      | закладка                | 书签    | 書籤     |
+| archive (verb)     | アーカイブ   | 보관        | архивировать            | 归档    | 封存     |
+| approve / approval | 許可 / 承認  | 허용 / 승인 | разрешить / разрешение  | 批准    | 核准     |
 
 Note the `file` / `document` inversion: Traditional 文件 means what Simplified calls 文档. Getting
 this pair backwards is the single most common failure in Simplified-to-Traditional conversion.
 
 ## Actions and states
 
-| en                   | ja                              | ko                   | zh-Hans        | zh-Hant        |
-| -------------------- | ------------------------------- | -------------------- | -------------- | -------------- |
-| create / new         | 作成 / 新規                     | 만들기 / 새로 만들기 | 新建           | 新增           |
-| edit                 | 編集                            | 편집                 | 编辑           | 編輯           |
-| rename               | 名前を変更                      | 이름 바꾸기          | 重命名         | 重新命名       |
-| delete               | 削除                            | 삭제                 | 删除           | 刪除           |
-| retry                | 再試行                          | 다시 시도            | 重试           | 重試           |
-| resume               | 再開                            | 재개                 | 继续           | 繼續           |
-| stop                 | 停止                            | 중지                 | 停止           | 停止           |
-| cancel               | キャンセル                      | 취소                 | 取消           | 取消           |
-| install / uninstall  | インストール / アンインストール | 설치 / 제거          | 安装 / 卸载    | 安裝 / 移除    |
-| validate             | 検証                            | 검증                 | 验证           | 驗證           |
-| import / export      | インポート / エクスポート       | 가져오기 / 내보내기  | 导入 / 导出    | 匯入 / 匯出    |
-| upload / download    | アップロード / ダウンロード     | 업로드 / 다운로드    | 上传 / 下载    | 上傳 / 下載    |
-| reveal in folder     | フォルダーに表示                | 폴더에 표시          | 在文件夹中显示 | 在資料夾中顯示 |
-| minimize to tray     | トレイに最小化                  | 트레이로 최소화      | 最小化到托盘   | 最小化至系統匣 |
-| idle                 | 待機中                          | 대기 중              | 空闲           | 閒置           |
-| running              | 実行中                          | 실행 중              | 运行中         | 執行中         |
-| waiting for approval | 承認待ち                        | 승인 대기 중         | 等待批准       | 等待核准       |
-| failed               | 失敗                            | 실패                 | 失败           | 失敗           |
-| completed            | 完了                            | 완료                 | 已完成         | 已完成         |
-| pending              | 保留中                          | 대기 중              | 待处理         | 待處理         |
+| en                   | ja                              | ko                   | ru                             | zh-Hans        | zh-Hant        |
+| -------------------- | ------------------------------- | -------------------- | ------------------------------ | -------------- | -------------- |
+| create / new         | 作成 / 新規                     | 만들기 / 새로 만들기 | создать / новый                | 新建           | 新增           |
+| edit                 | 編集                            | 편집                 | изменить                       | 编辑           | 編輯           |
+| rename               | 名前を変更                      | 이름 바꾸기          | переименовать                  | 重命名         | 重新命名       |
+| delete               | 削除                            | 삭제                 | удалить                        | 删除           | 刪除           |
+| retry                | 再試行                          | 다시 시도            | повторить                      | 重试           | 重試           |
+| resume               | 再開                            | 재개                 | продолжить                     | 继续           | 繼續           |
+| stop                 | 停止                            | 중지                 | остановить                     | 停止           | 停止           |
+| cancel               | キャンセル                      | 취소                 | отменить                       | 取消           | 取消           |
+| install / uninstall  | インストール / アンインストール | 설치 / 제거          | установить / удалить           | 安装 / 卸载    | 安裝 / 移除    |
+| validate             | 検証                            | 검증                 | проверить                      | 验证           | 驗證           |
+| import / export      | インポート / エクスポート       | 가져오기 / 내보내기  | импортировать / экспортировать | 导入 / 导出    | 匯入 / 匯出    |
+| upload / download    | アップロード / ダウンロード     | 업로드 / 다운로드    | загрузить / скачать            | 上传 / 下载    | 上傳 / 下載    |
+| reveal in folder     | フォルダーに表示                | 폴더에 표시          | показать в папке               | 在文件夹中显示 | 在資料夾中顯示 |
+| minimize to tray     | トレイに最小化                  | 트레이로 최소화      | свернуть в трей                | 最小化到托盘   | 最小化至系統匣 |
+| idle                 | 待機中                          | 대기 중              | ожидание                       | 空闲           | 閒置           |
+| running              | 実行中                          | 실행 중              | выполняется                    | 运行中         | 執行中         |
+| waiting for approval | 承認待ち                        | 승인 대기 중         | ожидает разрешения             | 等待批准       | 等待核准       |
+| failed               | 失敗                            | 실패                 | ошибка                         | 失败           | 失敗           |
+| completed            | 完了                            | 완료                 | завершено                      | 已完成         | 已完成         |
+| pending              | 保留中                          | 대기 중              | ожидает обработки              | 待处理         | 待處理         |
 
 ## Interface chrome
 
-| en                    | ja                         | ko                     | zh-Hans            | zh-Hant            |
-| --------------------- | -------------------------- | ---------------------- | ------------------ | ------------------ |
-| Home                  | ホーム                     | 홈                     | 首页               | 首頁               |
-| Onboarding            | 初期設定                   | 초기 설정              | 初始设置           | 初始設定           |
-| General               | 一般                       | 일반                   | 通用               | 一般               |
-| Appearance            | 外観                       | 외관                   | 外观               | 外觀               |
-| Theme                 | テーマ                     | 테마                   | 主题               | 主題               |
-| System / Light / Dark | システム / ライト / ダーク | 시스템 / 라이트 / 다크 | 系统 / 浅色 / 深色 | 系統 / 淺色 / 深色 |
-| Language              | 言語                       | 언어                   | 语言               | 語言               |
-| Notifications         | 通知                       | 알림                   | 通知               | 通知               |
-| Diagnostics           | 診断                       | 진단                   | 诊断               | 診斷               |
-| Permissions           | 権限                       | 권한                   | 权限               | 權限               |
-| Data root             | データルート               | 데이터 루트            | 数据目录           | 資料目錄           |
-| Command line tool     | コマンドラインツール       | 명령줄 도구            | 命令行工具         | 命令列工具         |
+| en                    | ja                         | ko                     | ru                           | zh-Hans            | zh-Hant            |
+| --------------------- | -------------------------- | ---------------------- | ---------------------------- | ------------------ | ------------------ |
+| Home                  | ホーム                     | 홈                     | Главная                      | 首页               | 首頁               |
+| Onboarding            | 初期設定                   | 초기 설정              | Настройка                    | 初始设置           | 初始設定           |
+| General               | 一般                       | 일반                   | Общие                        | 通用               | 一般               |
+| Appearance            | 外観                       | 외관                   | Внешний вид                  | 外观               | 外觀               |
+| Theme                 | テーマ                     | 테마                   | Тема                         | 主题               | 主題               |
+| System / Light / Dark | システム / ライト / ダーク | 시스템 / 라이트 / 다크 | Системная / Светлая / Тёмная | 系统 / 浅色 / 深色 | 系統 / 淺色 / 深色 |
+| Language              | 言語                       | 언어                   | Язык                         | 语言               | 語言               |
+| Notifications         | 通知                       | 알림                   | Уведомления                  | 通知               | 通知               |
+| Diagnostics           | 診断                       | 진단                   | Диагностика                  | 诊断               | 診斷               |
+| Permissions           | 権限                       | 권한                   | Разрешения                   | 权限               | 權限               |
+| Data root             | データルート               | 데이터 루트            | Корневая папка данных        | 数据目录           | 資料目錄           |
+| Command line tool     | コマンドラインツール       | 명령줄 도구            | Инструмент командной строки  | 命令行工具         | 命令列工具         |
 
 ## Style rules
 
@@ -179,6 +181,8 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
   surrounding spaces where they improve readability.
 - Korean prose uses standard Korean spacing and punctuation. Retained Latin product terms stay
   unchanged and take surrounding spaces where they improve readability.
+- Russian prose uses sentence case and standard Russian punctuation. Use `ё` where it is the natural
+  spelling, and keep retained Latin product terms unchanged.
 - One half-width space between Chinese and Latin script (`使用 Claude 模型`). No space between a
   number and a Chinese unit that reads as one word (`5 分钟` takes the space; `12k` is not split).
 - Second person is 你, never 您 — it matches the supportive, non-authoritative tone `docs/design.md`
@@ -187,5 +191,6 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
 - No exclamation points, per `docs/design.md`.
 - Don't pad imperatives with 请. `Check the network` is 检查网络连接, not 请检查网络连接.
 - Language names in the language picker are written in their own language and never translated:
-  `English`, `日本語`, `한국어`, `简体中文`, `繁體中文`. Only the `System` option follows the interface
+  `English`, `日本語`, `한국어`, `Русский`, `简体中文`, `繁體中文`. Only the `System` option follows the
+  interface
   language.
