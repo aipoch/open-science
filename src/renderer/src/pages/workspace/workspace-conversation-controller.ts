@@ -19,6 +19,7 @@ import {
   useWorkspaceMessageQueueController,
   type WorkspaceMessageQueueController
 } from './workspace-message-queue-controller'
+import { isWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import type { WorkspaceSessionController } from './workspace-session-controller'
 import { hasMainConversation } from './use-side-chat-controller'
 
@@ -229,6 +230,7 @@ const useWorkspaceConversationController = (
     },
     runtime: options.runtime,
     isBarrierInFlight: options.session.lifecycle.isBarrierInFlight,
+    isPresentationRevealing: isWorkspacePresentationRevealing,
     isSpecialistReady: (sessionId) => {
       const current = optionsRef.current
       return current.session.lifecycle.canStartSend(sessionId)

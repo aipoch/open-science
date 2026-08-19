@@ -28,6 +28,7 @@ import {
   isWorkspaceSpecialistBarrierInFlight,
   subscribeWorkspaceSpecialistBarriers
 } from './workspace-specialist-barrier'
+import { subscribeWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import { useOpenSideChatParentSessionIds } from './use-side-chat-controller'
 import type { ComposerSendSnapshot } from './workspace-composer-controller'
 
@@ -87,6 +88,7 @@ type WorkspaceMessageQueueControllerOptions = {
   }
   runtime: Pick<WorkspaceAgentRuntime, 'sendMessage' | 'cancelRun'>
   isBarrierInFlight: (sessionId: string) => boolean
+  isPresentationRevealing: (sessionId: string) => boolean
   isSpecialistReady: (sessionId: string) => boolean
   hasPendingPermissionRequest: (sessionId: string) => boolean
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
@@ -243,8 +245,10 @@ const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactEl
   const [owner] = useState(() => new WorkspaceMessageQueueOwner())
   useEffect(() => {
     const unsubscribeBarriers = subscribeWorkspaceSpecialistBarriers(owner.requestDrain)
+    const unsubscribePresentation = subscribeWorkspacePresentationRevealing(owner.requestDrain)
     return () => {
       unsubscribeBarriers()
+      unsubscribePresentation()
       owner.dispose()
     }
   }, [owner])
@@ -324,6 +328,8 @@ const queueSessionIsSendable = (
 ): boolean =>
   session.archivedAt === undefined &&
   (session.status === 'idle' || session.status === 'error') &&
+  // Errored turns have no live reveal to wait for; let the queue proceed immediately.
+  (session.status === 'error' || !options.isPresentationRevealing(session.id)) &&
   !options.promptInFlightSessionIds.includes(session.id) &&
   !options.sendPreparationInFlightSessionIds.includes(session.id) &&
   !options.saveAsSkillInFlightSessionIds.includes(session.id) &&

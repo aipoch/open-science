@@ -29,6 +29,7 @@ const RELIABLE_FAILURE_PROMPT = 'Start the reliable messaging post-fence failure
 const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fence failure.'
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
+const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
 const DELEGATION_INHERITED_SPECIALIST_PROMPT =
@@ -573,6 +574,36 @@ if (process.argv.includes('--version')) {
             }
           })
           await streamSegment(3, 8)
+          reply = ''
+        } else if (prompt.includes(QUEUE_GATE_PROMPT)) {
+          // Regression journey for queue dispatch gating: a slow lead-in, then one large final
+          // chunk so the renderer's paced reveal trails the store-complete state by seconds.
+          // An ungated queue would dispatch the next message mid-reveal.
+          const gateMessageId = `e2e-message-${nextMessageId++}`
+          for (let chunk = 0; chunk < 4; chunk += 1) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: gateMessageId,
+                content: { type: 'text', text: `Queue gate lead-in chunk ${chunk}.\n\n` }
+              }
+            })
+            await delay(50)
+          }
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: gateMessageId,
+              content: {
+                type: 'text',
+                text: 'Queue gate backlog paragraph: the reveal keeps pacing after the store completes. '.repeat(
+                  200
+                )
+              }
+            }
+          })
           reply = ''
         } else if (
           await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])

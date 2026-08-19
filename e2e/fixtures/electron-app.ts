@@ -343,6 +343,9 @@ class ElectronAppHarness implements ElectronApp {
       process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
     )
     settings.opencodeVersion = '1.0.0'
+    // Specs assert English copy. Pin the locale so the host language can't leak in — Main
+    // resolves a 'system' preference from the OS language list, ignoring Chromium's --lang.
+    settings.localePreference = 'en'
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     await this.launch()
     return this.page

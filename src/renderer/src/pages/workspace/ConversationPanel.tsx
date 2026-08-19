@@ -830,6 +830,7 @@ const ConversationPanel = ({
             pendingElicitations={sideChat ? [] : sessionPendingElicitations}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
             onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
+            reportPresentationRevealing
           />
         </WorkspaceMessageEditStateProvider>
 
