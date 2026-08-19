@@ -593,7 +593,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             throw error
           }
         },
-        rollbackShell: () => {
+        rollbackShell: async () => {
+          // Module loading can fail while verification is actively migrating. Keep the quit guard
+          // installed until that attempt settles so app.quit cannot interrupt database writes.
+          await databaseStartupOwner.whenAttemptSettled()
           disposeLocalePreferenceIpc()
           databaseStartupQuitGuard.dispose()
           managedPreviewProtocolBridge.dispose()

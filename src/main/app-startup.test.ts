@@ -280,19 +280,22 @@ describe('prepareVisibleStartupRuntime', () => {
 
 describe('waitForStartupShell', () => {
   const makeWindow = (): {
+    destroy: ReturnType<typeof vi.fn>
     emitWindow: (event: string) => void
     emitWebContents: (event: string, ...args: unknown[]) => void
-    window: Pick<BrowserWindow, 'once' | 'removeListener' | 'webContents'>
+    window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
   } => {
     const windowEvents = new EventEmitter()
     const webContentsEvents = new EventEmitter()
+    const destroy = vi.fn()
     return {
+      destroy,
       emitWindow: (event) => windowEvents.emit(event),
       emitWebContents: (event, ...args) => webContentsEvents.emit(event, ...args),
-      window: Object.assign(windowEvents, { webContents: webContentsEvents }) as unknown as Pick<
-        BrowserWindow,
-        'once' | 'removeListener' | 'webContents'
-      >
+      window: Object.assign(windowEvents, {
+        destroy,
+        webContents: webContentsEvents
+      }) as unknown as Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
     }
   }
 
@@ -307,14 +310,21 @@ describe('waitForStartupShell', () => {
 
     source.emitWindow('ready-to-show')
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
+    expect(source.destroy).not.toHaveBeenCalled()
+  })
+
+  it('discards an unusable startup window after a main-frame load failure', async () => {
+    const source = makeWindow()
+    const settled = vi.fn()
+    void waitForStartupShell(source.window).then(settled)
+
+    source.emitWebContents('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'file://index', true)
+
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
+    expect(source.destroy).toHaveBeenCalledOnce()
   })
 
   it.each([
-    [
-      'a main-frame load failure',
-      (source: ReturnType<typeof makeWindow>) =>
-        source.emitWebContents('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'file://index', true)
-    ],
     [
       'a renderer exit',
       (source: ReturnType<typeof makeWindow>) =>
@@ -332,5 +342,6 @@ describe('waitForStartupShell', () => {
     signal(source)
 
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
+    expect(source.destroy).not.toHaveBeenCalled()
   })
 })

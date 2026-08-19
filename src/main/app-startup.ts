@@ -123,10 +123,10 @@ export const prepareVisibleStartupRuntime = async <Shell, Modules, Runtime>(
 }
 
 // Resolve the first-paint barrier on terminal renderer/window events as well as success. The backend
-// and lifecycle must keep initializing even when Chromium cannot produce the first frame; windows.ts
-// owns renderer recovery and can then reload or close the failed startup window.
+// and lifecycle must keep initializing even when Chromium cannot produce the first frame. Main-frame
+// load failure discards the unusable window; windows.ts owns renderer-process crash recovery.
 export const waitForStartupShell = (
-  window: Pick<BrowserWindow, 'once' | 'removeListener' | 'webContents'>
+  window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
 ): Promise<void> =>
   new Promise((resolve) => {
     let settled = false
@@ -150,7 +150,11 @@ export const waitForStartupShell = (
       _validatedURL: string,
       isMainFrame: boolean
     ): void => {
-      if (isMainFrame) settle()
+      if (!isMainFrame) return
+      // windows.ts logs document load failures but deliberately does not retry them. Discard this
+      // unusable hidden window so the lifecycle creates a fresh main window after composition.
+      window.destroy()
+      settle()
     }
 
     window.once('ready-to-show', settle)
