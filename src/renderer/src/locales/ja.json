@@ -3047,5 +3047,9 @@
   "Slate": "スレート",
   "Change appearance for {{name}}": "{{name}} の外観を変更",
   "Appearance wasn’t saved. Try again.": "外観を保存できませんでした。もう一度お試しください。",
-  "Specialist appearance picker — 8 states": "スペシャリスト外観ピッカー — 8つの状態"
+  "Specialist appearance picker — 8 states": "スペシャリスト外観ピッカー — 8つの状態",
+  "System Tags stay first": "システムタグは常に先頭に表示されます",
+  "Reorder {{tag}}": "{{tag}} の順序を変更",
+  "Moved {{tag}} to position {{position}}.": "{{tag}} を {{position}} 番目に移動しました。",
+  "Could not reorder Tags. Try again.": "タグの順序を変更できませんでした。もう一度お試しください。"
 }

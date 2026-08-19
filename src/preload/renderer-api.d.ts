@@ -188,6 +188,7 @@ import type {
 import type {
   CreateTagRequest,
   DeleteTagRequest,
+  ReorderTagsRequest,
   SetTagAssignmentRequest,
   TagSnapshot,
   TagsChangedEvent,
@@ -724,6 +725,7 @@ export interface OpenScienceAPI {
     create(request: CreateTagRequest): Promise<TagSnapshot>
     update(request: UpdateTagRequest): Promise<TagSnapshot>
     delete(request: DeleteTagRequest): Promise<TagSnapshot>
+    reorder(request: ReorderTagsRequest): Promise<TagSnapshot>
     setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot>
     onChanged(listener: AcpListener<TagsChangedEvent>): RemoveListener
   }

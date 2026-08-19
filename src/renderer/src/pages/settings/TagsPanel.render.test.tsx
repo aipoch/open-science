@@ -12,6 +12,20 @@ import { TagsPanel } from './TagsPanel'
 let container: HTMLDivElement
 let root: Root
 
+const dispatchPointer = (
+  element: Element,
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  clientY: number
+): void => {
+  const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: 10, clientY })
+  Object.defineProperties(event, {
+    isPrimary: { value: true },
+    pointerId: { value: 1 },
+    pointerType: { value: 'mouse' }
+  })
+  act(() => element.dispatchEvent(event))
+}
+
 beforeEach(() => {
   container = document.createElement('div')
   document.body.append(container)
@@ -52,6 +66,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  Reflect.deleteProperty(document, 'elementFromPoint')
 })
 
 describe('TagsPanel', () => {
@@ -193,6 +208,51 @@ describe('TagsPanel', () => {
     expect(container.textContent).toContain('+2')
     expect(container.textContent).not.toContain('Production')
     expect(container.firstElementChild?.className).toContain('overflow-hidden')
+  })
+
+  it("renders a resource's Tags in the persisted global order", () => {
+    useTagStore.setState({
+      tags: [
+        { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
+        {
+          id: 'tag-beta',
+          name: 'Beta',
+          iconKey: 'bookmark',
+          colorKey: 'green',
+          createdAt: 3,
+          updatedAt: 3
+        },
+        {
+          id: 'tag-alpha',
+          name: 'Alpha',
+          iconKey: 'tag',
+          colorKey: 'blue',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      assignments: ['tag-alpha', 'tag-favorite', 'tag-beta'].map((tagId, index) => ({
+        tagId,
+        resourceType: 'catalog.skill' as const,
+        resourceId: 'analysis',
+        createdAt: index + 1
+      }))
+    })
+
+    act(() => {
+      root.render(
+        <ResourceTagBadges
+          reference={{ resourceType: 'catalog.skill', resourceId: 'analysis' }}
+          limit={Number.POSITIVE_INFINITY}
+        />
+      )
+    })
+
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('[title]')).map(
+        (element) => element.textContent
+      )
+    ).toEqual(['Favorites', 'Beta', 'Alpha'])
   })
 
   it('opens a Tag from its resource badge and removes the assignment without navigating', async () => {
@@ -421,7 +481,7 @@ describe('TagsPanel', () => {
     expect(tagList?.classList.contains('border-b')).toBe(true)
     expect(tagList?.classList.contains('md:border-b-0')).toBe(true)
     expect(tagList?.classList.contains('md:border-r')).toBe(true)
-    expect(tagRows.every((row) => row.classList.contains('w-full'))).toBe(true)
+    expect(tagRows.every((row) => row.classList.contains('flex-1'))).toBe(true)
     expect(counts.map((count) => count?.textContent)).toEqual(['1', '0'])
     expect(counts.every((count) => count?.classList.contains('ml-auto'))).toBe(true)
     expect(counts.every((count) => count?.classList.contains('min-w-5'))).toBe(true)
@@ -436,5 +496,129 @@ describe('TagsPanel', () => {
     expect(detailHeader?.classList.contains('flex-wrap')).toBe(true)
     expect(detailActions?.querySelector('[aria-label="Edit Tag"]')).not.toBeNull()
     expect(detailActions?.querySelector('[aria-label="Delete Tag"]')).not.toBeNull()
+  })
+
+  it('keeps the system Tag fixed and reorders custom Tags with the keyboard', async () => {
+    const reorder = vi.fn().mockResolvedValue(undefined)
+    useTagStore.setState({
+      reorder,
+      tags: [
+        { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
+        {
+          id: 'tag-a',
+          name: 'Alpha',
+          iconKey: 'tag',
+          colorKey: 'blue',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'tag-b',
+          name: 'Beta',
+          iconKey: 'bookmark',
+          colorKey: 'green',
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[aria-label="System Tags stay first"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Reorder Favorites"]')).toBeNull()
+    const handle = container.querySelector<HTMLButtonElement>('[aria-label="Reorder Alpha"]')!
+    handle.focus()
+    await act(async () => {
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
+    expect(reorder).toHaveBeenCalledWith({ tagIds: ['tag-b', 'tag-a'] })
+    expect(document.activeElement).toBe(handle)
+    expect(container.textContent).toContain('Moved Alpha to position 3.')
+  })
+
+  it('keeps the first-position drop target stable while dragging upward', async () => {
+    const reorder = vi.fn().mockResolvedValue(undefined)
+    useTagStore.setState({
+      reorder,
+      tags: [
+        { id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 },
+        {
+          id: 'tag-a',
+          name: 'Alpha',
+          iconKey: 'tag',
+          colorKey: 'blue',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'tag-b',
+          name: 'Beta',
+          iconKey: 'bookmark',
+          colorKey: 'green',
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ]
+    })
+    await act(async () => {
+      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+    })
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-reorderable-tag-id]'))
+    const firstBounds = vi.spyOn(rows[0]!, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 40,
+      left: 0,
+      right: 240,
+      width: 240,
+      height: 40,
+      x: 0,
+      y: 0,
+      toJSON: () => undefined
+    })
+    vi.spyOn(rows[1]!, 'getBoundingClientRect').mockReturnValue({
+      top: 40,
+      bottom: 80,
+      left: 0,
+      right: 240,
+      width: 240,
+      height: 40,
+      x: 0,
+      y: 40,
+      toJSON: () => undefined
+    })
+    const handle = container.querySelector<HTMLButtonElement>('[aria-label="Reorder Beta"]')!
+    handle.setPointerCapture = vi.fn()
+    handle.hasPointerCapture = vi.fn(() => true)
+    handle.releasePointerCapture = vi.fn()
+
+    dispatchPointer(handle, 'pointerdown', 70)
+    dispatchPointer(handle, 'pointermove', 66)
+    expect(rows[1]!.className).not.toContain('ring-primary/30')
+    dispatchPointer(handle, 'pointermove', 0)
+    expect(rows[1]!.className).toContain('ring-primary/30')
+    expect(rows[0]!.querySelector('.-top-px')).not.toBeNull()
+    expect(rows.every((row) => row.style.transform === '')).toBe(true)
+
+    firstBounds.mockReturnValue({
+      top: 40,
+      bottom: 80,
+      left: 0,
+      right: 240,
+      width: 240,
+      height: 40,
+      x: 0,
+      y: 40,
+      toJSON: () => undefined
+    })
+    dispatchPointer(handle, 'pointermove', 0)
+    expect(rows[0]!.querySelector('.-top-px')).not.toBeNull()
+
+    await act(async () => dispatchPointer(handle, 'pointerup', 0))
+    expect(reorder).toHaveBeenCalledWith({ tagIds: ['tag-b', 'tag-a'] })
+    expect(handle.releasePointerCapture).toHaveBeenCalledWith(1)
   })
 })

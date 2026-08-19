@@ -70,10 +70,11 @@ describe('notification attention metadata migration', () => {
         '0008_database_json_constraints',
         '0009_vision_evidence',
         '0010_compute_password_auth',
-        '0011_cross_resource_tags'
+        '0011_cross_resource_tags',
+        '0012_tag_ordering'
       ],
       from: '0006_database_domain_constraints',
-      to: '0011_cross_resource_tags'
+      to: '0012_tag_ordering'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
@@ -81,9 +82,7 @@ describe('notification attention metadata migration', () => {
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).resolves.toBeUndefined()
-    await expect(
-      access(`${databasePath}.before-0010_compute_password_auth.backup`)
-    ).resolves.toBeUndefined()
+    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).resolves.toBeUndefined()
 
     await expect(
       client.$queryRaw<

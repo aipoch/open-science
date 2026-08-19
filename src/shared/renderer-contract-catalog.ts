@@ -271,7 +271,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   ]),
   group('tags', 'tags', [
     ['onChanged', 'tags:changed', EVENT], ['create', 'tags:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
-    ['delete', 'tags:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['setAssignment', 'tags:set-assignment', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['delete', 'tags:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['reorder', 'tags:reorder', WEB, undefined, undefined, RUNTIME_VALIDATED], ['setAssignment', 'tags:set-assignment', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['snapshot', 'tags:snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'tags:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
   ]),
   group('remote-access', 'remoteAccess', [

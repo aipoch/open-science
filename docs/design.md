@@ -770,7 +770,9 @@ colors communicate a successful or failed probe/migration result.
   resource's detail or editor.
 - The Tag list is a single-action selector: every row keeps its resource count in one right-aligned
   trailing column. Persistent edit and delete icon actions belong to the selected custom Tag's detail
-  header instead of individual list rows; the protected Favorites Tag exposes neither action.
+  header instead of individual list rows; the protected Favorites Tag exposes neither action. A
+  leading handle reorders custom Tags by pointer or keyboard. Favorites instead shows a fixed lock
+  affordance and always remains first.
 - A Tag may belong to any number of resources and a resource may have any number of Tags. The same
   Tag filter is available in the three catalog panels and in the Specialist capability picker, but
   Specialist persistence continues to store concrete Skill and Connector IDs rather than a dynamic
@@ -783,7 +785,10 @@ colors communicate a successful or failed probe/migration result.
   from the cleaned display name with NFKC normalization and deterministic lowercase; it never crosses
   the renderer contract. Names compare case-insensitively without changing the cleaned display value
   shown to the user.
-- SQLite owns `Tag` definitions and `TagAssignment` edges. An assignment's composite identity is
+- SQLite owns `Tag` definitions, their unique contiguous `sortOrder`, and `TagAssignment` edges.
+  Favorites owns position `0`; custom Tags own positions `1..N`, and newly created Tags append. The
+  ordered Tag snapshot is the single global presentation order, so every resource with multiple Tags
+  renders its badges in that same order. An assignment's composite identity is
   `(tagId, resourceType, resourceId)`; deleting a custom Tag cascades its edges. `resourceType` stays a
   registry-validated string so later resource adapters do not require a table rebuild. Catalog
   reconciliation prunes references to deleted resources, while each V1 resource-deletion workflow

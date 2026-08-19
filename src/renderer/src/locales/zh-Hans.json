@@ -3047,5 +3047,9 @@
   "Slate": "石板灰",
   "Change appearance for {{name}}": "更改 {{name}} 的外观",
   "Appearance wasn’t saved. Try again.": "未能保存外观。请重试。",
-  "Specialist appearance picker — 8 states": "专家外观选择器 — 8 种状态"
+  "Specialist appearance picker — 8 states": "专家外观选择器 — 8 种状态",
+  "System Tags stay first": "系统标签固定在首位",
+  "Reorder {{tag}}": "调整 {{tag}} 的顺序",
+  "Moved {{tag}} to position {{position}}.": "已将 {{tag}} 移至第 {{position}} 位。",
+  "Could not reorder Tags. Try again.": "无法调整标签顺序。请重试。"
 }

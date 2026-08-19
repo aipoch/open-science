@@ -463,6 +463,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "nameKey" TEXT,
     "iconKey" TEXT,
     "colorKey" TEXT,
+    "sortOrder" INTEGER NOT NULL DEFAULT 0,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "Tag_shape_check" CHECK ((("systemKey" IS NOT NULL AND "name" IS NULL AND "nameKey" IS NULL AND "iconKey" IS NULL AND "colorKey" IS NULL) OR ("systemKey" IS NULL AND "name" IS NOT NULL AND "nameKey" IS NOT NULL AND "iconKey" IS NOT NULL AND "colorKey" IS NOT NULL))),
@@ -538,6 +539,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_systemKey_key" ON "Tag"("systemKey");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_nameKey_key" ON "Tag"("nameKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_sortOrder_key" ON "Tag"("sortOrder");`,
   `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`
 ] as const
 

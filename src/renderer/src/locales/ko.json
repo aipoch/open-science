@@ -3045,5 +3045,9 @@
   "Pink": "핑크",
   "Change appearance for {{name}}": "{{name}}의 외관 변경",
   "Appearance wasn’t saved. Try again.": "외관을 저장하지 못했습니다. 다시 시도하세요.",
-  "Specialist appearance picker — 8 states": "스페셜리스트 외관 선택기 — 8가지 상태"
+  "Specialist appearance picker — 8 states": "스페셜리스트 외관 선택기 — 8가지 상태",
+  "System Tags stay first": "시스템 태그는 항상 맨 앞에 표시됩니다",
+  "Reorder {{tag}}": "{{tag}} 순서 변경",
+  "Moved {{tag}} to position {{position}}.": "{{tag}}을(를) {{position}}번째로 이동했습니다.",
+  "Could not reorder Tags. Try again.": "태그 순서를 변경하지 못했습니다. 다시 시도하세요."
 }

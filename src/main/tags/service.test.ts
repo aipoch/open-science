@@ -8,6 +8,23 @@ import { TagService } from './service'
 const snapshot = (revision: number): TagSnapshot => ({ revision, tags: [], assignments: [] })
 
 describe('TagService', () => {
+  it('serializes Tag reordering and publishes the authoritative result', async () => {
+    const repository = {
+      reorder: vi.fn().mockResolvedValue(undefined),
+      snapshot: vi.fn((revision) => Promise.resolve(snapshot(revision)))
+    }
+    const events = { publish: vi.fn() }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      {} as TagResourceCatalog,
+      events
+    )
+
+    await expect(service.reorder({ tagIds: ['tag-b', 'tag-a'] })).resolves.toEqual(snapshot(1))
+    expect(repository.reorder).toHaveBeenCalledWith({ tagIds: ['tag-b', 'tag-a'] })
+    expect(events.publish).toHaveBeenCalledWith('tags:changed', { revision: 1 })
+  })
+
   it('validates resources, advances revision, and publishes a convergence event', async () => {
     const repository = {
       setAssignment: vi.fn().mockResolvedValue(undefined),

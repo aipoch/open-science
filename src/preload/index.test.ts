@@ -586,6 +586,7 @@ describe('preload bridge — public surface inventory', () => {
       'tags.create',
       'tags.delete',
       'tags.onChanged',
+      'tags.reorder',
       'tags.setAssignment',
       'tags.snapshot',
       'tags.update',

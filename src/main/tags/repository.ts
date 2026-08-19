@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient, type Tag as PrismaTag } from '@prisma/client
 import {
   FAVORITE_TAG_ID,
   FAVORITE_TAG_SYSTEM_KEY,
+  type ReorderTagsRequest,
   TAG_NAME_MAX_LENGTH,
   type CreateTagRequest,
   type SetTagAssignmentRequest,
@@ -16,7 +17,7 @@ import {
 } from '../../shared/tags'
 import type { TagResourceCatalogSnapshot } from './resource-catalog'
 
-type TagClient = Pick<PrismaClient, 'tag' | 'tagAssignment'>
+type TagClient = Pick<PrismaClient, 'tag' | 'tagAssignment' | '$transaction'>
 type TagClientProvider = () => Promise<TagClient>
 
 const cleanTagName = (input: string): string => input.normalize('NFKC').trim().replace(/\s+/gu, ' ')
@@ -56,6 +57,7 @@ class TagRepository {
       create: {
         id: FAVORITE_TAG_ID,
         systemKey: FAVORITE_TAG_SYSTEM_KEY,
+        sortOrder: 0,
         updatedAt: new Date()
       },
       update: {}
@@ -66,7 +68,7 @@ class TagRepository {
     const client = await this.getClient()
     await this.ensureFavorite(client)
     const [tags, assignments] = await Promise.all([
-      client.tag.findMany({ orderBy: [{ systemKey: 'desc' }, { nameKey: 'asc' }, { id: 'asc' }] }),
+      client.tag.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }),
       client.tagAssignment.findMany({
         orderBy: [{ createdAt: 'asc' }, { tagId: 'asc' }, { resourceType: 'asc' }]
       })
@@ -91,12 +93,15 @@ class TagRepository {
     if (nameKey.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
     try {
       const client = await this.getClient()
+      await this.ensureFavorite(client)
+      const lastTag = await client.tag.findFirst({ orderBy: { sortOrder: 'desc' } })
       await client.tag.create({
         data: {
           name,
           nameKey,
           iconKey: request.iconKey,
-          colorKey: request.colorKey
+          colorKey: request.colorKey,
+          sortOrder: (lastTag?.sortOrder ?? 0) + 1
         }
       })
     } catch (error) {
@@ -134,7 +139,51 @@ class TagRepository {
     const current = await client.tag.findUnique({ where: { id } })
     if (!current) throw new Error('Tag not found.')
     if (current.systemKey) throw new Error('System Tags cannot be deleted.')
-    await client.tag.delete({ where: { id } })
+    const trailingTags = await client.tag.findMany({
+      where: { sortOrder: { gt: current.sortOrder } },
+      select: { id: true },
+      orderBy: { sortOrder: 'asc' }
+    })
+    await client.$transaction([
+      client.tag.delete({ where: { id } }),
+      ...trailingTags.map((tag, index) =>
+        client.tag.update({ where: { id: tag.id }, data: { sortOrder: -(index + 1) } })
+      ),
+      ...trailingTags.map((tag, index) =>
+        client.tag.update({
+          where: { id: tag.id },
+          data: { sortOrder: current.sortOrder + index }
+        })
+      )
+    ])
+  }
+
+  async reorder(request: ReorderTagsRequest): Promise<void> {
+    const client = await this.getClient()
+    const customTags = await client.tag.findMany({
+      where: { systemKey: null },
+      select: { id: true },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+    })
+    const persistedIds = customTags.map(({ id }) => id)
+    const requestedIds = request.tagIds
+    if (
+      new Set(requestedIds).size !== requestedIds.length ||
+      requestedIds.length !== persistedIds.length ||
+      requestedIds.some((id) => !persistedIds.includes(id))
+    ) {
+      throw new Error('Tag order must include every custom Tag exactly once.')
+    }
+    if (requestedIds.every((id, index) => id === persistedIds[index])) return
+
+    await client.$transaction([
+      ...requestedIds.map((id, index) =>
+        client.tag.update({ where: { id }, data: { sortOrder: -(index + 1) } })
+      ),
+      ...requestedIds.map((id, index) =>
+        client.tag.update({ where: { id }, data: { sortOrder: index + 1 } })
+      )
+    ])
   }
 
   async setAssignment(request: SetTagAssignmentRequest): Promise<void> {
