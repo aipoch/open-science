@@ -510,9 +510,14 @@ class TaskRunner {
       throw new Error('Task Project update is unavailable.')
     }
     try {
-      return projectTaskProjection(
-        await this.dependencies.projects.update({ id: project.id, ...request })
-      )
+      const updateRequest: UpdateProjectRequest = {
+        id: project.id,
+        expectedUpdatedAt: request.expectedUpdatedAt,
+        ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.description !== undefined ? { description: request.description } : {}),
+        ...(request.agentContext !== undefined ? { agentContext: request.agentContext } : {})
+      }
+      return projectTaskProjection(await this.dependencies.projects.update(updateRequest))
     } catch (error) {
       if (
         error instanceof Error &&

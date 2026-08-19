@@ -111,8 +111,10 @@ describe('TaskRunner', () => {
     await expect(
       runner.updateProject(project.id, {
         expectedUpdatedAt: project.updatedAt,
-        agentContext: 'Prefer Python.'
-      })
+        agentContext: 'Prefer Python.',
+        id: 'project-redirect',
+        pinned: true
+      } as never)
     ).resolves.toEqual({ ...project, updatedAt: 2, hasAgentContext: true })
     expect(update).toHaveBeenCalledWith({
       id: project.id,

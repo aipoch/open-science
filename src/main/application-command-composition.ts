@@ -134,6 +134,7 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
 const TASK_COMMAND_NAMES = Object.freeze([
   'projects:list',
   'projects:create',
+  'projects:update',
   'sessions:load-all',
   'sessions:save-session',
   'sessions:set-delegation-policy',
