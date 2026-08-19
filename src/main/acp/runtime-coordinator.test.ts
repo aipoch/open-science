@@ -320,6 +320,23 @@ describe('AcpRuntimeCoordinator', () => {
     expect(coordinator.getSnapshot().revision).toBe(2)
   })
 
+  it('keeps snapshot publication available when no incremental event adapter is configured', () => {
+    let incrementalPublicationConfigured = true
+    new AcpRuntimeCoordinator(
+      (callbacks) => {
+        incrementalPublicationConfigured = callbacks.onEvent !== undefined
+        return createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+      },
+      { onStateChanged: vi.fn() }
+    )
+
+    expect(incrementalPublicationConfigured).toBe(false)
+  })
+
   it('does not capture the process Active backend for a Session without an owning runtime', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

@@ -6,12 +6,17 @@ import type {
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
+  AcpRuntimeEvent,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
+import {
+  createRuntimeEventSubscriptionOwner,
+  type RuntimeEventListener
+} from './runtime-event-subscription-owner'
 
 // Provides a stable renderer fallback before the first main-process snapshot arrives.
 const emptyAcpState: AcpStateSnapshot = {
@@ -43,6 +48,8 @@ const getErrorMessage = (error: unknown): string => {
 const useAcpRuntime = (): {
   state: AcpStateSnapshot
   reconcileSnapshot: (snapshot: AcpStateSnapshot) => void
+  subscribeRuntimeEvents: (listener: RuntimeEventListener) => () => void
+  currentRuntimeEvents: () => readonly AcpRuntimeEvent[]
   actionError: string | null
   isConnecting: boolean
   isDisconnecting: boolean
@@ -113,11 +120,25 @@ const useAcpRuntime = (): {
   const [actionError, setActionError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
+  const [runtimeEventOwner] = useState(createRuntimeEventSubscriptionOwner)
 
-  const applySnapshot = useCallback((snapshot: AcpStateSnapshot): void => {
-    if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
-    setState(snapshot)
-  }, [])
+  const applySnapshot = useCallback(
+    (snapshot: AcpStateSnapshot): void => {
+      if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
+      runtimeEventOwner.observeSnapshot(snapshot.events, snapshot)
+      setState(snapshot)
+    },
+    [runtimeEventOwner]
+  )
+
+  const applyInitialSnapshot = useCallback(
+    (snapshot: AcpStateSnapshot): void => {
+      if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
+      runtimeEventOwner.observeInitialSnapshot(snapshot.events, snapshot)
+      setState(snapshot)
+    },
+    [runtimeEventOwner]
+  )
 
   // Loads the initial snapshot and keeps state fresh through runtime broadcasts.
   useEffect(() => {
@@ -135,9 +156,12 @@ const useAcpRuntime = (): {
         const snapshot = await window.api.acp.getState()
         // Older Main versions do not publish revisions. In that compatibility case, a pushed
         // snapshot received after subscription is the only safe authority over the initial pull.
-        if (!hasPushedSnapshot || snapshot.revision !== undefined) applyMountedSnapshot(snapshot)
+        if (!hasPushedSnapshot || snapshot.revision !== undefined) {
+          if (isMounted) applyInitialSnapshot(snapshot)
+        }
       } catch (error) {
         if (isMounted) {
+          runtimeEventOwner.observeInitialSnapshot([])
           setActionError(getErrorMessage(error))
         }
       }
@@ -147,14 +171,19 @@ const useAcpRuntime = (): {
       hasPushedSnapshot = true
       applyMountedSnapshot(snapshot)
     })
+    const removeEventListener = window.api.acp.onEvent?.((event: AcpRuntimeEvent) => {
+      if (!isMounted) return
+      runtimeEventOwner.observeEvent(event)
+    })
 
     void loadInitialState()
 
     return () => {
       isMounted = false
       removeStateListener()
+      removeEventListener?.()
     }
-  }, [applySnapshot])
+  }, [applyInitialSnapshot, applySnapshot, runtimeEventOwner])
 
   // Runs an IPC action that returns a full runtime snapshot.
   const runSnapshotAction = useCallback(
@@ -425,6 +454,8 @@ const useAcpRuntime = (): {
   return {
     state,
     reconcileSnapshot: applySnapshot,
+    subscribeRuntimeEvents: runtimeEventOwner.subscribe,
+    currentRuntimeEvents: runtimeEventOwner.currentEvents,
     actionError,
     isConnecting,
     isDisconnecting,

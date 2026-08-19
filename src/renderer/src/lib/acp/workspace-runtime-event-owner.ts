@@ -3,6 +3,7 @@ import {
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  MAX_ACP_RUNTIME_EVENTS,
   isDurableAgentUserChoiceRequest,
   type AcpConnectionStatus,
   type AcpContextUsage,
@@ -45,6 +46,7 @@ type WorkspacePermissionLifecycleObserver = {
 
 type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
+  processIncremental: (events: readonly AcpRuntimeEvent[]) => Promise<void>
   drain: (sessionId?: string) => Promise<void>
 }
 type WorkspaceRuntimeEventSnapshot = Pick<
@@ -234,37 +236,56 @@ const createWorkspaceRuntimeEventProcessor = (
     }
   }
 
-  return {
-    process: (events) => {
-      latestEvents = events
-      const visibleLaneKeys = new Set<string | symbol>()
-
+  const acceptEvents = (
+    events: readonly AcpRuntimeEvent[],
+    replaceLatestEvents: boolean
+  ): Promise<void> => {
+    if (replaceLatestEvents) {
+      latestEvents = [...events]
+    } else {
+      const latestEventIds = new Set(latestEvents.map((event) => event.id))
       for (const event of events) {
-        const laneKey = getEventLaneKey(event)
-        const lane = getEventLane(laneKey)
-        visibleLaneKeys.add(laneKey)
-
-        if (
-          !lane.processedEventIds.has(event.id) &&
-          !lane.processingEventIds.has(event.id) &&
-          !lane.acceptedEvents.has(event.id)
-        ) {
-          // A bounded source snapshot may evict this event before a slow predecessor finishes.
-          lane.acceptedEvents.set(event.id, event)
-          acceptedEventVersion += 1
-          presentationBuffer.forceOnAccepted(lane.presentation, event)
+        if (!latestEventIds.has(event.id)) {
+          latestEvents.push(event)
+          latestEventIds.add(event.id)
         }
       }
-
-      for (const [laneKey, lane] of eventLanes) cleanEventLane(laneKey, lane)
-
-      const drains = [...visibleLaneKeys].map((laneKey) => drainLane(laneKey))
-      for (const [laneKey, lane] of eventLanes) {
-        if (!visibleLaneKeys.has(laneKey) && lane.acceptedEvents.size > 0) void drainLane(laneKey)
+      if (latestEvents.length > MAX_ACP_RUNTIME_EVENTS) {
+        latestEvents = latestEvents.slice(-MAX_ACP_RUNTIME_EVENTS)
       }
+    }
+    const visibleLaneKeys = new Set<string | symbol>()
 
-      return Promise.all(drains).then(() => undefined)
-    },
+    for (const event of events) {
+      const laneKey = getEventLaneKey(event)
+      const lane = getEventLane(laneKey)
+      visibleLaneKeys.add(laneKey)
+
+      if (
+        !lane.processedEventIds.has(event.id) &&
+        !lane.processingEventIds.has(event.id) &&
+        !lane.acceptedEvents.has(event.id)
+      ) {
+        // A bounded source snapshot may evict this event before a slow predecessor finishes.
+        lane.acceptedEvents.set(event.id, event)
+        acceptedEventVersion += 1
+        presentationBuffer.forceOnAccepted(lane.presentation, event)
+      }
+    }
+
+    for (const [laneKey, lane] of eventLanes) cleanEventLane(laneKey, lane)
+
+    const drains = [...visibleLaneKeys].map((laneKey) => drainLane(laneKey))
+    for (const [laneKey, lane] of eventLanes) {
+      if (!visibleLaneKeys.has(laneKey) && lane.acceptedEvents.size > 0) void drainLane(laneKey)
+    }
+
+    return Promise.all(drains).then(() => undefined)
+  }
+
+  return {
+    process: (events) => acceptEvents(events, true),
+    processIncremental: (events) => acceptEvents(events, false),
     drain: async (sessionId) => {
       if (sessionId !== undefined) {
         const lane = eventLanes.get(sessionId)
@@ -454,6 +475,13 @@ const ingestWorkspaceRuntimeSnapshot = async (
 const processWorkspaceRuntimeEvents = (snapshot: WorkspaceRuntimeEventSnapshot): Promise<boolean> =>
   ingestWorkspaceRuntimeSnapshot(snapshot, true)
 
+// Accepts live IPC events immediately, outside React state. The processor copies each event into
+// its per-session lane before returning, so later snapshot-window eviction cannot drop a prefix
+// while asynchronous presentation or persistence is still draining.
+const processIncrementalWorkspaceRuntimeEvents = (
+  events: readonly AcpRuntimeEvent[]
+): Promise<void> => liveWorkspaceRuntimeEventProcessor.processIncremental(events)
+
 // Flags sessions with a live Agent operation as disconnected on a transition into a dropped
 // connection state. Durable permission waits are intentionally quiescent: their provider RPC can
 // disappear while the persisted card remains actionable after a later resume.
@@ -548,6 +576,7 @@ export {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   markRunningSessionsDisconnectedOnDrop,
+  processIncrementalWorkspaceRuntimeEvents,
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,

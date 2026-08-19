@@ -13,6 +13,7 @@ import {
   type AcpAgentRuntimeUpdate,
   type AcpCreateSessionResponse,
   type AcpPermissionRequest,
+  type AcpRuntimeEvent,
   type AcpStateSnapshot
 } from '../../../../shared/acp'
 import {
@@ -73,6 +74,8 @@ type RuntimeMock = {
   respondToElicitation: Mock
   setPermissionProfile: Mock
   revokePermissionGrant: Mock
+  subscribeRuntimeEvents?: Mock
+  currentRuntimeEvents?: () => readonly AcpRuntimeEvent[]
 }
 
 const createRuntime = (state: AcpStateSnapshot): RuntimeMock => ({
@@ -281,6 +284,103 @@ describe('workspace Agent Runtime hook contract', () => {
       saveAsSkillInFlightSessionIds: [],
       nativeContextCompactionSessionIds: ['session-1']
     })
+  })
+
+  it('routes live events into Workspace before snapshot reconciliation', async () => {
+    const pending = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Stream the answer',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    let liveListener: ((events: readonly AcpRuntimeEvent[]) => void) | undefined
+    const runtime = createRuntime(
+      createSnapshot({
+        sessionIds: ['session-1'],
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1']
+      })
+    )
+    runtime.subscribeRuntimeEvents = vi.fn((listener) => {
+      liveListener = listener
+      return vi.fn()
+    })
+    runtime.currentRuntimeEvents = () => []
+    runtimeMock.current = runtime
+    await render()
+
+    const events: AcpRuntimeEvent[] = Array.from({ length: 8 }, (_, index) => ({
+      id: `runtime-1:acp-event-${index + 1}`,
+      timestamp: index + 1,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      promptMessageId: pending?.messageId,
+      text: 'x'
+    }))
+    vi.mocked(window.api.acp.getState).mockResolvedValue(
+      createSnapshot({
+        revision: 1,
+        sessionIds: ['session-1'],
+        events
+      })
+    )
+    await act(async () => {
+      for (const event of events) liveListener?.([event])
+      await drainWorkspaceRuntimeEventsForPersistence('session-1')
+    })
+
+    const agentText = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-1')
+      ?.messages.filter((message) => message.role === 'agent')
+      .map((message) => message.content)
+      .join('')
+    expect(agentText).toBe('x'.repeat(8))
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === 'session-1')
+        ?.awaitingFirstAgentOutput
+    ).not.toBe(true)
+  })
+
+  it('uses initial snapshot state when handling a recoverable lifecycle event', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue after compacting',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    let liveListener:
+      ((events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void) | undefined
+    const runtime = createRuntime(createSnapshot())
+    runtime.subscribeRuntimeEvents = vi.fn((listener) => {
+      liveListener = listener
+      return vi.fn()
+    })
+    runtime.currentRuntimeEvents = () => []
+    runtimeMock.current = runtime
+    await render()
+
+    liveListener?.(
+      [
+        {
+          id: 'runtime-1:overflow-1',
+          timestamp: 1,
+          kind: 'error',
+          level: 'error',
+          sessionId: 'session-1',
+          recoverable: 'context-overflow',
+          text: 'context overflow'
+        }
+      ],
+      createSnapshot({ sessionIds: ['session-1'] })
+    )
+
+    await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
   })
 
   it('owns one child runtime transport subscription and exposes its selector', async () => {

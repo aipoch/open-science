@@ -37,10 +37,12 @@ import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   markRunningSessionsDisconnectedOnDrop,
+  processIncrementalWorkspaceRuntimeEvents,
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,
   subscribeWorkspacePermissionLifecycle,
+  syncWorkspaceAgentFirstOutputState,
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
@@ -123,6 +125,12 @@ const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
 const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
+  // Characterization fixtures can still present the legacy snapshot-only seam. Production
+  // useAcpRuntime always supplies this subscription, including when an older Main lacks onEvent.
+  const subscribeRuntimeEvents = (
+    runtime as Partial<Pick<ReturnType<typeof useAcpRuntime>, 'subscribeRuntimeEvents'>>
+  ).subscribeRuntimeEvents
+  const runtimeRef = useRef(runtime)
   const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
   const subscribeToSubagentRuntimeUpdates = useCallback(
     (listener: SubagentRuntimeListener): (() => void) => {
@@ -186,6 +194,17 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     },
     [agentFrameworks, providers]
   )
+  const runtimeEventLifecycleOptionsRef = useRef({
+    supportsImageInput: supportsHistoryImageInput,
+    getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
+  })
+  useEffect(() => {
+    runtimeRef.current = runtime
+    runtimeEventLifecycleOptionsRef.current = {
+      supportsImageInput: supportsHistoryImageInput,
+      getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
+    }
+  }, [getSessionHistoryReplayDescriptor, runtime, supportsHistoryImageInput])
   const [lifecycleOwner] = useState(createWorkspaceRuntimeSessionLifecycleOwner)
   const pendingPermissions = useMemo(
     () => pendingWorkspacePermissions(restoredPermissionSessions, runtime.state.pendingPermissions),
@@ -251,12 +270,20 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   }, [])
 
   useEffect(() => {
-    lifecycleOwner.processRuntimeEvents(runtime, runtime.state.events, {
-      supportsImageInput: supportsHistoryImageInput,
-      getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
+    if (!subscribeRuntimeEvents) return
+    return subscribeRuntimeEvents((events, snapshot) => {
+      const currentRuntime = runtimeRef.current
+      const eventRuntime = snapshot ? { ...currentRuntime, state: snapshot } : currentRuntime
+      const acceptedEvents = [...events]
+      syncWorkspaceAgentFirstOutputState(eventRuntime.state.agentPromptInFlightSessionIds ?? [])
+      lifecycleOwner.processRuntimeEvents(
+        eventRuntime,
+        acceptedEvents,
+        runtimeEventLifecycleOptionsRef.current
+      )
+      void processIncrementalWorkspaceRuntimeEvents(acceptedEvents)
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
-  }, [runtime.state.events, getSessionHistoryReplayDescriptor, supportsHistoryImageInput])
+  }, [lifecycleOwner, subscribeRuntimeEvents])
   const agentPromptInFlightSessionIds =
     runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
 
@@ -278,8 +305,23 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   }, [permissionResponseAttemptOwner, runtime.state.pendingPermissions])
 
   useEffect(() => {
+    if (subscribeRuntimeEvents) {
+      syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
+      return
+    }
+    lifecycleOwner.processRuntimeEvents(runtime, runtime.state.events, {
+      supportsImageInput: supportsHistoryImageInput,
+      getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
+    })
     void processWorkspaceRuntimeEvents(runtime.state)
-  }, [agentPromptInFlightSessionIds, runtime.state])
+  }, [
+    agentPromptInFlightSessionIds,
+    getSessionHistoryReplayDescriptor,
+    lifecycleOwner,
+    runtime,
+    subscribeRuntimeEvents,
+    supportsHistoryImageInput
+  ])
 
   useEffect(() => {
     syncWorkspaceElicitationState(runtime.state.pendingElicitations ?? [])

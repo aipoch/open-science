@@ -59,7 +59,7 @@ describe('AcpRuntimePublicationOwner', () => {
     }
   })
 
-  it('coalesces assistant text state while publishing every event immediately', () => {
+  it('publishes assistant text incrementally without scheduling snapshot delivery', () => {
     const order: string[] = []
     let releaseScheduledState: (() => void) | undefined
     const owner = new AcpRuntimePublicationOwner({
@@ -81,7 +81,38 @@ describe('AcpRuntimePublicationOwner', () => {
 
     expect(order).toEqual(['event:one', 'event:two'])
     releaseScheduledState?.()
-    expect(order).toEqual(['event:one', 'event:two', 'state:2'])
+    expect(order).toEqual(['event:one', 'event:two'])
+  })
+
+  it('publishes all runtime events incrementally until lifecycle state is explicitly requested', () => {
+    let releaseScheduledState: (() => void) | undefined
+    const onEvent = vi.fn()
+    const onStateChanged = vi.fn()
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: { onEvent, onStateChanged },
+      scheduleStatePublication: (publish) => {
+        releaseScheduledState = publish
+        return () => (releaseScheduledState = undefined)
+      }
+    })
+
+    owner.pushEvent({ kind: 'thought', level: 'info', role: 'assistant', text: 'one' })
+    owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'two' })
+    owner.pushEvent({ kind: 'tool', level: 'info', toolCallId: 'tool-1', status: 'in_progress' })
+    owner.pushEvent({ kind: 'tool', level: 'info', toolCallId: 'tool-1', status: 'completed' })
+    owner.pushEvent({ kind: 'stop', level: 'info', text: 'end_turn' })
+    owner.pushEvent({ kind: 'error', level: 'error', text: 'provider failed' })
+    releaseScheduledState?.()
+
+    expect(onEvent).toHaveBeenCalledTimes(6)
+    expect(onStateChanged).not.toHaveBeenCalled()
+
+    owner.emitState()
+    expect(onStateChanged).toHaveBeenCalledOnce()
+    expect(onStateChanged.mock.calls[0]?.[0].events).toHaveLength(6)
   })
 
   it('coalesces streamed assistant thought state', () => {
@@ -139,7 +170,7 @@ describe('AcpRuntimePublicationOwner', () => {
     expect([...visibleChunks.values()].join('')).toBe(chunks.join(''))
   })
 
-  it('flushes pending assistant text at a tool boundary without losing event order', () => {
+  it('keeps incremental event order across a tool boundary', () => {
     const order: string[] = []
     const owner = new AcpRuntimePublicationOwner({
       snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
@@ -155,7 +186,7 @@ describe('AcpRuntimePublicationOwner', () => {
     owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'before' })
     owner.pushEvent({ kind: 'tool', level: 'info', toolCallId: 'tool-1', status: 'in_progress' })
 
-    expect(order).toEqual(['event:message', 'event:tool', 'state:2'])
+    expect(order).toEqual(['event:message', 'event:tool'])
   })
 
   it('coalesces progressive tool output but publishes completion immediately', () => {
@@ -289,7 +320,7 @@ describe('AcpRuntimePublicationOwner', () => {
     expect(statePublications).toBeLessThanOrEqual(3)
   })
 
-  it('publishes an event only after append hooks and before the resulting state', () => {
+  it('publishes an event after append hooks and before explicitly requested state', () => {
     const order: string[] = []
     const snapshotOwner = new AcpRuntimeSnapshotOwner('/workspace')
     const owner = new AcpRuntimePublicationOwner({
@@ -304,13 +335,15 @@ describe('AcpRuntimePublicationOwner', () => {
 
     owner.pushEvent({ kind: 'message', level: 'info', text: 'hello' }, () => order.push('appended'))
 
+    expect(order).toEqual(['appended', 'event'])
+    owner.emitState()
     expect(order).toEqual(['appended', 'event', 'state'])
     expect(owner.getSnapshot().events).toEqual([
       expect.objectContaining({ id: 'acp-event-1', kind: 'message', text: 'hello' })
     ])
   })
 
-  it('keeps the established permission event-state-callback-state order', () => {
+  it('publishes permission event and callback before one lifecycle state', () => {
     const order: string[] = []
     const request: AcpPermissionRequest = {
       requestId: 'request-1',
@@ -332,7 +365,7 @@ describe('AcpRuntimePublicationOwner', () => {
 
     owner.publishPermissionRequest(request)
 
-    expect(order).toEqual(['event', 'state', 'permission', 'state'])
+    expect(order).toEqual(['event', 'permission', 'state'])
     expect(owner.getSnapshot().events[0]).toMatchObject({
       kind: 'permission',
       sessionId: 'session-1',

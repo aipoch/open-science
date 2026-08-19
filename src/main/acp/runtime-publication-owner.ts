@@ -101,7 +101,14 @@ class AcpRuntimePublicationOwner {
       (acpRuntimeEventsPublished.get(runtimeEvent.kind) ?? 0) + 1
     )
     this.options.callbacks.onEvent?.(runtimeEvent)
-    if (this.isCoalescibleRuntimeEvent(runtimeEvent)) {
+    // Incremental adapters receive every event in order. State is published only by the explicit
+    // lifecycle mutations that follow this call; rebuilding the retained window for this event
+    // would duplicate the same payload across IPC. Snapshot-only adapters retain the established
+    // coalesced-state fallback below.
+    if (this.options.callbacks.onEvent) return
+
+    const coalescible = this.isCoalescibleRuntimeEvent(runtimeEvent)
+    if (coalescible) {
       this.coalescedEvents += 1
       if (this.coalescedEvents >= MAX_COALESCED_EVENTS) {
         this.emitState()
