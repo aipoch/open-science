@@ -92,9 +92,7 @@ Never translated, in any catalog:
 
 Translate generic Open Science roles, surfaces, and domain nouns according to the table. Keep exact
 third-party names and technical identifiers, including `Claude Connectors Directory`,
-`Specialist Marketplace protocol`, `specialist.json`, and package filenames. See
-[`i18n-terminology-decisions.md`](i18n-terminology-decisions.md) for the candidate terms and decision
-tree behind these choices.
+`Specialist Marketplace protocol`, `specialist.json`, and package filenames.
 
 ## Simplified / Traditional divergences
 
