@@ -276,16 +276,29 @@ describe('application runtime composition', () => {
 })
 
 describe('application surface shutdown', () => {
-  it('returns a timeout when an application surface never settles', async () => {
+  it('times out a hung surface and still attempts every later surface', async () => {
     vi.useFakeTimers()
     let outcome: Awaited<ReturnType<typeof shutdownApplicationSurfaces>> | undefined
+    const order: string[] = []
+    const disposeApplicationRuntime = vi.fn(() => {
+      order.push('application-runtime')
+    })
+    const shutdownRemoteAccess = vi.fn(() => {
+      order.push('remote-access')
+    })
+    const disposeIpcHandlers = vi.fn(() => {
+      order.push('ipc-handlers')
+    })
 
     try {
       void shutdownApplicationSurfaces({
-        disposeApplicationRuntime: vi.fn(),
-        shutdownRemoteAccess: vi.fn(),
-        disposeWebController: () => new Promise<void>(() => undefined),
-        disposeIpcHandlers: vi.fn()
+        disposeApplicationRuntime,
+        shutdownRemoteAccess,
+        disposeWebController: () => {
+          order.push('web-controller')
+          return new Promise<void>(() => undefined)
+        },
+        disposeIpcHandlers
       }).then((result) => {
         outcome = result
       })
@@ -293,6 +306,15 @@ describe('application surface shutdown', () => {
       await vi.advanceTimersByTimeAsync(APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS)
 
       expect(outcome).toBe('timeout')
+      expect(disposeApplicationRuntime).toHaveBeenCalledOnce()
+      expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
+      expect(disposeIpcHandlers).toHaveBeenCalledOnce()
+      expect(order).toEqual([
+        'web-controller',
+        'application-runtime',
+        'remote-access',
+        'ipc-handlers'
+      ])
     } finally {
       vi.useRealTimers()
     }
