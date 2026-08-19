@@ -91,6 +91,34 @@ export type AppStartupDeps<Context> = {
   diagnostics?: DiagnosticOperation
 }
 
+export type VisibleStartupRuntimeDeps<Shell, Modules, Runtime> = {
+  // Builds only what is required to show the renderer's database-startup shell. Keeping this seam
+  // deliberately small lets the user see useful UI before the full backend module graph is loaded.
+  prepareShell: () => Promise<Shell>
+  // Database verification and backend loading are independent after the shell exists, so both start
+  // immediately. Runtime composition remains ordered behind both prerequisites.
+  verifyDatabase: (shell: Shell) => Promise<void>
+  loadApplicationModules: (shell: Shell) => Promise<Modules>
+  composeRuntime: (shell: Shell, modules: Modules) => Promise<Runtime>
+  rollbackShell?: (shell: Shell, error: unknown) => Promise<void> | void
+}
+
+export const prepareVisibleStartupRuntime = async <Shell, Modules, Runtime>(
+  deps: VisibleStartupRuntimeDeps<Shell, Modules, Runtime>
+): Promise<Runtime> => {
+  const shell = await deps.prepareShell()
+
+  try {
+    const databaseVerification = deps.verifyDatabase(shell)
+    const applicationModules = deps.loadApplicationModules(shell)
+    const [modules] = await Promise.all([applicationModules, databaseVerification])
+    return await deps.composeRuntime(shell, modules)
+  } catch (error) {
+    await deps.rollbackShell?.(shell, error)
+    throw error
+  }
+}
+
 // Runs the ordered startup sequence: gate on the single-instance lock (quitting a secondary launch
 // before any backend work), prepare the backend, install the migration guard, then the lifecycle, and
 // finally bind the second-instance relay to the window — draining any handoff that arrived mid-startup.

@@ -4,8 +4,22 @@ import {
   createSecondInstanceRelay,
   createStartupWindowCloseOptions,
   createStartupWindowSecondInstanceHandler,
-  orchestrateAppStartup
+  orchestrateAppStartup,
+  prepareVisibleStartupRuntime
 } from './app-startup'
+
+const deferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} => {
+  let resolve!: (value: T) => void
+  return {
+    promise: new Promise<T>((next) => {
+      resolve = next
+    }),
+    resolve
+  }
+}
 
 describe('createSecondInstanceRelay', () => {
   it('records a signal that arrives before bind and drains it on bind, with its argv', () => {
@@ -182,5 +196,80 @@ describe('orchestrateAppStartup', () => {
     expect(diagnostics.phase).toHaveBeenCalledWith('prepare-runtime')
     expect(diagnostics.fail).toHaveBeenCalledWith(failure)
     expect(diagnostics.complete).not.toHaveBeenCalled()
+  })
+})
+
+describe('prepareVisibleStartupRuntime', () => {
+  it('loads the backend while database verification runs, then composes only after both finish', async () => {
+    const shellReady = deferred<{ tag: 'shell' }>()
+    const databaseReady = deferred<void>()
+    const modulesReady = deferred<{ tag: 'modules' }>()
+    const events: string[] = []
+
+    const preparation = prepareVisibleStartupRuntime({
+      prepareShell: vi.fn(async () => {
+        events.push('shell:start')
+        const shell = await shellReady.promise
+        events.push('shell:ready')
+        return shell
+      }),
+      verifyDatabase: vi.fn(async () => {
+        events.push('database:start')
+        await databaseReady.promise
+        events.push('database:ready')
+      }),
+      loadApplicationModules: vi.fn(async () => {
+        events.push('modules:start')
+        const modules = await modulesReady.promise
+        events.push('modules:ready')
+        return modules
+      }),
+      composeRuntime: vi.fn(async (_shell, modules) => {
+        events.push('runtime:ready')
+        return modules.tag
+      })
+    })
+
+    expect(events).toEqual(['shell:start'])
+    shellReady.resolve({ tag: 'shell' })
+    await vi.waitFor(() => {
+      expect(events).toEqual(['shell:start', 'shell:ready', 'database:start', 'modules:start'])
+    })
+
+    modulesReady.resolve({ tag: 'modules' })
+    await vi.waitFor(() => expect(events).toContain('modules:ready'))
+    expect(events).not.toContain('runtime:ready')
+
+    databaseReady.resolve()
+    await expect(preparation).resolves.toBe('modules')
+    expect(events).toEqual([
+      'shell:start',
+      'shell:ready',
+      'database:start',
+      'modules:start',
+      'modules:ready',
+      'database:ready',
+      'runtime:ready'
+    ])
+  })
+
+  it('rolls back the visible shell when a concurrent prerequisite fails', async () => {
+    const failure = new Error('backend import failed')
+    const rollbackShell = vi.fn()
+
+    await expect(
+      prepareVisibleStartupRuntime({
+        prepareShell: async () => ({ tag: 'shell' }),
+        verifyDatabase: async () => undefined,
+        loadApplicationModules: async () => {
+          throw failure
+        },
+        composeRuntime: vi.fn(),
+        rollbackShell
+      })
+    ).rejects.toBe(failure)
+
+    expect(rollbackShell).toHaveBeenCalledOnce()
+    expect(rollbackShell).toHaveBeenCalledWith({ tag: 'shell' }, failure)
   })
 })

@@ -141,7 +141,6 @@ import { HostFramesService } from './notebook/host-frames-service'
 import { HostSessionsService } from './notebook/host-sessions-service'
 import { HostModelService } from './notebook/host-model-service'
 import { HostViewImageService } from './notebook/host-view-image-service'
-import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../shared/uploads'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../shared/artifacts'
@@ -2635,9 +2634,9 @@ const createApplicationModules = async (
   )
 
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install
-  // lives) and start the env readiness gate. The conda channel comes from the effective package mirror
-  // (configured override, else the region default from locale). Runtime packs use the official CDN base
-  // with OPEN_SCIENCE_ENV_CDN_BASE available for private/self-hosted deployments.
+  // lives) and start the env readiness gate. Named environments resolve the effective conda channel
+  // lazily because they are the only path that solves online; default runtime packs use the official
+  // CDN and must not wait for mirror probing during application startup.
   // Build the provisioner separately from registering the IPC surface: if construction fails (e.g.
   // micromamba missing in dev), `provisioner` stays undefined but the notebook-env handlers are STILL
   // registered below (as unavailable stubs), so the renderer gets an actionable "runtime unavailable"
@@ -2646,12 +2645,18 @@ const createApplicationModules = async (
   let serialized: RuntimeProvisioner | undefined
   try {
     const configuredMirror = await settingsService.getPackageMirror()
-    const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
+    const effectiveMirror = (): ReturnType<typeof effectiveMirrorAsync> =>
+      effectiveMirrorAsync(configuredMirror, app.getLocale())
     provisioner = createProductionProvisioner(
       {
         root: provisioningRoot,
-        channel: mirror.condaChannel ?? process.env.OPEN_SCIENCE_CONDA_CHANNEL ?? 'conda-forge',
-        caBundle: mirror.caBundle,
+        channel: async () =>
+          (await effectiveMirror()).condaChannel ??
+          process.env.OPEN_SCIENCE_CONDA_CHANNEL ??
+          'conda-forge',
+        // Mirror probing never changes the configured enterprise CA bundle, so it is safe to pass
+        // through synchronously while channel selection warms in the background.
+        caBundle: configuredMirror?.caBundle,
         micromamba: { resourcesPath: process.resourcesPath },
         // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
         // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
@@ -2678,6 +2683,11 @@ const createApplicationModules = async (
         withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn)
       },
       { runner: micromambaRunner }
+    )
+    // Warm the process-local mirror cache after provisioner construction succeeds. This stays outside
+    // the startup critical path; a later named-env create awaits the same memoized probe if necessary.
+    void effectiveMirror().catch((error) =>
+      console.error('Notebook package mirror warmup failed:', error)
     )
     // One serialized wrapper shared by the startup gate and the notebook service's on-demand default
     // provisioning, so a concurrent build of the same default env (UI R-tab + an agent R run) can't
@@ -2728,7 +2738,7 @@ const createApplicationModules = async (
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
     // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/
     // removeEnvironment). Wired after construction like the mcp/mirror resolvers above.
-    notebookService.setEnvironmentManager(provisioner as unknown as NotebookEnvironmentManager)
+    notebookService.setEnvironmentManager(provisioner)
     // On first agent use of a not-yet-built default env, build it from the offline bundle (via the
     // shared serialized provisioner) instead of erroring — keeps R lazy but avoids the agent creating
     // a redundant named env.
