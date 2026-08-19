@@ -33,6 +33,50 @@ describe('TagService', () => {
     expect(events.publish).toHaveBeenCalledWith('tags:changed', { revision: 1 })
   })
 
+  it('serializes authoritative snapshots with their mutations', async () => {
+    let resolveFirstSnapshot: ((value: TagSnapshot) => void) | undefined
+    const firstSnapshot = new Promise<TagSnapshot>((resolve) => {
+      resolveFirstSnapshot = resolve
+    })
+    const repository = {
+      create: vi.fn().mockResolvedValue(undefined),
+      snapshot: vi
+        .fn()
+        .mockImplementationOnce(() => firstSnapshot)
+        .mockImplementation((revision) => Promise.resolve(snapshot(revision)))
+    }
+    const events = { publish: vi.fn() }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      {} as TagResourceCatalog,
+      events
+    )
+
+    const first = service.create({
+      name: 'First',
+      iconKey: 'tag',
+      colorKey: 'blue'
+    })
+    await vi.waitFor(() => expect(repository.snapshot).toHaveBeenCalledWith(1))
+    const second = service.create({
+      name: 'Second',
+      iconKey: 'star',
+      colorKey: 'amber'
+    })
+    await Promise.resolve()
+
+    expect(repository.create).toHaveBeenCalledTimes(1)
+    expect(repository.snapshot).toHaveBeenCalledTimes(1)
+
+    resolveFirstSnapshot?.(snapshot(1))
+    await expect(first).resolves.toEqual(snapshot(1))
+    await expect(second).resolves.toEqual(snapshot(2))
+    expect(repository.create).toHaveBeenCalledTimes(2)
+    expect(repository.snapshot).toHaveBeenNthCalledWith(2, 2)
+    expect(events.publish).toHaveBeenNthCalledWith(1, 'tags:changed', { revision: 1 })
+    expect(events.publish).toHaveBeenNthCalledWith(2, 'tags:changed', { revision: 2 })
+  })
+
   it('rejects assigning a stale resource without writing', async () => {
     const repository = { setAssignment: vi.fn() }
     const service = new TagService(

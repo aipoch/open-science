@@ -26,13 +26,17 @@ class TagService {
   }
 
   private mutate(operation: () => Promise<void>): Promise<TagSnapshot> {
-    const result = this.mutationQueue.then(operation)
-    this.mutationQueue = result.catch(() => undefined)
-    return result.then(async () => {
+    const result = this.mutationQueue.then(async () => {
+      await operation()
       this.revision += 1
       this.events.publish('tags:changed', { revision: this.revision })
       return this.repository.snapshot(this.revision)
     })
+    this.mutationQueue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 
   async snapshot(): Promise<TagSnapshot> {

@@ -87,12 +87,14 @@ class TagRepository {
     const name = cleanTagName(request.name)
     if (!name) throw new Error('Tag name is required.')
     if (name.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
+    const nameKey = tagNameKey(name)
+    if (nameKey.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
     try {
       const client = await this.getClient()
       await client.tag.create({
         data: {
           name,
-          nameKey: tagNameKey(name),
+          nameKey,
           iconKey: request.iconKey,
           colorKey: request.colorKey
         }
@@ -106,6 +108,8 @@ class TagRepository {
     const name = cleanTagName(request.name)
     if (!name) throw new Error('Tag name is required.')
     if (name.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
+    const nameKey = tagNameKey(name)
+    if (nameKey.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
     const client = await this.getClient()
     const current = await client.tag.findUnique({ where: { id: request.id } })
     if (!current) throw new Error('Tag not found.')
@@ -115,7 +119,7 @@ class TagRepository {
         where: { id: request.id },
         data: {
           name,
-          nameKey: tagNameKey(name),
+          nameKey,
           iconKey: request.iconKey,
           colorKey: request.colorKey
         }

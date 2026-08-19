@@ -49,6 +49,27 @@ describe('TagRepository', () => {
     ).rejects.toThrow('A Tag with this name already exists.')
   })
 
+  it('rejects names whose normalized comparison key exceeds the storage limit', async () => {
+    const expandingName = 'İ'.repeat(64)
+
+    await expect(
+      repository.create({ name: expandingName, iconKey: 'tag', colorKey: 'blue' })
+    ).rejects.toThrow('Tag name is too long.')
+
+    await repository.create({ name: 'Research', iconKey: 'tag', colorKey: 'blue' })
+    const tag = (await repository.snapshot(0)).tags.find(
+      (candidate) => 'name' in candidate && candidate.name === 'Research'
+    )!
+    await expect(
+      repository.update({
+        id: tag.id,
+        name: expandingName,
+        iconKey: 'tag',
+        colorKey: 'blue'
+      })
+    ).rejects.toThrow('Tag name is too long.')
+  })
+
   it('stores many-to-many assignments and cascades custom Tag deletion', async () => {
     await repository.create({ name: 'Methods', iconKey: 'flask-conical', colorKey: 'green' })
     const tag = (await repository.snapshot(0)).tags.find(
