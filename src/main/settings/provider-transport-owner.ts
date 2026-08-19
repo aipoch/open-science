@@ -44,8 +44,14 @@ type ResponsesBridgePort = Pick<
   | 'setModelTarget'
   | 'setTarget'
 >
-type AnthropicProviderBridgePort = Pick<AnthropicProviderBridge, 'start' | 'close' | 'setTarget'>
-type OpenAiProviderBridgePort = Pick<OpenAiProviderBridge, 'start' | 'close' | 'setTarget'>
+type AnthropicProviderBridgePort = Pick<
+  AnthropicProviderBridge,
+  'start' | 'close' | 'setTarget' | 'clearErrorReplay'
+>
+type OpenAiProviderBridgePort = Pick<
+  OpenAiProviderBridge,
+  'start' | 'close' | 'setTarget' | 'clearErrorReplay'
+>
 
 type ResponsesBridgeEntry = {
   bridge: ResponsesBridgePort
@@ -252,6 +258,7 @@ class ProviderTransportOwner {
     const targetIds = new Set<string>()
     const catalog: AgentModelCatalogEntry[] = []
     let activeProvider: ProviderRuntimeTarget['provider'] | undefined
+    let activeTargetId: string | undefined
     try {
       for (const planned of transport.targets) {
         const candidate = planned.target
@@ -312,6 +319,7 @@ class ProviderTransportOwner {
           model === (input.activeTarget.effectiveModel ?? input.activeTarget.provider.model)
         ) {
           activeProvider = localProvider
+          activeTargetId = targetId
         }
       }
       if (!activeProvider)
@@ -327,7 +335,14 @@ class ProviderTransportOwner {
         providerModelCatalog: Object.freeze(catalog),
         environment: loopbackProxyBypassEnvironment(process.env),
         providerTransportLease: {
-          setTarget: (targetId: string) => targetIds.has(targetId),
+          setTarget: (targetId: string) => {
+            if (!targetIds.has(targetId)) return false
+            if (activeTargetId !== targetId) {
+              activeTargetId = targetId
+              for (const bridge of bridges) bridge.clearErrorReplay()
+            }
+            return true
+          },
           release
         },
         release

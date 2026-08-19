@@ -6,6 +6,7 @@ import {
   ProviderTransportOwner,
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
+import { OpenAiProviderBridge } from './openai-provider-bridge'
 
 type ResponsesBridgeStub = ReturnType<
   NonNullable<ProviderTransportOwnerOptions['createResponsesBridge']>
@@ -91,7 +92,8 @@ const makeAnthropicBridge = (): AnthropicBridgeStub => ({
     token: 'anthropic-bridge-token'
   })),
   close: vi.fn(async () => undefined),
-  setTarget: vi.fn(() => true)
+  setTarget: vi.fn(() => true),
+  clearErrorReplay: vi.fn()
 })
 
 const makeOpenAiBridge = (index: number, startError?: Error): OpenAiBridgeStub => ({
@@ -100,7 +102,8 @@ const makeOpenAiBridge = (index: number, startError?: Error): OpenAiBridgeStub =
     return { baseUrl: `http://127.0.0.1:${44000 + index}`, token: `openai-token-${index}` }
   }),
   close: vi.fn(async () => undefined),
-  setTarget: vi.fn(() => true)
+  setTarget: vi.fn(() => true),
+  clearErrorReplay: vi.fn()
 })
 
 const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
@@ -285,6 +288,62 @@ describe('ProviderTransportOwner generations', () => {
 
     expect(bridges[0]?.close).toHaveBeenCalledTimes(1)
     expect(bridges[1]?.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalidates OpenCode replay caches across A to B to A target changes', async () => {
+    const upstreamFetch = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string }
+      return body.model === 'model-a'
+        ? Response.json({ error: { message: 'Invalid model-a request' } }, { status: 400 })
+        : Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
+    })
+    const owner = new ProviderTransportOwner({
+      createOpenAiProviderBridge: (targets, initialTargetId) =>
+        new OpenAiProviderBridge(targets, initialTargetId, upstreamFetch)
+    })
+    const targetA = makeTarget()
+    const targetB: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      providerId: 'provider-b',
+      effectiveModel: 'model-b',
+      provider: { ...makeTarget().provider, model: 'model-b' }
+    }
+    const targetAId = 'opencode/provider-a/model-a'
+    const targetBId = 'opencode/provider-b/model-b'
+    const generation = await owner.acquire({
+      activeTarget: targetA,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        modelRoute: 'opencode-openai',
+        transport: {
+          kind: 'opencode-openai',
+          targets: [
+            { id: targetAId, target: targetA },
+            { id: targetBId, target: targetB }
+          ]
+        }
+      }
+    })
+    const providerA = generation.providerModelCatalog?.find(
+      ({ provider }) => provider.model === 'model-a'
+    )?.provider
+    if (!providerA?.openaiBaseUrl || !providerA.key) throw new Error('Missing provider A loopback')
+    const sendA = (): Promise<Response> =>
+      fetch(`${providerA.openaiBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${providerA.key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'ignored', messages: [] })
+      })
+
+    try {
+      expect((await sendA()).status).toBe(400)
+      expect(generation.providerTransportLease?.setTarget(targetBId)).toBe(true)
+      expect(generation.providerTransportLease?.setTarget(targetAId)).toBe(true)
+      expect((await sendA()).status).toBe(400)
+      expect(upstreamFetch).toHaveBeenCalledTimes(2)
+    } finally {
+      await generation.release()
+    }
   })
 
   it('owns the native Codex provider projection, retargeting, and release', async () => {

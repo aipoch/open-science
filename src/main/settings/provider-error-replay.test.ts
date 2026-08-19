@@ -5,6 +5,7 @@ import {
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
   providerRequestFingerprint,
+  providerRequestHeadersFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
 
@@ -54,6 +55,24 @@ describe('provider error replay policy', () => {
     expect(cache.get('third')).toBe('third')
     cache.clear()
     expect(cache.get('first')).toBe(undefined)
+  })
+
+  it('fingerprints forwarded headers independently of name casing and insertion order', () => {
+    const first = new Headers([
+      ['Anthropic-Version', '2023-06-01'],
+      ['Anthropic-Beta', 'feature-a']
+    ])
+    const reordered = {
+      'anthropic-beta': 'feature-a',
+      'anthropic-version': '2023-06-01'
+    }
+
+    expect(providerRequestHeadersFingerprint(first)).toBe(
+      providerRequestHeadersFingerprint(reordered)
+    )
+    expect(
+      providerRequestHeadersFingerprint({ ...reordered, 'anthropic-beta': 'feature-b' })
+    ).not.toBe(providerRequestHeadersFingerprint(first))
   })
 
   it('cancels a deterministic error body as soon as it exceeds the byte limit', async () => {

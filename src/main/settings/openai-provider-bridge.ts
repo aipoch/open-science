@@ -12,6 +12,7 @@ import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
+  providerRequestHeadersFingerprint,
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
@@ -136,6 +137,10 @@ export class OpenAiProviderBridge {
     return true
   }
 
+  clearErrorReplay(): void {
+    this.deterministicErrors.clear()
+  }
+
   async start(): Promise<OpenAiProviderBridgeConnection> {
     return this.host.start()
   }
@@ -170,7 +175,13 @@ export class OpenAiProviderBridge {
       throw new Error('The OpenAI provider target has no valid endpoint URL.')
     }
     const body = JSON.stringify({ ...parsed, model: target.model })
-    const replayKey = providerRequestFingerprint(target.id, requestUrl.pathname, body)
+    const headersToForward = requestHeaders(request, target.key)
+    const replayKey = providerRequestFingerprint(
+      target.id,
+      requestUrl.pathname,
+      providerRequestHeadersFingerprint(headersToForward),
+      body
+    )
     const replay = this.deterministicErrors.get(replayKey)
     if (replay) {
       response.writeHead(replay.status, replay.headers)
@@ -180,7 +191,7 @@ export class OpenAiProviderBridge {
 
     const upstream = await this.fetchImpl(endpoint, {
       method: 'POST',
-      headers: requestHeaders(request, target.key),
+      headers: headersToForward,
       body,
       redirect: 'manual',
       signal: request.signal

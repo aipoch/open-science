@@ -227,6 +227,39 @@ describe('OpenAiProviderBridge', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
+  it('does not replay an error after an upstream-visible request header changes', async () => {
+    const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      return headers.get('x-provider-feature') === 'invalid'
+        ? Response.json({ error: { message: 'Invalid feature' } }, { status: 400 })
+        : Response.json({ output: [], model: 'model-a' })
+    })
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (feature?: string): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          ...(feature ? { 'x-provider-feature': feature } : {})
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    expect((await send('invalid')).status).toBe(400)
+    expect((await send()).status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps retryable 429 responses out of the deterministic replay cache', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json({ error: { message: 'Rate limited' } }, { status: 429 })

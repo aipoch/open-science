@@ -222,6 +222,38 @@ describe('AnthropicProviderBridge', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
+  it('does not replay an error after an upstream-visible request header changes', async () => {
+    const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      return headers.get('anthropic-beta') === 'invalid-beta'
+        ? Response.json({ error: { message: 'Invalid beta' } }, { status: 400 })
+        : Response.json({ content: [], model: 'model-a' })
+    })
+    const target = {
+      id: 'provider/model-a',
+      baseUrl: 'https://provider.example.test',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (beta?: string): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          ...(beta ? { 'anthropic-beta': beta } : {})
+        },
+        body: JSON.stringify({ model: 'ignored', messages: [] })
+      })
+
+    expect((await send('invalid-beta')).status).toBe(400)
+    expect((await send()).status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it.each([
     ['Claude Code', CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE],
     ['OpenCode', OPENCODE_ANTHROPIC_TOOL_IMAGE_REQUEST_FIXTURE]

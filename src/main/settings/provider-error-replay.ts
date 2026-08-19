@@ -42,6 +42,16 @@ const providerRequestFingerprint = (...parts: readonly string[]): string => {
   return hash.digest('hex')
 }
 
+const providerRequestHeadersFingerprint = (
+  source: Headers | Readonly<Record<string, string>>
+): string => {
+  const entries = source instanceof Headers ? [...source.entries()] : Object.entries(source)
+  entries.sort(([left], [right]) => left.toLowerCase().localeCompare(right.toLowerCase()))
+  return providerRequestFingerprint(
+    ...entries.flatMap(([name, value]) => [name.toLowerCase(), value])
+  )
+}
+
 const readBoundedProviderErrorBody = async (
   response: Response,
   options: BoundedProviderErrorBodyOptions = {}
@@ -145,5 +155,6 @@ export {
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
   providerRequestFingerprint,
+  providerRequestHeadersFingerprint,
   readBoundedProviderErrorBody
 }

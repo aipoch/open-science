@@ -125,6 +125,81 @@ describe('native Responses compatibility', () => {
     }
   })
 
+  it.each([
+    ['empty', ''],
+    ['malformed', '{not-json']
+  ])(
+    'replays an identical deterministic provider error with a %s JSON body',
+    async (_name, body) => {
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(body, { status: 401, headers: { 'content-type': 'application/json' } })
+      )
+      const proxy = new NativeResponsesCompatibilityProxy(
+        { baseUrl: 'https://provider.example.test/v1', key: 'wrong-key', model: 'model-a' },
+        fetchImpl
+      )
+      const connection = await proxy.start()
+      const send = (): Promise<Response> =>
+        fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ model: 'ignored', input: 'hello', stream: true })
+        })
+
+      try {
+        const first = await send()
+        const second = await send()
+        expect(first.status).toBe(400)
+        expect(second.status).toBe(400)
+        expect(first.headers.get('x-open-science-upstream-status')).toBe('401')
+        expect(second.headers.get('x-open-science-upstream-status')).toBe('401')
+        expect(fetchImpl).toHaveBeenCalledOnce()
+      } finally {
+        await proxy.close()
+      }
+    }
+  )
+
+  it('does not replay an error after an upstream-visible request header changes', async () => {
+    const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      return headers.get('x-provider-feature') === 'invalid'
+        ? Response.json({ error: { message: 'Invalid feature' } }, { status: 400 })
+        : Response.json({
+            id: 'response',
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 1 }
+          })
+    })
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://provider.example.test/v1', key: 'key-a', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    const send = (feature?: string): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          ...(feature ? { 'x-provider-feature': feature } : {})
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello', stream: false })
+      })
+
+    try {
+      expect((await send('invalid')).status).toBe(400)
+      expect((await send()).status).toBe(200)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('flattens namespace tools and matching history without changing plain functions', () => {
     const { request, aliases } = flattenNativeResponsesRequest({
       model: 'MiniMax-M3',

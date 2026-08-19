@@ -24,6 +24,7 @@ import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
+  providerRequestHeadersFingerprint,
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
@@ -613,7 +614,12 @@ export class NativeResponsesCompatibilityProxy {
         : scopedBody
       const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(routedBody)
       const upstreamRequestBody = JSON.stringify(upstreamRequest)
-      const replayKey = providerRequestFingerprint(this.target.baseUrl, upstreamRequestBody)
+      const headersToForward = upstreamHeaders(request, this.target.key)
+      const replayKey = providerRequestFingerprint(
+        this.target.baseUrl,
+        providerRequestHeadersFingerprint(headersToForward),
+        upstreamRequestBody
+      )
       const requestBytes = Buffer.byteLength(upstreamRequestBody, 'utf8')
       // Derive the input size from the already-serialized body so a large multimodal input is not
       // serialized a second time just for diagnostics. The subtracted 8/9 bytes are the JSON key and
@@ -670,7 +676,7 @@ export class NativeResponsesCompatibilityProxy {
       )
       const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
-        headers: upstreamHeaders(request, this.target.key),
+        headers: headersToForward,
         body: upstreamRequestBody,
         signal: AbortSignal.any([request.signal, upstreamAbort.signal])
       })
@@ -688,19 +694,23 @@ export class NativeResponsesCompatibilityProxy {
         const boundedBody = await readBoundedProviderErrorBody(upstream, {
           signal: request.signal
         })
-        const rawBody =
-          boundedBody.complete && responseType === 'json'
-            ? Buffer.from(
-                JSON.stringify(
-                  restoreNativeResponsesPayload(
-                    JSON.parse(boundedBody.body.toString('utf8')),
-                    aliases
-                  )
+        let rawBody = boundedBody.body
+        let bodyIsReplayable = boundedBody.complete
+        if (boundedBody.complete && responseType === 'json') {
+          try {
+            rawBody = Buffer.from(
+              JSON.stringify(
+                restoreNativeResponsesPayload(
+                  JSON.parse(boundedBody.body.toString('utf8')),
+                  aliases
                 )
               )
-            : boundedBody.body
-        const bodyIsReplayable =
-          boundedBody.complete && rawBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
+            )
+          } catch {
+            bodyIsReplayable = false
+          }
+        }
+        bodyIsReplayable &&= rawBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
         const bodyToReplay = bodyIsReplayable
           ? rawBody
           : Buffer.from(

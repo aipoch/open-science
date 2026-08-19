@@ -13,6 +13,7 @@ import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
   providerErrorClientStatus,
+  providerRequestHeadersFingerprint,
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
@@ -131,6 +132,10 @@ export class AnthropicProviderBridge {
     return true
   }
 
+  clearErrorReplay(): void {
+    this.deterministicErrors.clear()
+  }
+
   async start(): Promise<AnthropicProviderBridgeConnection> {
     return this.host.start()
   }
@@ -161,9 +166,11 @@ export class AnthropicProviderBridge {
 
     const target = this.target
     const body = JSON.stringify({ ...parsed, model: target.model })
+    const headersToForward = requestHeaders(request, target.key)
     const replayKey = providerRequestFingerprint(
       target.id,
       `${requestUrl.pathname}${requestUrl.search}`,
+      providerRequestHeadersFingerprint(headersToForward),
       body
     )
     const replay = this.deterministicErrors.get(replayKey)
@@ -176,7 +183,7 @@ export class AnthropicProviderBridge {
     if (!baseUrl) throw new Error('The Anthropic provider target has no valid base URL.')
     const upstream = await this.fetchImpl(`${baseUrl}${requestUrl.pathname}${requestUrl.search}`, {
       method: 'POST',
-      headers: requestHeaders(request, target.key),
+      headers: headersToForward,
       body,
       redirect: 'manual',
       signal: request.signal

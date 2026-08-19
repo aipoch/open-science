@@ -134,7 +134,8 @@ const makeAnthropicProviderBridgeDouble = (): AnthropicProviderBridgeDouble => (
     token: 'anthropic-bridge-token'
   })),
   close: vi.fn(async () => undefined),
-  setTarget: vi.fn(() => true)
+  setTarget: vi.fn(() => true),
+  clearErrorReplay: vi.fn()
 })
 
 const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDouble => ({
@@ -143,7 +144,8 @@ const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDoub
     token: `openai-bridge-token-${index}`
   })),
   close: vi.fn(async () => undefined),
-  setTarget: vi.fn(() => true)
+  setTarget: vi.fn(() => true),
+  clearErrorReplay: vi.fn()
 })
 
 type HarnessOptions = {
