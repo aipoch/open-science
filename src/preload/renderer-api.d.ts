@@ -380,6 +380,7 @@ import type {
   CancelMarketplaceCandidateRequest,
   GetMarketplaceReleaseRequest,
   InspectGitHubMarketplaceSourceRequest,
+  ListMarketplaceRequest,
   MarketplaceDownloadProgress,
   MarketplaceInstallPreview,
   MarketplaceInstallRequest,
@@ -619,7 +620,7 @@ export interface OpenScienceAPI {
   }
   specialist: {
     list(): Promise<SpecialistCatalogSnapshot>
-    listMarketplace(): Promise<MarketplaceSnapshot>
+    listMarketplace(request?: ListMarketplaceRequest): Promise<MarketplaceSnapshot>
     inspectGitHubMarketplaceSource(
       request: InspectGitHubMarketplaceSourceRequest
     ): Promise<MarketplaceSourceCandidate>

@@ -62,6 +62,10 @@ export type MarketplaceSnapshot = {
   failures: readonly MarketplaceSourceFailure[]
 }
 
+// Optional renderer intent: a user-initiated refresh bypasses the cached-root TTL so the button
+// always reaches the network. Automatic (view-entry) refreshes omit it and reuse fresh cache.
+export type ListMarketplaceRequest = { forceRefresh?: boolean }
+
 export type InspectGitHubMarketplaceSourceRequest = { repositoryUrl: string }
 
 export type MarketplaceSourceCandidate = {

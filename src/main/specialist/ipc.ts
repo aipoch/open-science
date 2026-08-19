@@ -48,6 +48,19 @@ import type { MarketplaceService } from './marketplace/service'
 
 const log = createLogger('specialist:ipc')
 
+const APPEARANCE_UPDATE_KEYS = new Set<keyof UpdateSpecialistRequest>([
+  'id',
+  'revision',
+  'iconKey',
+  'colorKey'
+])
+
+const isAppearanceOnlyUpdate = (request: UpdateSpecialistRequest): boolean =>
+  (request.iconKey !== undefined || request.colorKey !== undefined) &&
+  (Object.keys(request) as Array<keyof UpdateSpecialistRequest>).every((key) =>
+    APPEARANCE_UPDATE_KEYS.has(key)
+  )
+
 type PackageImportIpc = {
   service: Pick<
     SpecialistPackageService,
@@ -92,6 +105,21 @@ const isCandidateRequest = (request: unknown): request is SpecialistPackageInsta
   Object.keys(request).length === 1 &&
   typeof (request as { candidateToken?: unknown }).candidateToken === 'string' &&
   Boolean((request as { candidateToken: string }).candidateToken)
+
+// The list endpoint accepts no renderer data beyond one optional boolean: a user-initiated
+// refresh sets forceRefresh to bypass the cached-root TTL. Anything else is rejected as before.
+const parseListMarketplaceRequest = (request: unknown): { forceRefresh?: boolean } | undefined => {
+  if (request === undefined) return undefined
+  if (
+    typeof request !== 'object' ||
+    request === null ||
+    Object.keys(request).length !== 1 ||
+    typeof (request as { forceRefresh?: unknown }).forceRefresh !== 'boolean'
+  ) {
+    throw new Error('Marketplace list does not accept renderer data.')
+  }
+  return { forceRefresh: (request as { forceRefresh: boolean }).forceRefresh }
+}
 
 const isInstallCandidateRequest = (
   request: unknown
@@ -348,8 +376,7 @@ export const registerSpecialistIpcHandlers = (
     // Binding per request would retain every completed request until the renderer is destroyed.
     const boundMarketplaceSenders = new WeakSet<object>()
     ipcMainHandle(SPECIALIST_MARKETPLACE_IPC.LIST, async (_event, request: unknown) => {
-      if (request !== undefined) throw new Error('Marketplace list does not accept renderer data.')
-      return marketplace.list()
+      return marketplace.list(parseListMarketplaceRequest(request))
     })
     ipcMainHandle(
       SPECIALIST_MARKETPLACE_IPC.INSPECT_GITHUB_SOURCE,
@@ -409,7 +436,7 @@ export const registerSpecialistIpcHandlers = (
         const updated = await service.update(request)
         // A capability edit (skills/connectors) must reach live sessions: trigger a reconnect so the
         // next turn re-provisions skills and re-applies the updated specialist whitelist.
-        onProfilesChanged?.()
+        if (!isAppearanceOnlyUpdate(request)) onProfilesChanged?.()
         return updated
       } catch (error) {
         log.error('specialist:update failed', { error })

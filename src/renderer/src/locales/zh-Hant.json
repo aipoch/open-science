@@ -1444,6 +1444,7 @@
   "Refresh directory": "重新整理目錄",
   "Refresh directory listing": "重新整理目錄清單",
   "Refresh from vendor": "從廠商重新整理",
+  "Refreshing Marketplace…": "正在重新整理市集…",
   "Refreshing…": "重新整理中…",
   "Refused": "已拒絕",
   "Registry writes": "註冊表寫入",
@@ -1731,6 +1732,7 @@
   "Show relevant {{count}} packages_other": "顯示相關的 {{count}} 個套件",
   "Show rendered HTML": "顯示算繪後的 HTML",
   "Show repositories": "顯示儲存庫",
+  "Showing data from {{time}}": "顯示的是 {{time}} 的資料",
   "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "僅顯示前 5,000 個項目。進入子目錄可查看更多。",
   "Showing the first entries only — this directory is very large.": "僅顯示前若干項目 — 該目錄非常大。",
   "Showing {{rows}} rows · {{columns}} columns": "顯示 {{rows}} 列 · {{columns}} 欄",
@@ -2040,6 +2042,7 @@
   "Update to {{version}}": "更新到 {{version}}",
   "Updated today": "今天更新",
   "Updated {{count}} days ago_other": "{{count}} 天前更新",
+  "Updated {{time}}": "更新於 {{time}}",
   "Updates existing": "將更新現有技能",
   "Updating database…": "正在更新資料庫…",
   "Updating the notebook environment… {{percent}}%": "正在更新 Notebook 環境…… {{percent}}%",
@@ -3057,5 +3060,10 @@
   "Green": "綠色",
   "Blue": "藍色",
   "Purple": "紫色",
-  "Pink": "粉紅色"
+  "Pink": "粉紅色",
+  "Teal": "藍綠色",
+  "Slate": "石板灰",
+  "Change appearance for {{name}}": "更改 {{name}} 的外觀",
+  "Appearance wasn’t saved. Try again.": "無法儲存外觀。請重試。",
+  "Specialist appearance picker — 8 states": "專家外觀選擇器 — 8 種狀態"
 }

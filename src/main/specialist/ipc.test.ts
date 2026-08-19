@@ -360,6 +360,42 @@ describe('specialist session IPC', () => {
     expect(payload).not.toMatch(/resources[/\\]specialists/)
   })
 
+  it('skips runtime invalidation only for appearance-only updates', async () => {
+    handlers.clear()
+    const service = {
+      ...createProfileService(),
+      update: vi.fn().mockResolvedValue(profile)
+    } as unknown as ProfileService
+    const onProfilesChanged = vi.fn()
+
+    registerSpecialistIpcHandlers(
+      service,
+      new SessionBindingService(service),
+      createReconfigurationStub(),
+      onProfilesChanged
+    )
+    const handler = handlers.get(SPECIALIST_IPC.UPDATE)
+
+    await handler?.(undefined, {
+      id: profile.id,
+      revision: profile.revision,
+      iconKey: 'book-open'
+    })
+    await handler?.(undefined, {
+      id: profile.id,
+      revision: profile.revision,
+      colorKey: 'purple'
+    })
+    expect(onProfilesChanged).not.toHaveBeenCalled()
+
+    await handler?.(undefined, {
+      id: profile.id,
+      revision: profile.revision,
+      selectedCapabilities: profile.selectedCapabilities
+    })
+    expect(onProfilesChanged).toHaveBeenCalledOnce()
+  })
+
   it('routes a session specialist switch through the reconfiguration owner', async () => {
     handlers.clear()
     const binding = new SessionBindingService(createProfileService())

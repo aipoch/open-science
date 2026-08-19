@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SpecialistMarketplace } from './SpecialistMarketplace'
+import { resetMarketplaceStoreForTests } from '../../stores/marketplace-store'
 import type { MarketplaceSnapshot } from '../../../../shared/specialist-marketplace'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -78,6 +79,9 @@ const release = {
 }
 
 beforeEach(() => {
+  // The Marketplace snapshot is module-level store state shared across renders; each case starts
+  // from a pristine store so view-entry behavior (loading vs instant stale content) is hermetic.
+  resetMarketplaceStoreForTests()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -208,7 +212,7 @@ describe('Specialist Marketplace settings', () => {
     )
   })
 
-  it('hides stale listings while returning from a release to the Marketplace', async () => {
+  it('shows the last listings immediately with a visible refresh when returning from a release', async () => {
     const refresh = deferred<MarketplaceSnapshot>()
     window.api.specialist.listMarketplace = vi
       .fn()
@@ -240,13 +244,30 @@ describe('Specialist Marketplace settings', () => {
       await Promise.resolve()
     })
 
-    expect(container.textContent).toContain('Loading Marketplace…')
-    expect(container.textContent).not.toContain('Example Specialist')
+    // Re-entering keeps the last snapshot on screen instead of a full-screen loader, with a
+    // status line making the in-flight refresh visible.
+    expect(container.textContent).not.toContain('Loading Marketplace…')
+    expect(container.textContent).toContain('Example Specialist')
+    expect(container.textContent).toContain('Refreshing Marketplace…')
 
     await act(async () => {
       refresh.resolve(snapshot)
       await refresh.promise
     })
+    expect(container.textContent).not.toContain('Refreshing Marketplace…')
+  })
+
+  it('labels the data age once a refresh settles', async () => {
+    window.api.specialist.listMarketplace = vi.fn().mockResolvedValue({
+      ...snapshot,
+      sources: [{ ...snapshot.sources[0], lastRefreshedAt: '2026-08-19T00:00:00.000Z' }]
+    })
+
+    await act(async () => {
+      root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(container.textContent).toMatch(/Updated /)
   })
 
   it('shows signing identity before a GitHub source can be trusted and added', async () => {

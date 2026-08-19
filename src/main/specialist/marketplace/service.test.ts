@@ -128,6 +128,9 @@ describe('MarketplaceService', () => {
           })
         : new Response('missing', { status: 404 })
     })
+    // The clock advances between phases so a republished upstream root lands outside the cached-root
+    // TTL: with a frozen clock the later list() would keep answering from the pre-update cache.
+    let nowMs = Date.parse('2026-08-17T00:00:00.000Z')
     const order: string[] = []
     const disabled = new Set<string>()
     let installed = false
@@ -180,7 +183,7 @@ describe('MarketplaceService', () => {
       packages: packages as never,
       fetch: fetcher,
       token: () => 'source-candidate',
-      now: () => new Date('2026-08-17T00:00:00.000Z'),
+      now: () => new Date(nowMs),
       getDisabledSkillIds: async () => [...disabled],
       getInstalledSpecialists: async () =>
         installed
@@ -357,6 +360,7 @@ describe('MarketplaceService', () => {
       'https://raw.githubusercontent.com/example/marketplace/main/marketplace.json.sig',
       newerSignature
     )
+    nowMs += 2 * 60 * 1_000
     await expect(service.list()).resolves.toMatchObject({
       specialists: [
         {
@@ -375,6 +379,9 @@ describe('MarketplaceService', () => {
       'https://raw.githubusercontent.com/example/marketplace/main/marketplace.json.sig',
       signature
     )
+    // Upstream rolled back to the original root; advance past the TTL so the loads below fetch it
+    // instead of answering from the newer-root cache written moments ago.
+    nowMs += 2 * 60 * 1_000
 
     const [provenance] = (await repository.getAll()).installations
     if (!provenance) throw new Error('Expected Marketplace provenance')
@@ -843,7 +850,9 @@ describe('MarketplaceService', () => {
     const snapshot = await service.list()
 
     expect(snapshot.failures).toMatchObject([{ sourceId: 'github-example', code: 'schema' }])
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    // Root and signature fly in parallel, so both requests leave before either redirect is
+    // inspected and rejected; neither response body is read.
+    expect(fetcher).toHaveBeenCalledTimes(2)
     expect(fetcher.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
   })
 
@@ -1069,6 +1078,7 @@ describe('MarketplaceService', () => {
       ]
     ])
     let online = true
+    let nowMs = Date.parse('2026-08-18T00:00:00.000Z')
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       if (!online) throw new Error('offline')
       const bytes = responses.get(String(input))
@@ -1095,7 +1105,9 @@ describe('MarketplaceService', () => {
         artifactBaseUrls: [],
         trustedKeys: { 'cached-2026-01': publicKeyBase64 }
       },
-      now: () => new Date('2026-08-18T00:00:00.000Z'),
+      // The clock advances between loads: with a fixed now the root cache never ages past its TTL,
+      // and the offline-fallback path this case exercises would never be reached.
+      now: () => new Date(nowMs),
       getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
@@ -1110,6 +1122,7 @@ describe('MarketplaceService', () => {
     ).resolves.toMatchObject({ specialistId: 'cached-specialist' })
 
     online = false
+    nowMs += 2 * 60 * 1_000
     await expect(service.list()).resolves.toMatchObject({
       sources: [
         {
@@ -1139,5 +1152,86 @@ describe('MarketplaceService', () => {
       specialists: [],
       failures: [{ sourceId: 'cached-official' }]
     })
+  })
+
+  it('serves a fresh cached root without network and lets a forced refresh bypass the TTL', async () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    const publicKeyBase64 = publicKey.export({ format: 'der', type: 'spki' }).toString('base64')
+    const root = encoder.encode(
+      JSON.stringify({
+        schema_version: 1,
+        revision: 'ttl-1',
+        marketplace: { id: 'ttl', name: 'TTL Marketplace' },
+        specialists: []
+      })
+    )
+    const signature = encoder.encode(
+      JSON.stringify({
+        schema_version: 1,
+        algorithm: 'ed25519',
+        key_id: 'ttl-2026-01',
+        public_key: publicKeyBase64,
+        signature: sign(null, root, privateKey).toString('base64')
+      })
+    )
+    const responses = new Map<string, Uint8Array>([
+      ['https://raw.githubusercontent.com/example/ttl/main/marketplace.json', root],
+      ['https://raw.githubusercontent.com/example/ttl/main/marketplace.json.sig', signature]
+    ])
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const bytes = responses.get(String(input))
+      return bytes
+        ? new Response(Buffer.from(bytes), {
+            status: 200,
+            headers: { 'content-length': String(bytes.byteLength) }
+          })
+        : new Response('missing', { status: 404 })
+    })
+    let nowMs = Date.parse('2026-08-18T00:00:00.000Z')
+    const service = new MarketplaceService({
+      repository: new MarketplaceRepository(await mkdtemp(join(tmpdir(), 'marketplace-ttl-'))),
+      packages: {} as never,
+      fetch: fetcher,
+      officialSource: {
+        id: 'ttl-official',
+        name: 'TTL Marketplace',
+        repositoryUrl: 'https://github.com/example/ttl',
+        ref: 'main',
+        metadataBaseUrls: ['https://raw.githubusercontent.com/example/ttl/main/'],
+        artifactBaseUrls: [],
+        trustedKeys: { 'ttl-2026-01': publicKeyBase64 }
+      },
+      now: () => new Date(nowMs),
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [],
+      setSkillsMainEnabled: async () => undefined
+    })
+    const rootFetches = (): number =>
+      fetcher.mock.calls.filter(([input]) => String(input).endsWith('/marketplace.json')).length
+
+    await service.list()
+    const afterFirstLoad = rootFetches()
+    expect(afterFirstLoad).toBeGreaterThan(0)
+
+    // Within the TTL the verified cache is the primary answer: no network, and the data is not
+    // flagged as the degraded offline fallback.
+    const cached = await service.list()
+    expect(rootFetches()).toBe(afterFirstLoad)
+    expect(cached.sources).toHaveLength(1)
+    expect(cached.sources[0].usingCachedMetadata).toBeUndefined()
+    expect(cached.sources[0].lastRefreshedAt).toBe('2026-08-18T00:00:00.000Z')
+
+    nowMs += 2 * 60 * 1_000
+    await service.list()
+    expect(rootFetches()).toBe(afterFirstLoad + 1)
+
+    // The reload above rewrote the cache, so the next automatic list is a cache hit again…
+    nowMs += 30 * 1_000
+    await service.list()
+    expect(rootFetches()).toBe(afterFirstLoad + 1)
+
+    // …while a user-initiated refresh always reaches the network.
+    await service.list({ forceRefresh: true })
+    expect(rootFetches()).toBe(afterFirstLoad + 2)
   })
 })

@@ -15,13 +15,13 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
+import { useDateTimeFormat, useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
+import { useMarketplaceStore } from '@/stores/marketplace-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type {
   MarketplaceDownloadProgress,
   MarketplaceInstallPreview,
-  MarketplaceSnapshot,
   MarketplaceSourceCandidate,
   MarketplaceSpecialistRelease
 } from '../../../../shared/specialist-marketplace'
@@ -184,12 +184,18 @@ const MarketplaceLoading = ({ label }: { label: string }): React.JSX.Element => 
 const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
-  const [snapshot, setSnapshot] = useState<MarketplaceSnapshot>()
-  const [loading, setLoading] = useState(
-    view.kind === 'marketplace' || view.kind === 'marketplace-sources'
-  )
-  const [refreshing, setRefreshing] = useState(false)
-  const [loadError, setLoadError] = useState<string>()
+  const formatRelative = useRelativeTimeFormat()
+  // The snapshot lives in the store so it survives leaving this view: re-entering the Marketplace
+  // renders the last data immediately and refreshes in the background (the status line below makes
+  // that refresh visible), instead of returning to a full-screen loader for data already in hand.
+  const snapshot = useMarketplaceStore((state) => state.snapshot)
+  const isRefreshing = useMarketplaceStore((state) => state.isRefreshing)
+  const lastRefreshFailed = useMarketplaceStore((state) => state.lastRefreshFailed)
+  const refreshMarketplace = useMarketplaceStore((state) => state.refresh)
+  // No snapshot and no failure verdict yet is a genuine first load, true from the very first render
+  // before any effect has fired. Once a snapshot exists the content renders immediately whatever
+  // the refresh state, and a failed first load flips this to false so the error renders instead.
+  const loading = snapshot === undefined && !lastRefreshFailed
   const [query, setQuery] = useState('')
   const [repositoryUrl, setRepositoryUrl] = useState('')
   const [sourceCandidate, setSourceCandidate] = useState<MarketplaceSourceCandidate>()
@@ -240,33 +246,6 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     [cancelCandidate, viewKey]
   )
 
-  const loadMarketplace = useCallback(
-    async ({ preserveContent = false }: { preserveContent?: boolean } = {}): Promise<void> => {
-      if (typeof window.api?.specialist?.listMarketplace !== 'function') {
-        setLoadError(t('Marketplace unavailable'))
-        setLoading(false)
-        setRefreshing(false)
-        return
-      }
-      if (preserveContent) setRefreshing(true)
-      else setLoading(true)
-      setLoadError(undefined)
-      try {
-        setSnapshot(await window.api.specialist.listMarketplace())
-      } catch {
-        setLoadError(
-          preserveContent
-            ? t('Could not refresh Marketplace. Showing the last available data.')
-            : t('Marketplace unavailable')
-        )
-      } finally {
-        if (preserveContent) setRefreshing(false)
-        else setLoading(false)
-      }
-    },
-    [t]
-  )
-
   useEffect(() => {
     if (typeof window.api?.specialist?.onMarketplaceDownloadProgress !== 'function') return
     return window.api.specialist.onMarketplaceDownloadProgress((progress) => {
@@ -281,10 +260,13 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     })
   }, [view])
 
+  // Entering the Marketplace view refreshes without forcing: the cached-root TTL in Main answers
+  // from a fresh-enough cache with no network round trip. The toolbar Refresh button is the
+  // user-initiated path and forces past that TTL.
   useEffect(() => {
     if (view.kind !== 'marketplace' && view.kind !== 'marketplace-sources') return
-    void Promise.resolve().then(() => loadMarketplace())
-  }, [loadMarketplace, view.kind])
+    void Promise.resolve().then(() => refreshMarketplace())
+  }, [refreshMarketplace, view.kind])
 
   useEffect(() => {
     if (view.kind !== 'marketplace-release') return
@@ -340,6 +322,15 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     )
   }, [query, snapshot])
 
+  // The newest per-source refresh timestamp answers "how old is the data on screen", covering both
+  // the TTL-hit case (a few minutes ago) and a just-completed network refresh (now).
+  const lastDataAt = useMemo(() => {
+    const stamps = (snapshot?.sources ?? [])
+      .map((source) => source.lastRefreshedAt)
+      .filter((value): value is string => Boolean(value))
+    return stamps.sort().at(-1)
+  }, [snapshot])
+
   const inspectSource = async (): Promise<void> => {
     const startedViewKey = viewKey
     cancelCandidate(sourceCandidateTokenRef.current)
@@ -376,7 +367,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       sourceCandidateTokenRef.current = undefined
       setRepositoryUrl('')
       setSourceCandidate(undefined)
-      await loadMarketplace()
+      // Source configuration changed: force past the TTL so every source reports live state.
+      void refreshMarketplace({ forceRefresh: true })
     } catch {
       setSourceError(t('Could not add this Marketplace source.'))
     } finally {
@@ -388,7 +380,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     setSourceError(undefined)
     try {
       await window.api.specialist.removeMarketplaceSource({ sourceId })
-      await loadMarketplace()
+      void refreshMarketplace({ forceRefresh: true })
     } catch {
       setSourceError(t('Could not remove this Marketplace source.'))
     }
@@ -594,6 +586,14 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           <h3 className="text-sm font-semibold text-foreground">{t('Configured sources')}</h3>
           {loading ? (
             <MarketplaceLoading label={t('Loading…')} />
+          ) : !snapshot && lastRefreshFailed ? (
+            // Without this arm a failed load reads as "no sources configured".
+            <div className="mt-2">
+              <MarketplaceError
+                message={t('Marketplace unavailable')}
+                retry={() => void refreshMarketplace()}
+              />
+            </div>
           ) : snapshot?.sources.length ? (
             <ul className="mt-2 divide-y divide-border">
               {snapshot.sources.map((source) => (
@@ -966,9 +966,11 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           <SettingsIconAction
             label={t('Refresh Marketplace')}
             icon={RefreshCw}
-            disabled={loading || refreshing}
-            className={refreshing ? '[&_svg]:animate-spin motion-reduce:[&_svg]:animate-none' : ''}
-            onClick={() => void loadMarketplace({ preserveContent: true })}
+            disabled={isRefreshing}
+            className={
+              isRefreshing ? '[&_svg]:animate-spin motion-reduce:[&_svg]:animate-none' : ''
+            }
+            onClick={() => void refreshMarketplace({ forceRefresh: true })}
           />
           <SettingsIconAction
             label={t('Manage Marketplace sources')}
@@ -986,8 +988,45 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         />
       </div>
       {loading ? <MarketplaceLoading label={t('Loading Marketplace…')} /> : null}
-      {!loading && loadError ? (
-        <MarketplaceError message={loadError} retry={() => void loadMarketplace()} />
+      {!loading && !snapshot && lastRefreshFailed ? (
+        <MarketplaceError
+          message={t('Marketplace unavailable')}
+          retry={() => void refreshMarketplace()}
+        />
+      ) : null}
+      {/* Stale-while-revalidate status: neutral while content is on screen, and distinct from the
+          warning banners below, which mean degraded data rather than merely old data. */}
+      {!loading && snapshot && snapshot.sources.length > 0 && !lastRefreshFailed ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="mb-3.5 flex min-h-4 items-center gap-1.5 text-xs text-muted-foreground"
+        >
+          {isRefreshing ? (
+            <>
+              <Loader2
+                className="size-3.5 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+              <span className="font-medium text-foreground">{t('Refreshing Marketplace…')}</span>
+              {lastDataAt ? (
+                <span>
+                  · {t('Showing data from {{time}}', { time: formatRelative(lastDataAt) })}
+                </span>
+              ) : null}
+            </>
+          ) : lastDataAt ? (
+            <span>{t('Updated {{time}}', { time: formatRelative(lastDataAt) })}</span>
+          ) : null}
+        </p>
+      ) : null}
+      {!loading && snapshot && lastRefreshFailed ? (
+        <div
+          role="status"
+          className="mb-3 rounded-lg border border-warning-100/40 bg-warning-100/10 p-3 text-sm text-foreground"
+        >
+          {t('Could not refresh Marketplace. Showing the last available data.')}
+        </div>
       ) : null}
       {!loading
         ? snapshot?.sources
@@ -1013,7 +1052,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           message={t(
             'Marketplace could not be reached from any configured source. Check your network and try again.'
           )}
-          retry={() => void loadMarketplace()}
+          retry={() => void refreshMarketplace()}
         />
       ) : null}
       {!loading && !allSourcesUnavailable

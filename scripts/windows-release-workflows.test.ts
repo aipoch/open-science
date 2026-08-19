@@ -184,8 +184,16 @@ describe('post-merge Windows validation', () => {
       })
     })
     expect(verify.run).toContain('Get-AuthenticodeSignature')
-    expect(verify.run).toContain("$acceptableStatuses = @('Valid', 'NotTrusted')")
-    expect(verify.run).toContain('$signature.Status.ToString() -notin $acceptableStatuses')
+    expect(verify.run).toContain(
+      '$expectedTestCertificateSubject = "CN=Test certificate for \'Open Science [OSS]\'"'
+    )
+    expect(verify.run).toContain('$expectedUntrustedRootMessage =')
+    expect(verify.run).toContain("$signature.Status -eq 'UnknownError'")
+    expect(verify.run).toContain(
+      '$signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer'
+    )
+    expect(verify.run).toContain('$signature.StatusMessage -eq $expectedUntrustedRootMessage')
+    expect(verify.run).not.toContain('X509Store')
     expect(uploadSigned.with).toMatchObject({
       name: 'signpath-test-windows-x64',
       'retention-days': 7,

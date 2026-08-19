@@ -82,13 +82,33 @@ jobs:
             exit 1
           }
           $signature = Get-AuthenticodeSignature -FilePath $installers[0].FullName
-          $acceptableStatuses = @('Valid', 'NotTrusted')
-          if ($null -eq $signature.SignerCertificate -or $signature.Status.ToString() -notin $acceptableStatuses) {
-            Write-Error "SignPath returned an unacceptable Authenticode status: $($signature.Status)."
+          if ($null -eq $signature.SignerCertificate) {
+            Write-Error "SignPath returned an artifact without a signer certificate. Status: $($signature.Status)."
             exit 1
           }
-          Write-Host "Signature status: $($signature.Status)"
+
+          Write-Host "Initial signature status: $($signature.Status)"
+          Write-Host "Initial status message: $($signature.StatusMessage)"
           Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+
+          $expectedTestCertificateSubject = "CN=Test certificate for 'Open Science [OSS]'"
+          $expectedUntrustedRootMessage = 'A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider.'
+          $isExpectedSelfSignedTestCertificate = (
+            $signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer -and
+            $signature.SignerCertificate.Subject -eq $expectedTestCertificateSubject
+          )
+          $isExpectedUntrustedStatus = (
+            $signature.Status -eq 'NotTrusted' -or
+            ($signature.Status -eq 'UnknownError' -and $signature.StatusMessage -eq $expectedUntrustedRootMessage)
+          )
+
+          if ($signature.Status -ne 'Valid' -and -not (
+            $isExpectedSelfSignedTestCertificate -and $isExpectedUntrustedStatus
+          )) {
+            Write-Error "SignPath returned an unacceptable Authenticode signature: $($signature.Status) — $($signature.StatusMessage)"
+            exit 1
+          }
+
           "path=$($installers[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload signed installer

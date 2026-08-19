@@ -20,6 +20,16 @@ export const getAvatarColor = (colorKey?: string): string =>
 // consumers on a stable name.
 export const AVATAR_ICONS = APP_ICONS
 
+// Colors remain shared by the compact picker and the full editor.
+export const SPECIALIST_COLOR_OPTIONS = [
+  { key: 'blue', label: 'Blue' },
+  { key: 'green', label: 'Green' },
+  { key: 'teal', label: 'Teal' },
+  { key: 'amber', label: 'Amber' },
+  { key: 'purple', label: 'Purple' },
+  { key: 'slate', label: 'Slate' }
+] as const
+
 export const getAvatarStyle = (colorKey?: string): CSSProperties => ({
   background: getAvatarColor(colorKey)
 })

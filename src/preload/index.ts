@@ -59,6 +59,7 @@ import type {
   CancelMarketplaceCandidateRequest,
   GetMarketplaceReleaseRequest,
   InspectGitHubMarketplaceSourceRequest,
+  ListMarketplaceRequest,
   MarketplaceDownloadProgress,
   MarketplaceInstallRequest,
   PrepareMarketplaceInstallRequest,
@@ -396,7 +397,8 @@ const api: OpenScienceAPI = {
   },
   specialist: {
     list: () => electronRendererContracts.invoke('specialist.list'),
-    listMarketplace: () => electronRendererContracts.invoke('specialist.listMarketplace'),
+    listMarketplace: (request?: ListMarketplaceRequest) =>
+      electronRendererContracts.invoke('specialist.listMarketplace', request),
     inspectGitHubMarketplaceSource: (request: InspectGitHubMarketplaceSourceRequest) =>
       electronRendererContracts.invoke('specialist.inspectGitHubMarketplaceSource', request),
     addMarketplaceSource: (request: AddMarketplaceSourceRequest) =>

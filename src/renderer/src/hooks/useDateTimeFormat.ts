@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 
-import { formatDateTime, type DateTimeStyleName } from '@/lib/format-datetime'
+import { formatDateTime, formatRelativeTime, type DateTimeStyleName } from '@/lib/format-datetime'
 import { useLocaleStore } from '@/stores/locale-store'
 
 // Formats absolute timestamps in the interface language, re-rendering the caller when the language
@@ -16,6 +16,21 @@ export const useDateTimeFormat = (): ((
   return useCallback(
     (value: Date | number | string, style?: DateTimeStyleName) =>
       formatDateTime(value, locale, style),
+    [locale]
+  )
+}
+
+// Same contract as useDateTimeFormat for relative stamps ("3 minutes ago"): the time value follows
+// the interface language via Intl while the surrounding prose goes through i18next.
+export const useRelativeTimeFormat = (): ((
+  value: Date | number | string,
+  now?: Date | number | string
+) => string) => {
+  const locale = useLocaleStore((state) => state.locale)
+
+  return useCallback(
+    (value: Date | number | string, now?: Date | number | string) =>
+      formatRelativeTime(value, locale, now),
     [locale]
   )
 }

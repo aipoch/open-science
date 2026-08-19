@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDateTime } from './format-datetime'
+import { formatDateTime, formatRelativeTime } from './format-datetime'
 
 // A fixed instant, constructed in UTC so the assertions below don't depend on the runner's zone.
 const INSTANT = Date.UTC(2026, 7, 13, 7, 14, 0)
@@ -58,5 +58,27 @@ describe('formatDateTime', () => {
     // inherit the first one's formatter.
     expect(formatDateTime(INSTANT, 'en')).toBe(formatDateTime(INSTANT, 'en'))
     expect(formatDateTime(INSTANT, 'zh-Hans')).not.toBe(formatDateTime(INSTANT, 'en'))
+  })
+})
+
+describe('formatRelativeTime', () => {
+  it('clamps anything under 45 seconds to "now" in the locale language', () => {
+    expect(formatRelativeTime(INSTANT, 'en', INSTANT)).toBe('now')
+    expect(formatRelativeTime(INSTANT + 30_000, 'en', INSTANT)).toBe('now')
+    // Exact CLDR wording ("刚刚" vs "现在") varies by ICU build; assert the locale switched.
+    expect(formatRelativeTime(INSTANT, 'zh-Hans', INSTANT)).toMatch(/刚刚|现在/u)
+  })
+
+  it('picks the coarsest sensible unit in the locale language', () => {
+    expect(formatRelativeTime(INSTANT - 3 * 60_000, 'en', INSTANT)).toBe('3 minutes ago')
+    expect(formatRelativeTime(INSTANT + 2 * 3_600_000, 'en', INSTANT)).toBe('in 2 hours')
+    expect(formatRelativeTime(INSTANT - 3 * 60_000, 'zh-Hans', INSTANT)).toMatch(/3\s*分钟前/u)
+    // 5 rather than 2 days: CLDR gives Japanese a dedicated word ("一昨日") for two days ago.
+    expect(formatRelativeTime(INSTANT - 5 * 24 * 3_600_000, 'ja', INSTANT)).toMatch(/5\s*日前/u)
+  })
+
+  it('renders an unparseable value as empty rather than a bogus interval', () => {
+    expect(formatRelativeTime(Number.NaN, 'en', INSTANT)).toBe('')
+    expect(formatRelativeTime(INSTANT, 'en', 'not a date')).toBe('')
   })
 })
