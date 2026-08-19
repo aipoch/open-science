@@ -704,6 +704,33 @@ class AcpRuntimeCoordinator {
     return this.sendObservedPrompt(request)
   }
 
+  // Interactive prompt dispatch is an admission RPC, while the authoritative turn lifecycle is
+  // streamed through runtime state/events. Settle the RPC as soon as the provider accepts the
+  // prompt so a long-running turn (or its terminal maintenance) does not retain an Electron reply
+  // channel until completion.
+  startPrompt(request: AcpPromptRequest): Promise<void> {
+    let settled = false
+    let resolve!: () => void
+    let reject!: (error: unknown) => void
+    const accepted = new Promise<void>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
+    const settleAccepted = (): void => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    const settleRejected = (error: unknown): void => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
+
+    void this.sendPromptObserved(request, settleAccepted).then(settleAccepted, settleRejected)
+    return accepted
+  }
+
   sendApplicationPrompt(
     request: AcpPromptRequest,
     attribution: MessageAttribution

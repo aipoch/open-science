@@ -618,6 +618,41 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each([
+    ['Claude Code', 'claude-code'],
+    ['OpenCode', 'opencode'],
+    ['Codex Responses', 'codex'],
+    ['Codex bridge', 'codex']
+  ] as const)(
+    'acknowledges a %s user prompt at provider acceptance before turn completion',
+    async (_route, frameworkId) => {
+      const completion = createDeferred<unknown>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => completion.promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession()
+
+      await expect(
+        coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+      ).resolves.toBeUndefined()
+
+      expect(created.sendPrompt).toHaveBeenCalledOnce()
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+
+      completion.resolve({ stopReason: 'end_turn' })
+      await vi.waitFor(() =>
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
   it('does not report provider acceptance when dispatch fails before acceptance', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>

@@ -43,7 +43,7 @@ type AcpHandlerWorkflowRuntime = {
   hasLiveSession(projectId: string, sessionId: string): boolean
   captureSessionBackend(sessionId: string): AcpBackendGenerationView | undefined
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
-  sendPrompt(request: AcpPromptRequest): Promise<unknown>
+  startPrompt(request: AcpPromptRequest): Promise<void>
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
   startContinuation(request: AcpPromptRequest): Promise<void>
   startContinuationWhenDispatchAdmitted(
@@ -379,7 +379,7 @@ const createAcpHandlerWorkflows = (
     // back only its own token, preserving any older in-flight prompt tracked for the same Session.
     const tracked = taskNotifications?.trackPrompt(request)
     try {
-      await runtime.sendPrompt(request)
+      await runtime.startPrompt(request)
     } catch (error) {
       if (tracked) taskNotifications?.untrackPrompt(request.sessionId, tracked)
       throw error

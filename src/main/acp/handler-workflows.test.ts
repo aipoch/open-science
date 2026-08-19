@@ -81,6 +81,7 @@ const createHarness = (
   saveAsSkillAdmission?: Parameters<typeof createAcpHandlerWorkflows>[5]
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
+  startPrompt: ReturnType<typeof vi.fn>
   startContinuation: ReturnType<typeof vi.fn>
   startContinuationWhenDispatchAdmitted: ReturnType<typeof vi.fn>
   hasLiveSession: ReturnType<typeof vi.fn>
@@ -97,6 +98,7 @@ const createHarness = (
   const session = createSession()
   mutate?.(session)
   prepareControlTurn(session)
+  const startPrompt = vi.fn(async (request: unknown) => void request)
   const startContinuation = vi.fn(async (request: unknown) => void request)
   const hasLiveSession = vi.fn(() => true)
   const captureSessionBackend = vi.fn(
@@ -126,7 +128,7 @@ const createHarness = (
       hasLiveSession,
       captureSessionBackend,
       resumeSession: vi.fn(),
-      sendPrompt: vi.fn(),
+      startPrompt,
       getLatestUserPrompt: vi.fn(),
       startContinuation,
       startContinuationWhenDispatchAdmitted
@@ -141,6 +143,7 @@ const createHarness = (
   const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
   return {
     workflows,
+    startPrompt,
     startContinuation,
     startContinuationWhenDispatchAdmitted,
     hasLiveSession,
@@ -155,6 +158,35 @@ const createHarness = (
     }
   }
 }
+
+describe('ACP send prompt workflow', () => {
+  it('returns the current snapshot after provider admission', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.workflows.sendPrompt({ sessionId: 'session-1', text: 'Research this.' })
+    ).resolves.toEqual({ status: 'connected' })
+
+    expect(harness.startPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Research this.'
+    })
+  })
+
+  it('rolls back notification tracking when provider admission fails', async () => {
+    const trackPrompt = vi.fn(() => ({ token: 9 }))
+    const untrackPrompt = vi.fn()
+    const harness = createHarness(undefined, undefined, { trackPrompt, untrackPrompt })
+    const failure = new Error('Provider rejected prompt admission')
+    harness.startPrompt.mockRejectedValueOnce(failure)
+
+    await expect(
+      harness.workflows.sendPrompt({ sessionId: 'session-1', text: 'Research this.' })
+    ).rejects.toBe(failure)
+
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 9 })
+  })
+})
 
 describe('ACP Save as skill workflow', () => {
   it('dispatches through the Session admission already held by the workflow', async () => {
