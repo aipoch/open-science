@@ -1169,6 +1169,35 @@ describe('SpecialistsPanel', () => {
     expect(document.body.querySelector('[aria-label="Purple"]')).not.toBeNull()
   })
 
+  it('finishes an appearance save without waiting for the catalog reload', async () => {
+    const current = specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>
+    const updated = { ...current, colorKey: 'purple', revision: 2 }
+    window.api.specialist.update = vi.fn().mockResolvedValue(updated)
+    window.api.specialist.list = vi
+      .fn()
+      .mockResolvedValueOnce({ items: specialistItems, integrity: { status: 'ok' } })
+      .mockReturnValue(new Promise(() => undefined))
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Change appearance for RNA Reviewer"]'
+    )
+    expect(trigger).not.toBeNull()
+    openRadixMenu(trigger)
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Purple"]')?.click()
+    )
+    await vi.waitFor(() => expect(window.api.specialist.update).toHaveBeenCalledOnce())
+    await act(async () => Promise.resolve())
+
+    expect(trigger?.getAttribute('data-appearance-state')).toBe('success')
+    expect(document.body.textContent).toContain('Saved')
+  })
+
   it('routes wheel input from the popover to the hidden icon scroller', async () => {
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)

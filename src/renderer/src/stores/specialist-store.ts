@@ -118,8 +118,17 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
     const view = await window.api.specialist.update(input)
-    // Reload the full list so Reviewer and ordering stay consistent.
-    await refreshCatalog(set)
+    // The mutation result is authoritative for this custom Specialist. Apply it immediately so a
+    // slow catalog enrichment cannot leave an already-saved appearance stuck in its loading state.
+    set((state) => ({
+      items: state.items.map((item) =>
+        item.kind === 'custom' && item.id === view.id ? { ...item, ...view, kind: 'custom' } : item
+      )
+    }))
+    // Keep derived catalog fields and ordering synchronized without making mutation completion depend
+    // on the broader catalog read. Catalog-change events may race this refresh; request IDs ensure
+    // only the newest response is applied.
+    void refreshCatalog(set).catch(() => undefined)
     return view
   },
 
