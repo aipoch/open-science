@@ -36,6 +36,8 @@ Open Science supports computational and data-intensive research across disciplin
 
 ## 🚀 Quick Start
 
+Get Open Science running in three steps: download the installer for your platform, complete the guided first-run setup, and create a research project.
+
 ### 1. Download the app
 
 Open the [latest release](https://github.com/aipoch/open-science/releases/latest), expand **Assets**, and choose the installer for your computer:
