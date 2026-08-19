@@ -3613,6 +3613,38 @@ describe('notebook runtime service', () => {
     expect(changedSessions).toContain('session-1')
   })
 
+  it.each(['idle-shutdown', 'termination'] as const)(
+    'keeps live and durable kernel state unchanged when %s persistence fails',
+    async (callback) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root, {
+        repository
+      })
+
+      await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+      const before = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      const runJsonBefore = await readFile(before.runJsonPath, 'utf8')
+      const changedCountBefore = changedSessions.length
+      const persistenceError = new Error('kernel status persistence failed')
+      vi.spyOn(repository, 'markKernelTerminated').mockRejectedValueOnce(persistenceError)
+
+      const lifecycle = lifecycles[0]
+      const statusUpdate =
+        callback === 'idle-shutdown'
+          ? lifecycle.onIdleShutdown('python', DEFAULT_PY_ENV)
+          : lifecycle.onTerminated('python', DEFAULT_PY_ENV)
+      const failure = await statusUpdate.catch((error: unknown) => error)
+
+      expect(failure).toBe(persistenceError)
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
+      ).toBe('idle')
+      expect(await readFile(before.runJsonPath, 'utf8')).toBe(runJsonBefore)
+      expect(changedSessions).toHaveLength(changedCountBefore)
+    }
+  )
+
   it('ignores an idle-shutdown callback from a session replaced under the same id', async () => {
     const root = await createStorageRoot()
     const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root)
