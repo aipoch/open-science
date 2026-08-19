@@ -768,6 +768,9 @@ colors communicate a successful or failed probe/migration result.
   The left column manages Tags and the right column aggregates assigned resources with resource-type
   and text filters. Selecting a result navigates through the existing Settings history to that
   resource's detail or editor.
+- The Tag list is a single-action selector: every row keeps its resource count in one right-aligned
+  trailing column. Persistent edit and delete icon actions belong to the selected custom Tag's detail
+  header instead of individual list rows; the protected Favorites Tag exposes neither action.
 - A Tag may belong to any number of resources and a resource may have any number of Tags. The same
   Tag filter is available in the three catalog panels and in the Specialist capability picker, but
   Specialist persistence continues to store concrete Skill and Connector IDs rather than a dynamic

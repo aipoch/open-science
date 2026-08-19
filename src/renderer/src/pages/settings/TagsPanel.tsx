@@ -1,17 +1,7 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-/* Hallmark · component: grouped resource index · genre: modern-minimal · tone: technical/utilitarian · theme: project tokens · slop: pass */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · component: Tag master-detail · genre: modern-minimal · tone: technical/utilitarian · theme: project tokens · contrast: pass · slop: pass */
 import { AlertDialog, Dialog } from 'radix-ui'
-import {
-  ChevronDown,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  ScrollText,
-  Search,
-  Trash2,
-  Users,
-  X
-} from 'lucide-react'
+import { ChevronDown, Pencil, Plus, ScrollText, Search, Trash2, Users, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -38,12 +28,6 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
@@ -308,56 +292,30 @@ const TagsPanel = ({
       <div className="grid min-h-[420px] flex-1 grid-cols-[15rem_minmax(0,1fr)] overflow-hidden rounded-lg border border-border">
         <aside className="border-r border-border bg-background p-2">
           {tags.map((tag) => (
-            <div key={tag.id} className="group flex items-center gap-1">
-              <button
-                type="button"
-                aria-current={tag.id === currentSelectedId ? 'page' : undefined}
-                onClick={() => {
-                  setSelectedId(tag.id)
-                  onSelectedTagChange?.(tag.id)
-                }}
-                className={cn(
-                  'flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
-                  tag.id === currentSelectedId && 'bg-muted font-medium'
-                )}
-              >
-                <TagBadge tag={tag} className="min-w-0" />
-                <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                  {counts.get(tag.id) ?? 0}
-                </span>
-              </button>
-              {'systemKey' in tag ? null : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t('Tag actions')}
-                      className="shrink-0 opacity-100 transition-[opacity,color,background-color] duration-200 ease-out hover:!opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100"
-                    >
-                      <MoreHorizontal className="size-4" aria-hidden="true" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem className="gap-2" onSelect={() => openEditor(tag)}>
-                      <Pencil className="size-4" aria-hidden="true" />
-                      {t('Edit Tag')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="gap-2 text-destructive"
-                      onSelect={() => {
-                        setDeleteError(undefined)
-                        setDeleting(tag)
-                      }}
-                    >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                      {t('Delete Tag')}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+            <Button
+              key={tag.id}
+              type="button"
+              variant="ghost"
+              size="lg"
+              data-slot="tag-list-row"
+              aria-current={tag.id === currentSelectedId ? 'page' : undefined}
+              onClick={() => {
+                setSelectedId(tag.id)
+                onSelectedTagChange?.(tag.id)
+              }}
+              className={cn(
+                'w-full min-w-0 cursor-pointer justify-start gap-2 px-2 text-left font-normal hover:bg-muted',
+                tag.id === currentSelectedId && 'bg-muted font-medium'
               )}
-            </div>
+            >
+              <TagBadge tag={tag} className="min-w-0" />
+              <span
+                data-slot="tag-list-count"
+                className="ml-auto min-w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
+              >
+                {counts.get(tag.id) ?? 0}
+              </span>
+            </Button>
           ))}
         </aside>
 
@@ -368,14 +326,34 @@ const TagsPanel = ({
         >
           {selectedTag ? (
             <>
-              <div className="mb-4 flex items-center gap-2">
-                <TagBadge tag={selectedTag} />
-                <span className="text-xs text-muted-foreground">
-                  {t('{{count}} resources', {
-                    count: filteredResources.length,
-                    defaultValue_one: '{{count}} resource'
-                  })}
-                </span>
+              <div className="mb-4 flex min-h-7 items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <TagBadge tag={selectedTag} />
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {t('{{count}} resources', {
+                      count: filteredResources.length,
+                      defaultValue_one: '{{count}} resource'
+                    })}
+                  </span>
+                </div>
+                {'systemKey' in selectedTag ? null : (
+                  <div data-slot="tag-detail-actions" className="flex shrink-0 items-center gap-1">
+                    <SettingsIconAction
+                      label={t('Edit Tag')}
+                      icon={Pencil}
+                      onClick={() => openEditor(selectedTag)}
+                    />
+                    <SettingsIconAction
+                      label={t('Delete Tag')}
+                      icon={Trash2}
+                      danger
+                      onClick={() => {
+                        setDeleteError(undefined)
+                        setDeleting(selectedTag)
+                      }}
+                    />
+                  </div>
+                )}
               </div>
               <div className="mb-3 flex items-center gap-2">
                 <Select
