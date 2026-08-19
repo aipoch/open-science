@@ -942,6 +942,7 @@ describe('Russian catalog quality', () => {
     ['Beaker', 'Лабораторный стакан'],
     ['Close Provenance', 'Закрыть сведения о происхождении'],
     ['Open Provenance for {{title}}', 'Открыть сведения о происхождении для {{title}}'],
+    ['Open settings navigation', 'Открыть навигацию по настройкам'],
     ['Use {{name}}', 'Использовать {{name}}'],
     ['Go to home folder', 'Перейти в домашнюю папку'],
     [
