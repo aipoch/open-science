@@ -585,6 +585,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               }
             }
           } catch (error) {
+            // Invalidate caller leases immediately if composition fails after registering IPC. The
+            // outer shell rollback destroys the window and quits, but renderer calls can still arrive
+            // while that shutdown is in flight.
+            disposeIpcHandlerRegistry()
             managedPreviewProtocolBridge.dispose()
             throw error
           }
