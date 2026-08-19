@@ -9,6 +9,11 @@ import type { SshOverrides } from '../../shared/compute'
 // Maximum bytes captured per stream before we truncate. Caller can pass a smaller cap.
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
 
+// Give ssh a short opportunity to shut down cleanly before forcing it to exit. A second, shorter
+// window lets Node deliver the exit/close events after SIGKILL while still bounding every run.
+const TERMINATION_GRACE_MS = 2_000
+const FORCE_KILL_EVENT_GRACE_MS = 1_000
+
 // Wraps a string in POSIX single quotes, escaping embedded single quotes via the '\'' idiom. Inside
 // single quotes the shell expands nothing, so this is the only safe way to hand an arbitrary command
 // string to an outer `bash -lc` layer. (scp-runner exports an identical helper; duplicated here to keep
@@ -279,57 +284,147 @@ export class SystemSshRunner implements SshRunner {
       const stdoutBuf = new CappedOutput(maxBytes)
       const stderrBuf = new CappedOutput(maxBytes)
       let timedOut = false
+      let aborted = false
+      let abortReason: unknown
+      let settled = false
+      let processExited = false
+      let observedExitCode: number | null = null
 
       const child = execFile(target.sshBinary, args, {
         timeout: 0,
         encoding: 'buffer',
         env: opts.env
       })
-      const timer = setTimeout(() => {
-        timedOut = true
-        child.kill('SIGTERM')
-      }, opts.timeoutMs)
-      const cleanup = (): void => {
-        clearTimeout(timer)
-        opts.signal?.removeEventListener('abort', abort)
+
+      let timeoutTimer: NodeJS.Timeout | undefined
+      let terminationTimer: NodeJS.Timeout | undefined
+      let finalBoundaryTimer: NodeJS.Timeout | undefined
+
+      const clearTimer = (timer: NodeJS.Timeout | undefined): void => {
+        if (timer !== undefined) clearTimeout(timer)
       }
 
-      const abort = (): void => {
-        cleanup()
-        child.kill('SIGTERM')
-        reject(opts.signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
-      }
-      opts.signal?.addEventListener('abort', abort, { once: true })
-
-      child.stdout?.on('data', (chunk: Buffer) => {
+      const onStdout = (chunk: Buffer): void => {
         stdoutBuf.push(chunk)
-      })
+      }
 
-      child.stderr?.on('data', (chunk: Buffer) => {
+      const onStderr = (chunk: Buffer): void => {
         stderrBuf.push(chunk)
-      })
+      }
 
-      child.on('close', (code) => {
-        cleanup()
+      const cleanup = (detachChild = false): void => {
+        clearTimer(timeoutTimer)
+        clearTimer(terminationTimer)
+        clearTimer(finalBoundaryTimer)
+        opts.signal?.removeEventListener('abort', onAbort)
+        child.stdout?.removeListener('data', onStdout)
+        child.stderr?.removeListener('data', onStderr)
+        child.removeListener('exit', onExit)
+        child.removeListener('close', onClose)
+        child.removeListener('error', onError)
+        if (detachChild) {
+          // A failed late signal delivery must not become an unhandled EventEmitter error after the
+          // caller has crossed the hard boundary and no longer owns this ChildProcess.
+          child.on('error', () => undefined)
+          child.stdout?.destroy()
+          child.stderr?.destroy()
+          child.unref()
+        }
+      }
+
+      const finish = (exitCode: number | null, spawnError?: Error, detachChild = false): void => {
+        if (settled) return
+        settled = true
+        cleanup(detachChild)
+        if (aborted) {
+          reject(abortReason)
+          return
+        }
         resolve({
-          exitCode: code,
-          stdout: stdoutBuf.toString(),
-          stderr: stderrBuf.toString(),
-          truncated: stdoutBuf.wasTruncated() || stderrBuf.wasTruncated(),
+          exitCode: spawnError ? null : exitCode,
+          stdout: spawnError ? '' : stdoutBuf.toString(),
+          stderr: spawnError ? spawnError.message : stderrBuf.toString(),
+          truncated: spawnError ? false : stdoutBuf.wasTruncated() || stderrBuf.wasTruncated(),
           timedOut
         })
-      })
+      }
 
-      child.on('error', (err) => {
-        cleanup()
-        resolve({
-          exitCode: null,
-          stdout: '',
-          stderr: err.message,
-          truncated: false,
-          timedOut
-        })
-      })
+      const scheduleFinalBoundary = (): void => {
+        if (finalBoundaryTimer !== undefined) return
+        finalBoundaryTimer = setTimeout(() => {
+          finalBoundaryTimer = undefined
+          finish(observedExitCode, undefined, true)
+        }, FORCE_KILL_EVENT_GRACE_MS)
+      }
+
+      const safeKill = (signal: NodeJS.Signals): void => {
+        try {
+          child.kill(signal)
+        } catch {
+          // A failed signal delivery must not defeat the final settlement boundary below.
+        }
+      }
+
+      const requestTermination = (): void => {
+        if (settled) return
+        if (processExited) {
+          finish(observedExitCode, undefined, true)
+          return
+        }
+        if (terminationTimer !== undefined || finalBoundaryTimer !== undefined) return
+        safeKill('SIGTERM')
+        terminationTimer = setTimeout(() => {
+          terminationTimer = undefined
+          safeKill('SIGKILL')
+          scheduleFinalBoundary()
+        }, TERMINATION_GRACE_MS)
+      }
+
+      const onAbort = (): void => {
+        if (settled || aborted) return
+        aborted = true
+        abortReason =
+          opts.signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError')
+        clearTimer(timeoutTimer)
+        timeoutTimer = undefined
+        requestTermination()
+      }
+
+      const onExit = (code: number | null): void => {
+        processExited = true
+        observedExitCode = code
+        clearTimer(terminationTimer)
+        terminationTimer = undefined
+        if (aborted) finish(code, undefined, true)
+        else if (timedOut) scheduleFinalBoundary()
+      }
+
+      const onClose = (code: number | null): void => {
+        processExited = true
+        observedExitCode = code
+        finish(code)
+      }
+
+      const onError = (err: Error): void => {
+        // Signal delivery can itself emit an error without proving that the process exited. Preserve
+        // the hard boundary in that case; ordinary spawn/process errors retain the existing result.
+        if (timedOut || aborted) return
+        finish(null, err)
+      }
+
+      timeoutTimer = setTimeout(() => {
+        timedOut = true
+        requestTermination()
+      }, opts.timeoutMs)
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+      child.stdout?.on('data', onStdout)
+      child.stderr?.on('data', onStderr)
+      child.once('exit', onExit)
+      child.once('close', onClose)
+      child.once('error', onError)
+
+      // The signal may have changed between throwIfAborted() and listener registration.
+      if (opts.signal?.aborted) onAbort()
     })
   }
 }
