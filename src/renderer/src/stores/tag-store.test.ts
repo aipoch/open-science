@@ -62,6 +62,54 @@ describe('tag store', () => {
     expect(useTagStore.getState()).toMatchObject({ revision: 2, tags: result.tags })
   })
 
+  it('does not let an older in-flight load overwrite a completed mutation', async () => {
+    let resolveLoad: ((value: TagSnapshot) => void) | undefined
+    const pendingLoad = new Promise<TagSnapshot>((resolve) => {
+      resolveLoad = resolve
+    })
+    const mutationResult: TagSnapshot = {
+      ...favoriteSnapshot(2),
+      tags: [
+        ...favoriteSnapshot().tags,
+        {
+          id: 'tag-methods',
+          name: 'Methods',
+          iconKey: 'flask-conical',
+          colorKey: 'green',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    }
+    setTagsApi({
+      snapshot: vi.fn(() => pendingLoad),
+      create: vi.fn().mockResolvedValue(mutationResult)
+    })
+    useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+
+    const load = useTagStore.getState().load()
+    await useTagStore
+      .getState()
+      .create({ name: 'Methods', iconKey: 'flask-conical', colorKey: 'green' })
+    resolveLoad?.(favoriteSnapshot(1))
+    await load
+
+    expect(useTagStore.getState()).toMatchObject({
+      status: 'ready',
+      revision: 2,
+      tags: mutationResult.tags
+    })
+  })
+
+  it('ignores a load snapshot older than the current store revision', async () => {
+    setTagsApi({ snapshot: vi.fn().mockResolvedValue(favoriteSnapshot(1)) })
+    useTagStore.setState({ ...favoriteSnapshot(2), status: 'ready' })
+
+    await useTagStore.getState().load()
+
+    expect(useTagStore.getState()).toMatchObject({ status: 'ready', revision: 2 })
+  })
+
   it('reloads only for a newer cross-renderer revision', async () => {
     let listener: ((event: { revision: number }) => void) | undefined
     const snapshot = vi.fn().mockResolvedValue(favoriteSnapshot(3))

@@ -69,6 +69,10 @@ export const useTagStore = create<TagStore>((set, get) => ({
     try {
       const snapshot = await window.api.tags.snapshot()
       if (sequence !== loadSequence) return
+      if (snapshot.revision < get().revision) {
+        set({ status: 'ready', error: undefined })
+        return
+      }
       set({ ...stateFromSnapshot(snapshot), error: undefined })
     } catch {
       if (sequence !== loadSequence) return
@@ -77,6 +81,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
   },
   create: async (request) => {
     const snapshot = await window.api.tags.create(request)
+    loadSequence += 1
     set({ ...stateFromSnapshot(snapshot), error: undefined })
     const requestedNameKey = request.name
       .normalize('NFKC')
@@ -93,10 +98,12 @@ export const useTagStore = create<TagStore>((set, get) => ({
   },
   update: async (request) => {
     const snapshot = await window.api.tags.update(request)
+    loadSequence += 1
     set({ ...stateFromSnapshot(snapshot), error: undefined })
   },
   delete: async (id) => {
     const snapshot = await window.api.tags.delete({ id })
+    loadSequence += 1
     set({ ...stateFromSnapshot(snapshot), error: undefined })
   },
   setAssignment: async (request) => {
@@ -122,6 +129,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
     })
     try {
       const snapshot = await window.api.tags.setAssignment(request)
+      loadSequence += 1
       set({ ...stateFromSnapshot(snapshot), error: undefined })
     } catch (error) {
       set({ assignments: before })
