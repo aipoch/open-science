@@ -46,6 +46,12 @@ const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const gzipAsync = promisify(gzip)
+const STATIC_RESPONSE_SECURITY_HEADERS = {
+  'content-security-policy':
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer'
+} as const
 
 // Remote Browser access is an application session, not authority over native host lifecycle and
 // shell integration. The catalog keeps that authority decision aligned with renderer installation.
@@ -511,6 +517,7 @@ const serveStatic = async (
     const acceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] ?? ''))
     const body = canCompress && acceptsGzip ? await gzipAsync(content) : content
     response.writeHead(200, {
+      ...STATIC_RESPONSE_SECURITY_HEADERS,
       'content-type': MIME_TYPES[extension] ?? 'application/octet-stream',
       'content-length': String(body.byteLength),
       'cache-control': filePath.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000',
@@ -522,6 +529,7 @@ const serveStatic = async (
   } catch {
     const message = 'Web UI is not built. Run npm run build:web first.'
     response.writeHead(503, {
+      ...STATIC_RESPONSE_SECURITY_HEADERS,
       'content-type': 'text/plain; charset=utf-8',
       'content-length': String(Buffer.byteLength(message))
     })

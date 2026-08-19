@@ -1,23 +1,32 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const TOKEN_FILE = 'web-token'
 const COOKIE_NAME = 'open_science_web_token'
 
+const restrictTokenPermissions = async (tokenPath: string): Promise<void> => {
+  if (process.platform !== 'win32') await chmod(tokenPath, 0o600)
+}
+
 const loadOrCreateWebToken = async (configRoot: string): Promise<string> => {
   const tokenPath = join(configRoot, TOKEN_FILE)
+  let existing: string | undefined
   try {
-    const existing = (await readFile(tokenPath, 'utf8')).trim()
-    if (existing.length >= 32) return existing
+    existing = (await readFile(tokenPath, 'utf8')).trim()
   } catch {
     // Create the token below.
+  }
+  if (existing && existing.length >= 32) {
+    await restrictTokenPermissions(tokenPath)
+    return existing
   }
 
   const token = randomBytes(32).toString('base64url')
   await mkdir(dirname(tokenPath), { recursive: true })
   await writeFile(tokenPath, `${token}\n`, { encoding: 'utf8', mode: 0o600 })
+  await restrictTokenPermissions(tokenPath)
   return token
 }
 

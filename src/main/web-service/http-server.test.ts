@@ -120,9 +120,7 @@ describe('startWebHttpServer', () => {
       })
       expect(response.status).toBe(200)
       expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
-      expect(response.headers.get('content-security-policy')).toContain(
-        "frame-ancestors 'none'"
-      )
+      expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
       expect(response.headers.get('x-frame-options')).toBe('DENY')
       expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     }
