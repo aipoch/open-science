@@ -566,6 +566,58 @@ describe('SkillsPanel (list view)', () => {
     expect(exportSkill).toHaveBeenCalledTimes(2)
   })
 
+  it('serializes Skill exports across row action menus', async () => {
+    let finishExport: ((result: { saved: boolean }) => void) | undefined
+    const exportSkill = vi.fn(
+      (): Promise<{ saved: boolean }> =>
+        new Promise((resolve) => {
+          finishExport = resolve
+        })
+    )
+    ;(window as unknown as { api: unknown }).api = { settings: { exportSkill } }
+    useSettingsStore.setState({
+      skills: [
+        ...seedSkills,
+        {
+          id: 'imported-shared',
+          name: 'Shared',
+          displayName: 'Shared',
+          description: 'Imported',
+          source: 'imported',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true
+        }
+      ]
+    })
+    await act(async () => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+    await act(async () => {
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (item) => item.textContent?.trim() === 'Export'
+        )
+      )
+      await Promise.resolve()
+    })
+
+    expect(exportSkill).toHaveBeenCalledOnce()
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Mine"]')?.disabled
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Shared"]')?.disabled
+    ).toBe(true)
+
+    await act(async () => finishExport?.({ saved: false }))
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Mine"]')?.disabled
+    ).toBe(false)
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Shared"]')?.disabled
+    ).toBe(false)
+  })
+
   it('hides Skill export when the desktop bridge is unavailable', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)

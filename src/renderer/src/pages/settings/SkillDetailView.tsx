@@ -177,6 +177,7 @@ const SkillDetailView = ({
         mainToggleLabel={t('Toggle {{name}}', { name })}
         usages={usages}
         onToggleMain={() => void toggleSkill()}
+        showAgentPopover
         onOpenSpecialist={onOpenSpecialist}
       />
 

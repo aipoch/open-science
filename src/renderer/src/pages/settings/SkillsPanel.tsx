@@ -142,6 +142,7 @@ const SkillsPanel = ({
   const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [toggleError, setToggleError] = useState<string | undefined>()
   const loadRequestRef = useRef(0)
+  const exportInFlightRef = useRef(false)
   const canExportSkills = typeof window.api?.settings?.exportSkill === 'function'
   const chatProjectId = useMemo(
     () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
@@ -155,7 +156,8 @@ const SkillsPanel = ({
   }
 
   const exportSkill = async (id: string, name: string): Promise<void> => {
-    if (!canExportSkills) return
+    if (!canExportSkills || exportInFlightRef.current) return
+    exportInFlightRef.current = true
     setExportError(undefined)
     setExportStatus(undefined)
     setExportingId(id)
@@ -166,6 +168,7 @@ const SkillsPanel = ({
       // Main-process failures arrive already worded; only the fallback is ours to translate.
       setExportError(skillOperationErrorMessage(error) || t('Could not export this Skill.'))
     } finally {
+      exportInFlightRef.current = false
       setExportingId(undefined)
     }
   }
@@ -618,7 +621,7 @@ const SkillsPanel = ({
                                     type="button"
                                     variant="ghost"
                                     size="icon"
-                                    disabled={exportingId === skill.id}
+                                    disabled={exportingId !== undefined}
                                     aria-label={t('Actions for {{name}}', {
                                       name: skill.displayName
                                     })}

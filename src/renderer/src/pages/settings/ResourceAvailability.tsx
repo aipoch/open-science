@@ -20,6 +20,7 @@ type ResourceAvailabilityProps = {
   mainToggleLabel: string
   usages: readonly SpecialistUsage[]
   onToggleMain: () => void
+  showAgentPopover?: boolean
   onOpenSpecialist?: (usage: SpecialistUsage) => void
 }
 
@@ -28,6 +29,7 @@ const ResourceAvailability = ({
   mainToggleLabel,
   usages,
   onToggleMain,
+  showAgentPopover = false,
   onOpenSpecialist
 }: ResourceAvailabilityProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -52,7 +54,7 @@ const ResourceAvailability = ({
         />
       </div>
 
-      {mainEnabled || usages.length > 0 ? (
+      {showAgentPopover && (mainEnabled || usages.length > 0) ? (
         <div className="flex items-center justify-between gap-3 py-1.5">
           <div className="min-w-0">
             <p className="text-xs font-medium text-muted-foreground">{t('Agents with access')}</p>
@@ -66,7 +68,25 @@ const ResourceAvailability = ({
             onOpenSpecialist={onOpenSpecialist}
           />
         </div>
-      ) : null}
+      ) : showAgentPopover ? null : (
+        <div className="py-1.5">
+          <p className="text-xs font-medium text-muted-foreground">{t('Specialists')}</p>
+          {usages.length > 0 ? (
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {usages.map((usage) => (
+                <span
+                  key={usage.id}
+                  className="rounded-md bg-muted px-2 py-1 text-xs text-foreground"
+                >
+                  {usage.name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-0.5 text-sm text-foreground">{t('None')}</p>
+          )}
+        </div>
+      )}
     </section>
   )
 }

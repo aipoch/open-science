@@ -2596,6 +2596,12 @@ describe('SettingsPage layout', () => {
     })
     expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
     expect(crumb()).toContain('Connectors›Chemistry')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Specialists')
+    expect(document.body.textContent).toContain('Researcher')
+    expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
 
     // Back to the editor (capability tabs reset to Skills on remount), then a
     // custom server lands on its edit page.
