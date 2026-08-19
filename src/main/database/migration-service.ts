@@ -405,6 +405,13 @@ type MigrationManifestEntry = {
   backupRetention: 'retain' | 'delete-after-success'
 }
 
+const RETAINED_DATABASE_MIGRATION_BACKUP_LIMIT = 2
+
+type DatabaseMigrationBackupRetirementScope = {
+  throughMigrationId: string
+  includeDeleteAfterSuccess: boolean
+}
+
 const runMigrationVerifiers = async (
   client: PrismaClient,
   verifiers: MigrationVerifiers,
@@ -698,10 +705,29 @@ const createDatabaseMigrationBackup = async (
 const retireDatabaseMigrationBackups = async (
   client: PrismaClient,
   manifest: readonly MigrationManifestEntry[],
-  options: SchemaMigrationOptions
+  options: SchemaMigrationOptions,
+  scope: DatabaseMigrationBackupRetirementScope
 ): Promise<void> => {
+  const boundaryIndex = manifest.findIndex((migration) => migration.id === scope.throughMigrationId)
+  if (boundaryIndex < 0) {
+    throw new Error(`Unknown database backup retention boundary ${scope.throughMigrationId}.`)
+  }
+  const retainedMigrationIds = new Set(
+    manifest
+      .slice(0, boundaryIndex + 1)
+      .filter(
+        (migration) =>
+          migration.backupOnApply === 'required' && migration.backupRetention === 'retain'
+      )
+      .slice(-RETAINED_DATABASE_MIGRATION_BACKUP_LIMIT)
+      .map((migration) => migration.id)
+  )
   const retired = manifest.filter(
-    (migration) => migration.backupRetention === 'delete-after-success'
+    (migration) =>
+      (scope.includeDeleteAfterSuccess && migration.backupRetention === 'delete-after-success') ||
+      (migration.backupOnApply === 'required' &&
+        migration.backupRetention === 'retain' &&
+        !retainedMigrationIds.has(migration.id))
   )
   if (retired.length === 0) return
   let databasePath: string | undefined
@@ -1064,7 +1090,10 @@ const migrateApplicationDatabaseWithManifest = async (
       throw classifyDatabaseFailure(error, 'validation', latest.id)
     }
     await reportDatabaseCompatibility(client, options)
-    await retireDatabaseMigrationBackups(client, manifest, options)
+    await retireDatabaseMigrationBackups(client, manifest, options, {
+      throughMigrationId: latest.id,
+      includeDeleteAfterSuccess: true
+    })
     try {
       options.onCompleted?.(result)
     } catch {
@@ -1102,6 +1131,10 @@ const migrateApplicationDatabaseWithManifest = async (
     } catch {
       // A diagnostic sink failure must not invalidate a durable database backup.
     }
+    await retireDatabaseMigrationBackups(client, manifest, options, {
+      throughMigrationId: migrationId,
+      includeDeleteAfterSuccess: false
+    })
   }
   const repairsPreviewStateForeignKeyViolations = manifest.some(
     (candidate) =>

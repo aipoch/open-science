@@ -76,6 +76,12 @@ describe('notification attention metadata migration', () => {
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0009_vision_evidence.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0010_compute_password_auth.backup`)
     ).resolves.toBeUndefined()
 
     await expect(
