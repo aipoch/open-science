@@ -674,7 +674,14 @@ const SpecialistEditor = ({
                       const Icon = APP_ICONS[form.iconKey] ?? DEFAULT_APP_ICON
                       return <Icon className="size-4 shrink-0" aria-hidden="true" />
                     })()}
-                    <span>{ICON_ENTRIES.find((option) => option.key === form.iconKey)?.label}</span>
+                    <span>
+                      {(() => {
+                        const label = ICON_ENTRIES.find(
+                          (option) => option.key === form.iconKey
+                        )?.label
+                        return label === undefined ? undefined : t(label)
+                      })()}
+                    </span>
                   </span>
                 </SelectTrigger>
                 <SelectContent>
@@ -685,7 +692,7 @@ const SpecialistEditor = ({
                         <SelectItem key={option.key} value={option.key}>
                           <span className="flex items-center gap-2">
                             <option.Icon className="size-4 shrink-0" aria-hidden="true" />
-                            {option.label}
+                            {t(option.label)}
                           </span>
                         </SelectItem>
                       ))}

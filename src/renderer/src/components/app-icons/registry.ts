@@ -39,7 +39,9 @@ import { MoleculeIcon, PetriDishIcon } from './custom-glyphs'
 //
 // Icons are chosen to read as a Specialist's identity (a role or discipline), not as
 // app features. Icon keys are persisted (e.g. SpecialistProfileView.iconKey) and must
-// never be renamed or removed; unknown keys resolve to DEFAULT_APP_ICON.
+// never be renamed or removed; unknown keys resolve to DEFAULT_APP_ICON. Labels are
+// i18n keys: render them through t(entry.label) — every label needs catalog entries in
+// zh-Hans / zh-Hant / ja (the English literal below anchors the orphan guard).
 export type AppIconEntry = { key: string; label: string; Icon: LucideIcon }
 export type AppIconGroup = { key: string; label: string; icons: readonly AppIconEntry[] }
 
