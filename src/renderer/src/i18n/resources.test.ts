@@ -661,13 +661,208 @@ describe('Korean language endonyms', () => {
   })
 })
 
+describe('Korean native UI style', () => {
+  it('does not contain hidden formatting characters', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => /[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/u.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses a consistent Korean product voice without translated second-person pronouns', () => {
+    const unnaturalVoice = /귀하|당신|우리는|그것을|하십시오|하시기 바랍니다|기다리고 있어요/u
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => unnaturalVoice.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not pad text inside Trans placeholder tags', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => /<\w+>\s|\s<\/\w+>/u.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not expose English plural notation', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => /\(s\)/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not use known invalid particles after product terms', () => {
+    const invalidParticles = [
+      '런타임로',
+      '저장소이',
+      '저장소을',
+      '환경로',
+      '토큰를',
+      '토큰는',
+      '작업로',
+      '마켓플레이스을',
+      '마켓플레이스은',
+      'Claude Code은',
+      'Claude Code을',
+      'opencode은',
+      'opencode을',
+      'Claude을',
+      'ACP이',
+      'SSH을',
+      'SKILL.md을',
+      '.ipynb을',
+      'PDF은',
+      'ZIP를',
+      'ssh-agent을',
+      '{{provider}}은'
+    ]
+    const offenders = Object.entries(catalog('ko')).flatMap(([key, value]) =>
+      invalidParticles
+        .filter((phrase) => value.includes(phrase))
+        .map((phrase) => `${key}: ${phrase}`)
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not use known literal machine-translation phrasing', () => {
+    const unnaturalPhrases = [
+      '미리보기에 대한',
+      '미리보기에 대해',
+      '디렉토리',
+      '보관처리',
+      '저장 대화',
+      '활성을 중지',
+      '다른 것을 선택',
+      '현재 데이터</em>과',
+      '설명해주세요',
+      '에이전트에 표시',
+      'Open Science 스페셜리스트를',
+      'Open Science 프로젝트를',
+      'Open Science 커넥터를',
+      'Open Science 스킬을',
+      'Open Science는 커넥터를 로드',
+      'Open Science는 스킬을 로드',
+      'https://gateway.example/v1.와',
+      '호출 커넥터 도구를 원합니다',
+      '세션에 대해 에이전트를 중지',
+      '스킬이 에이전트를 가르치는',
+      '데이터를 어디에 저장해야 합니까',
+      '이동에서 제거',
+      '해당 폴더 없음',
+      '자체 포함된',
+      '대화 사용하시면',
+      '지원되지 않음 파일',
+      'Open Science 이',
+      '모두 스페셜리스트',
+      '하실 수',
+      '대형 파일 (',
+      '서브에이전트에서 사용됩니다',
+      'Open Science 전체 현재 보기',
+      '이 기존 검토에는 평가 세부정보',
+      '스페셜리스트는 “',
+      '새로고침할 수 없습니다 {{',
+      '스페셜리스트에 구성됩니다',
+      '미리보기 다시 시도해보세요',
+      '이에 대한 자유 형식 메모 모델 제공업체',
+      '에이전트 Open Science 드라이브',
+      '스캔하여 열기 Open Science',
+      '프록시 환경 Open Science',
+      'protocol 뒤에',
+      '<lnk>다운로드 Remote.It',
+      '미리보기할 수',
+      '대화에 대한 아티팩트',
+      '{{target}}을(를)',
+      '이것이 에이전트',
+      '에 의해 별도로',
+      '에 의해 예약',
+      '운영 체제에 의해 암호화',
+      '{{count}} 이 제한된',
+      '{{count}} 이 미리보기',
+      '{{count}} 단계를',
+      '{{count}} 실패',
+      '{{count}} 읽지 않음',
+      '프로젝트 회복',
+      '계속해서 회복',
+      '생산자 운영',
+      '페어링된 기본 Codex',
+      '관리 쌍',
+      '차단 유효성',
+      '설치됨 스킬',
+      '다음 조사 시',
+      'NCBI 비율 제한',
+      '선택 사항인 API 키'
+    ]
+    const offenders = Object.entries(catalog('ko')).flatMap(([key, value]) =>
+      unnaturalPhrases
+        .filter((phrase) => value.includes(phrase))
+        .map((phrase) => `${key}: ${phrase}`)
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses Korean counters instead of English count-plus-noun order', () => {
+    const bareCountedNoun =
+      /\{\{count\}\}\s+(?:추가 단계|최종 결과|권한|스킬|모델|Notebook|패키지|스페셜리스트|에이전트|아티팩트|원자|셀|확인|환경 항목|수치|파일|발견 항목|결과|원격 작업|실행|세션|셸|서브에이전트|리소스)/u
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => bareCountedNoun.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not attach a fixed Korean particle directly to interpolated values', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => /\{\{[^{}]+\}\}(?:이|가|은|는|을|를|와|과)(?=[\s.,?!]|$)/u.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the product role Reviewer consistently', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([key]) => /\breviewer\b/i.test(englishOf(key)))
+      .filter(([, value]) => !value.includes('리뷰어'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('formats short examples as Korean UI placeholders', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([key]) => /^e\.g\./i.test(englishOf(key)))
+      .filter(([, value]) => !value.startsWith('예: '))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses GitHub issue terminology instead of the generic problem noun', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([key]) => /GitHub issue/i.test(englishOf(key)))
+      .filter(([, value]) => !value.includes('이슈'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+})
+
 describe('Korean binding terminology', () => {
-  const mandatoryTerms = [
+  const mandatoryTerms: Array<{ source: RegExp; expected: string; excludeSource?: RegExp }> = [
     { source: /\bprojects?\b/i, expected: '프로젝트' },
     { source: /\bsessions?\b/i, expected: '세션' },
     { source: /\bconversations?\b/i, expected: '대화' },
     { source: /\bworkspaces?\b/i, expected: '워크스페이스' },
-    { source: /\bmessages?\b/i, expected: '메시지' },
+    {
+      source: /\bmessages?\b/i,
+      expected: '메시지',
+      excludeSource: /\bMessages or Chat Completions\b/
+    },
     { source: /\btasks?\b/i, expected: '작업' },
     { source: /\bmodels?\b/i, expected: '모델' },
     { source: /\bproviders?\b/i, expected: '모델 제공업체' },
@@ -701,28 +896,29 @@ describe('Korean binding terminology', () => {
     { source: /\bmirrors?\b/i, expected: '미러' },
     { source: /\btrays?\b/i, expected: '트레이' },
     { source: /\bbookmarks?\b/i, expected: '북마크' },
-    { source: /\brunning\b/i, expected: '실행 중' },
+    { source: /\brunning\b/i, expected: '실행 중', excludeSource: /\bby running\b/i },
     { source: /\bcalls?\b/i, expected: '호출' },
     { source: /\breveal(?:s|ed|ing)?\b/i, expected: '표시' },
     { source: /\blight\b/i, expected: '라이트' },
     { source: /\bdark\b/i, expected: '다크' }
   ]
 
-  it.each(mandatoryTerms)('uses $expected for matching source prose', ({ source, expected }) => {
-    const offenders = Object.entries(catalog('ko'))
-      .filter(([key]) =>
-        source.test(
-          englishOf(key).replace(
-            /\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
-            ''
-          )
-        )
-      )
-      .filter(([, value]) => !value.includes(expected))
-      .map(([key]) => key)
+  it.each(mandatoryTerms)(
+    'uses $expected for matching source prose',
+    ({ source, expected, excludeSource }) => {
+      const offenders = Object.entries(catalog('ko'))
+        .filter(([key]) => {
+          const sourceText = englishOf(key)
+            .replace(/<code>.*?<\/code>/g, '')
+            .replace(/\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g, '')
+          return source.test(sourceText) && !excludeSource?.test(sourceText)
+        })
+        .filter(([, value]) => !value.includes(expected))
+        .map(([key]) => key)
 
-    expect(offenders).toEqual([])
-  })
+      expect(offenders).toEqual([])
+    }
+  )
 
   it('matches topic, object, and conjunction particles to the chosen term', () => {
     const hasFinalConsonant = (term: string): boolean => {
