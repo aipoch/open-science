@@ -12,6 +12,10 @@ type DatabaseStartupError = {
   message: string
   migrationId?: string
   retryable: boolean
+  // Pre-redacted environment + stack summary for the "create an issue" draft. Composed in the main
+  // process, which owns the app version and the original error cause chain; the renderer only
+  // embeds it verbatim into the GitHub issue URL.
+  diagnostics?: string
 }
 
 type DatabaseStartupState =

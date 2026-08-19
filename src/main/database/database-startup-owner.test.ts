@@ -125,4 +125,52 @@ describe('database startup owner', () => {
       })
     )
   })
+
+  it('attaches pre-redacted diagnostics to the blocked state when a builder is provided', async () => {
+    const verifyDatabase = vi.fn(async () => {
+      throw new DatabaseMigrationError(
+        'database_open_failed',
+        'Open Science could not open its database.',
+        true
+      )
+    })
+    const owner = createDatabaseStartupOwner({
+      reportBlocked: vi.fn(),
+      verifyDatabase,
+      buildDiagnostics: (error) =>
+        error.code === 'database_open_failed' ? 'App version: 0.9.2\n\nError: boom' : undefined
+    })
+
+    const blocked = await owner.start()
+
+    expect(blocked).toMatchObject({
+      phase: 'blocked',
+      error: { diagnostics: 'App version: 0.9.2\n\nError: boom' }
+    })
+  })
+
+  it('still blocks cleanly when the diagnostics builder throws', async () => {
+    const verifyDatabase = vi.fn(async () => {
+      throw new DatabaseMigrationError(
+        'database_open_failed',
+        'Open Science could not open its database.',
+        true
+      )
+    })
+    const owner = createDatabaseStartupOwner({
+      reportBlocked: vi.fn(),
+      verifyDatabase,
+      buildDiagnostics: () => {
+        throw new Error('diagnostics failed')
+      }
+    })
+
+    const blocked = await owner.start()
+
+    expect(blocked).toMatchObject({
+      phase: 'blocked',
+      error: { code: 'database_open_failed' }
+    })
+    expect(blocked.phase === 'blocked' && blocked.error.diagnostics).toBeFalsy()
+  })
 })

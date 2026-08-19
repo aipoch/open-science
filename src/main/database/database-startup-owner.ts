@@ -4,6 +4,9 @@ import { DatabaseMigrationError, type SchemaMigrationProgress } from './migratio
 type DatabaseStartupOwnerDeps = {
   reportBlocked: (error: DatabaseMigrationError) => void
   verifyDatabase: (onProgress: (progress: SchemaMigrationProgress) => void) => Promise<void>
+  // Optional: composes the pre-redacted environment + stack block shared through the "create an
+  // issue" draft. Kept injectable so the owner stays free of os/app-version concerns.
+  buildDiagnostics?: (error: DatabaseMigrationError) => string | undefined
 }
 
 type DatabaseStartupOwner = {
@@ -60,13 +63,20 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
         } catch {
           // A diagnostic sink failure must not bypass the database compatibility gate.
         }
+        let diagnostics: string | undefined
+        try {
+          diagnostics = deps.buildDiagnostics?.(classified)
+        } catch {
+          // Diagnostics are a best-effort aid for issue reports; they must not mask the block.
+        }
         const blocked: DatabaseStartupState = {
           phase: 'blocked',
           error: {
             code: classified.code,
             message: classified.message,
             retryable: classified.retryable,
-            ...(classified.migrationId ? { migrationId: classified.migrationId } : {})
+            ...(classified.migrationId ? { migrationId: classified.migrationId } : {}),
+            ...(diagnostics ? { diagnostics } : {})
           }
         }
         publish(blocked)

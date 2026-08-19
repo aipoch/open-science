@@ -235,4 +235,40 @@ describe('DatabaseStartupGate', () => {
     await act(async () => screen.getByRole('button', { name: 'Retry' }).click())
     expect(retry).toHaveBeenCalledOnce()
   })
+
+  it('renders per-error guidance and opens a pre-filled GitHub issue draft', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(
+      <DatabaseStartupGate>
+        <div>Business application</div>
+      </DatabaseStartupGate>
+    )
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_newer_than_app',
+          message: 'The database was updated by a newer version of Open Science.',
+          migrationId: '0009_vision_evidence',
+          retryable: false,
+          diagnostics: 'App version: 0.9.2 (darwin-arm64)\n\nError: boom'
+        }
+      })
+    )
+
+    expect(screen.getByText('Why this happened')).toBeTruthy()
+    expect(screen.getByText('How to fix')).toBeTruthy()
+    expect(screen.getByText(/last written by a newer release/)).toBeTruthy()
+    expect(screen.getByText(/database_newer_than_app/)).toBeTruthy()
+    expect(screen.getByText(/0009_vision_evidence/)).toBeTruthy()
+
+    await act(async () => screen.getByRole('button', { name: /Create an issue for help/ }).click())
+
+    expect(open).toHaveBeenCalledOnce()
+    const [url, target] = open.mock.calls[0] as unknown as [string, string]
+    expect(url).toContain('https://github.com/aipoch/open-science/issues/new?title=')
+    expect(decodeURIComponent(url)).toContain('Startup blocked: database_newer_than_app')
+    expect(decodeURIComponent(url)).toContain('Error: boom')
+    expect(target).toBe('_blank')
+  })
 })
