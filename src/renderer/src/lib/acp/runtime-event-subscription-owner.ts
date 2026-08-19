@@ -80,6 +80,27 @@ const createRuntimeEventSubscriptionOwner = (): RuntimeEventSubscriptionOwner =>
         !directEventsSinceSnapshot.has(event.id)
     )
 
+  const mergeInitialEvents = (
+    snapshotEvents: readonly AcpRuntimeEvent[],
+    pendingEvents: readonly AcpRuntimeEvent[]
+  ): AcpRuntimeEvent[] => {
+    const pendingIndexes = new Map(pendingEvents.map((event, index) => [event.id, index]))
+    const merged: AcpRuntimeEvent[] = []
+    let pendingIndex = 0
+
+    for (const snapshotEvent of snapshotEvents) {
+      const overlapIndex = pendingIndexes.get(snapshotEvent.id)
+      if (overlapIndex === undefined) {
+        merged.push(snapshotEvent)
+      } else if (overlapIndex >= pendingIndex) {
+        merged.push(...pendingEvents.slice(pendingIndex, overlapIndex + 1))
+        pendingIndex = overlapIndex + 1
+      }
+    }
+    merged.push(...pendingEvents.slice(pendingIndex))
+    return merged
+  }
+
   const observeSnapshot = (
     events: readonly AcpRuntimeEvent[],
     snapshot?: RuntimeEventSnapshotContext
@@ -88,11 +109,7 @@ const createRuntimeEventSubscriptionOwner = (): RuntimeEventSubscriptionOwner =>
       initialized = true
       const snapshotEventIds = new Set(events.map((event) => event.id))
       const pendingEvents = [...pendingInitialEvents.values()]
-      const firstOverlapIndex = events.findIndex((event) => pendingInitialEvents.has(event.id))
-      const initialEvents =
-        firstOverlapIndex < 0
-          ? [...events, ...pendingEvents]
-          : [...events.slice(0, firstOverlapIndex), ...pendingEvents]
+      const initialEvents = mergeInitialEvents(events, pendingEvents)
       reconcileDirectEvents(events)
       previousSnapshotEventIds = snapshotEventIds
       pendingInitialEvents.clear()

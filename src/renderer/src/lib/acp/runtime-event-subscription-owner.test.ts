@@ -41,6 +41,20 @@ describe('runtime event subscription owner', () => {
     expect(listener.mock.calls[0]?.[0]).toEqual([first, second])
   })
 
+  it('keeps snapshot-only events that follow the first pending overlap', () => {
+    const owner = createRuntimeEventSubscriptionOwner()
+    const delivered: AcpRuntimeEvent[] = []
+    const first = runtimeEvent(1)
+    const second = runtimeEvent(2)
+    const third = runtimeEvent(3)
+    owner.subscribe((events) => delivered.push(...events))
+
+    owner.observeEvent(second)
+    owner.observeInitialSnapshot([first, second, third])
+
+    expect(delivered).toEqual([first, second, third])
+  })
+
   it('deduplicates delayed snapshots without suppressing newer incremental events', () => {
     const owner = createRuntimeEventSubscriptionOwner()
     const delivered: AcpRuntimeEvent[] = []
