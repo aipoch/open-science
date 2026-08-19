@@ -153,7 +153,7 @@ describe('database JSON constraints migration', () => {
       code: 'ENOENT'
     })
     await expect(
-      access(`${databasePath}.before-0009_vision_evidence.backup`)
+      access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).resolves.toBeUndefined()
     await expect(
       access(`${databasePath}.before-0010_compute_password_auth.backup`)
