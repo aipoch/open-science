@@ -17,6 +17,10 @@ import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 
 type PreviewStoreState = ReturnType<typeof usePreviewWorkbenchStore.getState>
 type PreviewSave = (request: SavePreviewStateRequest) => Promise<void>
+type PreviewSaveScheduler = {
+  schedule: (request: SavePreviewStateRequest) => void
+  flush: () => Promise<void>
+}
 
 const reportPersistenceError = (error: unknown): void => {
   console.warn('Preview persistence failed', error)
@@ -27,46 +31,70 @@ const reportPersistenceError = (error: unknown): void => {
 const createPreviewSaveScheduler = (
   save: PreviewSave,
   reportError: (error: unknown) => void
-): ((request: SavePreviewStateRequest) => void) => {
+): PreviewSaveScheduler => {
   const queues = new Map<
     string,
     {
       pendingState: PersistedPreviewState | undefined
-      isDraining: boolean
+      drain: Promise<void> | undefined
     }
   >()
+  const failures = new Map<string, unknown>()
 
-  return ({ projectId, state }) => {
-    const queue = queues.get(projectId) ?? { pendingState: undefined, isDraining: false }
+  const schedule = ({ projectId, state }: SavePreviewStateRequest): void => {
+    const queue = queues.get(projectId) ?? { pendingState: undefined, drain: undefined }
     queue.pendingState = state
     queues.set(projectId, queue)
 
-    if (queue.isDraining) return
-    queue.isDraining = true
+    if (queue.drain) return
 
-    void (async () => {
-      while (queue.pendingState) {
-        const nextState = queue.pendingState
-        queue.pendingState = undefined
+    const drain = (async () => {
+      try {
+        while (queue.pendingState) {
+          const nextState = queue.pendingState
+          queue.pendingState = undefined
 
-        try {
-          await save({ projectId, state: nextState })
-        } catch (error) {
-          reportError(error)
+          try {
+            await save({ projectId, state: nextState })
+            failures.delete(projectId)
+          } catch (error) {
+            failures.set(projectId, error)
+            reportError(error)
+          }
         }
+      } finally {
+        if (queues.get(projectId) === queue) queues.delete(projectId)
       }
-
-      queues.delete(projectId)
     })()
+    queue.drain = drain
+    void drain.catch(() => undefined)
   }
+
+  const flush = async (): Promise<void> => {
+    while (queues.size > 0) {
+      await Promise.all(
+        [...queues.values()]
+          .map((queue) => queue.drain)
+          .filter((drain): drain is Promise<void> => !!drain)
+      )
+    }
+
+    if (failures.size > 0) {
+      throw failures.values().next().value ?? new Error('Preview persistence flush failed')
+    }
+  }
+
+  return { schedule, flush }
 }
 
 // WorkspacePage can unmount while an IPC save is still in flight. Keep one renderer-lifetime scheduler
 // so a later Workspace mount cannot start a competing queue for the same Project.
-const schedulePreviewSave = createPreviewSaveScheduler(
+const previewSaveScheduler = createPreviewSaveScheduler(
   (request) => window.api.preview.save(request),
   reportPersistenceError
 )
+const schedulePreviewSave = previewSaveScheduler.schedule
+const flushPreviewPersistence = previewSaveScheduler.flush
 
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
 // Subagents selection. Other tool tabs remain runtime-only and re-appear from their existing owners.
@@ -259,4 +287,4 @@ export const usePreviewPersistence = (
   }, [])
 }
 
-export { toPersistedPreviewState, toRestoredSlice }
+export { flushPreviewPersistence, toPersistedPreviewState, toRestoredSlice }

@@ -15,6 +15,7 @@ import {
 } from '../../stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import {
+  flushPreviewPersistence,
   toPersistedPreviewState,
   toRestoredSlice,
   usePreviewPersistence
@@ -571,15 +572,14 @@ describe('usePreviewPersistence per-project save/restore', () => {
       usePreviewWorkbenchStore.setState({ activeItemId: secondItem.id })
     })
 
+    const flushing = flushPreviewPersistence()
     await act(async () => {
       delayedFirstSave.resolve()
-      await delayedFirstSave.promise
+      await flushing
     })
 
-    await vi.waitFor(() => {
-      expect(save).toHaveBeenCalledTimes(2)
-      expect(durableState?.activeItemId).toBe(secondItem.id)
-    })
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(durableState?.activeItemId).toBe(secondItem.id)
   })
 
   it('keeps the latest state durable across a remount while an earlier save is in flight', async () => {
@@ -634,14 +634,13 @@ describe('usePreviewPersistence per-project save/restore', () => {
       usePreviewWorkbenchStore.setState({ activeItemId: secondItem.id })
     })
 
+    const flushing = flushPreviewPersistence()
     await act(async () => {
       delayedFirstSave.resolve()
-      await delayedFirstSave.promise
+      await flushing
     })
 
-    await vi.waitFor(() => {
-      expect(durableState?.activeItemId).toBe(secondItem.id)
-    })
+    expect(durableState?.activeItemId).toBe(secondItem.id)
   })
 
   it('flushes the active project on unmount', async () => {
