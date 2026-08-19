@@ -144,6 +144,11 @@ export class UpdateService implements UpdateStrategy {
   }
 
   async check(): Promise<UpdateStatus> {
+    // Preserve the installer once a download owns the lifecycle or has completed. A scheduled/manual
+    // check can otherwise finish after the transfer and replace ready + localPath with its manifest
+    // result. apply() already validates the saved file and returns to available when it is missing.
+    if (this.downloadLifecycle || this.status.state === 'ready') return this.status
+
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',
       fields: { strategy: 'manifest' }

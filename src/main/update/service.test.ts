@@ -208,6 +208,64 @@ describe('UpdateService.download', () => {
     expect(existsSync(target)).toBe(true)
   })
 
+  it('preserves a completed download when a check is requested during the transfer', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    let manifestFetches = 0
+    let resolveLateCheck: ((response: Response) => void) | undefined
+    const lateCheck = new Promise<Response>((resolve) => {
+      resolveLateCheck = resolve
+    })
+    let releaseInstaller: (() => void) | undefined
+    const installerGate = new Promise<void>((resolve) => {
+      releaseInstaller = resolve
+    })
+    let markInstallerStarted: (() => void) | undefined
+    const installerStarted = new Promise<void>((resolve) => {
+      markInstallerStarted = resolve
+    })
+    const fetchImpl = (async (input: unknown) => {
+      if (String(input).endsWith('version.json')) {
+        manifestFetches += 1
+        return manifestFetches === 1 ? jsonResponse(manifestForCheck) : lateCheck
+      }
+      markInstallerStarted?.()
+      await installerGate
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const downloading = service.download()
+    await installerStarted
+    const checking = service.check()
+    releaseInstaller?.()
+    await downloading
+    resolveLateCheck?.(jsonResponse(manifestForCheck))
+    await checking
+
+    const readyStatus = service.getStatus()
+    expect(await service.check()).toBe(readyStatus)
+
+    expect(manifestFetches).toBe(1)
+    expect(service.getStatus()).toEqual(
+      expect.objectContaining({ state: 'ready', localPath: target, progress: 100 })
+    )
+  })
+
   it('records a completed installer download without its URL or local path', async () => {
     dir = await mkdtemp(join(tmpdir(), 'diagnostic-private-'))
     const target = join(dir, 'private-installer.dmg')
