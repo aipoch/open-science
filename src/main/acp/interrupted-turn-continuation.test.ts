@@ -354,6 +354,8 @@ describe('continueInterruptedTurn', () => {
       startedAt: 2
     })
     const startContinuation = vi.fn()
+    const trackPrompt = vi.fn(() => ({ token: 11 }))
+    const untrackPrompt = vi.fn()
 
     await expect(
       continueInterruptedTurn(
@@ -363,7 +365,8 @@ describe('continueInterruptedTurn', () => {
             getLatestUserPrompt: () => undefined,
             startContinuation
           },
-          loadSession: vi.fn(async () => durable)
+          loadSession: vi.fn(async () => durable),
+          notifications: { trackPrompt, untrackPrompt }
         },
         {
           sessionId: 'session-1',
@@ -379,6 +382,7 @@ describe('continueInterruptedTurn', () => {
       )
     ).rejects.toThrow('history could not be replayed after context reset')
     expect(startContinuation).not.toHaveBeenCalled()
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 11 })
   })
 
   it('does not dispatch a second continuation while the recovered prompt is already running', async () => {

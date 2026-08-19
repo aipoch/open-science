@@ -234,8 +234,8 @@ export const continueInterruptedTurn = async (
     sessionId: request.sessionId,
     text: prompt.content
   })
-  const continuation = buildContinuationRequest(session, prompt, request, livePrompt)
   try {
+    const continuation = buildContinuationRequest(session, prompt, request, livePrompt)
     if (dependencies.startDispatchAdmittedContinuation) {
       await dependencies.startDispatchAdmittedContinuation(continuation, async () => {
         const admittedSession = await dependencies.loadSession(request.projectId, request.sessionId)
