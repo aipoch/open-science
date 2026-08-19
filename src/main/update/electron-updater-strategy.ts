@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
-import type { UpdateStatus } from '../../shared/update'
+import { isNewer, type UpdateStatus } from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
 import { fetchManifest } from './manifest'
@@ -186,6 +186,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private downloadGeneration = 0
   private downloadOperation?: DiagnosticOperation
   private checkInFlight = false
+  private readyCheckStatus?: UpdateStatus
+  private readyCheckError?: unknown
   private status: UpdateStatus
   private applying = false
   private installerStarted = false
@@ -232,9 +234,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private subscribe(): void {
-    this.updater.on('checking-for-update', () => this.setStatus({ state: 'checking' }))
+    this.updater.on('checking-for-update', () => {
+      if (this.readyCheckStatus && this.status === this.readyCheckStatus) return
+      this.setStatus({ state: 'checking' })
+    })
     this.updater.on('update-available', (info) => {
       const i = info as { version?: string; releaseNotes?: unknown; files?: UpdateFeedFile[] }
+      const readyStatus = this.readyCheckStatus
+      if (
+        readyStatus &&
+        this.status === readyStatus &&
+        (!i.version || !isNewer(i.version, readyStatus.latest ?? this.currentVersion))
+      ) {
+        return
+      }
       const totalBytes = extractArtifactSize(i.files, this.platform, this.arch)
       this.setStatus({
         state: 'available',
@@ -248,6 +261,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       if (i.version) this.notesHydration = this.hydrateNotes(i.version)
     })
     this.updater.on('update-not-available', (info) => {
+      if (this.readyCheckStatus && this.status === this.readyCheckStatus) return
       const i = info as { version?: string }
       this.setStatus({ state: 'up-to-date', latest: i.version })
     })
@@ -286,6 +300,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return
+      if (this.readyCheckStatus && this.status === this.readyCheckStatus) {
+        this.readyCheckError = err
+        return
+      }
       if (this.installerStarted) {
         this.pendingInstallRollback?.()
         this.pendingInstallRollback = undefined
@@ -338,35 +356,39 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   async check(): Promise<UpdateStatus> {
-    // Keep provider checks mutually exclusive with downloads. A late check event can otherwise replace
-    // ready with checking/available/up-to-date and make apply() reject the completed update.
-    if (
-      this.applying ||
-      this.checkInFlight ||
-      this.downloadLifecycle ||
-      this.status.state === 'ready'
-    ) {
+    // Keep provider checks mutually exclusive with downloads. A ready update may still be refreshed,
+    // but its events are reconciled against the downloaded version by the subscribers above.
+    if (this.applying || this.checkInFlight || this.downloadLifecycle) {
       return this.status
     }
+    const readyStatus = this.status.state === 'ready' ? this.status : undefined
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',
       fields: { strategy: 'in-place' }
     })
     this.checkInFlight = true
+    this.readyCheckStatus = readyStatus
+    this.readyCheckError = undefined
     try {
       operation.phase('query-provider')
+      let providerFailure: unknown
       try {
         await this.updater.checkForUpdates()
       } catch (error) {
-        this.setStatus({
-          state: 'error',
-          error: error instanceof Error ? error.message : 'Update check failed'
-        })
-        operation.fail(error, { result: 'error' })
+        providerFailure = error
+        if (!readyStatus || this.status !== readyStatus) {
+          this.setStatus({
+            state: 'error',
+            error: error instanceof Error ? error.message : 'Update check failed'
+          })
+        }
       }
       // Wait for the notes fetch triggered by update-available so the returned status carries them.
       await this.notesHydration
-      if (this.status.state === 'error') {
+      providerFailure ??= this.readyCheckError
+      if (providerFailure) {
+        operation.fail(providerFailure, { result: 'error' })
+      } else if (this.status.state === 'error') {
         operation.fail(new Error('Updater check failed'), { result: 'error' })
       } else {
         operation.complete({ result: this.status.state })
@@ -374,6 +396,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       return this.status
     } finally {
       this.checkInFlight = false
+      this.readyCheckStatus = undefined
+      this.readyCheckError = undefined
     }
   }
 

@@ -227,8 +227,38 @@ describe('ElectronUpdaterStrategy', () => {
 
     const readyStatus = strategy.getStatus()
     expect(await strategy.check()).toBe(readyStatus)
-    expect(checkCalls).toBe(1)
+    expect(checkCalls).toBe(2)
     expect(strategy.getStatus().state).toBe('ready')
+  })
+
+  it('preserves in-place ready on check failure but accepts a strictly newer update', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+    await strategy.download()
+    const readyStatus = strategy.getStatus()
+
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('error', new Error('offline'))
+    })
+    expect(await strategy.check()).toBe(readyStatus)
+
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('checking-for-update')
+      updater.emit('update-available', {
+        version: '0.4.0',
+        releaseNotes: 'newer notes',
+        files: [{ url: 'https://cdn/Open-Science-0.4.0.zip', size: 12000 }]
+      })
+    })
+    expect(await strategy.check()).toEqual(
+      expect.objectContaining({ state: 'available', latest: '0.4.0', totalBytes: 12000 })
+    )
   })
 
   it('does not start an in-place download while a provider check is active', async () => {

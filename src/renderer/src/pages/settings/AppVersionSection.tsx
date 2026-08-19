@@ -20,7 +20,7 @@ const AppVersionSection = (): React.JSX.Element => {
   const version = appInfo?.version ?? status.current
   const isChecking = status.state === 'checking'
   const isDownloading = status.state === 'downloading'
-  const canCheck = !isChecking && !isDownloading && status.state !== 'ready'
+  const canCheck = !isChecking && !isDownloading
   const hasUpdate = status.state === 'available' || isDownloading || status.state === 'ready'
 
   const statusLine = ((): string => {
