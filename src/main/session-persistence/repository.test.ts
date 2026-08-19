@@ -393,6 +393,36 @@ describe('session persistence repository (per-session files)', () => {
     )
   })
 
+  it('recovers a valid historical Session temp when the primary is missing', async () => {
+    const root = await createStorageRoot()
+    const filePath = join(root, 'sessions', 'project-a', 'session-1.json')
+    await new SessionRepository(root).saveSession(createSession({ title: 'Before crash' }))
+    await rename(filePath, `${filePath}.1700000000000-1.tmp`)
+
+    await expect(new SessionRepository(root).loadAll()).resolves.toMatchObject({
+      sessions: [{ id: 'session-1', title: 'Before crash' }]
+    })
+    await expect(readdir(join(root, 'sessions', 'project-a'))).resolves.toEqual(['session-1.json'])
+  })
+
+  it('recovers a valid historical manifest temp when the primary is missing', async () => {
+    const root = await createStorageRoot()
+    const manifestPath = join(root, 'sessions', 'manifest.json')
+    await new SessionRepository(root).saveManifest({
+      lastProjectId: 'project-a',
+      lastSessionId: 'session-1'
+    })
+    await rename(manifestPath, `${manifestPath}.1700000000000-1.tmp`)
+
+    await expect(new SessionRepository(root).loadAll()).resolves.toMatchObject({
+      manifest: {
+        lastProjectId: 'project-a',
+        lastSessionId: 'session-1'
+      }
+    })
+    await expect(readdir(join(root, 'sessions'))).resolves.toEqual(['manifest.json'])
+  })
+
   it('loads one session directly so callers can refresh durable state between turns', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     await repository.saveSession(createSession({ title: 'Before correction' }))

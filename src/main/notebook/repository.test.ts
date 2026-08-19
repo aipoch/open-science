@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -22,6 +22,33 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('recovers a valid historical run.json temp when the primary is missing', async () => {
+    const root = await createStorageRoot()
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const original = await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      workspaceCwd: '/workspace/before-crash'
+    })
+    const filePath = join(original.notebookSessionRoot, 'run.json')
+    await rename(filePath, `${filePath}.1700000000000-1.tmp`)
+
+    const recovered = await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      workspaceCwd: '/workspace/after-crash'
+    })
+
+    expect(recovered.workspaceCwd).toBe('/workspace/after-crash')
+    expect(recovered.updatedAt).toBe(original.updatedAt)
+    await expect(readdir(original.notebookSessionRoot)).resolves.not.toEqual(
+      expect.arrayContaining([expect.stringContaining('.tmp')])
+    )
+    await expect(readFile(filePath, 'utf8')).resolves.toContain('before-crash')
+  })
+
   it('bounds the process-lifetime full-document cache', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

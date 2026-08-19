@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rename as renameFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const faults = vi.hoisted(() => ({
   failReadOnceWith: undefined as Error | undefined,
-  failRenameOnce: false
+  renameFailuresRemaining: 0
 }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -21,8 +21,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return actual.readFile(...args)
     }),
     rename: vi.fn(async (source: string, destination: string) => {
-      if (faults.failRenameOnce) {
-        faults.failRenameOnce = false
+      if (faults.renameFailuresRemaining > 0) {
+        faults.renameFailuresRemaining -= 1
         throw Object.assign(new Error('EPERM: settings file is temporarily locked'), {
           code: 'EPERM'
         })
@@ -38,7 +38,8 @@ let storageRoot: string | undefined
 
 afterEach(async () => {
   faults.failReadOnceWith = undefined
-  faults.failRenameOnce = false
+  faults.renameFailuresRemaining = 0
+  vi.clearAllMocks()
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   storageRoot = undefined
 })
@@ -56,6 +57,24 @@ describe('settings document store', () => {
     await expect(
       store.mutate((settings) => ({ ...settings, notificationsEnabled: false }))
     ).resolves.toMatchObject({ providers: [], notificationsEnabled: false })
+  })
+
+  it('recovers a valid historical Settings temp when the primary is missing', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-temp-'))
+    await writeFile(
+      join(storageRoot, 'settings.json.1700000000000-1.tmp'),
+      JSON.stringify({
+        version: 2,
+        providers: [],
+        notificationsEnabled: false
+      }),
+      'utf8'
+    )
+
+    await expect(new SettingsDocumentStore(storageRoot).read()).resolves.toMatchObject({
+      notificationsEnabled: false
+    })
+    await expect(readdir(storageRoot)).resolves.toEqual(['settings.json'])
   })
 
   it('rejects corrupt JSON and prevents a mutation from publishing over it', async () => {
@@ -101,17 +120,55 @@ describe('settings document store', () => {
     })
   })
 
-  it('recovers its mutation queue after an atomic rename failure', async () => {
+  it('retries a transient Windows file-replacement denial without losing the Settings save', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
     const store = new SettingsDocumentStore(storageRoot)
-    faults.failRenameOnce = true
+    faults.renameFailuresRemaining = 1
+
+    await expect(
+      store.mutate((settings) => ({ ...settings, notificationsEnabled: true }))
+    ).resolves.toMatchObject({ notificationsEnabled: true })
+
+    expect(vi.mocked(renameFile)).toHaveBeenCalledTimes(2)
+    await expect(store.read()).resolves.toMatchObject({ notificationsEnabled: true })
+  })
+
+  it('fails closed and removes its temporary file after persistent replacement denial', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
+    const store = new SettingsDocumentStore(storageRoot)
+    faults.renameFailuresRemaining = Number.POSITIVE_INFINITY
 
     await expect(
       store.mutate((settings) => ({ ...settings, notificationsEnabled: true }))
     ).rejects.toThrow('temporarily locked')
-    await expect(
-      store.mutate((settings) => ({ ...settings, conversationSkillImportEnabled: true }))
-    ).resolves.toMatchObject({ conversationSkillImportEnabled: true })
-    await expect(store.read()).resolves.toMatchObject({ conversationSkillImportEnabled: true })
+
+    await expect(readdir(storageRoot)).resolves.not.toEqual(
+      expect.arrayContaining([expect.stringContaining('.tmp')])
+    )
+    expect(vi.mocked(renameFile)).toHaveBeenCalledTimes(6)
+  })
+
+  it('keeps independent store instances from colliding on a temporary path', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-collision-'))
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    try {
+      const first = new SettingsDocumentStore(storageRoot)
+      const second = new SettingsDocumentStore(storageRoot)
+
+      await expect(
+        Promise.all([
+          first.mutate((settings) => ({ ...settings, notificationsEnabled: true })),
+          second.mutate((settings) => ({ ...settings, telemetryEnabled: false }))
+        ])
+      ).resolves.toHaveLength(2)
+
+      await expect(new SettingsDocumentStore(storageRoot).read()).resolves.toMatchObject({
+        version: 2,
+        providers: []
+      })
+      await expect(readdir(storageRoot)).resolves.toEqual(['settings.json'])
+    } finally {
+      now.mockRestore()
+    }
   })
 })

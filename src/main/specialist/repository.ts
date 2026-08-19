@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createLogger } from '../logger'
+import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 import {
   createEmptySpecialists,
   SPECIALISTS_FILE_VERSION,
@@ -349,7 +349,6 @@ const sanitizeSpecialists = (v: unknown): StoredSpecialists =>
 // and serializes concurrent mutations through a queue — identical to SettingsRepository.
 export class SpecialistRepository {
   private saveQueue: Promise<void> = Promise.resolve()
-  private writeSequence = 0
 
   constructor(private readonly storageDir: string) {}
 
@@ -365,38 +364,26 @@ export class SpecialistRepository {
     document: StoredSpecialists
     integrity: SpecialistDocumentIntegrity
   }> {
-    let raw: string
     try {
-      raw = await readFile(this.filePath, 'utf8')
+      const result = await readDurableJsonFile(this.filePath, (contents) =>
+        sanitizeSpecialistsWithIntegrity(JSON.parse(contents) as unknown)
+      )
+      return result.status === 'found'
+        ? result.value
+        : { document: createEmptySpecialists(), integrity: { status: 'ok' } }
     } catch (err) {
-      // ENOENT is the normal first-run state — return an empty document.
-      // Any other OS error (EMFILE, EACCES, truncated read, etc.) must propagate so
-      // that mutate() aborts rather than silently overwriting a store we could not read.
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { document: createEmptySpecialists(), integrity: { status: 'ok' } }
-      }
-      log.error('failed to read specialists file — aborting to prevent data loss', {
-        code: (err as NodeJS.ErrnoException).code
-        // intentionally omitting file contents — systemPrompt must not reach the log
-      })
+      const parseFailure = err instanceof SyntaxError
+      log.error(
+        parseFailure
+          ? 'failed to parse specialists file — aborting to prevent data loss'
+          : 'failed to read specialists file — aborting to prevent data loss',
+        {
+          code: parseFailure ? 'specialists-json-invalid' : (err as NodeJS.ErrnoException).code
+          // intentionally omitting file contents — systemPrompt must not reach the log
+        }
+      )
       throw err
     }
-
-    // JSON.parse failure (truncated write, disk corruption) must also propagate.
-    // We do not return empty here because the file exists but is unreadable — a
-    // subsequent write would permanently destroy every specialist the file contained.
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw) as unknown
-    } catch (err) {
-      log.error('failed to parse specialists file — aborting to prevent data loss', {
-        code: 'specialists-json-invalid'
-        // intentionally omitting raw content — systemPrompt must not reach the log
-      })
-      throw err
-    }
-
-    return sanitizeSpecialistsWithIntegrity(parsed)
   }
 
   // Insert a new specialist (caller supplies a fully-formed record).
@@ -535,11 +522,7 @@ export class SpecialistRepository {
   }
 
   private async write(doc: StoredSpecialists): Promise<void> {
-    await mkdir(this.storageDir, { recursive: true })
-    this.writeSequence += 1
-    const tmp = `${this.filePath}.${Date.now()}-${this.writeSequence}.tmp`
-    await writeFile(tmp, `${JSON.stringify(doc, null, 2)}\n`, 'utf8')
-    await rename(tmp, this.filePath)
+    await writeDurableJsonFile(this.filePath, `${JSON.stringify(doc, null, 2)}\n`)
   }
 }
 

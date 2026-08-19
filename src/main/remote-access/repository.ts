@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 
 import type { RemoteAccessMode } from '../../shared/remote-access'
+import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 
 const REMOTE_ACCESS_FILE = 'remote-access.json'
 const REMOTE_ACCESS_VERSION = 4 as const
@@ -93,23 +93,16 @@ export class RemoteAccessRepository {
   }
 
   async load(): Promise<StoredRemoteAccess> {
-    let contents: string
-    try {
-      contents = await readFile(this.path, 'utf8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaults()
-      throw error
-    }
-    return parseStored(JSON.parse(contents))
+    const result = await readDurableJsonFile(this.path, (contents) =>
+      parseStored(JSON.parse(contents))
+    )
+    return result.status === 'found' ? result.value : defaults()
   }
 
   save(value: StoredRemoteAccess): Promise<void> {
     const snapshot = JSON.stringify(value, null, 2)
     const operation = this.writeQueue.then(async () => {
-      await mkdir(dirname(this.path), { recursive: true })
-      const temporaryPath = `${this.path}.${process.pid}.tmp`
-      await writeFile(temporaryPath, `${snapshot}\n`, { encoding: 'utf8', mode: 0o600 })
-      await rename(temporaryPath, this.path)
+      await writeDurableJsonFile(this.path, `${snapshot}\n`)
     })
     this.writeQueue = operation.then(
       () => undefined,

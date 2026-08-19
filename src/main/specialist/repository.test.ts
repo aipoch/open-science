@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
@@ -110,6 +110,20 @@ afterEach(async () => {
 })
 
 describe('SpecialistRepository.getAll', () => {
+  it('recovers a valid historical temp when the primary is missing', async () => {
+    const specialist = makeSpecialist({ id: 'recovered-specialist' })
+    await writeFile(
+      join(tmpDir, 'specialists.json.1700000000000-1.tmp'),
+      JSON.stringify({ version: 2, specialists: [specialist] }),
+      'utf8'
+    )
+
+    await expect(new SpecialistRepository(tmpDir).getAll()).resolves.toMatchObject({
+      specialists: [{ id: 'recovered-specialist' }]
+    })
+    await expect(readdir(tmpDir)).resolves.toEqual(['specialists.json'])
+  })
+
   it('returns empty document on a fresh directory', async () => {
     const repo = new SpecialistRepository(tmpDir)
     const doc = await repo.getAll()

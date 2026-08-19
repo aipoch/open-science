@@ -1,5 +1,7 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+
+import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 
 const WEB_SERVICE_STATE_FILE = 'web-service.json'
 
@@ -28,27 +30,32 @@ const isProcessAlive = (pid: number): boolean => {
   }
 }
 
+const decodeWebServiceState = (contents: string): WebServiceState => {
+  const state = JSON.parse(contents) as WebServiceState
+  if (
+    !Number.isInteger(state.pid) ||
+    !Number.isInteger(state.port) ||
+    typeof state.startedAt !== 'string' ||
+    typeof state.appVersion !== 'string' ||
+    typeof state.configRoot !== 'string'
+  ) {
+    throw new Error('Invalid web service state.')
+  }
+  return { ...state, attached: state.attached === true }
+}
+
 const readWebServiceState = async (configRoot: string): Promise<WebServiceState | undefined> => {
   const statePath = statePathFor(configRoot)
   try {
-    const state = JSON.parse(await readFile(statePath, 'utf8')) as WebServiceState
-    if (
-      !Number.isInteger(state.pid) ||
-      !Number.isInteger(state.port) ||
-      typeof state.startedAt !== 'string' ||
-      typeof state.appVersion !== 'string' ||
-      typeof state.configRoot !== 'string'
-    ) {
-      throw new Error('Invalid web service state.')
-    }
+    const result = await readDurableJsonFile(statePath, decodeWebServiceState)
+    if (result.status === 'missing') return undefined
+    const state = result.value
     if (!isProcessAlive(state.pid)) {
       await rm(statePath, { force: true })
       return undefined
     }
-    // Coerce attached so a state file written before this field existed reads as a dedicated daemon.
-    return { ...state, attached: state.attached === true }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    return state
+  } catch {
     await rm(statePath, { force: true })
     return undefined
   }
@@ -60,13 +67,7 @@ const writeWebServiceState = async (
 ): Promise<WebServiceState> => {
   const completeState = { ...state, configRoot }
   const statePath = statePathFor(configRoot)
-  const temporaryPath = `${statePath}.${process.pid}.tmp`
-  await mkdir(dirname(statePath), { recursive: true })
-  await writeFile(temporaryPath, `${JSON.stringify(completeState, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600
-  })
-  await rename(temporaryPath, statePath)
+  await writeDurableJsonFile(statePath, `${JSON.stringify(completeState, null, 2)}\n`)
   return completeState
 }
 

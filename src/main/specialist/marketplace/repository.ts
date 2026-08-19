@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+
+import { readDurableJsonFile, writeDurableJsonFile } from '../../storage/durable-json-file'
 
 export type StoredMarketplaceSource = {
   id: string
@@ -258,19 +259,16 @@ const sanitizeDocument = (value: unknown): MarketplaceDocument => {
 export class MarketplaceRepository {
   private readonly filePath: string
   private queue: Promise<void> = Promise.resolve()
-  private writeSequence = 0
 
-  constructor(private readonly storageDir: string) {
+  constructor(storageDir: string) {
     this.filePath = join(storageDir, 'specialist-marketplace.json')
   }
 
   async getAll(): Promise<MarketplaceDocument> {
-    try {
-      return sanitizeDocument(JSON.parse(await readFile(this.filePath, 'utf8')))
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyDocument()
-      throw error
-    }
+    const result = await readDurableJsonFile(this.filePath, (contents) =>
+      sanitizeDocument(JSON.parse(contents))
+    )
+    return result.status === 'found' ? result.value : emptyDocument()
   }
 
   async addSource(source: StoredMarketplaceSource): Promise<void> {
@@ -437,10 +435,6 @@ export class MarketplaceRepository {
   }
 
   private async write(document: MarketplaceDocument): Promise<void> {
-    await mkdir(this.storageDir, { recursive: true })
-    this.writeSequence += 1
-    const temporary = `${this.filePath}.${Date.now()}-${this.writeSequence}.tmp`
-    await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, 'utf8')
-    await rename(temporary, this.filePath)
+    await writeDurableJsonFile(this.filePath, `${JSON.stringify(document, null, 2)}\n`)
   }
 }
