@@ -67,17 +67,16 @@ class SettingsRepository {
     return this.store.read()
   }
 
-  // Inserts or replaces a provider by id, then returns the persisted document. An existing provider is
-  // replaced in place so the list keeps its creation order (editing or re-testing must not reorder it);
-  // a new provider is appended.
-  async upsertProvider(provider: StoredProvider, requireExisting = false): Promise<StoredSettings> {
+  // Inserts or replaces a provider without reordering existing entries. existingId, when supplied,
+  // is checked in the same mutation so stale edits cannot append a deleted provider.
+  async upsertProvider(provider: StoredProvider, existingId?: string): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
-      if (requireExisting && index < 0) throw new Error('Provider no longer exists.')
+      if (existingId && !settings.providers.some(({ id }) => id === existingId))
+        throw new Error('Provider no longer exists.')
       const providers = [...settings.providers]
       if (index >= 0) providers[index] = provider
       else providers.push(provider)
-
       return {
         ...settings,
         providers,
@@ -620,9 +619,10 @@ class SettingsRepository {
   // Replaces one custom MCP server record (identity fields must be preserved by the caller).
   async updateCustomServer(id: string, server: StoredCustomMcpServer): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
-      connectors.customMcpServers = (connectors.customMcpServers ?? []).map((s) =>
-        s.id === id ? server : s
-      )
+      const servers = connectors.customMcpServers
+      if (!servers?.some(({ id: existingId }) => existingId === id))
+        throw new Error(`Unknown custom connector: ${id}`)
+      connectors.customMcpServers = servers.map((stored) => (stored.id === id ? server : stored))
     })
   }
 

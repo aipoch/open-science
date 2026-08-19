@@ -239,19 +239,20 @@ class ProviderAccountsModule {
       provider.lastValidationFailure = existing.lastValidationFailure
     }
 
+    const editId = request.requireExisting ? request.id : undefined
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
         provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
       const collapsedCardWasActive =
         settings.activeProviderId === provider.id || settings.activeProviderId === outgoingId
-      await this.repository.upsertProvider(provider, request.requireExisting === true)
+      await this.repository.upsertProvider(provider, editId)
       if (collapsedCardWasActive) {
         await this.repository.setActiveProvider(provider.id, this.resolveActiveModel(provider))
       }
       return
     }
 
-    await this.repository.upsertProvider(provider, request.requireExisting === true)
+    await this.repository.upsertProvider(provider, editId)
   }
 
   async deleteProvider(id: string): Promise<void> {

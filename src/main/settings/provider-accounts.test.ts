@@ -154,6 +154,34 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it.each([
+    {
+      sourceType: 'claude-isolated',
+      sourceId: 'builtin-claude-isolated',
+      destinationType: 'claude-shared',
+      destinationId: 'builtin-claude-shared'
+    },
+    {
+      sourceType: 'claude-shared',
+      sourceId: 'builtin-claude-shared',
+      destinationType: 'claude-isolated',
+      destinationId: 'builtin-claude-isolated'
+    }
+  ] as const)(
+    'allows a require-existing edit from $sourceType to $destinationType',
+    async ({ sourceType, sourceId, destinationType, destinationId }) => {
+      await module.upsertProvider({ type: sourceType })
+
+      await expect(
+        module.upsertProvider({ id: sourceId, type: destinationType, requireExisting: true })
+      ).resolves.toBeUndefined()
+
+      expect((await repository.getSettings()).providers.map((provider) => provider.id)).toEqual(
+        expect.arrayContaining([sourceId, destinationId])
+      )
+    }
+  )
+
   it('projects an ephemeral runtime target without changing the stored provider selection', async () => {
     await module.upsertProvider({
       type: 'custom',

@@ -2339,6 +2339,58 @@ describe('SettingsPage layout', () => {
     expect(addCustomServer).not.toHaveBeenCalled()
   })
 
+  it('keeps the Connector editor and draft open when an update loses a deletion race', async () => {
+    const customServer = {
+      id: 'custom-server-uuid',
+      name: 'my-mcp',
+      displayName: 'My MCP',
+      description: 'A custom MCP server.',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx',
+      args: ['-y', '@example/my-mcp']
+    }
+    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+      connectors: [],
+      customServers: [customServer],
+      ncbi: { hasApiKey: false }
+    })
+    const updateCustomServer = vi
+      .fn()
+      .mockRejectedValue(new Error('Unknown custom connector: custom-server-uuid'))
+    useSettingsStore.setState({ updateCustomServer })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Connectors')?.click())
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')?.click()
+    })
+
+    const displayName = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Display name"]'
+    )!
+    fireEvent.change(displayName, { target: { value: 'Unsaved draft' } })
+    const submit = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => submit?.click())
+
+    expect(updateCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: customServer.id, displayName: 'Unsaved draft' })
+    )
+    expect(document.body.textContent).toContain('Unknown custom connector: custom-server-uuid')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
+    ).toBe('Unsaved draft')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).some(
+        (button) => button.textContent?.trim() === 'Save changes'
+      )
+    ).toBe(true)
+  })
+
   it('switches to the Network panel, configures a mirror, and saves it', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

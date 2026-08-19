@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
-import type { StoredProvider } from './types'
+import type { StoredCustomMcpServer, StoredProvider } from './types'
 import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
@@ -624,11 +624,40 @@ describe('settings repository', () => {
     const staleProvider = (await repository.getSettings()).providers[0]
 
     const deleting = repository.deleteProvider(staleProvider.id)
-    const updating = repository.upsertProvider({ ...staleProvider, name: 'Stale edit' }, true)
+    const updating = repository.upsertProvider(
+      provider({ id: 'destination', name: 'Stale edit' }),
+      staleProvider.id
+    )
 
     await expect(deleting).resolves.toMatchObject({ providers: [] })
     await expect(updating).rejects.toThrow('Provider no longer exists.')
     await expect(repository.getSettings()).resolves.toMatchObject({ providers: [] })
+  })
+
+  it('rejects a custom server update queued after deletion', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const server: StoredCustomMcpServer = {
+      id: 'custom-server',
+      name: 'custom-server',
+      displayName: 'Custom server',
+      transport: 'stdio',
+      command: 'npx',
+      enabled: true,
+      trustedAt: 1
+    }
+    await repository.addCustomServer(server)
+    const staleServer = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    if (!staleServer) throw new Error('Expected custom server fixture')
+
+    const deleting = repository.removeCustomServer(server.id)
+    const updating = repository.updateCustomServer(server.id, {
+      ...staleServer,
+      displayName: 'Stale edit'
+    })
+
+    await expect(deleting).resolves.toMatchObject({ connectors: { customMcpServers: [] } })
+    await expect(updating).rejects.toThrow(`Unknown custom connector: ${server.id}`)
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
   it('keeps provider order stable when an existing provider is updated in place', async () => {
