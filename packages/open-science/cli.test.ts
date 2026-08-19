@@ -1,4 +1,6 @@
-import { resolve } from 'node:path'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
@@ -462,6 +464,72 @@ describe('task CLI', () => {
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
     expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
+  })
+
+  it('preserves an existing artifact output when the download stream fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+    const output = join(directory, 'report.md')
+    await writeFile(output, 'existing report')
+    const failure = new Error('download interrupted')
+    let pullCount = 0
+    const response = new Response(
+      new ReadableStream({
+        async pull(controller) {
+          if (pullCount++ === 0) {
+            controller.enqueue(new TextEncoder().encode('partial replacement'))
+          } else {
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 20))
+            controller.error(failure)
+          }
+        }
+      })
+    )
+    const client = { downloadArtifact: vi.fn().mockResolvedValue(response) }
+
+    try {
+      await expect(
+        runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+      ).rejects.toBe(failure)
+
+      expect(await readFile(output, 'utf8')).toBe('existing report')
+      expect(await readdir(directory)).toEqual(['report.md'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces an existing artifact output after the complete download succeeds', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+    const output = join(directory, 'report.md')
+    await writeFile(output, 'existing report')
+    const client = {
+      downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+    }
+
+    try {
+      await runTaskCommand(
+        {
+          command: 'artifacts',
+          subcommand: 'download',
+          positionals: ['artifact-1'],
+          options: { output, json: true, jsonl: false }
+        },
+        { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+      )
+
+      expect(await readFile(output, 'utf8')).toBe('replacement report')
+      expect(await readdir(directory)).toEqual(['report.md'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {

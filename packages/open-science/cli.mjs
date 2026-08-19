@@ -2,9 +2,9 @@
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
-import { closeSync, openSync } from 'node:fs'
-import { createWriteStream } from 'node:fs'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { closeSync, createWriteStream, openSync } from 'node:fs'
+import { mkdir, readFile, rename, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -588,7 +588,16 @@ export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
 
 const writeDownload = async (response, output) => {
   if (!response.body) throw new Error('Artifact download returned no data.')
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(output))
+  const temporaryOutput = `${output}.${process.pid}-${randomUUID()}.tmp`
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body),
+      createWriteStream(temporaryOutput, { flags: 'wx' })
+    )
+    await rename(temporaryOutput, output)
+  } finally {
+    await rm(temporaryOutput, { force: true }).catch(() => undefined)
+  }
 }
 
 const TASK_DEPS = {
