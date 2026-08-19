@@ -596,6 +596,30 @@ describe('Korean safety copy', () => {
       '<em>기존 데이터(~{{size}})가 새 위치로 이동됩니다</em> — 파일도 함께 이동되며 현재 폴더에는 아무것도 남지 않습니다.'
     ],
     [
+      'Choose how much the agent can do without asking when a conversation starts.',
+      '대화가 시작될 때 에이전트가 묻지 않고 수행할 수 있는 작업 범위를 선택하세요.'
+    ],
+    [
+      'New conversations can run commands, change files, execute notebook code, and access the network without asking first. Existing conversations are unchanged.',
+      '새로운 대화에서는 먼저 묻지 않고 명령을 실행하고, 파일을 변경하고, Notebook 코드를 실행하고, 네트워크에 액세스할 수 있습니다. 기존 대화에는 영향을 주지 않습니다.'
+    ],
+    [
+      "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears.",
+      '알림은 다른 앱을 사용하는 동안에만 표시됩니다. 사용자가 취소한 작업과 앱이 자동으로 다시 시도하는 실패는 알림을 표시하지 않습니다. 알림이 처음 표시될 때 운영 체제에서 알림 권한을 요청할 수 있습니다.'
+    ],
+    [
+      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+    ],
+    [
+      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone._other',
+      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+    ],
+    [
+      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+    ],
+    [
       'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
       '개별 권한은 계속 취소할 수 있습니다. 전체 집합이 확인될 때까지 모두 취소가 비활성화됩니다.'
     ],
@@ -708,7 +732,7 @@ describe('Korean binding terminology', () => {
       'Approval covers later {{runtime}} calls in this conversation, including across restarts.',
       '승인은 다시 시작 후에도 이 대화에서 이후 {{runtime}} 호출에 적용됩니다.'
     ],
-    ['made a call', '호출함'],
+    ['made a call', '호출 실행'],
     ['Plan call record', '계획 호출 기록'],
     ['Resume', '재개'],
     ['Resume session', '세션 재개'],
@@ -736,8 +760,8 @@ describe('Korean binding terminology', () => {
     ['Token usage for this response', '이 응답의 토큰 사용량'],
     ['Token usage unavailable for this response', '이 응답의 토큰 사용량을 확인할 수 없습니다.'],
     ['Used tool: {{name}}', '사용한 도구: {{name}}'],
-    ['read a file', '파일을 읽었습니다'],
-    ['ran {{count}} tools_other', '도구 {{count}}개를 실행했습니다'],
+    ['read a file', '파일 읽음'],
+    ['ran {{count}} tools_other', '도구 {{count}}개 실행'],
     ['Keep it in the current folder', '현재 폴더에 유지'],
     ['Pin current folder', '현재 폴더 고정'],
     ['Load more sessions', '세션 더 불러오기'],

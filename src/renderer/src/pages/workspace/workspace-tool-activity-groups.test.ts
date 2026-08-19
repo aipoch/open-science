@@ -1,6 +1,8 @@
+import i18next from 'i18next'
 import { describe, expect, it } from 'vitest'
 
 import type { ChatMessage, ToolActivity } from '@/stores/session-store'
+import ko from '../../locales/ko.json'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ConversationItem } from './workspace-conversation-items'
 import {
@@ -231,6 +233,28 @@ describe('formatActivityGroupTitle', () => {
 
     // command precedes read precedes edit in ACTIVITY_CATEGORY_ORDER regardless of input order.
     expect(formatActivityGroupTitle(activities)).toBe('Ran 2 commands, read a file, edited a file')
+  })
+
+  it('joins Korean activity clauses as consistent sentence fragments', async () => {
+    const korean = i18next.createInstance()
+    await korean.init({
+      lng: 'ko',
+      fallbackLng: false,
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { ko: { translation: ko } }
+    })
+    const activities = [
+      createActivity({ id: 'cmd-1', toolKind: 'execute' }),
+      createActivity({ id: 'cmd-2', toolKind: 'execute' }),
+      createActivity({ id: 'read-1', toolKind: 'read' }),
+      createActivity({ id: 'edit-1', toolKind: 'edit' })
+    ]
+
+    expect(formatActivityGroupTitle(activities, undefined, korean.t.bind(korean))).toBe(
+      '명령 2개 실행, 파일 읽음, 파일 수정'
+    )
   })
 
   it('falls back to a generic title when no activities match', () => {
