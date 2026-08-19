@@ -767,7 +767,9 @@ describe('Settings backend ownership architecture', () => {
     expect(mainIndex).toContain(
       'const startupSettingsRepository = new SettingsRepository(settingsStore)'
     )
-    expect(mainIndex).toContain('settingsStore,\n          translate,')
+    expect(mainIndex).toMatch(
+      /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
+    )
     expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
     expect(mainIpc).toContain(
       'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      applyNetworkProxy:'
