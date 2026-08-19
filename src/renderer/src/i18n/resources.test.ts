@@ -420,6 +420,11 @@ describe('mandatory product glossary', () => {
     /AGENTS\.md/g,
     /ssh-agent/g,
     /setup-token/g,
+    /\bopen-science\b/g,
+    /\bRemote\.It\b/g,
+    /\bZIP\b/g,
+    /\/Users\/[\w./-]+/g,
+    /\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
     /\bmax_tokens\b/g,
     /\bskills\//g,
     /(?:~\/|\.)[\w./-]*skills\b/g,
@@ -587,6 +592,125 @@ describe('Korean language endonyms', () => {
       简体中文: '简体中文',
       繁體中文: '繁體中文'
     })
+  })
+})
+
+describe('Korean binding terminology', () => {
+  const mandatoryTerms = [
+    { source: /\bprojects?\b/i, expected: '프로젝트' },
+    { source: /\bsessions?\b/i, expected: '세션' },
+    { source: /\bconversations?\b/i, expected: '대화' },
+    { source: /\bworkspaces?\b/i, expected: '워크스페이스' },
+    { source: /\bmessages?\b/i, expected: '메시지' },
+    { source: /\btasks?\b/i, expected: '작업' },
+    { source: /\bmodels?\b/i, expected: '모델' },
+    { source: /\bproviders?\b/i, expected: '모델 제공업체' },
+    { source: /\bsubscriptions?\b/i, expected: '구독' },
+    { source: /\bkernels?\b/i, expected: '커널' },
+    { source: /\bartifacts?\b/i, expected: '아티팩트' },
+    { source: /\bactivity groups?\b/i, expected: '활동 그룹' },
+    { source: /\btools?\b/i, expected: '도구' },
+    { source: /\bcompute hosts?\b/i, expected: '컴퓨팅 호스트' },
+    { source: /\bruntimes?\b/i, expected: '런타임' },
+    { source: /\benvironments?\b/i, expected: '환경' },
+    { source: /\bpreviews?\b/i, expected: '미리보기' },
+    { source: /\breasoning effort\b/i, expected: '추론 강도' },
+    { source: /\bcontexts?\b/i, expected: '컨텍스트' },
+    { source: /\bfiles?\b/i, expected: '파일' },
+    { source: /\bdocuments?\b/i, expected: '문서' },
+    { source: /\bfolders?\b/i, expected: '폴더' },
+    { source: /\bdata\b/i, expected: '데이터' },
+    { source: /\binformation\b/i, expected: '정보' },
+    { source: /\bsoftware\b/i, expected: '소프트웨어' },
+    { source: /\bprograms?\b/i, expected: '프로그램' },
+    { source: /\bsettings?\b/i, expected: '설정' },
+    { source: /\bnetworks?\b/i, expected: '네트워크' },
+    { source: /\bcaches?\b/i, expected: '캐시' },
+    { source: /\bprocess(?:es)?\b/i, expected: '프로세스' },
+    { source: /\bthreads?\b/i, expected: '스레드' },
+    { source: /\bqueues?\b/i, expected: '대기열' },
+    { source: /\bcredentials?\b/i, expected: '자격 증명' },
+    { source: /\blogs?\b/i, expected: '로그' },
+    { source: /\bmirrors?\b/i, expected: '미러' },
+    { source: /\btrays?\b/i, expected: '트레이' },
+    { source: /\bbookmarks?\b/i, expected: '북마크' },
+    { source: /\brunning\b/i, expected: '실행 중' },
+    { source: /\bcalls?\b/i, expected: '호출' },
+    { source: /\breveal(?:s|ed|ing)?\b/i, expected: '표시' },
+    { source: /\blight\b/i, expected: '라이트' },
+    { source: /\bdark\b/i, expected: '다크' }
+  ]
+
+  it.each(mandatoryTerms)('uses $expected for matching source prose', ({ source, expected }) => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([key]) =>
+        source.test(
+          englishOf(key).replace(
+            /\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
+            ''
+          )
+        )
+      )
+      .filter(([, value]) => !value.includes(expected))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('matches topic, object, and conjunction particles to the chosen term', () => {
+    const hasFinalConsonant = (term: string): boolean => {
+      const last = [...term].at(-1)
+      if (!last) return false
+      const codePoint = last.codePointAt(0) ?? 0
+      return codePoint >= 0xac00 && codePoint <= 0xd7a3 && (codePoint - 0xac00) % 28 !== 0
+    }
+    const offenders = [...new Set(mandatoryTerms.map(({ expected }) => expected))].flatMap(
+      (term) => {
+        const wrongParticles = hasFinalConsonant(term) ? ['는', '를', '와'] : ['은', '을', '과']
+        const pattern = new RegExp(`${term}(?:${wrongParticles.join('|')})(?=\\s|[,.!?…<]|$)`, 'u')
+        return Object.entries(catalog('ko'))
+          .filter(([, value]) => pattern.test(value))
+          .map(([key]) => `${key}: ${term}`)
+      }
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each([
+    ['Allow for this conversation', '이 대화에서 허용'],
+    ['Allowed this session', '이번 세션에서 허용됨'],
+    [
+      'Approval applies to matching calls in this project.',
+      '이 프로젝트에서 일치하는 호출에 승인이 적용됩니다.'
+    ],
+    [
+      'Approval covers later {{runtime}} calls in this conversation, including across restarts.',
+      '승인은 다시 시작 후에도 이 대화에서 이후 {{runtime}} 호출에 적용됩니다.'
+    ],
+    ['made a call', '호출함'],
+    ['Plan call record', '계획 호출 기록'],
+    ['Resume', '재개'],
+    ['Resume session', '세션 재개'],
+    ['Running', '실행 중'],
+    ['running', '실행 중'],
+    ['Reveal in folder', '폴더에 표시'],
+    ['Light', '라이트'],
+    ['Dark', '다크'],
+    ['Storage', '저장소'],
+    ['Archive', '보관'],
+    ['Star on GitHub', 'GitHub에서 Star'],
+    ['Star {{app}} on GitHub', 'GitHub에서 {{app}}에 Star'],
+    [
+      'Star {{app}} on GitHub, {{count}} stars_other',
+      'GitHub에서 {{app}}에 Star, Star {{count}}개'
+    ],
+    [
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.",
+      '<name>{{name}}</name>에 계속 연결된 대화는 <em>사용할 수 없게</em> 되며 메인 에이전트로 자동 <em>전환되지 않습니다</em>. 영향을 받는 각 대화가 다시 메시지를 보내기 전에 새 스페셜리스트 또는 메인 에이전트를 명시적으로 선택해야 합니다.'
+    ]
+  ])('preserves the exact meaning of %s', (key, expected) => {
+    expect(catalog('ko')[key]).toBe(expected)
   })
 })
 

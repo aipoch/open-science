@@ -23,9 +23,9 @@ periods and colons inside an English sentence stay part of the key.
   or the translation is stranded and the UI silently falls back to English. `resources.test.ts`
   fails on any entry whose key no longer appears in the source.
 - **Plurals**: the key is the English _plural_ form and the call site passes the singular:
-  `t('{{count}} files selected', { count, defaultValue_one: '{{count}} file selected' })`. Chinese
-  Chinese, Japanese, and Korean have one plural category, so their entries take the `_other` suffix and `_one`
-  entries are rejected.
+  `t('{{count}} files selected', { count, defaultValue_one: '{{count}} file selected' })`. Chinese,
+  Japanese, and Korean have one plural category, so their entries take the `_other` suffix and
+  `_one` entries are rejected.
 - **Context** disambiguates two different meanings that share one English string — `t('Compute', {
 context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the suffixed entry;
   English ignores context and renders the base key.

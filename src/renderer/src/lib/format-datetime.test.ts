@@ -10,6 +10,7 @@ describe('formatDateTime', () => {
     const english = formatDateTime(INSTANT, 'en')
     const simplified = formatDateTime(INSTANT, 'zh-Hans')
     const traditional = formatDateTime(INSTANT, 'zh-Hant')
+    const korean = formatDateTime(INSTANT, 'ko')
 
     // The point of the module: the same instant reads as a month name in English and as 月/日 in
     // Chinese, rather than leaking "Aug" into a Chinese interface.
@@ -18,6 +19,8 @@ describe('formatDateTime', () => {
     expect(simplified).not.toMatch(/Aug/u)
     expect(traditional).toMatch(/月/u)
     expect(traditional).not.toMatch(/Aug/u)
+    expect(korean).toMatch(/월/u)
+    expect(korean).not.toMatch(/Aug/u)
   })
 
   it('keeps each locale on its own clock convention', () => {
@@ -58,5 +61,6 @@ describe('formatDateTime', () => {
     // inherit the first one's formatter.
     expect(formatDateTime(INSTANT, 'en')).toBe(formatDateTime(INSTANT, 'en'))
     expect(formatDateTime(INSTANT, 'zh-Hans')).not.toBe(formatDateTime(INSTANT, 'en'))
+    expect(formatDateTime(INSTANT, 'ko')).not.toBe(formatDateTime(INSTANT, 'en'))
   })
 })
