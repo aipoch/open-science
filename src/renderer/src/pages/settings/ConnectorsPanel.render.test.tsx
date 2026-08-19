@@ -319,6 +319,12 @@ describe('ConnectorsPanel (groups)', () => {
     expect(pubmedRow?.textContent).not.toContain('Main Agent')
     expect(europePmcRow?.textContent).not.toContain('Specialist only')
     expect(europePmcRow?.textContent).not.toContain('Main Agent')
+    expect(pubmedRow?.textContent).toContain('Used by')
+    const usageLabel = pubmedRow?.querySelector('[data-slot="skill-usage-agents-label"]')
+    const usageTrigger = pubmedRow?.querySelector('[data-slot="skill-usage-agents-trigger"]')
+    expect(usageLabel?.compareDocumentPosition(usageTrigger!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
     expect(
       pubmedRow
         ?.querySelector('[data-slot="skill-usage-agents-trigger"]')

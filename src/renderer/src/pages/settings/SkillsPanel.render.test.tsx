@@ -458,6 +458,8 @@ describe('SkillsPanel (list view)', () => {
     expect(betaRow?.textContent).not.toContain('Specialist only')
     expect(alphaRow?.textContent).not.toContain('Main Agent')
     expect(betaRow?.textContent).not.toContain('Main Agent')
+    expect(alphaRow?.textContent).toContain('Used by')
+    expect(betaRow?.textContent).toContain('Used by')
     expect(alphaRow?.querySelector('[aria-label="Toggle Alpha"]')?.getAttribute('data-state')).toBe(
       'checked'
     )

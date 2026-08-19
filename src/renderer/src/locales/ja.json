@@ -3046,6 +3046,7 @@
   "Could not reorder Tags. Try again.": "タグの順序を変更できませんでした。もう一度お試しください。",
   "All Agents/Specialists": "すべてのエージェント/スペシャリスト",
   "Used by Agents and Specialists": "使用中のエージェントとスペシャリスト",
+  "Used by": "使用者",
   "Export": "エクスポート",
   "Remove": "削除",
   "Filter Skills by agent": "エージェントでスキルを絞り込む",

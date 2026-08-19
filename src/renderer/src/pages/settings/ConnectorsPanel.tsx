@@ -435,12 +435,22 @@ export function ConnectorsPanel({
                         className="mt-0.5 flex min-w-0 items-center gap-2"
                         data-connector-metadata={connector.id}
                       >
-                        <SkillUsageAgents
-                          resourceKind="Connector"
-                          mainEnabled={connector.enabled}
-                          usages={usages}
-                          onOpenSpecialist={onOpenSpecialist}
-                        />
+                        {connector.enabled || usages.length > 0 ? (
+                          <span className="inline-flex shrink-0 items-center gap-1">
+                            <span
+                              data-slot="skill-usage-agents-label"
+                              className="text-xs text-muted-foreground"
+                            >
+                              {t('Used by')}
+                            </span>
+                            <SkillUsageAgents
+                              resourceKind="Connector"
+                              mainEnabled={connector.enabled}
+                              usages={usages}
+                              onOpenSpecialist={onOpenSpecialist}
+                            />
+                          </span>
+                        ) : null}
                         <ResourceTagBadges
                           reference={{
                             resourceType: 'catalog.connector',
@@ -760,12 +770,22 @@ export function ConnectorsPanel({
                                         ? t('Connected')
                                         : t('Disabled')}
                             </span>
-                            <SkillUsageAgents
-                              resourceKind="Connector"
-                              mainEnabled={server.enabled}
-                              usages={usages}
-                              onOpenSpecialist={onOpenSpecialist}
-                            />
+                            {server.enabled || usages.length > 0 ? (
+                              <span className="inline-flex shrink-0 items-center gap-1">
+                                <span
+                                  data-slot="skill-usage-agents-label"
+                                  className="text-xs text-muted-foreground"
+                                >
+                                  {t('Used by')}
+                                </span>
+                                <SkillUsageAgents
+                                  resourceKind="Connector"
+                                  mainEnabled={server.enabled}
+                                  usages={usages}
+                                  onOpenSpecialist={onOpenSpecialist}
+                                />
+                              </span>
+                            ) : null}
                             <ResourceTagBadges
                               reference={{
                                 resourceType: 'catalog.connector',

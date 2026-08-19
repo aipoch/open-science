@@ -591,11 +591,21 @@ const SkillsPanel = ({
                               </span>
                             </button>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              <SkillUsageAgents
-                                mainEnabled={skill.enabled}
-                                usages={usages}
-                                onOpenSpecialist={onOpenSpecialist}
-                              />
+                              {skill.enabled || usages.length > 0 ? (
+                                <span className="inline-flex shrink-0 items-center gap-1">
+                                  <span
+                                    data-slot="skill-usage-agents-label"
+                                    className="text-xs text-muted-foreground"
+                                  >
+                                    {t('Used by')}
+                                  </span>
+                                  <SkillUsageAgents
+                                    mainEnabled={skill.enabled}
+                                    usages={usages}
+                                    onOpenSpecialist={onOpenSpecialist}
+                                  />
+                                </span>
+                              ) : null}
                               <ResourceTagBadges
                                 reference={{
                                   resourceType: 'catalog.skill',

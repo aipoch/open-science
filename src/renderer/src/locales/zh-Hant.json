@@ -3046,6 +3046,7 @@
   "Could not reorder Tags. Try again.": "無法調整標籤順序。請再試一次。",
   "All Agents/Specialists": "全部智能體/專家",
   "Used by Agents and Specialists": "使用中的智能體和專家",
+  "Used by": "使用者",
   "Export": "匯出",
   "Remove": "移除",
   "Filter Skills by agent": "按智能體篩選技能",

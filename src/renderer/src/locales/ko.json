@@ -3044,6 +3044,7 @@
   "Could not reorder Tags. Try again.": "태그 순서를 변경하지 못했습니다. 다시 시도하세요.",
   "All Agents/Specialists": "모든 에이전트/스페셜리스트",
   "Used by Agents and Specialists": "사용 중인 에이전트 및 스페셜리스트",
+  "Used by": "사용자",
   "Export": "내보내기",
   "Remove": "제거",
   "Filter Skills by agent": "에이전트별 스킬 필터링",
