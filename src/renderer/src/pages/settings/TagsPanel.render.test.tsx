@@ -89,6 +89,55 @@ describe('TagsPanel', () => {
     expect(resourceRow?.querySelector('[data-slot="tag-resource-subtitle"]')).toBeNull()
   })
 
+  it('keeps custom connector identities visible and accessible', async () => {
+    useSettingsStore.setState({
+      skills: [],
+      customServers: [
+        {
+          id: 'custom-alpha',
+          name: 'alpha-mcp',
+          displayName: 'Lab connector',
+          description: 'Search papers',
+          transport: 'stdio',
+          enabled: true
+        },
+        {
+          id: 'custom-beta',
+          name: 'beta-mcp',
+          displayName: 'Lab connector',
+          transport: 'stdio',
+          enabled: true
+        }
+      ]
+    })
+    useTagStore.setState({
+      assignments: ['custom-alpha', 'custom-beta'].map((resourceId, index) => ({
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.connector' as const,
+        resourceId,
+        createdAt: index + 1
+      }))
+    })
+
+    await act(async () => {
+      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+    })
+
+    expect(
+      Array.from(container.querySelectorAll('[data-slot="tag-resource-subtitle"]')).map(
+        (subtitle) => subtitle.textContent
+      )
+    ).toEqual(['alpha-mcp · Search papers', 'beta-mcp'])
+    expect(
+      Array.from(container.querySelectorAll('button[aria-label^="Remove Lab connector"]')).map(
+        (button) => button.getAttribute('aria-label')
+      )
+    ).toEqual([
+      'Remove Lab connector (alpha-mcp) from Favorites',
+      'Remove Lab connector (beta-mcp) from Favorites'
+    ])
+  })
+
   it('limits compact resource Tags and summarizes the overflow', () => {
     useTagStore.setState({
       tags: [

@@ -58,6 +58,7 @@ import { TagBadge } from './tag-visuals'
 type TagResourceRow = TagResourceRef & {
   title: string
   subtitle?: string
+  accessibleTitle?: string
 }
 
 type TagDraft = { name: string; iconKey: TagIconKey; colorKey: TagColorKey }
@@ -166,7 +167,13 @@ const TagsPanel = ({
         resourceType: 'catalog.connector' as const,
         resourceId: connector.id,
         title: connector.displayName,
-        subtitle: connector.description?.trim() || undefined
+        subtitle: connector.description?.trim()
+          ? `${connector.name} · ${connector.description.trim()}`
+          : connector.name,
+        accessibleTitle:
+          connector.displayName === connector.name
+            ? connector.name
+            : `${connector.displayName} (${connector.name})`
       })),
       ...specialistItems
         .filter((item) => item.kind !== 'reviewer')
@@ -478,7 +485,7 @@ const TagsPanel = ({
                                   </button>
                                   <SettingsIconAction
                                     label={t('Remove {{resource}} from {{tag}}', {
-                                      resource: resource.title,
+                                      resource: resource.accessibleTitle ?? resource.title,
                                       tag: tagPresentation(selectedTag, t).name
                                     })}
                                     icon={X}
