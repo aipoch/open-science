@@ -12,6 +12,7 @@
   <a href="../zh-Hant/README.md"><img alt="繁體中文 README" src="https://img.shields.io/badge/繁體中文-d9d9d9"></a>
   <a href="../ja/README.md"><img alt="日本語 README" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
   <a href="../ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
+  <a href="../fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
 </p>
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
@@ -117,7 +118,7 @@ Open Science 将研究组织成项目和会话，使每项结果都能与产生�
   </tr>
 </table>
 
-生成的报告、图表和表格会继续附属于会话，同时汇集到项目文件库。面板尺寸变化时，预览标签页会保持活动结果可见；长名称会保留用于识别的后缀和扩展名。Open Science 可以预览常见科学数据、PDF、Office 文档（DOCX、XLSX、PPTX）、图像（支持缩放和平移）、带语法高亮的源代码、分子结构与反应，以及 Notebook 历史。预览限制不会截断底层文件，智能体和外部工具仍可使用完整产物。使用 `Cmd/Ctrl+F` 搜索工作区中的对话记录、Notebook 输出和渲染页面，或使用 `Cmd/Ctrl+K` 打开项目级命令面板。工作区还支持深色模式：在 **Settings → General** 中切换主题，整个命令行、对话记录和渲染器配色会无闪烁切换。界面也提供简体中文和繁体中文，并可在设置中运行时切换语言。
+生成的报告、图表和表格会继续附属于会话，同时汇集到项目文件库。面板尺寸变化时，预览标签页会保持活动结果可见；长名称会保留用于识别的后缀和扩展名。Open Science 可以预览常见科学数据、PDF、Office 文档（DOCX、XLSX、PPTX）、图像（支持缩放和平移）、带语法高亮的源代码、分子结构与反应，以及 Notebook 历史。预览限制不会截断底层文件，智能体和外部工具仍可使用完整产物。使用 `Cmd/Ctrl+F` 搜索工作区中的对话记录、Notebook 输出和渲染页面，或使用 `Cmd/Ctrl+K` 打开项目级命令面板。工作区还支持深色模式：在 **Settings → General** 中切换主题，整个命令行、对话记录和渲染器配色会无闪烁切换。界面也提供简体中文、繁体中文、日语、韩语和法语，并可在设置中运行时切换语言。
 
 ### 为对话创建分支而不丢失原始内容
 

@@ -2039,7 +2039,6 @@
   "Version {{version}}": "버전 {{version}}",
   "Version unavailable": "버전을 사용할 수 없음",
   "View": "보기",
-  "View {{name}} details": "{{name}} 세부 정보 보기",
   "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.": "선택한 모델은 이미지를 지원하지 않습니다. 이미지 지원을 활성화하려면 설정 > 모델에서 Vision 모델을 구성하세요.",
   "The attached image is invalid.": "첨부된 이미지가 잘못되었습니다.",
   "The attached image is too large to prepare for the Vision model.": "비전모델을 준비하기에는 첨부된 이미지가 너무 큽니다.",

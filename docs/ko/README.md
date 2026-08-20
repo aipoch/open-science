@@ -12,6 +12,7 @@
   <a href="../zh-Hant/README.md"><img alt="繁體中文 README" src="https://img.shields.io/badge/繁體中文-d9d9d9"></a>
   <a href="../ja/README.md"><img alt="日本語 README" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
   <a href="../ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
+  <a href="../fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
 </p>
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
@@ -117,7 +118,7 @@ Open Science는 연구를 프로젝트와 세션으로 구성하여 각 결과�
   </tr>
 </table>
 
-생성된 보고서, 그림, 표는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모입니다. 패널 크기가 변해도 미리보기 탭은 활성 결과를 표시하며, 긴 이름은 식별 가능한 접미사와 확장자를 유지합니다. Open Science는 일반 과학 데이터, PDF, Office 문서(DOCX, XLSX, PPTX), 확대/축소 및 이동이 가능한 이미지, 구문 강조 소스 코드, 분자 구조와 반응, Notebook 기록을 미리 봅니다. 미리보기 한도는 원본 파일을 자르지 않으므로 에이전트와 외부 도구가 전체 아티팩트를 계속 사용할 수 있습니다. `Cmd/Ctrl+F`로 워크스페이스 전체의 대화 기록, Notebook 출력, 렌더링된 페이지를 검색하거나 `Cmd/Ctrl+K`로 프로젝트 범위 명령 팔레트를 열 수 있습니다. **Settings → General**에서 테마를 전환하면 셸, 대화 기록, 렌더러 색상이 깜박임 없이 전환됩니다. 인터페이스는 설정의 런타임 언어 전환을 통해 중국어 간체와 번체로도 사용할 수 있습니다.
+생성된 보고서, 그림, 표는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모입니다. 패널 크기가 변해도 미리보기 탭은 활성 결과를 표시하며, 긴 이름은 식별 가능한 접미사와 확장자를 유지합니다. Open Science는 일반 과학 데이터, PDF, Office 문서(DOCX, XLSX, PPTX), 확대/축소 및 이동이 가능한 이미지, 구문 강조 소스 코드, 분자 구조와 반응, Notebook 기록을 미리 봅니다. 미리보기 한도는 원본 파일을 자르지 않으므로 에이전트와 외부 도구가 전체 아티팩트를 계속 사용할 수 있습니다. `Cmd/Ctrl+F`로 워크스페이스 전체의 대화 기록, Notebook 출력, 렌더링된 페이지를 검색하거나 `Cmd/Ctrl+K`로 프로젝트 범위 명령 팔레트를 열 수 있습니다. **Settings → General**에서 테마를 전환하면 셸, 대화 기록, 렌더러 색상이 깜박임 없이 전환됩니다. 인터페이스는 설정의 런타임 언어 전환을 통해 중국어 간체·번체, 일본어, 한국어, 프랑스어로도 사용할 수 있습니다.
 
 ### 원본을 잃지 않고 대화 분기
 

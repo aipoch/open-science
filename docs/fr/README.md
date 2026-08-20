@@ -1,0 +1,424 @@
+# Open Science - Le banc de travail de recherche IA open source avec des agents IA scientifiques
+
+[![Télécharger](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
+[![Version](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![Licence](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
+[![Site web](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
+
+<p align="center">
+  <a href="../../README.md"><img alt="English README" src="https://img.shields.io/badge/English-d9d9d9"></a>
+  <a href="../zh-Hans/README.md"><img alt="简体中文 README" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
+  <a href="../zh-Hant/README.md"><img alt="繁體中文 README" src="https://img.shields.io/badge/繁體中文-d9d9d9"></a>
+  <a href="../ja/README.md"><img alt="日本語 README" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
+  <a href="../ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
+  <a href="../fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
+</p>
+
+> Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
+
+Open Science est un banc de travail de recherche IA open source, local-first, destiné aux scientifiques et aux chercheurs. Il permet une recherche reproductible et inspectable, tous modèles confondus, grâce à des agents IA scientifiques, l'exécution Python et R, des connecteurs de données scientifiques, et une prise en charge multiplateforme de macOS, Windows et Linux. Créez un projet, décrivez votre objectif de recherche en langage naturel, et laissez les agents lire des fichiers, rechercher sur le web, exécuter du code, interroger des sources de données scientifiques, et produire des rapports, des tableaux et des figures avec une provenance traçable — le tout dans un seul espace de travail.
+
+Open Science prend en charge la recherche computationnelle et intensive en données dans de nombreuses disciplines, notamment l'apprentissage automatique, la statistique, les sciences de la vie, la chimie, la science des matériaux, la physique et les sciences de l'environnement. Il accompagne le processus de recherche, de la revue de littérature et de l'élaboration d'hypothèses jusqu'à l'exécution de code, l'analyse de données, la simulation, la visualisation et la production de résultats de recherche traçables.
+
+> 💡 **[Open Science v0.18.0 est disponible](https://github.com/aipoch/open-science/releases/latest)** _(dernière mise à jour : 19 août 2026)_. Les points forts incluent des balises de catalogue transversales avec favoris et tri par glisser-déposer, une expérience de gestion des compétences redessinée, une place de marché des spécialistes allégée avec navigation instantanée en cache et icônes de capacités, l'édition rapide de l'apparence des spécialistes, l'authentification SSH par mot de passe pour les hôtes de calcul, la localisation en coréen et en français, ainsi que des guides README et de contribution multilingues — avec un chargement plus rapide de la place de marché et des connecteurs, un flux d'événements d'exécution incrémental, la suppression protégée des compétences, la persistance atomique de la racine de données à l'accueil, et un durcissement de la récupération au démarrage, dans les sessions, le calcul et le programme de mise à jour. Consultez les [notes de version les plus récentes](https://github.com/aipoch/open-science/releases/latest) pour le journal complet.
+
+<p align="center">
+ <img width="1920" height="1140" alt="Espace de travail de l'application de bureau Open Science, banc de travail de recherche IA open source, montrant une session d'agent avec des artefacts générés" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
+</p>
+
+## Table des matières
+
+- [Démarrage rapide](#-démarrage-rapide)
+- [Visite du produit](#visite-du-produit)
+- [Pourquoi Open Science](#pourquoi-open-science)
+- [Principes de conception](#principes-de-conception)
+- [Capacités principales](#capacités-principales)
+- [Fournisseurs de modèles](#fournisseurs-de-modèles)
+- [Données, autorisations et confiance](#données-autorisations-et-confiance)
+- [État du projet](#état-du-projet)
+- [Développement et empaquetage](#développement-et-empaquetage)
+- [Feuille de route](#feuille-de-route)
+- [Relation avec l'écosystème AIPOCH](#relation-avec-lécosystème-aipoch)
+- [Ce que ce n'est pas](#ce-que-ce-nest-pas)
+- [Questions fréquentes](#questions-fréquentes)
+- [Participer](#participer)
+- [Licence](#licence)
+
+## 🚀 Démarrage rapide
+
+Faites fonctionner Open Science en trois étapes : téléchargez l'installateur de votre plateforme, terminez le guidage du premier lancement, puis créez un projet de recherche.
+
+### 1. Télécharger l'application
+
+Ouvrez la [dernière version](https://github.com/aipoch/open-science/releases/latest), développez **Assets**, et choisissez l'installateur adapté à votre ordinateur :
+
+| Votre ordinateur                    | Choisissez                               |
+| ----------------------------------- | ---------------------------------------- |
+| macOS — Apple Silicon (M1 ou plus récent) | Le DMG macOS pour Apple Silicon / ARM64 |
+| macOS — Intel                       | Le DMG macOS pour Intel / x64            |
+| Windows x64                         | L'installateur Windows x64               |
+| Linux x64                           | L'AppImage Linux x64 ou le paquet Debian |
+
+Consultez les fichiers et les informations de vérification publiés sur la page de version. Voir [Vérifier votre téléchargement](../../SECURITY.md#verifying-your-download) avant l'installation si vous devez valider un paquet.
+
+> Si macOS ou Windows affiche un avertissement de développeur non identifié ou d'éditeur inconnu, vérifiez que le paquet provient de la page officielle Releases avant de continuer.
+
+### 2. Terminer la configuration initiale
+
+Le premier lancement comporte cinq étapes guidées :
+
+1. **Environnement** vérifie la compatibilité, le stockage de l'application, le stockage sécurisé des identifiants et l'accès réseau.
+2. **Environnement d'exécution de l'agent** sélectionne et prépare Claude Code, OpenCode ou Codex. Les environnements d'exécution gérés par l'application peuvent être installés sans Node.js, npm ni mot de passe administrateur.
+3. **Fournisseur de modèle** connecte et teste le modèle que vous souhaitez utiliser. Choisissez un fournisseur intégré, une passerelle personnalisée, ou une connexion par abonnement Claude ou Codex existante.
+4. **Environnement d'exécution Notebook** prépare éventuellement des environnements Python et R gérés par l'application, ou active des interpréteurs détectés et enregistrés manuellement pour l'une ou l'autre langue.
+5. **Emplacement des données** choisit où sont stockés les artefacts volumineux, les Notebooks, les téléversements et les environnements.
+
+<table>
+  <tr>
+    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="Vérifications automatiques de l'environnement au premier lancement dans Open Science"></td>
+    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Configuration du fournisseur de modèle au premier lancement dans Open Science"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Vérifications de compatibilité hôte, de stockage et de réseau</sub></td>
+    <td align="center"><sub>Validation du fournisseur, de la clé API, du point de terminaison et du modèle</sub></td>
+  </tr>
+</table>
+
+L'exécution Notebook est optionnelle. Toutes les vérifications d'environnement et de l'environnement d'exécution de l'agent requises doivent réussir avant que `Continue` ne devienne disponible, et la connexion au modèle doit réussir avant la fin de la configuration. Les paramètres Notebook et d'emplacement des données peuvent conserver leurs valeurs par défaut et être modifiés plus tard dans Paramètres.
+
+### 3. Démarrer un projet de recherche
+
+1. Cliquez sur **New project** et donnez au projet un nom de recherche stable, avec une description optionnelle.
+2. Ouvrez une session et décrivez l'objectif, les données d'entrée, les contraintes, les sorties souhaitées, et la façon dont le résultat doit être vérifié.
+3. Joignez des fichiers source, sélectionnez un modèle vérifié, et choisissez un mode d'approbation.
+4. Envoyez la tâche. Inspectez l'activité des outils de l'agent, approuvez les actions sensibles, et ouvrez les artefacts générés dans le panneau d'aperçu.
+5. Pour explorer une autre direction, modifiez un message utilisateur antérieur et renvoyez-le sur une nouvelle branche ; utilisez les contrôles de révision du message pour revenir à l'un ou l'autre chemin.
+6. Ouvrez la vue **Provenance** d'un artefact pour inspecter ses versions et les preuves disponibles derrière le résultat sélectionné.
+7. Poursuivez le travail dans des sessions ultérieures. Utilisez `@` pour référencer un fichier de projet existant et `/` pour sélectionner explicitement une compétence activée.
+
+> Les captures d'écran de ce README illustrent le flux de travail. Les libellés, catalogues et autres détails d'interface peuvent différer de la version que vous installez.
+
+## Visite du produit
+
+Open Science organise la recherche en projets et en sessions afin que chaque résultat reste lié aux preuves qui l'ont produit. Les sections ci-dessous parcourent l'espace de travail, la provenance des artefacts, les aperçus, les compétences scientifiques et les connecteurs de données.
+
+### Un seul espace de travail, de la tâche aux artefacts traçables
+
+Les projets regroupent les sessions liées, les téléversements, les fichiers générés et l'état d'aperçu. La conversation enregistre la réponse de l'agent et les commandes, lectures de fichiers, modifications, recherches et appels de connecteurs qui l'ont produite. Chaque artefact généré est stocké comme une version immuable, avec somme de contrôle. Sa vue **Provenance** expose les preuves qu'Open Science a pu vérifier au moment de la création : code producteur et historique d'exécution, entrées référencées, inventaire d'environnement observé, branche de conversation productrice, et éventuels constats du relecteur limités à cette version. Les preuves manquantes sont indiquées comme indisponibles au lieu d'être devinées.
+
+<table>
+  <tr>
+    <td width="50%"><img src="../images/readme/project-files.jpg" alt="Bibliothèque de fichiers du projet avec téléversements et artefacts de recherche générés"></td>
+    <td width="50%"><img src="../images/readme/csv-preview.jpg" alt="Aperçu d'un artefact CSV à côté d'une session d'agent terminée"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Téléversements et fichiers générés organisés par projet et par session</sub></td>
+    <td align="center"><sub>Les aperçus natifs gardent les données et l'historique de recherche côte à côte</sub></td>
+  </tr>
+</table>
+
+Les rapports, figures et tableaux générés restent attachés à la session et sont aussi rassemblés dans la bibliothèque de fichiers du projet. Les onglets d'aperçu conservent le résultat actif visible lorsque le panneau change de taille, et les noms longs conservent leur suffixe et leur extension d'identification. Open Science prévisualise les données scientifiques courantes, les PDF, les documents Office (DOCX, XLSX, PPTX), les images (avec zoom et panoramique), le code source avec coloration syntaxique, les structures et réactions moléculaires, et l'historique Notebook. Les limites d'aperçu ne tronquent pas le fichier sous-jacent — l'artefact complet reste disponible pour l'agent et les outils externes. Utilisez `Cmd/Ctrl+F` pour rechercher dans les transcriptions, la sortie Notebook et les pages rendues de l'espace de travail, ou `Cmd/Ctrl+K` pour ouvrir la palette de commandes du projet. Un mode sombre complète l'espace de travail : basculez le thème dans **Settings → General** et toute la palette du terminal, de la transcription et du renderer change sans flash. L'interface est aussi disponible en chinois (simplifié et traditionnel), japonais, coréen et français, avec un sélecteur de langue au moment de l'exécution dans Paramètres.
+
+### Bifurquer une conversation sans perdre l'original
+
+Modifiez un message utilisateur terminé pour renvoyer une invite révisée à partir de ce point. Open Science crée une nouvelle branche de messages au lieu de supprimer les tours qui suivaient, et les contrôles de révision permettent de passer de l'original aux chemins alternatifs. La sélection de branche, l'activité des outils, les pièces jointes et les artefacts générés persistent lors des changements de projet et des redémarrages. La provenance reste liée à la branche exacte qui a produit chaque version d'artefact, si bien qu'explorer une autre hypothèse ne brouille pas le registre du résultat antérieur.
+
+### Compétences scientifiques et connecteurs de données
+
+Open Science inclut un catalogue croissant de **18 compétences** de recherche mises en avant, basées sur des fichiers : AlphaFold2, Boltz, Borzoi, Chai-1, DiffDock, Environment & Packages, ESM-2, ESMFold2, Evo 2, Indication Dossier, LigandMPNN, Literature Review, OpenFold3, ProteinMPNN, scGPT, scvi-tools, SolubleMPNN, et **Remote Compute (SSH)** pour soumettre et récupérer des travaux de longue durée sur des clusters HPC distants. Vous pouvez créer des compétences personnelles, téléverser des paquets `SKILL.md`/ZIP/`.skill`, prévisualiser et importer des compétences compatibles depuis GitHub avec un accès authentifié optionnel, ou importer des compétences déjà installées dans vos répertoires d'agents globaux. L'agent peut aussi demander l'import d'un paquet depuis une pièce jointe de session ou une URL GitHub publique, avec un aperçu et une confirmation appartenant à l'application avant toute écriture. Les compétences activées peuvent être sélectionnées directement dans le composeur avec `/`.
+
+Il inclut aussi **24 connecteurs** de recherche intégrés : Literature Graph, PubMed, bioRxiv, Genes & Ontologies, Genomes, BioMart, Variants, Human Genetics, Clinical Genomics, Structures & Interactions, Protein Annotation, Expression, Omics Archives, CellGuide, Regulation, RNA, Chemistry, ChEMBL, ZINC, Molecule Viewer, Clinical Trials, Drug Regulatory, Cancer Models, et Research Resources. Les connecteurs intégrés et personnalisés restent derrière le système d'autorisations, avec des contrôles `Always allow`, `Ask each time` et `Block` par outil. L'application installée affiche les catalogues courants de compétences, de connecteurs et d'outils.
+
+<table>
+  <tr>
+    <td width="50%"><img src="../images/readme/skills.jpg" alt="Paramètres Open Science montrant les compétences scientifiques mises en avant"></td>
+    <td width="50%"><img src="../images/readme/connectors.jpg" alt="Paramètres Open Science montrant les connecteurs de données scientifiques intégrés"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Compétences de recherche lisibles et réutilisables</sub></td>
+    <td align="center"><sub>Bases de données scientifiques exposées comme outils d'agent soumis à autorisation</sub></td>
+  </tr>
+</table>
+
+## Pourquoi Open Science
+
+Open Science rassemble les tâches de recherche, l'exécution, les fichiers et les preuves dans un seul espace de travail de bureau local et inspectable.
+
+Le travail de recherche est généralement dispersé entre fenêtres de discussion, Notebooks, scripts locaux, bases de données scientifiques, explorateurs de fichiers et outils de reporting. Le contexte se perd à chaque passage de relais, et la réponse est souvent séparée du code et des fichiers qui l'ont produite.
+
+Open Science rassemble ces pièces dans un seul espace de travail de bureau inspectable :
+
+- **Un travail qui persiste.** Les projets, sessions, brouillons, fichiers, aperçus et historiques d'exécution survivent aux redémarrages de l'application.
+- **De l'exécution, pas seulement des suggestions.** L'agent peut exécuter des commandes, du Python et du R, modifier des fichiers, rechercher, appeler des connecteurs, et générer des artefacts avec l'approbation de l'utilisateur.
+- **Des chemins alternatifs sans travail perdu.** Révisez une invite antérieure sur une nouvelle branche de messages et basculez entre les directions de recherche résultantes.
+- **Des résultats traçables.** Les versions d'artefacts immuables conservent les preuves de production qu'Open Science peut vérifier, et marquent explicitement celles qu'il ne peut pas.
+- **Plusieurs choix de modèles.** Utilisez un fournisseur cloud intégré, une passerelle personnalisée compatible, ou un abonnement Claude ou Codex ; choisissez le modèle et son effort de raisonnement ensemble dans le composeur.
+- **Propriété local-first.** L'application et l'état du projet s'exécutent sur votre ordinateur ; les appels externes passent par des services que vous configurez ou approuvez explicitement.
+- **Inspectabilité.** Le code source, les compétences, les définitions de connecteurs, l'activité des outils, les fichiers générés et la provenance des artefacts sont disponibles pour relecture.
+- **Extensibilité.** Ajoutez des compétences et des connecteurs MCP au lieu d'attendre une feuille de route de plugins fermée.
+- **Pas de licence par siège.** Open Science est un logiciel Apache-2.0. Vous ne payez que le modèle ou l'infrastructure que vous choisissez d'utiliser.
+
+Open Science est un produit indépendant, construit de zéro. Ce n'est ni un proxy, ni un client non officiel, ni une reskin d'une autre application de recherche IA.
+
+## Principes de conception
+
+Open Science repose sur sept principes de conception qui gouvernent la façon dont le code, les données, les modèles et la supervision humaine s'articulent : ouvert par défaut, compatibilité multi-fournisseurs explicite, propriété des données local-first, supervision humaine dans la boucle, registres de recherche durables, capacités composables, et frontières scientifiques honnêtes.
+
+- **Ouvert par défaut.** Le code source, les formats, les connecteurs et les compétences doivent rester inspectables et forkables.
+- **Multi-fournisseurs avec une compatibilité explicite.** L'application valide la configuration du fournisseur et rend visibles les exigences de point de terminaison, au lieu de traiter chaque protocole d'API comme interchangeable.
+- **Local-first et conscient des données.** Conservez l'état du projet en local, rendez visibles les flux de données externes, et rendez l'autonomie optionnelle.
+- **Humain dans la boucle.** Les modifications de fichiers, les commandes, l'accès réseau et les appels de connecteurs sont gouvernés par des profils d'approbation explicites.
+- **Registres de recherche durables.** Les sessions, l'activité des outils, l'historique Notebook et les versions d'artefacts immuables doivent rester relisibles après la fin de l'exécution, les preuves indisponibles étant énoncées clairement.
+- **Capacités composables.** Les compétences, connecteurs, modèles, aperçus et futurs backends de calcul doivent être des pièces remplaçables plutôt qu'une boîte noire unique.
+- **Frontières scientifiques honnêtes.** La sortie générée ne remplace pas le jugement d'expert, la relecture statistique, ni la validation contre les preuves primaires.
+
+## Capacités principales
+
+Open Science combine la gestion de projets, l'exécution d'agents multi-modèles, les Notebooks Python et R, les connecteurs de données scientifiques, des versions d'artefacts immuables avec provenance, et un contrôle humain dans la boucle soumis à autorisation, dans un seul espace de travail local. L'application installée et les [notes de version les plus récentes](https://github.com/aipoch/open-science/releases/latest) font foi pour les catalogues évolutifs, les détails d'empaquetage et les options nouvellement ajoutées.
+
+| Domaine                         | Capacité principale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Projets et sessions**         | Créer, renommer et supprimer des projets ; maintenir plusieurs sessions avec épinglage ; éditer des invites terminées en branches de messages persistantes et sélectionnables sans supprimer le chemin aval d'origine ; conversations latérales persistantes dans une session ; restaurer le travail récent, les brouillons, l'historique de conversation et l'état d'aperçu. |
+| **Flux de travail de l'agent**  | Tâches en langage naturel, réponses en flux, cartes d'activité d'outils typées regroupées sous des titres de but déclarés, indicateur d'usage du contexte en direct avec estimations par catégorie, compactage de contexte à la demande, persistance entre redémarrages, contrôles d'arrêt, pauses d'approbation, étape de confirmation (avec préférence mémorisée) avant de fermer ou de quitter pendant une tâche en cours, file d'attente de messages du composeur pour préparer des suivis pendant un tour en cours, branchement vers une nouvelle session depuis des messages d'agent terminés, notifications de bureau avec motifs d'attention plus badges de conversations non lues durables et attention native sur les approbations bloquantes, centre de messages de notification transversal avec état de lecture durable et cibles supprimées conservées, cartes de clarification structurées pour les demandes à plusieurs questions, statut de session en direct sur le tableau de bord Accueil, métadonnées de timing des messages avec popovers de durée et d'usage, usage de jetons par tour, identification du framework d'agents et du modèle pour les tours terminés, palette de commandes du projet, lectures de cadre limitées au projet, actions de projet et contexte d'agent, lignes de barre latérale de session affinées, plans de session soumis à relecture avec contrats d'exécution durables et commandes CLI de consultation, d'approbation et de rejet de plan, rendu fluide des réponses en direct, panneaux latéraux repliables, raccourci clavier de nouvelle conversation, et récupération des sessions interrompues par un redémarrage de l'application. |
+| **Délégation aux sous-agents**  | Délégation de sous-agents en production, avec messagerie et récupération durables.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Modèles**                     | Fournisseurs cloud intégrés, passerelles compatibles personnalisées, connexions par abonnement Claude et Codex, validation de connexion, entrée d'images multimodale par modèle, sélecteur combiné du composeur pour le modèle et l'effort de raisonnement qu'il prend en charge, bascule à chaud des modèles et fournisseurs compatibles sans reconnecter le processus d'agent, et sélecteur Vision dédié avec relais d'évidence d'image persistant pour les backends texte uniquement. Les fournisseurs disponibles et les formats d'API sont validés contre le backend d'agent sélectionné. |
+| **Backend d'agent**             | Un backend de framework d'agents sélectionnable, afin que le même espace de travail puisse s'exécuter sur plus d'une implémentation d'agent sous-jacente, avec des choix de fournisseur et de modèle validés contre le backend sélectionné, des backends gérés par l'application installables, commutables et retirables depuis Paramètres, et une relecture de contexte consciente de l'agent qui respecte le chemin de contexte de chaque framework après un changement ou une reprise. |
+| **Spécialistes**                | Profils d'agents spécialistes personnels avec capacités limitées, transfert immédiat en vol depuis l'agent principal, personnalisation conversationnelle, import/export de paquet, identités d'invocation immuables, identifiants générés à partir du nom avec substitutions validées, et une place de marché des spécialistes limitée, avec vérification de paquet signé, sources GitHub officielles et approuvées par l'utilisateur, repli CDN, progression du téléchargement, et résolution des conflits de compétences à l'import. |
+| **Exécution**                   | Noyaux persistants Python, R et REPL de plan de contrôle avec historique durable du code et des sorties, plus des commandes de terminal sans état enregistrées dans le même historique d'exécution ; inférence REPL bornée pour l'évaluation menée par l'agent ; environnements gérés par l'application avec provisionnement hors ligne ; interpréteurs Python et R apportés par l'utilisateur ; hôtes de calcul SSH distants comme cibles d'exécution supplémentaires ; un terminal utilisateur partagé avec l'agent ; un inventaire en lecture seule des paquets installés par environnement d'exécution ; et un accès en lecture aux artefacts Notebook pour l'inspection de fichiers côté agent. La gestion des paquets pour les environnements d'exécution R externes reste manuelle. |
+| **Entrées et fichiers**         | Pièces jointes (jusqu'à 10 Go par fichier, avec téléversement en flux), bibliothèque de projet avec pagination indexée, regroupement par session, recherche de nom de fichier limitée à la source, vues grille et liste, grande fenêtre d'expansion pour les grands projets, aperçu de fichier en vue scindée à côté de la session, cartes d'artefacts générés, références `@` vers des téléversements/sorties existants, mentions `@path` pour accorder l'accès à un dossier local avec navigation inter-lecteurs, barre de chemin éditable et sélecteur de lecteur, téléchargement/export de fichiers, téléchargements sélectifs d'artefacts de session, export de conversation en Markdown ou PDF, et export de session en `.ipynb` (par onglet ou tout télécharger). |
+| **Artefacts et provenance**     | Versions d'artefacts immuables, limitées à la session, avec contenu à somme de contrôle et, lorsqu'ils sont disponibles, code producteur, historique d'exécution, références d'entrée exactes, inventaire d'environnement, contexte de branche de message productrice, accès à la lignée d'artefacts, et preuves du relecteur limitées à la version, avec navigation entre versions et liens directs entre preuves liées. |
+| **Formats d'aperçu**            | Aperçus multi-onglets réactifs pour les données scientifiques courantes, les PDF, les documents Office (DOCX, XLSX, PPTX), les images (y compris TIFF, avec zoom et panoramique), le code source avec coloration syntaxique, les structures et réactions moléculaires, et l'historique Notebook, visibles en ligne ou en plein écran, avec une navigation « voir dans le contexte » vers la conversation qui a produit un artefact. |
+| **Gestion locale des données**  | Données de projet et d'application locales, emplacement de stockage configurable, migration guidée, et paramètres de proxy globaux avec modes système, manuel et direct ; tableau de bord d'usage des jetons avec synthèses par période, carte de chaleur d'activité sur 30 jours, et graphiques quotidiens d'entrée/cache/sortie. |
+| **Compétences**                 | **18 compétences** intégrées mises en avant ; compétences personnelles aux noms immuables en minuscules à traits d'union ; création conversationnelle de compétences à partir du langage naturel dans une session ; enregistrer comme compétence depuis un tour de conversation terminé ; prise en charge directe du dossier de compétences utilisateur avec validation de paquet hors bande ; gestion groupée activer/désactiver avec filtres de source, de statut et de texte ; téléversement de paquet ; aperçu/import GitHub authentifié ; import de compétences globales installées avec aperçu des candidats ; imports de paquets demandés par l'agent depuis des pièces jointes de session ou des URL GitHub ; API JavaScript hôte en camelCase pour le script de compétences, avec validation structurée ; contrôles activer/désactiver ; et sélection explicite `/` dans une session. |
+| **Connecteurs**                 | **24 connecteurs** de recherche intégrés avec surfaces d'état d'exécution et de récupération, connecteurs MCP locaux/distants personnalisés avec noms d'invocation immuables en minuscules distincts des noms d'affichage éditables, identifiants locaux générés à partir du nom avec substitutions validées, métadonnées de contact, et autorisations au niveau du connecteur et de l'outil. |
+| **Contrôles de sécurité**       | Profils de conversation `Ask for approval`, `Auto-approve edits` et `Full access` ; dialogues d'approbation avec aperçus de code et décisions d'appel/conversation ; autorisations durables aux portées globale, projet et session, avec filtrage, révocation par ligne et par famille, et Annuler ; plus des politiques par connecteur et par outil. |
+| **Relecture et vérification**   | Un relecteur optionnel qui audite un tour terminé contre sa propre transcription, son journal d'exécution et ses artefacts, signale des constats succès/avertissement/échec, et peut exécuter une boucle de correction bornée pour les corriger ; une politique de modèle de relecteur configurable qui suit le modèle actif ou épingle un fournisseur, un modèle et un effort de raisonnement dédiés ; et des instantanés d'évaluation du relecteur durables avec attribution des corrections. |
+| **Distribution et support**     | Installateurs pour macOS, Windows et Linux ; assistant de premier lancement allégé pour l'environnement, l'environnement d'exécution de l'agent, le fournisseur de modèle, l'environnement d'exécution Notebook et l'emplacement des données ; guidage de mise à jour avec rappels visibles ; diagnostics locaux ; et liens communautaires. |
+
+## Fournisseurs de modèles
+
+Open Science est agnostique vis-à-vis des modèles au niveau produit : connectez-le à de grands fournisseurs LLM cloud, à une passerelle personnalisée, ou réutilisez un abonnement Claude ou Codex existant. La disponibilité des fournisseurs dépend actuellement du backend d'agent sélectionné et des protocoles d'API qu'il prend en charge. Il y a quatre façons de connecter un modèle :
+
+| Mode de fournisseur              | Fonctionnement                                                                                                                                                                                                                                                                                                               |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fournisseurs cloud intégrés**  | Choisissez dans la liste des fournisseurs affichée par l'application installée et authentifiez-vous avec la clé demandée.                                                                                                                                                                                                    |
+| **Passerelle personnalisée**     | Fournissez une URL de base compatible, une clé API et l'identifiant exact du modèle. Le format d'API par défaut (Messages, Chat Completions ou Responses) est dérivé du framework d'agents actif, si bien qu'une nouvelle passerelle personnalisée est compatible d'emblée.                                                 |
+| **Abonnement Codex**             | Sélectionnez d'abord le framework d'agents Codex, puis vous pouvez sélectionner l'abonnement Codex dans le type de fournisseur.                                                                                                                                                                                              |
+| **Abonnement Claude**            | Connectez-vous avec un abonnement Claude selon deux modes : **partagé** (une connexion navigateur qui stocke les identifiants dans votre profil `~/.claude` par défaut) ou **isolé** (un `claude setup-token` géré par l'application sous un `CLAUDE_CONFIG_DIR` appartenant à l'application, entièrement isolé de `~/.claude/`, avec un flux navigateur plus un repli par collage de jeton). |
+
+Le fournisseur héritage **Local Claude** a été retiré. Les entrées Local Claude précédemment stockées
+sont abandonnées lors de la mise à niveau ; ajoutez **Claude Subscription** et authentifiez-vous avec
+la connexion navigateur partagée ou le flux isolé `claude setup-token` à la place.
+
+Les fournisseurs cloud intégrés incluent actuellement OpenAI, Anthropic, Grok (xAI), DeepSeek, Zhipu AI (GLM) avec un point de terminaison dédié GLM Coding Plan, Kimi (Moonshot), MiniMax, StepFun avec un point de terminaison d'abonnement Step Plan dédié, Xiaomi MIMO, SenseNova, Volcengine Ark, Bailian (Alibaba Cloud) avec un point de terminaison d'abonnement Bailian for Plan dédié, et la passerelle d'agrégation OpenRouter, parmi d'autres ; certains sont spécifiques à une région.
+
+Les fournisseurs, les modèles disponibles et les points de terminaison régionaux peuvent évoluer indépendamment de ce README. Considérez le sélecteur de fournisseur et le test de connexion de l'application installée comme la source de vérité.
+
+## Données, autorisations et confiance
+
+Open Science stocke les données de projet, les paramètres, les versions d'artefacts et les preuves de provenance sur l'ordinateur local. Les clés API sont conservées localement et utilisent le stockage sécurisé d'identifiants du système d'exploitation lorsqu'il est disponible. Les journaux sont locaux et ne sont pas téléversés automatiquement.
+
+Un flux de données externe reste possible et doit être examiné :
+
+- Les requêtes de modèle envoient l'invite et le contexte nécessaire au fournisseur de modèle sélectionné.
+- Les recherches web et les connecteurs distants envoient leurs paramètres affichés à des services externes.
+- Les connecteurs locaux peuvent exécuter des commandes de confiance sur l'ordinateur.
+- Les pièces jointes, les références `@`, les journaux et les rapports générés peuvent contenir des données de recherche sensibles.
+
+Choisissez le profil d'autorisation le plus étroit qui convienne à la tâche :
+
+| Mode                 | Comportement                                                                     | Usage recommandé                                                |
+| -------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `Ask for approval`   | Demande avant les modifications, commandes, réseau et appels de connecteurs      | Nouveaux flux, données sensibles, scripts peu familiers         |
+| `Auto-approve edits` | Autorise automatiquement les modifications de l'espace de travail ; demande pour les commandes, le réseau et les connecteurs | Travail d'édition de fichiers de confiance avec un accès externe contrôlé |
+| `Full access`        | Autorise automatiquement les modifications, commandes, réseau et connecteurs     | Travail clairement délimité, pleinement de confiance, sans surveillance |
+
+Examinez les paramètres des connecteurs et l'activité des outils avant de les approuver. N'incluez jamais de clés API, de jetons d'accès, d'identifiants patients, de données non publiées ou de chemins locaux sensibles dans des captures d'écran ou des journaux d'issues publiques.
+
+## État du projet
+
+Open Science est une application de bureau en développement actif, disponible pour macOS, Windows et Linux. Le développement se concentre sur des flux de recherche local-first fiables, des capacités scientifiques extensibles, des artefacts de recherche traçables, et une exécution contrôlée par l'utilisateur.
+
+Consultez la [dernière version](https://github.com/aipoch/open-science/releases/latest) pour les téléchargements courants et les changements spécifiques à une version. Pour les capacités livrées, partielles et prévues, voir la [carte des capacités](../../ROADMAP.md#capability-map).
+
+Open Science assiste l'exécution de la recherche et la tenue des registres ; les chercheurs restent responsables des méthodes, de l'interprétation, de la confidentialité et de la validité scientifique.
+
+## Développement et empaquetage
+
+Open Science est une application Electron construite avec React, TypeScript, Prisma/SQLite, et un environnement d'exécution d'agent basé sur ACP.
+
+Prérequis pour le développement à partir des sources :
+
+- Node.js LTS ou plus récent, avec npm
+- Git
+- Python 3 uniquement si vous voulez l'exécution Notebook
+
+```bash
+git clone https://github.com/aipoch/open-science.git
+cd open-science
+npm install
+npm run dev
+```
+
+`npm install` génère automatiquement le client Prisma et installe les dépendances natives Electron. `npm run dev` construit les bundles Electron main/preload, démarre le renderer, et ouvre l'application de bureau. Les données de développement sont isolées sous `~/.open-science-project`.
+
+Commandes utiles :
+
+| Commande               | Objet                                       |
+| ---------------------- | ------------------------------------------- |
+| `npm run dev`          | Démarrer l'application de développement     |
+| `npm run dev:web`      | Application de dev + UI web localhost (127.0.0.1) |
+| `npm run dev:headless` | Backend de dev + UI web, sans fenêtre Electron |
+| `npm run lint`         | Exécuter ESLint                             |
+| `npm run typecheck`    | Vérifier les types du code main et renderer |
+| `npm test`             | Exécuter la suite Vitest                    |
+| `npm run build`        | Vérifier les types et construire l'application |
+| `npm run build:web`    | Construire l'UI web localhost optionnelle   |
+| `npm run build:mac`    | Empaqueter les builds macOS                 |
+| `npm run build:win`    | Empaqueter les builds Windows               |
+| `npm run build:linux`  | Empaqueter les builds Linux                 |
+
+La sortie empaquetée est écrite sous `dist/`.
+
+### Modes web localhost et headless
+
+Le backend de bureau peut éventuellement servir le même renderer à un navigateur sur l'ordinateur local. Cette
+fonctionnalité est désactivée par défaut et ne se lie qu'à `127.0.0.1`.
+
+```bash
+npm run build:web
+npm run dev:web
+```
+
+Ouvrez l'URL authentifiée affichée par l'application. Utilisez `npm run dev:headless` pour démarrer le
+backend, la barre d'état, l'environnement d'exécution de l'agent et le service web localhost sans ouvrir de fenêtre Electron.
+Définissez `OPEN_SCIENCE_WEB_PORT` pour choisir un port (par défaut `44100`). Quitter explicitement
+l'application arrête toujours normalement les processus d'agent et Notebook.
+
+### Accès distant mobile
+
+La même UI web localhost peut être atteinte depuis un téléphone ou une tablette via l'appariement Remote.It. Appariez
+un navigateur avec un code Open Science à six chiffres, approuvez-le une fois sur le bureau, et l'espace de travail
+reste joignable sans exposer directement le serveur en boucle locale. La confiance du navigateur est révocable, et
+les changements de mode ou l'arrêt du service invalident immédiatement les sessions distantes actives.
+
+### CLI et SDK headless
+
+Le CLI headless et le SDK Node.js sans dépendance utilisent le même démon local, les mêmes projets, sessions,
+identifiants et autorisations que les interfaces de bureau et web. L'usage détaillé vit avec le
+paquet publiable, afin qu'il n'y ait qu'une seule référence de commandes à maintenir :
+
+- [Guide CLI](../../packages/open-science/CLI.md) - installation, cycle de vie du service, automatisation des tâches,
+  artefacts, formats de sortie et codes de sortie
+- [Aperçu du paquet SDK](../../packages/open-science/README.md) - démarrage rapide Node.js et point d'entrée du paquet
+
+## Feuille de route
+
+La feuille de route produit et l'état des capacités sont maintenus dans [ROADMAP.md](../../ROADMAP.md). Ce README ne duplique volontairement pas la liste mouvante des priorités ou des cibles de version.
+
+## Relation avec l'écosystème AIPOCH
+
+<img width="1920" height="1140" alt="Comment Open Science s'inscrit dans l'écosystème AIPOCH comme couche d'orchestration de bureau pour des flux de travail d'IA scientifique ouverts" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
+
+[AIPOCH](https://aipoch.com/open-science) ([organisation GitHub](https://github.com/aipoch)) construit Open Science comme la couche d'orchestration de bureau pour des flux de travail d'IA scientifique ouverts.
+
+- [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) est une collection plus large de plus de 500 compétences de recherche médicale et scientifique basées sur des fichiers, toutes inspectables, importables, et associables à Open Science depuis GitHub.
+- Open Science fournit l'espace de travail projet/session, l'environnement d'exécution de l'agent, l'exécution, les artefacts, les aperçus, les autorisations et les connecteurs qui transforment ces instructions en un flux de travail interactif.
+
+Les compétences et connecteurs peuvent exécuter du code ou envoyer des données à l'extérieur. Examinez leur source, leur licence, leurs scripts et leur comportement réseau avant de les activer.
+
+## Ce que ce n'est pas
+
+Open Science est un outil d'exécution de recherche et de tenue de registres, pas une enveloppe de discussion générique, un client non officiel, ni un substitut à la relecture scientifique.
+
+- **Pas seulement une UI de discussion.** Le produit s'organise autour de projets persistants, d'exécution, de fichiers, d'artefacts et d'une activité d'outils relisible.
+- **Pas un client non officiel d'un autre produit.** C'est une implémentation indépendante, avec son propre code, modèle de données, interface et feuille de route.
+- **Pas un remplacement du jugement scientifique.** Les sorties exigent toujours une relecture de domaine, une validation statistique, et une vérification contre les sources primaires.
+
+## Questions fréquentes
+
+### Que dois-je faire la première fois que j'ouvre Open Science ?
+
+R : Terminez les cinq étapes de configuration : **Environment**, **Agent runtime**, **Model provider**, **Notebook runtime** et **Data location**. Corrigez les lignes requises marquées `Action needed`, installez ou réparez l'agent sélectionné s'il est proposé, et testez la connexion au modèle. La configuration Notebook et un emplacement de données personnalisé sont optionnels.
+
+### Qu'est-ce qu'une clé API, et où l'obtenir ?
+
+R : Une clé API est un identifiant secret émis par un fournisseur de modèle. Créez-en une ou copiez-la depuis la console développeur/API de ce fournisseur. Le fournisseur peut facturer les requêtes faites avec la clé. Traitez-la comme un mot de passe : ne la partagez jamais et ne la commitez jamais dans un dépôt.
+
+### Ai-je besoin d'une clé API ?
+
+R : Non si vous réutilisez une connexion par abonnement existante — un abonnement Claude via la connexion navigateur partagée ou un flux `claude setup-token` isolé géré par l'application, ou une connexion d'abonnement ChatGPT/Codex sur le backend Codex. Les fournisseurs cloud intégrés et les passerelles personnalisées exigent leurs propres clés.
+
+### Quels fournisseurs de modèles puis-je utiliser ?
+
+R : Ouvrez le sélecteur de fournisseur pendant la configuration ou sous `Settings → Model` pour les choix pris en charge par votre application installée et le backend d'agent sélectionné. Vous pouvez utiliser un fournisseur cloud intégré, une passerelle personnalisée compatible, un abonnement Claude via une connexion partagée ou isolée, ou un abonnement Codex sur le backend Codex.
+
+### Pourquoi le test de connexion au modèle échoue-t-il ?
+
+R : Vérifiez la clé API pour des caractères manquants ou des espaces, confirmez l'URL de base et la région, utilisez l'identifiant de modèle exact du fournisseur, et confirmez l'accès réseau et le solde du compte. Pour un abonnement Claude, réessayez la connexion navigateur partagée ou actualisez l'identifiant isolé `claude setup-token`, selon le mode sélectionné.
+
+### Pourquoi `Continue` est-il désactivé pendant la configuration ?
+
+R : L'étape courante n'a pas satisfait sa condition requise. Corrigez toute ligne d'environnement marquée `Action needed`, installez ou réparez l'environnement d'exécution de l'agent sélectionné, ou validez le fournisseur de modèle, selon l'étape active. La configuration Notebook est optionnelle et n'affecte que l'exécution Notebook.
+
+### La configuration est terminée. Comment démarrer une tâche de recherche ?
+
+R : Créez ou ouvrez un projet, démarrez une session, joignez les fichiers source éventuels, et décrivez l'objectif, les contraintes, la sortie attendue et les critères de validation. Utilisez `@` pour référencer un fichier de projet et `/` pour sélectionner une compétence activée.
+
+### Comment exécuter des travaux sur un cluster HPC distant ?
+
+R : Activez la compétence **Remote Compute (SSH)** sous **Settings → Skills**, enregistrez votre cluster sous **Settings → Compute**, puis démarrez une session et sélectionnez la compétence avec `/remote-compute-ssh`. La compétence gère l'enregistrement de l'hôte, les commandes courtes via SSH, et la soumission de travaux pleinement asynchrone — l'application démarre automatiquement un tour d'analyse lorsque le travail se termine, si bien que vous n'écrivez jamais de boucle d'attente.
+
+### Y a-t-il une interface en ligne de commande ?
+
+R : Oui. Installez-la en un clic depuis **Settings → General → Command line tool → Install command** (ajoute `open-science` à votre PATH ; aucun Node.js séparé n'est nécessaire). Le CLI contrôle le service local et soumet des tâches de recherche sans ouvrir de navigateur :
+
+```bash
+# Démarrer le service en arrière-plan
+open-science start --no-open
+
+# Créer un projet et exécuter une tâche par son nom exact
+open-science project create "Systematic review"
+open-science run --project "Systematic review" \
+  --prompt-file ./task.md \
+  --approval-profile auto \
+  --skill literature-review \
+  --wait --json
+
+# Télécharger un artefact généré
+open-science artifacts list <session-id> --json
+open-science artifacts download <artifact-id> --output ./report.md
+```
+
+Voir le [guide CLI](../../packages/open-science/CLI.md) pour la référence complète des commandes, les formats de sortie JSON/JSONL, les codes de sortie, et les options de service headless.
+
+### Comment inspecter l'origine d'un résultat généré ?
+
+R : Ouvrez l'artefact généré et choisissez **Provenance**. Sélectionnez une version pour inspecter l'identité du contenu et, lorsqu'ils sont disponibles, le code producteur, l'historique d'exécution, les entrées, l'inventaire d'environnement, le contexte de conversation productrice, et les preuves du relecteur. Les preuves qu'Open Science n'a pas pu vérifier sont marquées indisponibles.
+
+### Puis-je réviser une demande antérieure sans perdre la conversation qui a suivi ?
+
+R : Oui. Modifiez un message utilisateur terminé et renvoyez-le pour créer une nouvelle branche à partir de ce point. Les tours ultérieurs d'origine restent disponibles, et les flèches de révision à côté du message basculent entre les chemins alternatifs.
+
+### Mes données de recherche restent-elles sur mon ordinateur ?
+
+R : Les projets, sessions, fichiers, paramètres et identifiants configurés sont stockés localement par défaut. Le contenu nécessaire aux requêtes de modèle, aux recherches web ou aux appels de connecteurs peut tout de même être envoyé au service externe que vous avez sélectionné ; examinez donc les entrées sensibles et les politiques du fournisseur avant d'exécuter une tâche.
+
+## Participer
+
+| Canal                                                                    | Utilisez-le pour                                                           |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | Bogues, échecs reproductibles et propositions de fonctionnalités concrètes |
+| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | Questions de conception, propositions de feuille de route et conversations techniques plus longues |
+| [Discord](https://discord.gg/zxQAYjReRv)                                 | Aide communautaire, coordination des contributeurs et discussion informelle |
+| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | Annonces de version et mises à jour de construction en public              |
+| [Site web](https://aipoch.com/)                                          | Aperçu produit, téléchargements et le reste de l'écosystème AIPOCH         |
+
+Avant d'ouvrir une issue publique, retirez des journaux et captures d'écran les clés API, jetons, chemins de fichiers privés, données non publiées, identifiants patients et autres éléments sensibles. Voir [CONTRIBUTING.md](CONTRIBUTING.md) pour le flux de développement.
+
+> ⭐ **Ajouter une étoile au dépôt :** Si ce projet vous a été utile, une étoile sur GitHub serait grandement appréciée. Étoiler le dépôt encourage le développement continu. Cela ne prend qu'une seconde, mais cela a un impact réel sur le projet.
+
+## Licence
+
+Licence Apache 2.0 — voir [LICENSE](../../LICENSE).
