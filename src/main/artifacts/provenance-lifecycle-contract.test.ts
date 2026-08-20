@@ -270,6 +270,20 @@ describe('artifact provenance durable lifecycle contract', () => {
       value.storageRoot,
       ...snapshotRow.messageSnapshot!.storageKey.split('/')
     )
+    const currentSnapshot = JSON.parse(await readFile(snapshotPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    const futureSnapshot = JSON.stringify({ ...currentSnapshot, schemaVersion: 4 })
+    await writeFile(snapshotPath, futureSnapshot, 'utf8')
+    await value.client.artifactMessageSnapshot.update({
+      where: { id: snapshotRow.messageSnapshot!.id },
+      data: { checksum: sha256(futureSnapshot) }
+    })
+    await expect(repository.getVersionMessages(firstIdentity)).resolves.toEqual({
+      messages: { state: 'unavailable', reason: 'message-snapshot-unsupported' }
+    })
+
     await writeFile(snapshotPath, '{"corrupt":true}\n', 'utf8')
     await expect(repository.getVersionMessages(firstIdentity)).resolves.toEqual({
       messages: { state: 'unavailable', reason: 'message-snapshot-corrupt' }

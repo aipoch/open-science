@@ -17,6 +17,7 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import fr from '../locales/fr.json'
 import ja from '../locales/ja.json'
 import ko from '../locales/ko.json'
 import zhHans from '../locales/zh-Hans.json'
@@ -31,6 +32,7 @@ import {
 type Catalog = Record<string, string>
 
 const sourceCatalogs = {
+  fr,
   ja,
   ko,
   'zh-Hans': zhHans,
@@ -61,14 +63,21 @@ const markers = (text: string): string[] =>
 const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
+const REQUIRED_PLURAL_CATEGORIES = {
+  fr: ['one', 'many', 'other'],
+  ja: ['other'],
+  ko: ['other'],
+  'zh-Hans': ['other'],
+  'zh-Hant': ['other']
+} as const satisfies Record<TranslatedLocale, readonly string[]>
 // This key is selected by a lookup table whose caller always supplies count=0, even though the copy
 // itself has no interpolation marker. Keep the exceptional contract explicit; every other counted
 // key is discovered by its {{count}} marker below.
 const COUNTED_KEYS_WITHOUT_MARKER = ['probed just now'] as const
 
 describe('supported catalog registration', () => {
-  it('ships a Korean catalog in the synchronous first-paint resources', () => {
-    expect(resources).toHaveProperty('ko')
+  it('ships every translated catalog in the synchronous first-paint resources', () => {
+    expect(Object.keys(resources).sort()).toEqual([...TRANSLATED].sort())
   })
 })
 
@@ -209,30 +218,53 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     expect(malformed).toEqual([])
   })
 
-  // Chinese, Japanese, and Korean have a single plural category, so a `_one` entry is copy that can never
-  // render. English needs no catalog entry at all: the key carries the plural form and the call site
-  // passes the singular as `defaultValue_one`.
+  // Catalogs carry exactly the categories selected by the locale's CLDR rules. English needs no
+  // catalog entry at all: the key carries the plural form and the call site passes the singular as
+  // `defaultValue_one`.
   it('uses only the plural categories the translated grammar has', () => {
+    const allowed = new Set<string>(REQUIRED_PLURAL_CATEGORIES[locale])
     const wrong = Object.keys(catalog(locale))
       .map((key) => ({ key, suffix: key.split('_').at(-1) ?? '' }))
-      .filter(({ suffix }) => PLURAL_CATEGORIES.has(suffix) && suffix !== 'other')
+      .filter(({ suffix }) => PLURAL_CATEGORIES.has(suffix) && !allowed.has(suffix))
       .map(({ key }) => key)
 
     expect(wrong).toEqual([])
   })
 
-  it('stores every counted translation under the locale _other category', () => {
+  it('stores every counted translation under a locale plural category', () => {
     const bareCountedKeys = Object.keys(catalog(locale)).filter(
-      (key) => englishOf(key).includes('{{count}}') && !key.endsWith('_other')
+      (key) =>
+        englishOf(key).includes('{{count}}') &&
+        ![...PLURAL_CATEGORIES].some((category) => key.endsWith(`_${category}`))
     )
 
     expect(bareCountedKeys).toEqual([])
   })
 
+  it('provides every plural category selected by the locale at runtime', () => {
+    const entries = catalog(locale)
+    const pluralGroups = new Set(
+      Object.keys(entries)
+        .filter((key) => PLURAL_CATEGORIES.has(key.split('_').at(-1) ?? ''))
+        .map((key) => key.replace(/_(?:zero|one|two|few|many|other)$/, ''))
+    )
+    const missing = [...pluralGroups].flatMap((key) =>
+      REQUIRED_PLURAL_CATEGORIES[locale]
+        .filter((category) => entries[`${key}_${category}`] === undefined)
+        .map((category) => `${key}_${category}`)
+    )
+
+    expect(missing).toEqual([])
+  })
+
   it('suffixes dynamic counted keys that have no interpolation marker', () => {
     const entries = catalog(locale)
     const invalid = COUNTED_KEYS_WITHOUT_MARKER.filter(
-      (key) => entries[key] !== undefined || entries[`${key}_other`] === undefined
+      (key) =>
+        entries[key] !== undefined ||
+        REQUIRED_PLURAL_CATEGORIES[locale].some(
+          (category) => entries[`${key}_${category}`] === undefined
+        )
     )
 
     expect(invalid).toEqual([])
@@ -240,7 +272,25 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
 })
 
 describe('dynamic counted lookup translations', () => {
+  it('renders the French CLDR many category without falling back to English', async () => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'fr',
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { fr: { translation: catalog('fr') } }
+    })
+
+    expect(instance.t('{{count}} files', { count: 1_000_000 })).toBe('1000000 fichiers')
+  })
+
   it.each([
+    {
+      locale: 'fr' as const,
+      expected: ["vérifié à l'instant", 'vérifié il y a 3 h', 'il y a 3 j', 'il y a 3 jours']
+    },
     {
       locale: 'zh-Hans' as const,
       expected: ['刚刚探测', '3 小时前探测', '3 天前', '3 天前']
@@ -291,29 +341,56 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
-  it.each(['ja', 'ko'] as const)('%s keeps product and technical terms in English', (locale) => {
-    const retainedProductGlossary = [
-      { term: 'Open Science', source: /\bOpen Science\b/ },
+  it.each(['fr', 'ja', 'ko'] as const)(
+    '%s keeps product and technical terms in English',
+    (locale) => {
+      const retainedProductGlossary = [
+        { term: 'Open Science', source: /\bOpen Science\b/ },
+        { term: 'Anthropic', source: /\bAnthropic\b/ },
+        { term: 'Claude', source: /\bClaude\b/ },
+        { term: 'Codex', source: /\bCodex\b/ },
+        { term: 'opencode', source: /\bOpenCode\b/ },
+        { term: 'MCP', source: /\bMCP\b/ },
+        { term: 'ACP', source: /\bACP\b/ },
+        { term: 'API', source: /\bAPI\b/ },
+        { term: 'CLI', source: /\bCLI\b/ },
+        { term: 'SSH', source: /\bSSH\b/ },
+        { term: 'ZIP', source: /\bZIP\b/ },
+        { term: 'GitHub', source: /\bGitHub\b/ },
+        { term: 'Discord', source: /\bDiscord\b/ },
+        { term: 'Python', source: /\bPython\b/ },
+        { term: 'Jupyter', source: /\bJupyter\b/ },
+        { term: 'Office', source: /\bOffice\b/ },
+        { term: 'Chromium', source: /\bChromium\b/ }
+      ]
+      const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+        const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
+        return retainedProductGlossary
+          .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
+          .map(({ term }) => `${key}: ${term}`)
+      })
+
+      expect(offenders).toEqual([])
+    }
+  )
+
+  it('keeps reviewed French product and technical names in English', () => {
+    const retainedTerms = [
       { term: 'Anthropic', source: /\bAnthropic\b/ },
-      { term: 'Claude', source: /\bClaude\b/ },
-      { term: 'Codex', source: /\bCodex\b/ },
-      { term: 'opencode', source: /\bOpenCode\b/ },
-      { term: 'MCP', source: /\bMCP\b/ },
-      { term: 'ACP', source: /\bACP\b/ },
-      { term: 'API', source: /\bAPI\b/ },
-      { term: 'CLI', source: /\bCLI\b/ },
-      { term: 'SSH', source: /\bSSH\b/ },
-      { term: 'GitHub', source: /\bGitHub\b/ },
-      { term: 'Discord', source: /\bDiscord\b/ },
-      { term: 'Python', source: /\bPython\b/ },
-      { term: 'Jupyter', source: /\bJupyter\b/ },
-      { term: 'Office', source: /\bOffice\b/ },
-      { term: 'Chromium', source: /\bChromium\b/ }
+      { term: 'Claude Code', source: /\bClaude Code\b/ },
+      { term: 'Chromium', source: /\bChromium\b/ },
+      { term: 'Electron', source: /\bElectron\b/ },
+      { term: 'Markdown', source: /\bMarkdown\b/ },
+      { term: 'Remote.It', source: /\bRemote\.It\b/ }
     ]
-    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
-      const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
-      return retainedProductGlossary
-        .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
+    const offenders = Object.entries(catalog('fr')).flatMap(([key, value]) => {
+      const source = englishOf(key)
+      return retainedTerms
+        .filter(({ term, source: pattern }) => {
+          const sourceOccurrences = source.split(term).length - 1
+          const translationOccurrences = value.split(term).length - 1
+          return pattern.test(source) && translationOccurrences < sourceOccurrences
+        })
         .map(({ term }) => `${key}: ${term}`)
     })
 
@@ -321,14 +398,40 @@ describe('mandatory product glossary', () => {
   })
 
   const chosenGenericTerms = {
+    fr: {
+      Agent: 'Agent',
+      'Agent framework': "Framework d'agents",
+      'Command line tool': 'Outil en ligne de commande',
+      Diagnostics: 'Diagnostics',
+      failed: 'échec',
+      Skills: 'Compétences',
+      Specialist: 'Spécialiste',
+      Specialists: 'Spécialistes',
+      Marketplace: 'Place de marché',
+      Connector: 'Connecteur',
+      Main: 'Agent principal',
+      Light: 'Clair',
+      Resume: 'Reprendre',
+      Running: 'En cours',
+      running: 'en cours',
+      Terminal: 'Terminal',
+      Shell: 'Terminal',
+      'Token usage': 'Utilisation des jetons',
+      'Claude setup token': 'Jeton de configuration Claude',
+      'Token: {{masked}}': 'Jeton\u00a0: {{masked}}'
+    },
     'zh-Hans': {
       Agent: '智能体',
+      'Agent framework': '智能体框架',
+      Resume: '继续',
       Skills: '技能',
       Specialist: '专家',
       Specialists: '专家',
       Marketplace: '市场',
       Connector: '连接器',
       Main: '主智能体',
+      Light: '浅色',
+      Running: '运行中',
       Shell: '命令行',
       'Token usage': '词元用量',
       'Claude setup token': 'Claude 设置令牌',
@@ -336,12 +439,16 @@ describe('mandatory product glossary', () => {
     },
     'zh-Hant': {
       Agent: '智能體',
+      'Agent framework': '智能體框架',
+      Resume: '繼續',
       Skills: '技能',
       Specialist: '專家',
       Specialists: '專家',
       Marketplace: '市集',
       Connector: '連接器',
       Main: '主智能體',
+      Light: '淺色',
+      Running: '執行中',
       Shell: '命令列',
       'Token usage': '詞元用量',
       'Claude setup token': 'Claude 設定權杖',
@@ -349,12 +456,16 @@ describe('mandatory product glossary', () => {
     },
     ja: {
       Agent: 'エージェント',
+      'Agent framework': 'エージェントフレームワーク',
+      Resume: '再開',
       Skills: 'スキル',
       Specialist: 'スペシャリスト',
       Specialists: 'スペシャリスト',
       Marketplace: 'マーケットプレイス',
       Connector: 'コネクタ',
       Main: 'メインエージェント',
+      Light: 'ライト',
+      Running: '実行中',
       Shell: 'シェル',
       'Token usage': 'トークン使用量',
       'Claude setup token': 'Claude セットアップトークン',
@@ -384,11 +495,229 @@ describe('mandatory product glossary', () => {
     expect(actual).toEqual(expected)
   })
 
+  it('uses the chosen French agent framework term in every sentence', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bagent frameworks?\b/i.test(englishOf(key)))
+      .filter(([key, value]) => {
+        const expected = /\bagent frameworks\b/i.test(englishOf(key))
+          ? /frameworks d'agents/i
+          : /framework d'agents/i
+        return !expected.test(value)
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses theme meanings for French light and dark copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key, value]) => {
+        const source = englishOf(key)
+        return (
+          (/\blight\b/i.test(source) && !/\bclair\b/i.test(value)) ||
+          (/\bdark\b/i.test(source) && !/\bsombre\b/i.test(value))
+        )
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses unambiguous French safety and operation copy', () => {
+    const expected = {
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.":
+        "Les conversations toujours liées à <name>{{name}}</name> deviendront <em>indisponibles</em> et <em>ne seront pas</em> automatiquement basculées vers l'agent principal. Pour chaque conversation concernée, vous devrez choisir explicitement un nouveau spécialiste ou l'agent principal avant de pouvoir envoyer à nouveau des messages.",
+      'The candidate authentication configuration is verified before commit. Session enablement and Permission Grants will be cleared.':
+        "La configuration d'authentification proposée est vérifiée avant validation. L'activation des sessions et les autorisations accordées seront supprimées.",
+      'Ask before file edits, commands, network, and MCP tools.':
+        "Demander une autorisation avant de modifier des fichiers, d'exécuter des commandes, d'accéder au réseau ou d'utiliser des outils MCP.",
+      'Allow for this conversation': 'Autoriser pour cette conversation',
+      'Allow for this project': 'Autoriser pour ce projet',
+      'Allowed this session': 'Autorisé pour cette session',
+      'Anthropic approx.': 'Estimation Anthropic',
+      'Clear all session grants': 'Révoquer toutes les autorisations de la session',
+      'Grant folder…': "Autoriser l'accès à un dossier…",
+      'Grant this folder': "Autoriser l'accès à ce dossier",
+      'Close Provenance': 'Fermer le panneau de provenance',
+      'Go to home': 'Accéder au dossier personnel',
+      'Go-to locations': 'Accès rapides',
+      Cartoon: 'Ruban',
+      'Cartoon requires a protein or nucleic-acid backbone':
+        'La représentation en rubans nécessite un squelette protéique ou nucléique',
+      'Reset runtime': "Réinitialiser l'environnement d'exécution",
+      'Install Specialist': 'Installer le spécialiste',
+      'Update Specialist': 'Mettre à jour le spécialiste',
+      '<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder.':
+        '<em>Vos données existantes (~{{size}}) seront déplacées</em> vers le nouvel emplacement — vos fichiers les accompagneront et rien ne restera dans le dossier actuel.',
+      "Opening your browser to sign in… Didn't open? Cancel and use a setup token.":
+        "Ouverture du navigateur pour vous connecter… Rien ne s'est ouvert\u00a0? Annulez et utilisez un jeton de configuration.",
+      "Opening your browser to sign in… finish there and this closes automatically. Didn't open, or prefer a token? Paste one below.":
+        "Ouverture du navigateur pour vous connecter… Terminez la connexion dans le navigateur\u00a0; cette fenêtre se fermera automatiquement. Rien ne s'est ouvert, ou vous préférez utiliser un jeton\u00a0? Collez-le ci-dessous.",
+      'Its contents fill the editor; switch back to Write to tweak.':
+        "Son contenu est chargé dans l'éditeur\u00a0; revenez à Écrire pour le modifier.",
+      Image: 'Image',
+      'Copy command': 'Copier la commande',
+      'Data location': 'Emplacement des données',
+      'Edit specialist': 'Modifier le spécialiste',
+      'Recent artifacts': 'Artefacts récents',
+      'Search sessions and artifacts…': 'Rechercher des sessions et des artefacts…',
+      'Search skills': 'Rechercher des compétences',
+      'Search skills to add': 'Rechercher des compétences à ajouter',
+      'Search skills…': 'Rechercher des compétences…',
+      'Search specialists': 'Rechercher des spécialistes',
+      'Search specialists…': 'Rechercher des spécialistes…',
+      'Specialist delete': 'Suppression du spécialiste',
+      'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.':
+        "Remote.It est un service tiers. Open Science utilise uniquement son interface en ligne de commande (CLI) de bureau installée par l'utilisateur ; il n'inclut pas ce logiciel, ne le redistribue pas, ne l'enregistre pas et ne crée aucun compte pour ce service.",
+      'No folders granted yet.': "Aucun accès à un dossier n'a encore été autorisé.",
+      "Your home folder itself can't be granted — pick a subfolder.":
+        "L'accès ne peut pas être accordé directement au dossier personnel ; choisissez un sous-dossier.",
+      'Refreshing…': 'Actualisation…',
+      Upload: 'Téléverser',
+      'Upload failed': 'Échec du téléversement',
+      Runtime: "Environnement d'exécution",
+      Runtime_duration: "Durée d'exécution"
+    }
+    const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
+
+    expect(actual).toEqual(expected)
+  })
+
+  it('uses the chosen French runtime term for environment surfaces', () => {
+    // These keys refer to an executable environment, not elapsed time or an individual run.
+    const runtimeEnvironmentKeys = [
+      'Agent runtime',
+      'Agent runtime repair issues',
+      "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first.",
+      'Could not change that runtime.',
+      'Could not check whether that runtime is in use, so it was not disabled.',
+      'Could not load runtimes.',
+      'Could not re-check runtimes.',
+      'Could not refresh runtime readiness.',
+      'Could not reset the runtime.',
+      'Detecting runtimes…',
+      'Downloading managed runtime…',
+      'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.',
+      'Manage your agent runtime and model providers.',
+      'Managed runtime is not set up yet',
+      'Notebook runtime',
+      'Notebook runtime (optional)',
+      'Notebook runtimes',
+      'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.',
+      'Set up the agent runtime',
+      'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.',
+      'Setting up {{language}} runtime',
+      'This removes the {{name}} runtime this app downloaded and manages. A separate {{name}} you installed yourself is not affected. You can reinstall it here at any time.',
+      '{{label}} runtime',
+      'View notebook runtimes?',
+      'Change notebook runtime?',
+      'Changes the runtime used by the current notebook session.'
+    ]
+    const offenders = runtimeEnvironmentKeys.filter(
+      (key) => !/environnements? d['’]exécution/i.test(catalog('fr')[key])
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the chosen French Marketplace term throughout the surface', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bMarketplace\b/.test(englishOf(key)))
+      .filter(([key]) => !key.includes('Specialist Marketplace protocol'))
+      .filter(([, value]) => !/place de marché/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the French specialist noun throughout role copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bSpecialists?\b/.test(englishOf(key)))
+      .filter(([key]) => !key.includes('Specialist Marketplace protocol'))
+      .filter(([, value]) => !/\bspécialistes?\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses natural French progress ratios without agreement ambiguity', () => {
+    const expected = {
+      '{{current}} of {{total}}': '{{current}} sur {{total}}',
+      '{{visible}} of {{total}}': '{{visible}} sur {{total}}',
+      '{{selected}} of {{total}} selected': 'Sélection : {{selected}}/{{total}}',
+      '{{selected}} of {{total}} included': 'Éléments inclus : {{selected}}/{{total}}'
+    }
+    const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
+
+    expect(actual).toEqual(expected)
+  })
+
+  it('uses an agreement-safe French token coverage ratio for every plural category', () => {
+    const expectedValue =
+      'Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.'
+    const keys = [
+      'Token totals are available for {{reported}} of {{count}} runs in this period._one',
+      'Token totals are available for {{reported}} of {{count}} runs in this period._other',
+      'Token totals are available for {{reported}} of {{count}} runs in this period._many'
+    ]
+
+    expect(keys.map((key) => catalog('fr')[key])).toEqual(keys.map(() => expectedValue))
+  })
+
+  it('does not use financial terms for French permission grants', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\b(?:grants?|granted)\b/i.test(englishOf(key)))
+      .filter(([, value]) => /\b(?:subventions?|octrois?)\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps French high punctuation attached to the preceding text', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([, value]) => / [;:?!]/.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not use exclamation points in French UI copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([, value]) => value.includes('!'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses téléverser consistently for French upload copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bupload(?:ed|ing|s)?\b/i.test(englishOf(key)))
+      .filter(([, value]) => !/télévers/i.test(value) || /télécharg/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each(['/path/to/new/location', '/scratch/username', '/path/to/corp-ca-bundle.pem'])(
+    'preserves the exact technical path %s in every translated catalog',
+    (path) => {
+      const offenders = TRANSLATED.filter((locale) => catalog(locale)[path] !== path)
+
+      expect(offenders).toEqual([])
+    }
+  )
+
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
-    const expected = { 'zh-Hans': '命令行', 'zh-Hant': '命令列', ja: 'シェル', ko: '셸' }[locale]
+    const expected = {
+      fr: /\btermin(?:al|aux)\b/i,
+      'zh-Hans': /命令行/,
+      'zh-Hant': /命令列/,
+      ja: /シェル/,
+      ko: /셸/
+    }[locale]
     const offenders = Object.entries(catalog(locale))
       .filter(([key]) => /\bshell\b/i.test(englishOf(key)))
-      .filter(([, value]) => !value.includes(expected))
+      .filter(([, value]) => !expected.test(value))
       .map(([key]) => key)
 
     expect(offenders).toEqual([])
@@ -398,6 +727,7 @@ describe('mandatory product glossary', () => {
     '%s uses the chosen Main Agent spelling in every Main role label',
     (locale) => {
       const expected = {
+        fr: 'Agent principal',
         'zh-Hans': '主智能体',
         'zh-Hant': '主智能體',
         ja: 'メインエージェント',
@@ -405,7 +735,7 @@ describe('mandatory product glossary', () => {
       }[locale]
       const offenders = Object.entries(catalog(locale))
         .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
-        .filter(([, value]) => !value.includes(expected))
+        .filter(([, value]) => !value.toLocaleLowerCase().includes(expected.toLocaleLowerCase()))
         .map(([key]) => key)
 
       expect(offenders).toEqual([])
@@ -488,11 +818,40 @@ describe('mandatory product glossary', () => {
   })
 
   const localizedFeatureTerms = {
-    'zh-Hans': { agent: '智能体', skill: '技能' },
-    'zh-Hant': { agent: '智能體', skill: '技能' },
-    ja: { agent: 'エージェント', skill: 'スキル' },
-    ko: { agent: '에이전트', skill: '스킬' }
-  } satisfies Record<TranslatedLocale, { agent: string; skill: string }>
+    fr: {
+      agent: 'agent',
+      skill: 'compétence',
+      untranslatedAgent: /\bsubagents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    'zh-Hans': {
+      agent: '智能体',
+      skill: '技能',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    'zh-Hant': {
+      agent: '智能體',
+      skill: '技能',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    ja: {
+      agent: 'エージェント',
+      skill: 'スキル',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    ko: {
+      agent: '에이전트',
+      skill: '스킬',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    }
+  } satisfies Record<
+    TranslatedLocale,
+    { agent: string; skill: string; untranslatedAgent: RegExp; untranslatedSkill: RegExp }
+  >
 
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
     const expected = localizedFeatureTerms[locale]
@@ -502,14 +861,20 @@ describe('mandatory product glossary', () => {
       return [
         {
           source: /\b(?:sub)?agents?\b/i,
-          untranslated: /\b(?:sub)?agents?\b/i,
+          untranslated: expected.untranslatedAgent,
           expected: expected.agent
         },
-        { source: /\bskills?\b/i, untranslated: /\bskills?\b/i, expected: expected.skill }
+        {
+          source: /\bskills?\b/i,
+          untranslated: expected.untranslatedSkill,
+          expected: expected.skill
+        }
       ]
         .filter(
           ({ source: pattern, untranslated, expected: term }) =>
-            pattern.test(source) && (!prose.includes(term) || untranslated.test(prose))
+            pattern.test(source) &&
+            (!prose.toLocaleLowerCase().includes(term.toLocaleLowerCase()) ||
+              untranslated.test(prose))
         )
         .map(({ expected: term }) => `${key}: ${term}`)
     })
@@ -524,6 +889,7 @@ describe('mandatory product glossary', () => {
     /^Token:/
   ]
   const localizedTokenTerms = {
+    fr: { credential: 'jeton', model: 'jeton' },
     'zh-Hans': { credential: '令牌', model: '词元' },
     'zh-Hant': { credential: '權杖', model: '詞元' },
     ja: { credential: 'トークン', model: 'トークン' },
@@ -540,7 +906,10 @@ describe('mandatory product glossary', () => {
       const term = credentialTokenSource.some((pattern) => pattern.test(source))
         ? expected.credential
         : expected.model
-      return !prose.includes(term) || /\btokens?\b/i.test(prose) ? [`${key}: ${term}`] : []
+      return !prose.toLocaleLowerCase().includes(term.toLocaleLowerCase()) ||
+        /\btokens?\b/i.test(prose)
+        ? [`${key}: ${term}`]
+        : []
     })
 
     expect(offenders).toEqual([])
@@ -1095,6 +1464,72 @@ describe('Korean binding terminology', () => {
   })
 })
 
+describe('French safety copy', () => {
+  it.each([
+    ['Allow globally', 'Autoriser pour tous les projets'],
+    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
+    ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
+    ['Approval applies to this call only.', "L'autorisation s'applique uniquement à cet appel."],
+    ['This call only', 'Pour cet appel uniquement'],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      "Les autorisations individuelles restent révocables\u00a0; « Tout révoquer » est désactivé tant que l'ensemble complet n'est pas connu."
+    ],
+    ['{{count}} allowed this session_one', '{{count}} autorisation accordée pendant cette session'],
+    [
+      '{{count}} allowed this session_other',
+      '{{count}} autorisations accordées pendant cette session'
+    ]
+  ])('preserves the scope of %s', (key, expected) => {
+    expect(catalog('fr')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Session', 'Session'],
+    ['Sessions', 'Sessions'],
+    ['{{count}} sessions_one', '{{count}} session'],
+    ['{{count}} sessions_other', '{{count}} sessions'],
+    ['{{count}} runs_one', '{{count}} exécution'],
+    ['{{count}} runs_other', '{{count}} exécutions'],
+    ['{{count}} packages_one', '{{count}} paquet'],
+    ['{{count}} packages_other', '{{count}} paquets'],
+    ['{{count}} checks_one', '{{count}} vérification'],
+    ['{{count}} checks_other', '{{count}} vérifications'],
+    ['{{count}} files_one', '{{count}} fichier'],
+    ['{{count}} files_other', '{{count}} fichiers'],
+    ['Runs', 'Exécutions'],
+    ['Checks', 'Vérifications'],
+    ['Package', 'Paquet'],
+    ['Packages', 'Paquets'],
+    ['Download Plan', 'Télécharger le plan'],
+    ['Plan blocked', 'Plan bloqué'],
+    ['Revoked {{count}} permissions_one', '{{count}} autorisation révoquée'],
+    ['Revoked {{count}} permissions_other', '{{count}} autorisations révoquées']
+  ])('uses French domain terminology and plural agreement for %s', (key, expected) => {
+    expect(catalog('fr')[key]).toBe(expected)
+  })
+
+  it('never translates the product term Session as a meeting', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bsessions?\b/i.test(englishOf(key)))
+      .filter(([, value]) => /\bséances?\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not leave generic package prose in English or translate Plan as a pricing tier', () => {
+    const proseOnly = (value: string): string =>
+      value.replace(/\b[\w.-]+\.(?:md|txt|json|zip)\b/g, '')
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\b(?:packages?|Plan)\b/.test(proseOnly(englishOf(key))))
+      .filter(([, value]) => /\b(?:packages?|forfaits?)\b/i.test(proseOnly(value)))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+})
+
 // The suffix convention above is only unambiguous while no English string contains an underscore.
 // If a future string does, englishOf() would truncate it and every guard here would quietly compare
 // the wrong text, so this is asserted rather than assumed.
@@ -1409,16 +1844,20 @@ const transCallSites = (source: string): CallSite[] =>
 
 // A context call must resolve through its exact suffix. Accepting a bare key here hides semantic
 // collisions such as noun/verb and duration/runtime, while i18next silently renders the wrong copy.
-const resolvesIn = (entries: Catalog, { key, plural, context }: CallSite): boolean => {
+const resolvesIn = (
+  entries: Catalog,
+  { key, plural, context }: CallSite,
+  pluralCategories: readonly string[] = ['other']
+): boolean => {
   if (context) {
     if (plural) {
-      return [...PLURAL_CATEGORIES].some(
+      return pluralCategories.every(
         (category) => entries[`${key}_${context}_${category}`] !== undefined
       )
     }
     return entries[`${key}_${context}`] !== undefined
   }
-  if (plural) return [...PLURAL_CATEGORIES].some((c) => entries[`${key}_${c}`] !== undefined)
+  if (plural) return pluralCategories.every((c) => entries[`${key}_${c}`] !== undefined)
   return entries[key] !== undefined
 }
 
@@ -1443,7 +1882,7 @@ describe('missing translations', () => {
   it.each(TRANSLATED)('every English t() literal has a %s translation', (locale) => {
     const entries = catalog(locale)
     const untranslated = sites
-      .filter((site) => !resolvesIn(entries, site))
+      .filter((site) => !resolvesIn(entries, site, REQUIRED_PLURAL_CATEGORIES[locale]))
       .map((site) => `${site.file}: ${JSON.stringify(site.key)}`)
 
     expect(untranslated).toEqual([])

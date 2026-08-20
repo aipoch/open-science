@@ -21,7 +21,8 @@ const LANGUAGE_NAMES = {
   'zh-Hans': '简体中文',
   'zh-Hant': '繁體中文',
   ja: '日本語',
-  ko: '한국어'
+  ko: '한국어',
+  fr: 'Français'
 } as const satisfies Record<Locale, string>
 
 // Only the 'System' option follows the interface language. Order puts 'System' first, then the

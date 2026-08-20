@@ -100,6 +100,76 @@ describe('compute host repository', () => {
     expect(host?.detailsUpdatedBy).toBe('user')
   })
 
+  it('decodes current Compute JSON without exposing its persistence version', async () => {
+    const { client } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(
+          createRow({
+            sshOverrides: JSON.stringify({ schemaVersion: 1, user: 'argocd', port: 2222 }),
+            probeResult: JSON.stringify({
+              schemaVersion: 1,
+              ok: true,
+              probedAt: '2026-01-01T00:00:00Z',
+              exitCode: 0,
+              errorTail: null,
+              cpus: 64
+            })
+          })
+        )
+    })
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('ssh:biowulf')).resolves.toMatchObject({
+      sshOverrides: { user: 'argocd', port: 2222 },
+      probeResult: { ok: true, cpus: 64 }
+    })
+  })
+
+  it('does not expose unsupported or corrupt Compute JSON payloads', async () => {
+    const { client } = createMockClient({
+      findMany: () =>
+        Promise.resolve([
+          createRow({
+            id: 'future',
+            providerId: 'ssh:future',
+            sshOverrides: JSON.stringify({ schemaVersion: 2, user: 'future-user' }),
+            probeResult: JSON.stringify({ schemaVersion: 2, ok: true })
+          }),
+          createRow({
+            id: 'corrupt',
+            providerId: 'ssh:corrupt',
+            sshOverrides: JSON.stringify({ schemaVersion: 1, port: 'not-a-number' }),
+            probeResult: JSON.stringify({
+              schemaVersion: 1,
+              ok: 'yes',
+              probedAt: '2026-01-01T00:00:00Z',
+              exitCode: 0,
+              errorTail: null
+            })
+          })
+        ])
+    })
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.list()).resolves.toMatchObject([
+      { providerId: 'ssh:future', sshOverrides: undefined, probeResult: undefined },
+      { providerId: 'ssh:corrupt', sshOverrides: undefined, probeResult: undefined }
+    ])
+  })
+
+  it('keeps readable Compute rows available when one row is corrupt', async () => {
+    const { client } = createMockClient({
+      findMany: () =>
+        Promise.resolve([
+          createRow({ authenticationMode: 'future-authentication-mode' }),
+          createRow({ id: 'healthy', providerId: 'ssh:healthy', sshAlias: 'healthy' })
+        ])
+    })
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.list()).resolves.toMatchObject([{ providerId: 'ssh:healthy' }])
+  })
+
   it('returns null when a host is not found', async () => {
     const { client, computeHost } = createMockClient({
       findUnique: () => Promise.resolve(null)
@@ -156,6 +226,7 @@ describe('compute host repository', () => {
 
     const call = computeHost.create.mock.calls[0]![0] as { data: Record<string, unknown> }
     expect(JSON.parse(call.data.sshOverrides as string)).toEqual({
+      schemaVersion: 1,
       user: 'argocd',
       port: 22,
       identityFile: '~/.ssh/id_ed25519'
@@ -426,7 +497,10 @@ describe('compute host repository', () => {
     ).resolves.toBe(false)
     expect(updateMany).toHaveBeenCalledWith({
       where: { providerId: 'ssh:biowulf', authenticationRevision: 1 },
-      data: { probeResult: JSON.stringify(failure), shape: 'direct_ssh' }
+      data: {
+        probeResult: JSON.stringify({ schemaVersion: 1, ...failure }),
+        shape: 'direct_ssh'
+      }
     })
   })
 
@@ -450,7 +524,10 @@ describe('compute host repository', () => {
     ).resolves.toBeUndefined()
     expect(updateMany).toHaveBeenCalledWith({
       where: { providerId: 'ssh:biowulf', authenticationRevision: 1 },
-      data: { probeResult: JSON.stringify(staleProbe), shape: 'direct_ssh' }
+      data: {
+        probeResult: JSON.stringify({ schemaVersion: 1, ...staleProbe }),
+        shape: 'direct_ssh'
+      }
     })
     expect(update).not.toHaveBeenCalled()
   })

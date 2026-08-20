@@ -57,7 +57,15 @@ describe('LanguageSelect', () => {
 
     // Language names are never translated — a reader stranded in the wrong language must still be
     // able to recognize their own.
-    expect(options).toEqual(['System', 'English', '简体中文', '繁體中文', '日本語', '한국어'])
+    expect(options).toEqual([
+      'System',
+      'English',
+      '简体中文',
+      '繁體中文',
+      '日本語',
+      '한국어',
+      'Français'
+    ])
   })
 
   it('switches the interface language and persists the choice', () => {
@@ -117,6 +125,24 @@ describe('LanguageSelect', () => {
     expect(i18next.language).toBe('ko')
     expect(document.documentElement.lang).toBe('ko')
     expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('인터페이스 언어')
+  })
+
+  it('switches to French copy from the language picker', () => {
+    render(<LanguageSelect />)
+    openRadixMenu(container.querySelector('button'))
+
+    const french = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
+      option.textContent?.includes('Français')
+    )
+    clickRadixMenuItem(french as HTMLElement)
+
+    expect(useLocaleStore.getState().preference).toBe('fr')
+    expect(useLocaleStore.getState().locale).toBe('fr')
+    expect(i18next.language).toBe('fr')
+    expect(document.documentElement.lang).toBe('fr')
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
+      "Langue de l'interface"
+    )
   })
 })
 

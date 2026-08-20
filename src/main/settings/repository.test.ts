@@ -487,11 +487,12 @@ describe('settings repository', () => {
     const repository = new SettingsRepository(root)
 
     expect(sanitizeSettings({}).localePreference).toBeUndefined()
-    expect(sanitizeSettings({ localePreference: 'fr' }).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'de' }).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'ko' }).localePreference).toBe('ko')
     expect(sanitizeSettings({ localePreference: 'system' }).localePreference).toBe('system')
 
-    await repository.setLocalePreference('ja')
-    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('ja')
+    await repository.setLocalePreference('fr')
+    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('fr')
   })
 
   it('serializes startup locale and runtime settings writes through one document store', async () => {
