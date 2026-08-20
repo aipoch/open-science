@@ -50,10 +50,22 @@ const buildStartupDiagnostics = (
     if (!described) break
     const frames = described.frames.slice(0, remainingFrames)
     remainingFrames -= frames.length
-    sections.push([described.heading, ...frames.map((frame) => `    ${frame}`)].join('\n'))
+    // Frame and cause truncation is otherwise silent — mark it so "no marker" really means
+    // "complete stack".
+    const omittedFrames = described.frames.length - frames.length
+    sections.push(
+      [
+        described.heading,
+        ...frames.map((frame) => `    ${frame}`),
+        ...(omittedFrames > 0
+          ? [`    … ${omittedFrames} more frame${omittedFrames === 1 ? '' : 's'}`]
+          : [])
+      ].join('\n')
+    )
     current = current instanceof Error ? current.cause : undefined
   }
   if (sections.length === 0) return undefined
+  if (describeError(current)) sections.push('… (further causes omitted)')
 
   const home = homedir()
   const header = [

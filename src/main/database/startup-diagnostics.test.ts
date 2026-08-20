@@ -67,6 +67,34 @@ describe('buildStartupDiagnostics', () => {
     expect(result).toContain('at f19 (/f.js:19:1)')
   })
 
+  it('marks frames dropped by the frame budget instead of hiding them', () => {
+    const frames = Array.from({ length: 40 }, (_, i) => `    at f${i} (/f.js:${i}:1)`)
+    const error = new Error('deep stack')
+    error.stack = `Error: deep stack\n${frames.join('\n')}`
+
+    const result = buildStartupDiagnostics(error, env)
+
+    expect(result).toContain('at f31 (/f.js:31:1)')
+    expect(result).not.toContain('at f32 (/f.js:32:1)')
+    expect(result).toContain('… 8 more frames')
+  })
+
+  it('marks causes dropped by the depth budget instead of hiding them', () => {
+    let current = new Error('cause 8')
+    current.stack = 'Error: cause 8\n    at f (/f.js:1:1)'
+    for (let i = 7; i >= 0; i -= 1) {
+      const next = new Error(`cause ${i}`, { cause: current })
+      next.stack = `Error: cause ${i}\n    at f (/f.js:1:1)`
+      current = next
+    }
+
+    const result = buildStartupDiagnostics(current, env)
+
+    expect(result).toContain('Error: cause 7')
+    expect(result).not.toContain('Error: cause 8')
+    expect(result).toContain('… (further causes omitted)')
+  })
+
   it('caps the diagnostics length with a truncation marker', () => {
     const error = new Error('x'.repeat(20000))
     error.stack = `Error: ${'x'.repeat(20000)}\n    at f (/f.js:1:1)`
