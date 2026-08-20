@@ -458,12 +458,13 @@ export class OpenScienceClient {
     }
   }
 
-  async request(path, { method = 'GET', body, signal, timeoutMs } = {}) {
+  async request(path, { method = 'GET', body, idempotencyKey, signal, timeoutMs } = {}) {
     const headers = {
       authorization: `Bearer ${this.token}`,
       accept: 'application/json'
     }
     if (body !== undefined) headers['content-type'] = 'application/json'
+    if (idempotencyKey !== undefined) headers['idempotency-key'] = idempotencyKey
     return withRequestTimeout(
       { defaultTimeoutMs: this.requestTimeoutMs, signal, timeoutMs },
       async (requestSignal) => {

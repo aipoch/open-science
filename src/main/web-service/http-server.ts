@@ -52,6 +52,9 @@ const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
+const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
+const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
+const MAX_IDEMPOTENCY_KEY_LENGTH = 255
 const gzipAsync = promisify(gzip)
 const STATIC_RESPONSE_SECURITY_HEADERS = {
   'content-security-policy':
@@ -284,6 +287,86 @@ class ExternalAuthorizationExpiredError extends Error {
   }
 }
 
+class IdempotencyConflictError extends Error {
+  constructor() {
+    super('Idempotency-Key was already used with a different request body.')
+    this.name = 'IdempotencyConflictError'
+  }
+}
+
+type TaskIdempotencyEntry = {
+  fingerprint: string
+  expiresAt: number
+  result: Promise<unknown>
+}
+
+class TaskIdempotencyRegistry {
+  private readonly entries = new Map<string, TaskIdempotencyEntry>()
+
+  run<Result>(
+    scope: string,
+    fingerprint: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    const now = Date.now()
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt <= now) this.entries.delete(key)
+    }
+
+    const existing = this.entries.get(scope)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) throw new IdempotencyConflictError()
+      // Refresh insertion order so bounded eviction retains recently retried operations.
+      this.entries.delete(scope)
+      this.entries.set(scope, existing)
+      return existing.result as Promise<Result>
+    }
+
+    const result = Promise.resolve().then(operation)
+    this.entries.set(scope, {
+      fingerprint,
+      expiresAt: now + TASK_IDEMPOTENCY_TTL_MS,
+      result
+    })
+    while (this.entries.size > MAX_TASK_IDEMPOTENCY_ENTRIES) {
+      const oldest = this.entries.keys().next().value
+      if (oldest === undefined) break
+      this.entries.delete(oldest)
+    }
+    return result
+  }
+
+  clear(): void {
+    this.entries.clear()
+  }
+}
+
+const idempotencyKey = (request: IncomingMessage): string | undefined => {
+  const value = request.headers['idempotency-key']
+  if (value === undefined) return undefined
+  if (Array.isArray(value) || value.length === 0 || value.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+    throw new TaskApiError(
+      'invalid_request',
+      `Idempotency-Key must contain between 1 and ${MAX_IDEMPOTENCY_KEY_LENGTH} characters.`
+    )
+  }
+  return value
+}
+
+const runIdempotentTask = <Result>(
+  registry: TaskIdempotencyRegistry,
+  request: IncomingMessage,
+  url: URL,
+  callerContext: CallerContext,
+  body: unknown,
+  operation: () => Promise<Result>
+): Promise<Result> => {
+  const key = idempotencyKey(request)
+  if (key === undefined) return operation()
+  const scope = JSON.stringify([callerContext.location, request.method, url.pathname, key])
+  return registry.run(scope, JSON.stringify(body), operation)
+}
+
 const assertExternalAuthorizationCurrent = (
   authorization: ExternalWebAccessAuthorization | undefined
 ): void => {
@@ -302,6 +385,12 @@ const taskError = (response: ServerResponse, error: unknown): void => {
   if (error instanceof ExternalAuthorizationExpiredError) {
     json(response, 401, {
       error: { code: 'unauthorized', message: error.message }
+    })
+    return
+  }
+  if (error instanceof IdempotencyConflictError) {
+    json(response, 409, {
+      error: { code: 'idempotency_conflict', message: error.message }
     })
     return
   }
@@ -396,6 +485,7 @@ const handleTaskApiRequest = async (
   url: URL,
   tasks: NonNullable<WebServerOptions['tasks']>,
   callerContext: CallerContext,
+  idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
@@ -409,7 +499,14 @@ const handleTaskApiRequest = async (
         const body = (await readJsonBody(request)) as CreateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 201, {
-          data: await tasks.createProject(body)
+          data: await runIdempotentTask(
+            idempotencyRegistry,
+            request,
+            url,
+            callerContext,
+            body,
+            () => tasks.createProject(body)
+          )
         })
         return true
       }
@@ -432,7 +529,16 @@ const handleTaskApiRequest = async (
       if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
         const body = (await readJsonBody(request)) as StartTaskRunRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 202, { data: await tasks.startRun(body) })
+        json(response, 202, {
+          data: await runIdempotentTask(
+            idempotencyRegistry,
+            request,
+            url,
+            callerContext,
+            body,
+            () => tasks.startRun(body)
+          )
+        })
         return true
       }
 
@@ -564,6 +670,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const awaitingPong = new WeakSet<WebSocket>()
   const internalEventStream = new InternalWebEventStream()
   const commandClient = createApplicationCommandClient()
+  const taskIdempotencyRegistry = new TaskIdempotencyRegistry()
   const clientLeases = new ClientLeaseRegistry((clientId) => {
     commandClient.releaseClient('web', clientId)
   })
@@ -653,6 +760,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 }
               : {})
           }),
+          taskIdempotencyRegistry,
           externalAuthorization
         ))
       ) {
@@ -882,6 +990,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       })
     })
   } catch (error) {
+    taskIdempotencyRegistry.clear()
     removeBroadcastSink()
     removeTaskProgressSink?.()
     try {
@@ -923,6 +1032,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
     },
     close: async () => {
+      taskIdempotencyRegistry.clear()
       clearInterval(eventHeartbeatInterval)
       removeBroadcastSink()
       removeTaskProgressSink?.()

@@ -1639,6 +1639,110 @@ describe('startWebHttpServer', () => {
     expect(onShutdownRequest).not.toHaveBeenCalled()
   })
 
+  it('replays project and run POST responses for repeated idempotency keys', async () => {
+    const createProject = vi.fn().mockResolvedValue({ id: 'project-1', name: 'Created' })
+    let releaseStartRun: (() => void) | undefined
+    const startRunGate = new Promise<void>((resolve) => {
+      releaseStartRun = resolve
+    })
+    const startRun = vi.fn(async () => {
+      await startRunGate
+      return {
+        id: 'run-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        cwd: '/workspace/research',
+        status: 'running' as const,
+        startedAt: 1,
+        artifacts: [],
+        preferredComputeHostIds: []
+      }
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress: vi.fn(() => vi.fn()),
+        listProjects: vi.fn(),
+        createProject,
+        updateProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun,
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const post = async (path: string, key: string, body: unknown): Promise<unknown> => {
+      const response = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'idempotency-key': key
+        },
+        body: JSON.stringify(body)
+      })
+      return response.json()
+    }
+    const postTwice = async (path: string, key: string, body: unknown): Promise<unknown[]> => {
+      const responses: unknown[] = []
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        responses.push(await post(path, key, body))
+      }
+      return responses
+    }
+
+    const projectResponses = await postTwice('/api/v1/projects', 'create-project-1', {
+      name: 'Created'
+    })
+    const conflictingProject = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'idempotency-key': 'create-project-1'
+      },
+      body: JSON.stringify({ name: 'Different project' })
+    })
+    const runBody = {
+      project: 'project-1',
+      prompt: 'Research this.'
+    }
+    const firstRunResponse = post('/api/v1/runs', 'start-run-1', runBody)
+    await vi.waitFor(() => expect(startRun).toHaveBeenCalledOnce())
+    const secondRunResponse = post('/api/v1/runs', 'start-run-1', runBody)
+    releaseStartRun?.()
+    const runResponses = await Promise.all([firstRunResponse, secondRunResponse])
+
+    expect(projectResponses[1]).toEqual(projectResponses[0])
+    expect(conflictingProject.status).toBe(409)
+    expect(await conflictingProject.json()).toEqual({
+      error: {
+        code: 'idempotency_conflict',
+        message: 'Idempotency-Key was already used with a different request body.'
+      }
+    })
+    expect(runResponses[1]).toEqual(runResponses[0])
+    expect([createProject.mock.calls.length, startRun.mock.calls.length]).toEqual([1, 1])
+  })
+
   it('serves the versioned task API without exposing internal RPC channels', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)

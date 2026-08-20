@@ -28,6 +28,10 @@ final options argument to an individual request method. `downloadArtifact` keeps
 while its returned `Response` body is streaming. `waitForRun` applies its overall `timeoutMs` and
 caller signal to every in-flight polling request as well as the delay between polls.
 
+For retry-safe project creation and Run starts, pass the same `idempotencyKey` in the final options
+argument on every attempt. The daemon replays the first response for up to 24 hours while it remains
+running; reusing a key with a different request body fails with `idempotency_conflict`.
+
 The `project` request field and the `listSessions(projectId)` argument both require a Project ID.
 Project display names are not accepted as routing identifiers.
 

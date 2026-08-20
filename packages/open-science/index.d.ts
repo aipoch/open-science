@@ -1,7 +1,11 @@
 export type PermissionProfile = 'ask' | 'auto' | 'full'
 export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
-export type RequestOptions = { signal?: AbortSignal; timeoutMs?: number }
+export type RequestOptions = {
+  idempotencyKey?: string
+  signal?: AbortSignal
+  timeoutMs?: number
+}
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunProgressPhase =
   | 'accepted'
