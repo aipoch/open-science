@@ -5,6 +5,23 @@ import type { ResolvedAgentBackend } from '../agent-framework'
 import { ReviewerModelRuntimeOwner } from './model-runtime-owner'
 
 describe('ReviewerModelRuntimeOwner', () => {
+  it('tracks inherited Reviewer work until its shared-runtime admission is released', async () => {
+    const owner = new ReviewerModelRuntimeOwner({
+      appVersion: 'test',
+      captureModel: async () => ({ model: 'inherited-model' }),
+      resolveTarget: vi.fn()
+    })
+
+    expect(owner.hasActiveWork()).toBe(false)
+    const admission = await owner.admit()
+
+    expect(admission.reviewerAcpRuntime).toBeUndefined()
+    expect(owner.hasActiveWork()).toBe(true)
+
+    await admission.release()
+    expect(owner.hasActiveWork()).toBe(false)
+  })
+
   it.each([
     {
       path: 'claude-code',
