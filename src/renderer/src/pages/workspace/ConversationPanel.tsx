@@ -971,16 +971,14 @@ const ConversationPanel = ({
 
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
-                {!sideChat &&
-                !hasPendingPermission &&
-                !pendingElicitation &&
-                !pendingPlan &&
-                (notebookReference ||
-                  messageQueue.items.length > 0 ||
-                  hasAnyJobs ||
-                  hasSubagents ||
-                  (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false)) ? (
+                {notebookReference ||
+                messageQueue.items.length > 0 ||
+                hasAnyJobs ||
+                hasSubagents ||
+                (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
                   <div
+                    aria-hidden={ordinaryComposerBlocked || undefined}
+                    inert={ordinaryComposerBlocked || undefined}
                     key={
                       notebookReference
                         ? `notebook-${notebookReference.sessionId}`
@@ -992,7 +990,8 @@ const ConversationPanel = ({
                       'flex px-2',
                       notebookReference || messageQueue.items.length > 0
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
-                        : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card'
+                        : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card',
+                      ordinaryComposerBlocked && 'invisible pointer-events-none'
                     )}
                   >
                     {activeSession &&
@@ -1149,95 +1148,106 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {sideChat ? (
-                    <SideChatPanel
-                      view={sideChat}
-                      onSend={onSendSideChat}
-                      onDraftChange={onSideChatDraftChange}
-                      onCancel={onCancelSideChat}
-                      onClose={handleCloseSideChat}
-                      controls={
-                        <ComposerAgentControlsMenu
-                          profile={permissionProfile}
-                          profileState={permissionProfileState}
-                          grants={permissionGrants}
-                          autoReviewEnabled={autoReviewEnabled}
-                          readOnly
-                          permissionProfileReadOnly
-                          grantActionsReadOnly
-                          autoReviewDisabled
-                          enabledComputeHosts={enabledComputeHosts}
-                          selectedComputeHosts={selectedComputeHosts}
-                          onComputeHostEnabledChange={onComputeHostEnabledChange}
-                          onComputeHostSelectedChange={onComputeHostSelectedChange}
-                          onProfileChange={onPermissionProfileChange}
-                          onAutoReviewChange={onAutoReviewToggle}
-                          onRevokeGrant={onRevokePermissionGrant}
-                          onClearGrants={onClearPermissionGrants}
-                          showSpecialist={activeSession !== undefined}
-                          specialistId={specialistId}
-                          specialistUnavailable={specialistUnavailable}
-                          specialistReadOnly
-                          onSpecialistChange={onSpecialistChange}
-                        />
-                      }
-                    />
-                  ) : hasPendingPermission ? (
-                    <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
-                      <PermissionApprovalControls
-                        requests={rootPermissionRequests}
-                        onRespond={onRespondToPermission}
-                        embedded
-                        notebookLookup={
-                          activeSession
-                            ? {
-                                sessionId: activeSession.id,
-                                workspaceCwd: activeSession.cwd ?? '',
-                                projectId: activeSession.projectId
-                              }
-                            : undefined
-                        }
-                      />
-                    </ResizablePermissionComposer>
-                  ) : pendingElicitation ? (
-                    <ResizableElicitationComposer
-                      key={pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id}
+                  {ordinaryComposerBlocked ? (
+                    <div
+                      data-testid="blocking-composer-overlay"
+                      className="absolute inset-x-0 bottom-0 z-30"
                     >
-                      <WorkspaceElicitationCard
-                        elicitation={pendingElicitation}
-                        request={pendingElicitationRequest}
-                        embedded
-                        onRespond={onRespondToElicitation}
-                        onDraftChange={(answers: ElicitationAnswer[]) => {
-                          if (!activeSession || !pendingElicitationActivity) return
-                          setElicitationDraftAnswers(
-                            activeSession.id,
-                            pendingElicitationActivity.id,
-                            answers
-                          )
-                        }}
-                      />
-                    </ResizableElicitationComposer>
-                  ) : pendingPlan ? (
-                    <ResizablePlanComposer key={activePendingPlanKey}>
-                      <WorkspacePlanCard
-                        embedded
-                        projection={pendingPlan}
-                        onOpen={openPendingPlan}
-                        onRespond={(decision) => respondToPendingPlan({ decision })}
-                        onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
-                        onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
-                      />
-                    </ResizablePlanComposer>
+                      {sideChat ? (
+                        <SideChatPanel
+                          view={sideChat}
+                          onSend={onSendSideChat}
+                          onDraftChange={onSideChatDraftChange}
+                          onCancel={onCancelSideChat}
+                          onClose={handleCloseSideChat}
+                          controls={
+                            <ComposerAgentControlsMenu
+                              profile={permissionProfile}
+                              profileState={permissionProfileState}
+                              grants={permissionGrants}
+                              autoReviewEnabled={autoReviewEnabled}
+                              readOnly
+                              permissionProfileReadOnly
+                              grantActionsReadOnly
+                              autoReviewDisabled
+                              enabledComputeHosts={enabledComputeHosts}
+                              selectedComputeHosts={selectedComputeHosts}
+                              onComputeHostEnabledChange={onComputeHostEnabledChange}
+                              onComputeHostSelectedChange={onComputeHostSelectedChange}
+                              onProfileChange={onPermissionProfileChange}
+                              onAutoReviewChange={onAutoReviewToggle}
+                              onRevokeGrant={onRevokePermissionGrant}
+                              onClearGrants={onClearPermissionGrants}
+                              showSpecialist={activeSession !== undefined}
+                              specialistId={specialistId}
+                              specialistUnavailable={specialistUnavailable}
+                              specialistReadOnly
+                              onSpecialistChange={onSpecialistChange}
+                            />
+                          }
+                        />
+                      ) : hasPendingPermission ? (
+                        <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
+                          <PermissionApprovalControls
+                            requests={rootPermissionRequests}
+                            onRespond={onRespondToPermission}
+                            embedded
+                            notebookLookup={
+                              activeSession
+                                ? {
+                                    sessionId: activeSession.id,
+                                    workspaceCwd: activeSession.cwd ?? '',
+                                    projectId: activeSession.projectId
+                                  }
+                                : undefined
+                            }
+                          />
+                        </ResizablePermissionComposer>
+                      ) : pendingElicitation ? (
+                        <ResizableElicitationComposer
+                          key={
+                            pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
+                          }
+                        >
+                          <WorkspaceElicitationCard
+                            elicitation={pendingElicitation}
+                            request={pendingElicitationRequest}
+                            embedded
+                            onRespond={onRespondToElicitation}
+                            onDraftChange={(answers: ElicitationAnswer[]) => {
+                              if (!activeSession || !pendingElicitationActivity) return
+                              setElicitationDraftAnswers(
+                                activeSession.id,
+                                pendingElicitationActivity.id,
+                                answers
+                              )
+                            }}
+                          />
+                        </ResizableElicitationComposer>
+                      ) : pendingPlan ? (
+                        <ResizablePlanComposer key={activePendingPlanKey}>
+                          <WorkspacePlanCard
+                            embedded
+                            projection={pendingPlan}
+                            onOpen={openPendingPlan}
+                            onRespond={(decision) => respondToPendingPlan({ decision })}
+                            onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
+                            onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
+                          />
+                        </ResizablePlanComposer>
+                      ) : null}
+                    </div>
                   ) : null}
 
-                  {/* Composer stays mounted to preserve its draft, but a pending blocking interaction
-                      owns the lane and makes the ordinary controls unreachable. */}
+                  {/* The ordinary composer keeps this lane's geometry while a blocking interaction
+                      overlays it, so panel entry/resize/exit never resizes the transcript viewport. */}
                   <form
-                    hidden={ordinaryComposerBlocked}
+                    aria-hidden={ordinaryComposerBlocked || undefined}
+                    data-testid="ordinary-composer-form"
+                    inert={ordinaryComposerBlocked || undefined}
                     className={cn(
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      ordinaryComposerBlocked && 'hidden'
+                      ordinaryComposerBlocked && 'invisible pointer-events-none'
                     )}
                     data-specialist-color={specialistComposerColor}
                     onSubmit={(event) => event.preventDefault()}
@@ -1404,8 +1414,10 @@ const ConversationPanel = ({
                               ? { sessionId: activeSession.id, projectId: activeSession.projectId }
                               : undefined
                           }
-                          focusRequest={composerFocusKey}
-                          restoreFocusRequest={sideChat ? undefined : composerRestoreFocusRequest}
+                          focusRequest={ordinaryComposerBlocked ? undefined : composerFocusKey}
+                          restoreFocusRequest={
+                            ordinaryComposerBlocked ? undefined : composerRestoreFocusRequest
+                          }
                         />
                       </div>
 

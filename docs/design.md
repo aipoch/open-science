@@ -602,6 +602,10 @@ colors communicate a successful or failed probe/migration result.
 - Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
   approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
   any still-pending Permission approval instead of interrupting the Side Chat in progress.
+- Side Chat, Permission, Ask User, and Plan surfaces overlay the ordinary composer lane and the
+  transcript above it. Keep the ordinary composer and its status chrome in layout but visually and
+  interactively hidden while the overlay is open, so opening, resizing, resolving, or closing a
+  blocking surface never changes the message viewport height or the reader's scroll position.
 - Hide both the Notebook-chrome queue disclosure and its expanded composer rows while Side Chat,
   Permission, Ask User, or Plan owns the lane; keep the transient queue in memory so it reappears when
   the ordinary composer returns.
