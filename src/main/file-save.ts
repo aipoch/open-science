@@ -46,7 +46,7 @@ type ProjectArtifactExportLimits = {
 
 // Structural subset of fs FileHandle: the size check and stream must observe one open file.
 type ProjectArtifactFileHandle = {
-  stat: () => Promise<{ isFile: () => boolean; size: number }>
+  stat: () => Promise<{ isFile: () => boolean; size: number; dev: number; ino: number }>
   createReadStream: (options: {
     autoClose: false
     highWaterMark: number
@@ -66,6 +66,8 @@ type ProjectArtifactExportCandidate = {
   file: SaveProjectArtifactsRequest['files'][number]
   sourcePath: string
   entryName: string
+  device: number
+  inode: number
 }
 
 type ManagedFileHandle = {
@@ -231,6 +233,9 @@ const writeProjectArtifactArchive = async (options: {
         const metadata = await source.stat()
         if (!metadata.isFile()) {
           throw new Error('Project export source is not a regular file.')
+        }
+        if (metadata.dev !== candidate.device || metadata.ino !== candidate.inode) {
+          throw new Error('Project export source changed after validation.')
         }
         if (metadata.size > options.limits.maxFileBytes) {
           throw new Error('Project export file exceeds the per-file size limit.')
@@ -612,7 +617,13 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
             takenNames,
             `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName, sourcePath)}`
           )
-          candidates.push({ file, sourcePath, entryName })
+          candidates.push({
+            file,
+            sourcePath,
+            entryName,
+            device: metadata.dev,
+            inode: metadata.ino
+          })
           // Claim checks are case-insensitive; the entry itself keeps its original casing.
           takenNames.add(entryName.toLowerCase())
           totalBytes += metadata.size

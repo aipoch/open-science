@@ -664,7 +664,9 @@ describe('file save IPC handlers', () => {
     const bytes = Buffer.from('artifact bytes')
     const readFileMock = vi.fn().mockResolvedValue(bytes)
     const openProjectArtifactFile = vi.fn().mockImplementation(async () => ({
-      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: bytes.byteLength }),
+      stat: vi
+        .fn()
+        .mockResolvedValue({ isFile: () => true, size: bytes.byteLength, dev: 1, ino: 1 }),
       readFile: readFileMock,
       createReadStream: vi.fn(() => Readable.from([bytes])),
       close: vi.fn().mockResolvedValue(undefined)
@@ -697,6 +699,68 @@ describe('file save IPC handlers', () => {
       expect(result).toEqual({ saved: true, filePath: destinationPath })
       const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
       expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe('artifact bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a Project Artifact whose inode changes after validation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-identity-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    await writeFile(destinationPath, 'existing destination')
+    const createReadStream = vi.fn(() => Readable.from([Buffer.from('replacement bytes')]))
+    const closeValidated = vi.fn().mockResolvedValue(undefined)
+    const closeReplacement = vi.fn().mockResolvedValue(undefined)
+    const openProjectArtifactFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 14, dev: 7, ino: 11 }),
+        createReadStream,
+        close: closeValidated
+      })
+      .mockResolvedValueOnce({
+        stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 17, dev: 7, ino: 12 }),
+        createReadStream,
+        close: closeReplacement
+      })
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue('/managed/report.csv')
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath, openProjectArtifactFile } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://report',
+            suggestedName: 'report.csv',
+            message: 'Project export source changed after validation.'
+          }
+        ]
+      })
+      expect(resolveSessionArtifactFilePath).toHaveBeenCalledTimes(1)
+      expect(createReadStream).not.toHaveBeenCalled()
+      expect(closeValidated).toHaveBeenCalledTimes(1)
+      expect(closeReplacement).toHaveBeenCalledTimes(1)
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing destination')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -1171,7 +1235,7 @@ describe('file save IPC handlers', () => {
     await writeFile(destinationPath, 'existing destination')
     const close = vi.fn().mockResolvedValue(undefined)
     const openProjectArtifactFile = vi.fn().mockResolvedValue({
-      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 5 }),
+      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 5, dev: 1, ino: 1 }),
       createReadStream: vi.fn(() => Readable.from([Buffer.from('this grew past the limit')])),
       close
     })
