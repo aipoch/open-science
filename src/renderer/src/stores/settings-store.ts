@@ -342,7 +342,10 @@ const createSettingsStoreState = (
     reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
     writeCoordinator
   }),
-  ...createSettingsNavigationSlice({ setState: (patch) => set(patch) }),
+  ...createSettingsNavigationSlice({
+    getState: get,
+    setState: (patch) => set(patch)
+  }),
   ...createSettingsSkillsSlice({
     getState: get,
     setState: (patch) => set(patch),

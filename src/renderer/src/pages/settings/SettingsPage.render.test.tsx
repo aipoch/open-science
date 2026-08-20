@@ -1164,7 +1164,7 @@ describe('SettingsPage layout', () => {
     })
 
     await act(async () => {
-      useSettingsStore.setState({ pendingSkillId: 'alpha' })
+      useSettingsStore.getState().openSettingsToSkill('alpha')
     })
 
     expect(navButton('Agent')?.parentElement?.tagName).toBe('LI')
@@ -2778,8 +2778,8 @@ describe('SettingsPage layout', () => {
   })
 
   it('opens directly on a skill detail when the store has a pending skill', async () => {
-    // A skill mention sets the pending id before the dialog opens.
-    useSettingsStore.setState({ pendingSkillId: 'alpha' })
+    // A skill mention publishes a landing intent before the dialog opens.
+    useSettingsStore.getState().openSettingsToSkill('alpha')
 
     const settingsRef = createRef<SettingsPageHandle>()
     await act(async () => {
@@ -2797,8 +2797,8 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
     expect(document.body.textContent).toContain('Alpha')
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
-    // The pending id is consumed so a later normal open won't jump back to it.
-    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+    // The intent is consumed so a later normal open won't jump back to it.
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
 
     act(() => {
       expect(settingsRef.current?.closeActivePane()).toBe(true)
@@ -2809,8 +2809,28 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('honors a repeated external intent for the same skill while Settings stays open', async () => {
+    useSettingsStore.getState().openSettingsToSkill('alpha')
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
+    )
+
+    await act(async () => navButton('Model')?.click())
+    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+
+    act(() => useSettingsStore.getState().openSettingsToSkill('alpha'))
+    await waitFor(() =>
+      expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
+    )
+  })
+
   it('opens directly on a requested settings panel and consumes the target', async () => {
-    useSettingsStore.setState({ pendingSettingsPanel: 'storage' })
+    useSettingsStore.getState().openSettingsToPanel('storage')
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2820,11 +2840,11 @@ describe('SettingsPage layout', () => {
     })
 
     expect(navButton('Storage')?.getAttribute('aria-current')).toBe('page')
-    expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
   })
 
   it('opens directly on a specialist editor when the store has a pending specialist', async () => {
-    // The switch approval card deep-links to one specialist's editor: the pending id is set
+    // The switch approval card deep-links to one specialist's editor: the intent is published
     // before the dialog opens, and the catalog resolves that profile.
     const researcher: SpecialistProfileView = {
       id: 'spc-1',
@@ -2845,7 +2865,7 @@ describe('SettingsPage layout', () => {
       integrity: { status: 'ok' }
     })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2863,8 +2883,8 @@ describe('SettingsPage layout', () => {
     const name = document.body.querySelector<HTMLInputElement>('#sp-name')
     expect(name?.value).toBe('Researcher')
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
-    // The pending id is consumed so a later normal open won't jump back to it.
-    expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()
+    // The intent is consumed so a later normal open won't jump back to it.
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
   })
 
   it('navigates from a specialist capability row to the skill detail and back', async () => {
@@ -2887,7 +2907,7 @@ describe('SettingsPage layout', () => {
       integrity: { status: 'ok' }
     })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2940,7 +2960,7 @@ describe('SettingsPage layout', () => {
       integrity: { status: 'ok' }
     })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.setState({ pendingSkillId: 'alpha' })
+    useSettingsStore.getState().openSettingsToSkill('alpha')
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2993,7 +3013,7 @@ describe('SettingsPage layout', () => {
       integrity: { status: 'ok' }
     })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.setState({ pendingSettingsPanel: 'connectors' })
+    useSettingsStore.getState().openSettingsToPanel('connectors')
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -3084,7 +3104,7 @@ describe('SettingsPage layout', () => {
       tools: []
     })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -3165,7 +3185,7 @@ describe('SettingsPage layout', () => {
       integrity: { status: 'ok' }
     })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -3202,7 +3222,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('opens the specialist creation form from Write from scratch', async () => {
-    useSettingsStore.setState({ pendingSettingsPanel: 'specialists' })
+    useSettingsStore.getState().openSettingsToPanel('specialists')
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -3229,7 +3249,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('uses a multi-level header breadcrumb for Marketplace Specialist details', async () => {
-    useSettingsStore.setState({ pendingSettingsPanel: 'specialists' })
+    useSettingsStore.getState().openSettingsToPanel('specialists')
     Object.assign(window.api.specialist, {
       listMarketplace: vi.fn().mockResolvedValue({
         sources: [
@@ -3350,8 +3370,8 @@ describe('SettingsPage layout', () => {
       useSettingsStore.setState({ environmentCheck: repairedStorage })
       return repairedStorage
     })
+    useSettingsStore.getState().openSettingsToPanel('storage')
     useSettingsStore.setState({
-      pendingSettingsPanel: 'storage',
       environmentCheck: failedStorage,
       checkEnvironment
     })

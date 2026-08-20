@@ -49,7 +49,14 @@ import { preloadComputeHosts, useComputeStore } from '@/stores/compute-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
-import type { SettingsPanelId } from './settings-navigation'
+import {
+  INITIAL_SETTINGS_ROUTE,
+  settingsPanelRoute,
+  type ModelView,
+  type NetworkView,
+  type SettingsPanelId,
+  type SettingsRoute
+} from './settings-navigation'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ProvidersPanel } from './ProvidersPanel'
@@ -194,9 +201,6 @@ type SettingsPageHandle = {
   closeActivePane: () => boolean
 }
 
-// The model panel sub-view, driven by the settings navigation history so add/edit is a breadcrumb page.
-type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; providerId: string }
-
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
   createEmptyProviderFormValue({
@@ -321,35 +325,6 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 const EMPTY_USAGE_SESSIONS = [] as const
 const EMPTY_USAGE_PROJECTS = [] as const
 
-// One entry in the settings back/forward history: the active panel plus each panel's current sub-view
-// (skills: list / manage / detail / create / edit / import; model: list / create / edit; connectors: list /
-// detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
-// Network panel sub-view: the package-mirror list vs. the configure form (a breadcrumb drill-in).
-type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
-
-type NavLocation = {
-  panel: SettingsPanelId
-  skills: SkillsView
-  model: ModelView
-  connectors?: ConnectorsView
-  network?: NetworkView
-  compute?: ComputeView
-  specialists?: SpecialistsView
-  archived?: ArchivedView
-  tagId?: string
-}
-
-const INITIAL_LOCATION: NavLocation = {
-  panel: 'model',
-  skills: { kind: 'list' },
-  model: { kind: 'list' },
-  connectors: { kind: 'list' },
-  network: { kind: 'list' },
-  compute: { kind: 'list' },
-  specialists: { kind: 'list' },
-  archived: { kind: 'list' }
-}
-
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
 const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
@@ -380,19 +355,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const persistProvider = useSettingsStore((state) => state.persistProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
-  const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
-  const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
-  const pendingSpecialistId = useSettingsStore((state) => state.pendingSpecialistId)
-  const consumePendingSpecialist = useSettingsStore((state) => state.consumePendingSpecialist)
-  const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
-  const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
-  const pendingComputeHostId = useSettingsStore((state) => state.pendingComputeHostId)
-  const consumePendingComputeHost = useSettingsStore((state) => state.consumePendingComputeHost)
-  const pendingComputeAuthentication = useSettingsStore(
-    (state) => state.pendingComputeAuthentication
-  )
-  const consumePendingComputeAuthentication = useSettingsStore(
-    (state) => state.consumePendingComputeAuthentication
+  const pendingSettingsIntent = useSettingsStore((state) => state.pendingSettingsIntent)
+  const consumePendingSettingsIntent = useSettingsStore(
+    (state) => state.consumePendingSettingsIntent
   )
   const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
   const clearSettingsWriteError = useSettingsStore((state) => state.clearSettingsWriteError)
@@ -400,9 +365,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     typeof window.api.settings.listAgentHomeSkills === 'function' &&
     typeof window.api.settings.importAgentHomeSkills === 'function'
 
-  // Settings navigation history (browser-like back/forward). Panel switches and drill-downs push a
-  // new location; the active panel and open sub-views are derived from the current entry.
-  const [history, setHistory] = useState<NavLocation[]>([INITIAL_LOCATION])
+  // Settings navigation history (browser-like back/forward). Each entry contains only its active
+  // panel route, so unrelated panel views cannot form impossible combinations.
+  const [history, setHistory] = useState<SettingsRoute[]>([INITIAL_SETTINGS_ROUTE])
   const [historyIndex, setHistoryIndex] = useState(0)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
@@ -456,124 +421,32 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     mobileNavTriggerRef.current?.focus()
   }, [isMobile, isMobileNavOpen])
 
-  // When opened from a skill mention, seed the history straight to that skill's detail page. This is
-  // the derive-state-during-render pattern (guarded so it runs once per request); the guard resets on
-  // close so reopening the same skill re-seeds. The Skills panel loads its list on mount, so the
-  // breadcrumb name resolves once that arrives.
-  const [seededSkillId, setSeededSkillId] = useState<string | undefined>(undefined)
-  if (open && pendingSkillId !== undefined && pendingSkillId !== seededSkillId) {
-    setSeededSkillId(pendingSkillId)
-    setHistory([
-      {
-        panel: 'skills',
-        skills: { kind: 'detail', id: pendingSkillId },
-        model: { kind: 'list' },
-        connectors: { kind: 'list' }
-      }
-    ])
-    setHistoryIndex(0)
-  }
-  if (!open && seededSkillId !== undefined) {
-    setSeededSkillId(undefined)
-  }
-
-  // External entry points seed one shared panel target. The consumed target cannot override a later
-  // manual navigation when the dialog is reopened normally.
-  const [seededSettingsPanel, setSeededSettingsPanel] = useState<SettingsPanelId | undefined>()
-  if (open && pendingSettingsPanel !== undefined && pendingSettingsPanel !== seededSettingsPanel) {
-    setSeededSettingsPanel(pendingSettingsPanel)
-    setHistory([{ ...INITIAL_LOCATION, panel: pendingSettingsPanel }])
-    setHistoryIndex(0)
-  }
-  if (!open && seededSettingsPanel !== undefined) {
-    setSeededSettingsPanel(undefined)
-  }
-
-  const [seededComputeHostId, setSeededComputeHostId] = useState<string | undefined>()
-  if (open && pendingComputeHostId !== undefined && pendingComputeHostId !== seededComputeHostId) {
-    setSeededComputeHostId(pendingComputeHostId)
-    setHistory([
-      {
-        ...INITIAL_LOCATION,
-        panel: 'compute',
-        compute: { kind: 'detail', providerId: pendingComputeHostId }
-      }
-    ])
-    setHistoryIndex(0)
-  }
-  if (!open && seededComputeHostId !== undefined) {
-    setSeededComputeHostId(undefined)
-  }
-
-  const [seededComputeAuthentication, setSeededComputeAuthentication] = useState<
-    string | undefined
-  >()
-  const pendingComputeAuthenticationKey = pendingComputeAuthentication
-    ? String(pendingComputeAuthentication.requestId)
-    : undefined
+  // External entry points publish one route intent with an event identity. Guard by request rather
+  // than target value so two separate requests for the same route are both honored.
+  const [seededIntentId, setSeededIntentId] = useState<number | undefined>()
   if (
     open &&
-    pendingComputeAuthentication &&
-    pendingComputeAuthenticationKey !== seededComputeAuthentication
+    pendingSettingsIntent !== undefined &&
+    pendingSettingsIntent.requestId !== seededIntentId
   ) {
-    setSeededComputeAuthentication(pendingComputeAuthenticationKey)
-    setHistory([
-      {
-        ...INITIAL_LOCATION,
-        panel: 'compute',
-        compute: {
-          kind: 'detail',
-          providerId: pendingComputeAuthentication.providerId,
-          authenticationFocus: pendingComputeAuthentication.errorCode,
-          authenticationRequestId: pendingComputeAuthentication.requestId
-        }
-      }
-    ])
+    setSeededIntentId(pendingSettingsIntent.requestId)
+    setHistory([pendingSettingsIntent.route])
     setHistoryIndex(0)
   }
-  if (!open && seededComputeAuthentication !== undefined) {
-    setSeededComputeAuthentication(undefined)
+  if (!open && seededIntentId !== undefined) {
+    setSeededIntentId(undefined)
   }
 
-  // When opened from the specialist switch approval card, seed the history straight onto that
-  // specialist's editor. Same derive-during-render pattern as the skill seed above; the
-  // Specialists panel resolves the profile from the catalog once it mounts.
-  const [seededSpecialistId, setSeededSpecialistId] = useState<string | undefined>(undefined)
-  if (open && pendingSpecialistId !== undefined && pendingSpecialistId !== seededSpecialistId) {
-    setSeededSpecialistId(pendingSpecialistId)
-    setHistory([
-      {
-        panel: 'specialists',
-        specialists: { kind: 'edit', id: pendingSpecialistId },
-        skills: { kind: 'list' },
-        model: { kind: 'list' }
-      }
-    ])
-    setHistoryIndex(0)
-  }
-  if (!open && seededSpecialistId !== undefined) {
-    setSeededSpecialistId(undefined)
-  }
+  // Consume only the request applied above. A newer intent that arrives before this effect runs must
+  // remain pending for the next render.
+  useEffect(() => {
+    if (pendingSettingsIntent !== undefined) {
+      consumePendingSettingsIntent(pendingSettingsIntent.requestId)
+    }
+  }, [consumePendingSettingsIntent, pendingSettingsIntent])
 
-  useEffect(() => {
-    if (pendingSettingsPanel !== undefined) consumePendingSettingsPanel()
-  }, [pendingSettingsPanel, consumePendingSettingsPanel])
-  // Clear the store's pending flag after it has been applied, so a later normal open starts fresh.
-  useEffect(() => {
-    if (pendingSkillId !== undefined) consumePendingSkill()
-  }, [pendingSkillId, consumePendingSkill])
-  useEffect(() => {
-    if (pendingSpecialistId !== undefined) consumePendingSpecialist()
-  }, [pendingSpecialistId, consumePendingSpecialist])
-  useEffect(() => {
-    if (pendingComputeHostId !== undefined) consumePendingComputeHost()
-  }, [pendingComputeHostId, consumePendingComputeHost])
-  useEffect(() => {
-    if (pendingComputeAuthentication !== undefined) consumePendingComputeAuthentication()
-  }, [pendingComputeAuthentication, consumePendingComputeAuthentication])
-
-  const currentLocation = history[historyIndex]
-  const activePanel = currentLocation.panel
+  const currentRoute = history[historyIndex]
+  const activePanel = currentRoute.panel
 
   // Auto-detect opencode the first time its detection card is shown without a known path, so the card
   // reflects reality without a manual re-detect. Guarded on path + in-flight to run at most once.
@@ -617,68 +490,48 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const projects = useProjectStore((state) =>
     isUsageVisible ? state.projects : EMPTY_USAGE_PROJECTS
   )
-  const skillsView = currentLocation.skills
-  const modelView = currentLocation.model
-  const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
-  const networkView: NetworkView = currentLocation.network ?? { kind: 'list' }
-  const computeView: ComputeView = currentLocation.compute ?? { kind: 'list' }
-  const specialistsView: SpecialistsView = currentLocation.specialists ?? { kind: 'list' }
-  const archivedView: ArchivedView = currentLocation.archived ?? { kind: 'list' }
+  const skillsView: SkillsView =
+    currentRoute.panel === 'skills' ? currentRoute.view : { kind: 'list' }
+  const modelView: ModelView = currentRoute.panel === 'model' ? currentRoute.view : { kind: 'list' }
+  const connectorsView: ConnectorsView =
+    currentRoute.panel === 'connectors' ? currentRoute.view : { kind: 'list' }
+  const networkView: NetworkView =
+    currentRoute.panel === 'network' ? currentRoute.view : { kind: 'list' }
+  const computeView: ComputeView =
+    currentRoute.panel === 'compute' ? currentRoute.view : { kind: 'list' }
+  const specialistsView: SpecialistsView =
+    currentRoute.panel === 'specialists' ? currentRoute.view : { kind: 'list' }
+  const archivedView: ArchivedView =
+    currentRoute.panel === 'archived' ? currentRoute.view : { kind: 'list' }
+  const activeTagId = currentRoute.panel === 'tags' ? currentRoute.tagId : undefined
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
   useEffect(() => {
-    if (currentLocation.panel === 'tags' && currentLocation.tagId) {
-      setSelectedTagId(currentLocation.tagId)
-    }
-  }, [currentLocation.panel, currentLocation.tagId, setSelectedTagId])
+    if (activeTagId) setSelectedTagId(activeTagId)
+  }, [activeTagId, setSelectedTagId])
 
-  // Pushes a new location, dropping any forward entries.
-  const navigate = (location: NavLocation): void => {
-    const nextConnectors = location.connectors ?? { kind: 'list' }
-    const nextNetwork = location.network ?? { kind: 'list' }
-    const nextCompute = location.compute ?? { kind: 'list' }
-    const nextSpecialists = location.specialists ?? { kind: 'list' }
-    const nextArchived = location.archived ?? { kind: 'list' }
-    if (
-      location.panel === activePanel &&
-      location.skills.kind === skillsView.kind &&
-      ('id' in location.skills ? location.skills.id : undefined) ===
-        ('id' in skillsView ? skillsView.id : undefined) &&
-      location.model.kind === modelView.kind &&
-      ('providerId' in location.model ? location.model.providerId : undefined) ===
-        ('providerId' in modelView ? modelView.providerId : undefined) &&
-      nextConnectors.kind === connectorsView.kind &&
-      ('id' in nextConnectors ? nextConnectors.id : undefined) ===
-        ('id' in connectorsView ? connectorsView.id : undefined) &&
-      nextNetwork.kind === networkView.kind &&
-      nextCompute.kind === computeView.kind &&
-      ('providerId' in nextCompute ? nextCompute.providerId : undefined) ===
-        ('providerId' in computeView ? computeView.providerId : undefined) &&
-      JSON.stringify(nextSpecialists) === JSON.stringify(specialistsView) &&
-      nextArchived.kind === archivedView.kind &&
-      ('projectId' in nextArchived ? nextArchived.projectId : undefined) ===
-        ('projectId' in archivedView ? archivedView.projectId : undefined) &&
-      location.tagId === currentLocation.tagId
-    ) {
-      return
-    }
-    setHistory((entries) => [...entries.slice(0, historyIndex + 1), location])
+  // Pushes a complete active route, dropping any forward entries. Routes contain only serializable
+  // navigation values, so comparing the whole route automatically covers fields added later.
+  const navigate = (route: SettingsRoute): void => {
+    if (JSON.stringify(route) === JSON.stringify(currentRoute)) return
+    setHistory((entries) => [...entries.slice(0, historyIndex + 1), route])
     setHistoryIndex((index) => index + 1)
   }
 
   // Internal panel transitions must use this dialog's history instead of reseeding an external
   // entry point, so Back returns to the recovery panel the user just completed.
-  const navigatePanel = (panel: SettingsPanelId): void =>
-    navigate({
-      ...INITIAL_LOCATION,
-      panel,
-      tagId: panel === 'tags' ? browserSelectedTagId : undefined
-    })
+  const navigatePanel = (panel: SettingsPanelId): void => {
+    if (panel === 'tags') {
+      navigate({ panel, tagId: browserSelectedTagId })
+      return
+    }
+    navigate(settingsPanelRoute(panel))
+  }
 
   const navigateTag = (tagId: string): void => {
     setSelectedTagId(tagId)
-    navigate({ ...currentLocation, panel: 'tags', tagId })
+    navigate({ panel: 'tags', tagId })
   }
 
   const recordSelectedTag = useCallback(
@@ -695,53 +548,34 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   )
 
   // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
-  const navigateSkills = (skills: SkillsView): void =>
-    navigate({ panel: 'skills', skills, model: modelView, connectors: connectorsView })
+  const navigateSkills = (skills: SkillsView): void => navigate({ panel: 'skills', view: skills })
 
   // Navigates within the connectors panel (list/detail/add/edit) as a history entry.
   const navigateConnectors = (connectors: ConnectorsView): void =>
-    navigate({ panel: 'connectors', skills: skillsView, model: modelView, connectors })
+    navigate({ panel: 'connectors', view: connectors })
 
   // Navigates within the specialists panel (list/create) as a history entry.
   const navigateSpecialists = (specialists: SpecialistsView): void =>
-    navigate({ panel: 'specialists', skills: skillsView, model: modelView, specialists })
+    navigate({ panel: 'specialists', view: specialists })
 
   // Navigates within the network panel (package-mirror list vs. configure) as a history entry, so the
   // configure form gets a proper "Network / Package mirror" breadcrumb + back/forward.
   const navigateNetwork = (network: NetworkView): void =>
-    navigate({
-      panel: 'network',
-      skills: skillsView,
-      model: modelView,
-      connectors: connectorsView,
-      network
-    })
+    navigate({ panel: 'network', view: network })
 
   // Navigates within the compute panel (list/add/detail) as a history entry.
   const navigateCompute = (compute: ComputeView): void =>
-    navigate({
-      panel: 'compute',
-      skills: skillsView,
-      model: modelView,
-      connectors: connectorsView,
-      compute
-    })
+    navigate({ panel: 'compute', view: compute })
 
   const navigateArchived = (archived: ArchivedView): void =>
-    navigate({
-      panel: 'archived',
-      skills: skillsView,
-      model: modelView,
-      connectors: connectorsView,
-      archived
-    })
+    navigate({ panel: 'archived', view: archived })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
   const breadcrumb = ((): {
     rootLabelKey: DrillablePanelName
-    rootTo: NavLocation
-    parents?: ReadonlyArray<{ label: string; to: NavLocation; ariaLabel: string }>
+    rootTo: SettingsRoute
+    parents?: ReadonlyArray<{ label: string; to: SettingsRoute; ariaLabel: string }>
     leaf: string
   } | null => {
     if (activePanel === 'skills' && skillsView.kind !== 'list') {
@@ -762,7 +596,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     })()
       return {
         rootLabelKey: 'Skills',
-        rootTo: { panel: 'skills', skills: { kind: 'list' }, model: currentLocation.model },
+        rootTo: { panel: 'skills', view: { kind: 'list' } },
         leaf
       }
     }
@@ -773,19 +607,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           : ''
       return {
         rootLabelKey: 'Model',
-        rootTo: { panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } },
+        rootTo: { panel: 'model', view: { kind: 'list' } },
         leaf: modelView.kind === 'create' ? t('Add provider') : t('Edit {{name}}', { name }).trim()
       }
     }
     if (activePanel === 'network' && networkView.kind !== 'list') {
       return {
         rootLabelKey: 'Network',
-        rootTo: {
-          panel: 'network',
-          skills: currentLocation.skills,
-          model: currentLocation.model,
-          network: { kind: 'list' }
-        },
+        rootTo: { panel: 'network', view: { kind: 'list' } },
         leaf: networkView.kind === 'proxy' ? t('Proxy') : t('Package mirror')
       }
     }
@@ -808,12 +637,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabelKey: 'Connectors',
-        rootTo: {
-          panel: 'connectors',
-          skills: currentLocation.skills,
-          model: currentLocation.model,
-          connectors: { kind: 'list' }
-        },
+        rootTo: { panel: 'connectors', view: { kind: 'list' } },
         leaf
       }
     }
@@ -825,22 +649,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             computeView.providerId)
       return {
         rootLabelKey: 'Compute',
-        rootTo: {
-          panel: 'compute',
-          skills: currentLocation.skills,
-          model: currentLocation.model,
-          connectors: currentLocation.connectors,
-          compute: { kind: 'list' }
-        },
+        rootTo: { panel: 'compute', view: { kind: 'list' } },
         leaf
       }
     }
     if (activePanel === 'specialists' && specialistsView.kind !== 'list') {
-      const rootTo: NavLocation = {
+      const rootTo: SettingsRoute = {
         panel: 'specialists',
-        skills: currentLocation.skills,
-        model: currentLocation.model,
-        specialists: { kind: 'list' }
+        view: { kind: 'list' }
       }
       if (
         specialistsView.kind === 'marketplace-sources' ||
@@ -852,7 +668,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           parents: [
             {
               label: t('Marketplace'),
-              to: { ...rootTo, specialists: { kind: 'marketplace' } },
+              to: { panel: 'specialists', view: { kind: 'marketplace' } },
               ariaLabel: t('Back to Marketplace')
             }
           ],
@@ -884,12 +700,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (activePanel === 'archived' && archivedView.kind === 'project') {
       return {
         rootLabelKey: 'Archived',
-        rootTo: {
-          panel: 'archived',
-          skills: currentLocation.skills,
-          model: currentLocation.model,
-          archived: { kind: 'list' }
-        },
+        rootTo: { panel: 'archived', view: { kind: 'list' } },
         leaf:
           projects.find((project) => project.id === archivedView.projectId)?.name ??
           t('Archived project')
@@ -976,18 +787,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setStatusMessage(undefined)
   }
 
-  const openCreate = (): void =>
-    navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'create' } })
+  const openCreate = (): void => navigate({ panel: 'model', view: { kind: 'create' } })
 
   const openEdit = (provider: ProviderView): void =>
     navigate({
       panel: 'model',
-      skills: currentLocation.skills,
-      model: { kind: 'edit', providerId: provider.id }
+      view: { kind: 'edit', providerId: provider.id }
     })
 
-  const closeForm = (): void =>
-    navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
+  const closeForm = (): void => navigate({ panel: 'model', view: { kind: 'list' } })
 
   const handleSave = async (): Promise<void> => {
     if (providerEditTargetMissing) return
@@ -1003,7 +811,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         ...(modelView.kind === 'edit' ? { requireExisting: true } : {})
       })
 
-      navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
+      navigate({ panel: 'model', view: { kind: 'list' } })
 
       if (providerId) {
         setBusyProviderId(providerId)
@@ -1358,9 +1166,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       onOpenTag={navigateTag}
                       onOpenSpecialist={(usage) =>
                         navigate({
-                          ...currentLocation,
                           panel: 'specialists',
-                          specialists:
+                          view:
                             usage.kind === 'builtin'
                               ? { kind: 'builtin', id: usage.id }
                               : { kind: 'edit', id: usage.id }
@@ -1375,16 +1182,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       onOpenTag={navigateTag}
                       onOpenSkillDetail={(skillId) =>
                         navigate({
-                          ...currentLocation,
                           panel: 'skills',
-                          skills: { kind: 'detail', id: skillId }
+                          view: { kind: 'detail', id: skillId }
                         })
                       }
                       onOpenConnectorDetail={(connectorId) =>
                         navigate({
-                          ...currentLocation,
                           panel: 'connectors',
-                          connectors: customServers.some((server) => server.id === connectorId)
+                          view: customServers.some((server) => server.id === connectorId)
                             ? { kind: 'edit', id: connectorId }
                             : { kind: 'detail', id: connectorId }
                         })
@@ -1396,19 +1201,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       onOpenResource={(reference) => {
                         if (reference.resourceType === 'catalog.skill') {
                           navigate({
-                            ...currentLocation,
                             panel: 'skills',
-                            skills: { kind: 'detail', id: reference.resourceId }
+                            view: { kind: 'detail', id: reference.resourceId }
                           })
                           return
                         }
                         if (reference.resourceType === 'catalog.connector') {
                           navigate({
-                            ...currentLocation,
                             panel: 'connectors',
-                            connectors: customServers.some(
-                              (server) => server.id === reference.resourceId
-                            )
+                            view: customServers.some((server) => server.id === reference.resourceId)
                               ? { kind: 'edit', id: reference.resourceId }
                               : { kind: 'detail', id: reference.resourceId }
                           })
@@ -1418,9 +1219,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           (item) => item.id === reference.resourceId
                         )
                         navigate({
-                          ...currentLocation,
                           panel: 'specialists',
-                          specialists:
+                          view:
                             specialist?.kind === 'builtin'
                               ? { kind: 'builtin', id: reference.resourceId }
                               : { kind: 'edit', id: reference.resourceId }
@@ -1491,9 +1291,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         onOpenTag={navigateTag}
                         onOpenSpecialist={(usage) =>
                           navigate({
-                            ...currentLocation,
                             panel: 'specialists',
-                            specialists:
+                            view:
                               usage.kind === 'builtin'
                                 ? { kind: 'builtin', id: usage.id }
                                 : { kind: 'edit', id: usage.id }
