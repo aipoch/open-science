@@ -509,6 +509,7 @@ class NotebookLocalRpcServer {
     Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization | 'ambiguous'>
   >()
   private readonly consumedExecutionToolCalls = new Map<string, Set<string>>()
+  private readonly computeSubmissionInvocations = new Map<string, Map<string, Promise<unknown>>>()
 
   constructor(
     private readonly service: NotebookLocalRpcCapability,
@@ -665,6 +666,7 @@ class NotebookLocalRpcServer {
     this.skillImportRpcTokens.clear()
     this.executionAuthorizations.clear()
     this.consumedExecutionToolCalls.clear()
+    this.computeSubmissionInvocations.clear()
 
     if (!server || !lifecycle) {
       return this.artifactProvenance?.releaseAllWriteReservations?.() ?? Promise.resolve()
@@ -816,6 +818,7 @@ class NotebookLocalRpcServer {
       this.sessionSpecialists.delete(ownedSessionId)
       this.executionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
+      this.computeSubmissionInvocations.delete(ownedSessionId)
     }
     for (const [aliasSessionId, targetSessionId] of this.sessionAliases) {
       if (ownedSessionIds.has(aliasSessionId) || ownedSessionIds.has(targetSessionId)) {
@@ -2139,6 +2142,7 @@ class NotebookLocalRpcServer {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const intent = typeof params.intent === 'string' ? params.intent : ''
         const command = typeof params.command === 'string' ? params.command : ''
+        const invocationId = typeof params.invocation_id === 'string' ? params.invocation_id : ''
         const options = {
           environment: typeof params.environment === 'string' ? params.environment : undefined,
           resourceRequest: isRecord(params.resources)
@@ -2154,7 +2158,40 @@ class NotebookLocalRpcServer {
           workspaceCwd: typeof params.workspace_cwd === 'string' ? params.workspace_cwd : undefined
         }
         try {
-          return await this.computeService.submitJob(context, providerId, intent, command, options)
+          if (!invocationId) {
+            return await this.computeService.submitJob(
+              context,
+              providerId,
+              intent,
+              command,
+              options
+            )
+          }
+
+          const sessionInvocations = this.computeSubmissionInvocations.get(sessionId) ?? new Map()
+          const existing = sessionInvocations.get(invocationId)
+          if (existing) return await existing
+
+          const submission = this.computeService.submitJob(
+            context,
+            providerId,
+            intent,
+            command,
+            options
+          )
+          sessionInvocations.set(invocationId, submission)
+          this.computeSubmissionInvocations.set(sessionId, sessionInvocations)
+          try {
+            return await submission
+          } catch (error) {
+            if (sessionInvocations.get(invocationId) === submission) {
+              sessionInvocations.delete(invocationId)
+              if (sessionInvocations.size === 0) {
+                this.computeSubmissionInvocations.delete(sessionId)
+              }
+            }
+            throw error
+          }
         } catch (err) {
           // Re-throw compute call errors as structured error objects so the JS shim can parse them.
           if (err instanceof Error && 'computeCallError' in err) {

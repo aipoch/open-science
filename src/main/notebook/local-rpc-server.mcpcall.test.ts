@@ -923,6 +923,41 @@ describe('computeCall RPC', () => {
     ])
   })
 
+  it('reuses the first submit_job result when the same invocation is retried', async () => {
+    const submitJob = vi
+      .fn()
+      .mockResolvedValueOnce({ job_id: 'job-1', status: 'queued' })
+      .mockResolvedValueOnce({ job_id: 'job-2', status: 'queued' })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const submit = (): Promise<Response> =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: 'invocation-1',
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command: 'python analyze.py'
+          }
+        })
+      })
+
+    await expect((await submit()).json()).resolves.toEqual({
+      result: { job_id: 'job-1', status: 'queued' }
+    })
+    await expect((await submit()).json()).resolves.toEqual({
+      result: { job_id: 'job-1', status: 'queued' }
+    })
+    expect(submitJob).toHaveBeenCalledTimes(1)
+  })
+
   it('serializes submit_job compute call errors', async () => {
     const submitErr = new Error('approval denied') as Error & { computeCallError: unknown }
     submitErr.computeCallError = {
