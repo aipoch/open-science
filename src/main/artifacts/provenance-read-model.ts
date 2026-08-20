@@ -6,7 +6,6 @@ import type { PrismaClient } from '@prisma/client'
 import type {
   ArtifactExecutionSnapshot,
   ArtifactLineageProvenance,
-  ArtifactMessageSnapshotFile,
   ArtifactVersionDescriptor,
   ArtifactVersionEvidence,
   ArtifactVersionProvenance,
@@ -25,7 +24,6 @@ import {
 import type {
   ReviewFindingDispositionOutcome,
   ReviewFindingDispositionTrigger,
-  ReviewScopeSnapshotBlock,
   ReviewWithProvenanceEvidence
 } from '../../shared/reviewer'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
@@ -39,10 +37,16 @@ import {
 } from './provenance-execution-evidence'
 import { sha256 } from './provenance-canonical'
 import { validateArtifactCoreEvidence } from './provenance-core-evidence'
+import {
+  decodeArtifactMessageSnapshot,
+  decodeReviewScopeSnapshot
+} from './provenance-snapshot-decoder'
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+class UnsupportedMessageSnapshotVersionError extends Error {}
 
 const assertSafeSegment = (value: string, label: string): string => {
   if (!SAFE_SEGMENT_PATTERN.test(value)) throw new Error(`Invalid ${label}: ${value}`)
@@ -324,7 +328,14 @@ class ArtifactProvenanceReadModel {
         ) {
           throw new Error('Message snapshot checksum mismatch.')
         }
-        const snapshot = JSON.parse(serializedSnapshot) as ArtifactMessageSnapshotFile
+        const decodedSnapshot = decodeArtifactMessageSnapshot(serializedSnapshot)
+        if (decodedSnapshot.status === 'unsupported') {
+          throw new UnsupportedMessageSnapshotVersionError()
+        }
+        if (decodedSnapshot.status === 'corrupt') {
+          throw new Error('Message snapshot schema is invalid.')
+        }
+        const snapshot = decodedSnapshot.value
         const hasValidPath = snapshot.messages.every(
           (message, index) =>
             index === 0 || message.parentMessageId === snapshot.messages[index - 1]?.id
@@ -382,8 +393,14 @@ class ArtifactProvenanceReadModel {
           return attribution ? { ...rest, attribution } : rest
         })
         messages = { state: 'available', items, activities, activityGroups }
-      } catch {
-        messages = { state: 'unavailable', reason: 'message-snapshot-corrupt' }
+      } catch (error) {
+        messages = {
+          state: 'unavailable',
+          reason:
+            error instanceof UnsupportedMessageSnapshotVersionError
+              ? 'message-snapshot-unsupported'
+              : 'message-snapshot-corrupt'
+        }
       }
     }
 
@@ -408,20 +425,19 @@ class ArtifactProvenanceReadModel {
           }
           if (snapshot?.state === 'ready') {
             try {
-              const payload = JSON.parse(snapshot.snapshotJson) as {
-                schemaVersion?: unknown
-                blocks?: unknown
-              }
-              if (
-                (payload.schemaVersion !== 1 && payload.schemaVersion !== 2) ||
-                !Array.isArray(payload.blocks) ||
-                sha256(snapshot.snapshotJson) !== snapshot.checksum
-              ) {
+              if (sha256(snapshot.snapshotJson) !== snapshot.checksum) {
                 throw new Error('Review scope snapshot checksum mismatch.')
+              }
+              const decodedSnapshot = decodeReviewScopeSnapshot(snapshot.snapshotJson)
+              if (
+                decodedSnapshot.status === 'unsupported' ||
+                decodedSnapshot.status === 'corrupt'
+              ) {
+                throw new Error('Review scope snapshot schema is invalid.')
               }
               scopeSnapshot = {
                 state: 'available',
-                blocks: payload.blocks as ReviewScopeSnapshotBlock[]
+                blocks: decodedSnapshot.value
               }
             } catch {
               scopeSnapshot = { state: 'unavailable', reason: 'corrupt' }

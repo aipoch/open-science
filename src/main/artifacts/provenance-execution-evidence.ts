@@ -15,6 +15,10 @@ import type {
   NotebookRunRecord
 } from '../../shared/notebook'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import {
+  decodeArtifactExecutionSnapshot,
+  parseArtifactExecutionSnapshot
+} from './provenance-execution-snapshot-decoder'
 
 const MAX_EXECUTION_SNAPSHOT_BYTES = 4 * 1024 * 1024
 const MAX_EXECUTION_SNAPSHOT_RUNS = 128
@@ -38,12 +42,6 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
-
-const stringValue = (value: unknown): string | undefined =>
-  typeof value === 'string' ? value : undefined
-
-const numberValue = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? value : undefined
 
 const tableCell = (value: unknown): CanonicalJson => {
   if (
@@ -440,110 +438,6 @@ const resolveRunEnvironmentCapture = (
   }
 }
 
-const normalizeStoredProvenanceOutput = (value: unknown): ProvenanceNotebookOutput[] => {
-  const output = recordValue(value)
-  if (output?.type === 'text' && typeof output.text === 'string') {
-    return [
-      {
-        type: 'text',
-        text: output.text,
-        ...(output.truncated === true ? { truncated: true } : {})
-      }
-    ]
-  }
-  if (output?.type === 'error') {
-    const name = stringValue(output.name)
-    const message = stringValue(output.message) ?? name ?? 'Notebook execution failed.'
-    const traceback = Array.isArray(output.traceback)
-      ? output.traceback.filter((line): line is string => typeof line === 'string')
-      : typeof output.traceback === 'string' && output.traceback
-        ? output.traceback.split('\n')
-        : undefined
-    return [
-      { type: 'error', ...(name ? { name } : {}), message, ...(traceback ? { traceback } : {}) }
-    ]
-  }
-  if (output?.type === 'table') {
-    const columns = Array.isArray(output.columns)
-      ? output.columns.filter((column): column is string => typeof column === 'string')
-      : []
-    const previewRows = Array.isArray(output.previewRows)
-      ? output.previewRows.filter((row): row is unknown[] => Array.isArray(row))
-      : []
-    const rowCount = numberValue(output.rowCount)
-    return columns.length > 0 && rowCount !== undefined
-      ? [{ type: 'table', columns, rowCount, previewRows }]
-      : []
-  }
-  if (output?.type === 'omitted-media') {
-    const mimeTypes =
-      typeof output.mimeType === 'string'
-        ? [output.mimeType]
-        : Array.isArray(output.mime_types)
-          ? output.mime_types.filter((mimeType): mimeType is string => typeof mimeType === 'string')
-          : []
-    return mimeTypes.map((mimeType) => ({
-      type: 'omitted-media',
-      mimeType,
-      ...(typeof output.byteLength === 'number' ? { byteLength: output.byteLength } : {})
-    }))
-  }
-  return []
-}
-
-const parseArtifactExecutionSnapshot = (value: string): PersistedArtifactExecutionSnapshot => {
-  const parsed = JSON.parse(value) as unknown
-  const snapshot = recordValue(parsed)
-  const truncation = recordValue(snapshot?.truncation)
-  if (
-    snapshot?.schemaVersion !== 2 ||
-    typeof snapshot.rootFrameId !== 'string' ||
-    typeof snapshot.agentFrameId !== 'string' ||
-    typeof snapshot.messageBranchId !== 'string' ||
-    typeof snapshot.terminalPromptMessageId !== 'string' ||
-    typeof snapshot.producerRunId !== 'string' ||
-    typeof snapshot.producerRunIndex !== 'number' ||
-    !Number.isSafeInteger(snapshot.producerRunIndex) ||
-    typeof snapshot.createdAt !== 'string' ||
-    !Array.isArray(snapshot.inputFiles) ||
-    !Array.isArray(snapshot.runs) ||
-    (snapshot.truncation !== undefined &&
-      (!truncation ||
-        truncation.reason !== 'payload-limit' ||
-        !Number.isSafeInteger(truncation.omittedLeadingRunCount) ||
-        Number(truncation.omittedLeadingRunCount) < 0 ||
-        !Number.isSafeInteger(truncation.omittedOutputCount) ||
-        Number(truncation.omittedOutputCount) < 0 ||
-        !Number.isSafeInteger(truncation.omittedInputCount) ||
-        Number(truncation.omittedInputCount) < 0)) ||
-    snapshot.runs.some((run) => {
-      const candidate = recordValue(run)
-      return (
-        !candidate ||
-        typeof candidate.runId !== 'string' ||
-        typeof candidate.runIndex !== 'number' ||
-        !Number.isSafeInteger(candidate.runIndex) ||
-        typeof candidate.kernelKind !== 'string' ||
-        typeof candidate.script !== 'string' ||
-        typeof candidate.status !== 'string' ||
-        typeof candidate.startedAt !== 'string' ||
-        !Array.isArray(candidate.outputs) ||
-        !Array.isArray(candidate.inputFileVersionKeys)
-      )
-    })
-  ) {
-    throw new Error('Artifact Version execution snapshot schema is invalid.')
-  }
-  const normalized = parsed as PersistedArtifactExecutionSnapshot
-  return {
-    ...normalized,
-    runs: normalized.runs.map((run) => ({
-      ...run,
-      outputs: (run.outputs as unknown[]).flatMap(normalizeStoredProvenanceOutput)
-    }))
-  }
-}
-
 const validateArtifactExecutionSnapshot = (
   snapshot: PersistedArtifactExecutionSnapshot,
   expected: {
@@ -588,6 +482,7 @@ const validateArtifactExecutionSnapshot = (
 
 export {
   buildBoundedExecutionSnapshot,
+  decodeArtifactExecutionSnapshot,
   environmentEvidence,
   inputEvidence,
   parseArtifactExecutionSnapshot,
