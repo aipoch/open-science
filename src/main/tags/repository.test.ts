@@ -106,9 +106,10 @@ describe('TagRepository', () => {
       (candidate) => 'name' in candidate && candidate.name === 'Research'
     )!
 
-    while (Date.now() <= staleTag.updatedAt) {
-      await new Promise((resolve) => setTimeout(resolve, 1))
-    }
+    repository = new TagRepository(
+      async () => client,
+      () => staleTag.updatedAt
+    )
     await repository.update({
       id: staleTag.id,
       name: 'Current research',
@@ -126,12 +127,16 @@ describe('TagRepository', () => {
         expectedUpdatedAt: staleTag.updatedAt
       })
     ).rejects.toThrow('Tag changed since it was loaded.')
-    expect((await repository.snapshot(1)).tags).toContainEqual(
+    const currentTag = (await repository.snapshot(1)).tags.find(
+      (candidate) => candidate.id === staleTag.id
+    )!
+    expect(currentTag).toEqual(
       expect.objectContaining({
         id: staleTag.id,
         name: 'Current research',
         iconKey: 'book-open',
-        colorKey: 'green'
+        colorKey: 'green',
+        updatedAt: staleTag.updatedAt + 1
       })
     )
   })

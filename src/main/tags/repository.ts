@@ -49,7 +49,10 @@ const duplicateNameError = (error: unknown): never => {
 }
 
 class TagRepository {
-  constructor(private readonly getClient: TagClientProvider) {}
+  constructor(
+    private readonly getClient: TagClientProvider,
+    private readonly now: () => number = Date.now
+  ) {}
 
   private async ensureFavorite(client: TagClient): Promise<void> {
     await client.tag.upsert({
@@ -126,7 +129,8 @@ class TagRepository {
           name,
           nameKey,
           iconKey: request.iconKey,
-          colorKey: request.colorKey
+          colorKey: request.colorKey,
+          updatedAt: new Date(Math.max(this.now(), request.expectedUpdatedAt + 1))
         }
       })
       if (result.count === 0) throw new Error('Tag changed since it was loaded.')
