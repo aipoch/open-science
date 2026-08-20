@@ -17,7 +17,7 @@
 
 > Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
 
-Open Science est un banc de travail de recherche IA open source, local-first, destiné aux scientifiques et aux chercheurs. Il permet une recherche reproductible et inspectable, tous modèles confondus, grâce à des agents IA scientifiques, l'exécution Python et R, des connecteurs de données scientifiques, et une prise en charge multiplateforme de macOS, Windows et Linux. Créez un projet, décrivez votre objectif de recherche en langage naturel, et laissez les agents lire des fichiers, rechercher sur le web, exécuter du code, interroger des sources de données scientifiques, et produire des rapports, des tableaux et des figures avec une provenance traçable — le tout dans un seul espace de travail.
+Open Science est un banc de travail de recherche IA open source, local-first et indépendant des modèles, destiné aux scientifiques et aux chercheurs. Il permet une recherche reproductible et inspectable grâce à des agents IA scientifiques, l'exécution Python et R, des connecteurs de données scientifiques, et une prise en charge multiplateforme de macOS, Windows et Linux. Créez un projet, décrivez votre objectif de recherche en langage naturel, et laissez les agents lire des fichiers, rechercher sur le web, exécuter du code, interroger des sources de données scientifiques, et produire des rapports, des tableaux et des figures avec une provenance traçable — le tout dans un seul espace de travail.
 
 Open Science prend en charge la recherche computationnelle et intensive en données dans de nombreuses disciplines, notamment l'apprentissage automatique, la statistique, les sciences de la vie, la chimie, la science des matériaux, la physique et les sciences de l'environnement. Il accompagne le processus de recherche, de la revue de littérature et de l'élaboration d'hypothèses jusqu'à l'exécution de code, l'analyse de données, la simulation, la visualisation et la production de résultats de recherche traçables.
 
@@ -407,6 +407,8 @@ R : Oui. Modifiez un message utilisateur terminé et renvoyez-le pour créer une
 R : Les projets, sessions, fichiers, paramètres et identifiants configurés sont stockés localement par défaut. Le contenu nécessaire aux requêtes de modèle, aux recherches web ou aux appels de connecteurs peut tout de même être envoyé au service externe que vous avez sélectionné ; examinez donc les entrées sensibles et les politiques du fournisseur avant d'exécuter une tâche.
 
 ## Participer
+
+Open Science accueille les signalements de bogues, les propositions de fonctionnalités, les discussions de conception, les questions de la communauté et les contributions via GitHub, Discord, X et le site web d'AIPOCH. Choisissez le canal qui correspond le mieux à votre objectif, puis consultez le guide de contribution et les précautions relatives aux publications publiques avant de partager les détails de votre projet.
 
 | Canal                                                                    | Utilisez-le pour                                                                                   |
 | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
