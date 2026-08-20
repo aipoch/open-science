@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import { Check, Monitor, Moon, Sun } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
@@ -32,6 +33,9 @@ const THEME_OPTIONS = [
   Icon: typeof Monitor
 }[]
 
+const themeOptionLabel = (labelKey: string, t: TFunction): string =>
+  labelKey === 'System' ? t('System', { context: 'theme' }) : t(labelKey)
+
 // Three-way segmented control for the Settings > Appearance section. The selected segment carries a
 // raised surface; the whole group is a radiogroup so it reads correctly to assistive tech.
 export const ThemeSegmentedControl = (): React.JSX.Element => {
@@ -53,7 +57,7 @@ export const ThemeSegmentedControl = (): React.JSX.Element => {
           <RadioGroup.Item
             key={value}
             value={value}
-            aria-label={t(labelKey)}
+            aria-label={themeOptionLabel(labelKey, t)}
             className={cn(
               'inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors duration-150 ease-out motion-reduce:transition-none',
               selected
@@ -62,7 +66,7 @@ export const ThemeSegmentedControl = (): React.JSX.Element => {
             )}
           >
             <Icon className="size-3.5" strokeWidth={2} aria-hidden="true" />
-            <span>{t(labelKey)}</span>
+            <span>{themeOptionLabel(labelKey, t)}</span>
           </RadioGroup.Item>
         )
       })}
@@ -89,8 +93,8 @@ export const ThemePreferenceMenu = ({ className }: ThemePreferenceMenuProps): Re
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={t('Theme: {{theme}}', { theme: t(active.labelKey) })}
-          title={t('Theme: {{theme}}', { theme: t(active.labelKey) })}
+          aria-label={t('Theme: {{theme}}', { theme: themeOptionLabel(active.labelKey, t) })}
+          title={t('Theme: {{theme}}', { theme: themeOptionLabel(active.labelKey, t) })}
           className={cn(
             'inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
             className
@@ -105,7 +109,7 @@ export const ThemePreferenceMenu = ({ className }: ThemePreferenceMenuProps): Re
           <DropdownMenuItem key={value} onSelect={() => setPreference(value)} className="gap-2">
             <Icon className="size-4 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
             <span className="flex-1">
-              <span className="block leading-tight">{t(labelKey)}</span>
+              <span className="block leading-tight">{themeOptionLabel(labelKey, t)}</span>
               <span className="block whitespace-nowrap text-xs leading-tight text-muted-foreground">
                 {t(descriptionKey)}
               </span>

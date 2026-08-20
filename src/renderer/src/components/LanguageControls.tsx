@@ -34,7 +34,7 @@ const useOptions = (): { value: LanguagePreference; label: string; description?:
     value === 'system'
       ? {
           value,
-          label: t('System'),
+          label: t('System', { context: 'language' }),
           description: t('Match your device')
         }
       : { value, label: LANGUAGE_NAMES[value] }

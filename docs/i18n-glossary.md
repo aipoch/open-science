@@ -182,7 +182,11 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
 - Korean prose uses standard Korean spacing and punctuation. Retained Latin product terms stay
   unchanged and take surrounding spaces where they improve readability.
 - Russian prose uses sentence case and standard Russian punctuation. Use `ё` where it is the natural
-  spelling, and keep retained Latin product terms unchanged.
+  spelling, and keep retained Latin product terms unchanged. Use concise native UI phrasing:
+  `предпросмотр` (not `предварительный просмотр`), `API-ключ`, and infinitives for button actions.
+  Translate permission approval as `разрешение`; reserve `утвердить` / `утверждение` for execution
+  Plans. Avoid literal calques and unnecessary loanwords such as `опционально`, `кастомный`, and
+  `ревью` when established Russian UI terms are available.
 - One half-width space between Chinese and Latin script (`使用 Claude 模型`). No space between a
   number and a Chinese unit that reads as one word (`5 分钟` takes the space; `12k` is not split).
 - Second person is 你, never 您 — it matches the supportive, non-authoritative tone `docs/design.md`
