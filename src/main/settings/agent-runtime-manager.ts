@@ -301,7 +301,8 @@ export class AgentRuntimeManager {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
-  private reusableRuntimeProbe: ReusableRuntimeProbe | undefined
+  private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
+  private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -373,11 +374,11 @@ export class AgentRuntimeManager {
 
   async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
     const settings = await this.repository.getSettings()
-    const reusableProbe = this.takeReusableRuntimeProbe(settings)
+    const reusableProbe = this.takeReusableRuntimeProbe('preflightRuntimeProbe', settings)
     const runtimeProbe = reusableProbe ?? (await this.probeConfiguredRuntimes(settings))
     // A fresh Preflight probe is the hand-off to the immediately following full environment check.
     // A consumed environment result is intentionally not re-published after the trailing refresh.
-    if (!reusableProbe) this.storeReusableRuntimeProbe(runtimeProbe)
+    if (!reusableProbe) this.storeReusableRuntimeProbe('environmentCheckRuntimeProbe', runtimeProbe)
 
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const framework = getAgentFramework(agentFrameworkId)
@@ -418,7 +419,7 @@ export class AgentRuntimeManager {
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     const settings = await this.repository.getSettings()
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    const runtimeProbe = this.takeReusableRuntimeProbe(settings)
+    const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
     const [claudeRuntime, opencodeRuntime, codexRuntime] = await Promise.all([
       this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion),
       this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion),
@@ -1090,9 +1091,12 @@ export class AgentRuntimeManager {
     }
   }
 
-  private takeReusableRuntimeProbe(settings: StoredSettings): ConfiguredRuntimeProbe | undefined {
-    const reusable = this.reusableRuntimeProbe
-    this.reusableRuntimeProbe = undefined
+  private takeReusableRuntimeProbe(
+    slot: 'environmentCheckRuntimeProbe' | 'preflightRuntimeProbe',
+    settings: StoredSettings
+  ): ConfiguredRuntimeProbe | undefined {
+    const reusable = this[slot]
+    this[slot] = undefined
     if (!reusable) return undefined
     if (Date.now() - reusable.capturedAt > RUNTIME_PROBE_REUSE_WINDOW_MS) return undefined
     return reusable.probe.fingerprint === storedRuntimeProbeFingerprint(settings)
@@ -1100,8 +1104,11 @@ export class AgentRuntimeManager {
       : undefined
   }
 
-  private storeReusableRuntimeProbe(probe: ConfiguredRuntimeProbe): void {
-    this.reusableRuntimeProbe = { capturedAt: Date.now(), probe }
+  private storeReusableRuntimeProbe(
+    slot: 'environmentCheckRuntimeProbe' | 'preflightRuntimeProbe',
+    probe: ConfiguredRuntimeProbe
+  ): void {
+    this[slot] = { capturedAt: Date.now(), probe }
   }
 
   private storeResolvedRuntimeProbe(
@@ -1119,7 +1126,7 @@ export class AgentRuntimeManager {
       codexRuntime.codexComponents?.nativeCliPath ?? settings.codex?.nativePath
     const controlledAdapterPath =
       this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
-    this.storeReusableRuntimeProbe({
+    this.storeReusableRuntimeProbe('preflightRuntimeProbe', {
       fingerprint: runtimeProbeFingerprint({
         claudePath,
         opencodePath,

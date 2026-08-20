@@ -587,7 +587,7 @@ class RuntimeResourceProfiler {
   }
 
   async sampleNow(): Promise<void> {
-    await this.queueSample()
+    await this.queueSample(this.phase, true)
   }
 
   async finish(): Promise<RuntimeProfileResult> {
@@ -655,16 +655,21 @@ class RuntimeResourceProfiler {
     )
   }
 
-  private queueSample(): Promise<void> {
-    if (this.sampleInFlight) return this.sampleInFlight
-    const sampling = this.captureSample().finally(() => {
+  private queueSample(phase = this.phase, force = false): Promise<void> {
+    if (this.sampleInFlight && !force) return this.sampleInFlight
+    const previousSample = this.sampleInFlight
+    const sampling = (
+      previousSample
+        ? previousSample.then(() => this.captureSample(phase))
+        : this.captureSample(phase)
+    ).finally(() => {
       if (this.sampleInFlight === sampling) this.sampleInFlight = undefined
     })
     this.sampleInFlight = sampling
     return sampling
   }
 
-  private async captureSample(): Promise<void> {
+  private async captureSample(phase: string): Promise<void> {
     const application = this.application
     const rootPid = application?.process().pid
     if (!application || rootPid === undefined) return
@@ -694,7 +699,7 @@ class RuntimeResourceProfiler {
       mergeResourceSample(
         capturedAt,
         capturedAt - this.startedAt,
-        this.phase,
+        phase,
         tree,
         electronSnapshot.metrics,
         this.cpuTracker,

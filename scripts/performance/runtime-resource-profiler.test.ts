@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { ElectronApplication } from 'playwright'
+import { describe, expect, it, vi } from 'vitest'
 import type { ProcessSnapshotEntry, ProcessTreeSnapshot } from './process-snapshot'
 import {
   ProcessCpuTracker,
+  RuntimeResourceProfiler,
   mergeResourceSample,
   parseSessionHydrationDiagnostic,
   renderSummaryMarkdown,
@@ -169,6 +174,61 @@ describe('runtime resource profiler', () => {
     expect(() => validateSampleInterval(100)).toThrow('sampleIntervalMs')
     expect(validatePhase('notebook-tool')).toBe('notebook-tool')
     expect(() => validatePhase('User project')).toThrow('lowercase kebab-case')
+  })
+
+  it('finishes an in-flight sample under its starting phase before sampling a new phase', async () => {
+    const outputRoot = await mkdtemp(join(tmpdir(), 'open-science-runtime-profiler-'))
+    let releaseFirstSample: (() => void) | undefined
+    let markFirstSampleStarted: (() => void) | undefined
+    const firstSampleStarted = new Promise<void>((resolve) => {
+      markFirstSampleStarted = resolve
+    })
+    const firstSampleReleased = new Promise<void>((resolve) => {
+      releaseFirstSample = resolve
+    })
+    const readTree = vi.fn(async (): Promise<ProcessTreeSnapshot> => {
+      if (readTree.mock.calls.length === 1) {
+        markFirstSampleStarted?.()
+        await firstSampleReleased
+      }
+      return tree([processEntry()])
+    })
+    const evaluate = vi.fn().mockResolvedValueOnce('39.0.0').mockResolvedValue([])
+    const application = {
+      evaluate,
+      off: vi.fn(),
+      on: vi.fn(),
+      process: () => ({ pid: 10 })
+    } as unknown as ElectronApplication
+    const profiler = new RuntimeResourceProfiler({
+      outputRoot,
+      readTree,
+      runId: 'phase-transition',
+      sampleIntervalMs: 10_000
+    })
+
+    try {
+      const attaching = profiler.attach(application)
+      await firstSampleStarted
+      profiler.markPhase('recovery')
+      const samplingRecovery = profiler.sampleNow()
+      profiler.markPhase('idle')
+      const samplingIdle = profiler.sampleNow()
+      releaseFirstSample?.()
+      await attaching
+      await samplingRecovery
+      await samplingIdle
+
+      const result = await profiler.finish()
+
+      expect(result.summary.phases.startup.sampleCount).toBe(1)
+      expect(result.summary.phases.recovery.sampleCount).toBe(1)
+      expect(result.summary.phases.idle.sampleCount).toBe(1)
+      expect(readTree).toHaveBeenCalledTimes(3)
+    } finally {
+      profiler.abort()
+      await rm(outputRoot, { force: true, recursive: true })
+    }
   })
 
   it('retains only whitelisted scalar Session hydration performance fields', () => {

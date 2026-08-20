@@ -314,9 +314,7 @@ describe('AgentRuntimeManager', () => {
     expect(getCodexVersion).toHaveBeenCalledTimes(1)
   })
 
-  it('expires an unconsumed runtime probe instead of hiding an external runtime change', async () => {
-    let now = 100
-    vi.spyOn(Date, 'now').mockImplementation(() => now)
+  it('probes again for an independent Preflight call after an external runtime change', async () => {
     const claudePath = join(storageRoot, 'bin', 'claude')
     inventory.claude.set(claudePath, '2.1.0')
     await repository.setClaudeInfo({ resolvedPath: claudePath, version: '2.1.0' })
@@ -331,7 +329,6 @@ describe('AgentRuntimeManager', () => {
 
     await manager.getPreflight(providers)
     inventory.claude.set(claudePath, undefined)
-    now = 2_101
     const refreshed = await manager.getPreflight(providers)
 
     expect(refreshed.claudeReady).toBe(false)
