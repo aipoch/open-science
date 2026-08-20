@@ -59,6 +59,7 @@ const productionFiles = [
   'legacy-upload.ts',
   'message-delivery-owner.ts',
   'reconciliation-owner.ts',
+  'relay-projection.ts',
   'side-chat-owner.ts',
   'state-owner.ts'
 ] as const
@@ -969,7 +970,7 @@ describe('Session persistence coordinator architecture', () => {
         'state-owner.ts'
       ].sort()
     )
-    expect(sessionDependencies('state-owner.ts')).toEqual([])
+    expect(sessionDependencies('state-owner.ts')).toEqual(['relay-projection.ts'])
     expect(sessionDependencies('deletion-owner.ts')).toEqual(
       ['legacy-upload.ts', 'state-owner.ts'].sort()
     )
@@ -991,6 +992,7 @@ describe('Session persistence coordinator architecture', () => {
       'deletion-owner.ts',
       'message-delivery-owner.ts',
       'reconciliation-owner.ts',
+      'relay-projection.ts',
       'side-chat-owner.ts'
     ] as const) {
       expect(sessionDependencies(file), file).not.toContain('coordinator.ts')

@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
+import {
+  projectConversationMessage,
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../../../shared/conversation-graph'
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
@@ -42,6 +47,11 @@ const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionRe
   window.api.sessions.deleteSession(request)
 
 type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
+type OrderedSessionSaveRecovery = (
+  error: unknown,
+  submitted: PersistedChatSession,
+  retry: SessionPersistenceApi['saveSession']
+) => Promise<PersistedChatSession>
 
 type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'> & {
   saveLatestSession: (
@@ -49,6 +59,13 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions
   ) => Promise<PersistedChatSession>
+  saveSessionWithRecovery: (
+    session: PersistedChatSession,
+    options: SaveSessionOptions | undefined,
+    recover: OrderedSessionSaveRecovery
+  ) => Promise<PersistedChatSession>
+  seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
+  getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
   flush: () => Promise<void>
 }
 
@@ -135,7 +152,12 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
   baseItems: readonly Item[],
   submittedItems: readonly Item[],
   latestItems: readonly Item[],
-  ignoreUpdatedAt = false
+  ignoreUpdatedAt = false,
+  resolveConcurrent?: (
+    baseItem: Item | undefined,
+    submittedItem: Item,
+    latestItem: Item
+  ) => Item | undefined
 ): Item[] | undefined => {
   const baseById = new Map(baseItems.map((item) => [item.id, item]))
   const submittedById = new Map(submittedItems.map((item) => [item.id, item]))
@@ -161,13 +183,83 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
     } else if (graphItemsEqual(submittedItem, latestItem, ignoreUpdatedAt)) {
       selected = submittedItem
     } else {
-      return undefined
+      selected =
+        submittedItem && latestItem
+          ? resolveConcurrent?.(baseItem, submittedItem, latestItem)
+          : undefined
+      if (!selected) return undefined
     }
     if (selected) rebased.push(structuredClone(selected))
   }
 
   return rebased
 }
+
+// Message payloads have more than one legitimate owner: runtime streaming updates content while
+// artifact/upload finalization can update a disjoint field on the same durable identity. Apply a
+// property-level three-way merge, union append-only event evidence, and fail closed whenever both
+// sides changed the same semantic property differently.
+const rebaseMessageCollection = <Item extends { id: string; eventIds: string[] }>(
+  baseItems: readonly Item[],
+  submittedItems: readonly Item[],
+  latestItems: readonly Item[]
+): Item[] | undefined =>
+  rebaseConversationGraphCollection(
+    baseItems,
+    submittedItems,
+    latestItems,
+    false,
+    (baseItem, submittedItem, latestItem) => {
+      const rebased = structuredClone(latestItem) as Record<string, unknown>
+      const base = baseItem as Record<string, unknown> | undefined
+      const submitted = submittedItem as Record<string, unknown>
+      const latest = latestItem as Record<string, unknown>
+      const keys = new Set([
+        ...Object.keys(base ?? {}),
+        ...Object.keys(submitted),
+        ...Object.keys(latest)
+      ])
+
+      for (const key of keys) {
+        if (key === 'id') continue
+        if (key === 'eventIds') {
+          const baseEventIds = (base?.eventIds as string[] | undefined) ?? []
+          const submittedEventIds = submitted.eventIds as string[]
+          const latestEventIds = latest.eventIds as string[]
+          const onlyAppends = (candidate: readonly string[]): boolean =>
+            baseEventIds.every((eventId) => candidate.includes(eventId))
+          if (!onlyAppends(submittedEventIds) || !onlyAppends(latestEventIds)) return undefined
+          rebased.eventIds = [...new Set([...latestEventIds, ...submittedEventIds])]
+          continue
+        }
+        if (key === 'updatedAt') {
+          rebased.updatedAt = Math.max(
+            Number(base?.updatedAt ?? 0),
+            Number(submitted.updatedAt ?? 0),
+            Number(latest.updatedAt ?? 0)
+          )
+          continue
+        }
+
+        const baseValue = base?.[key]
+        const submittedValue = submitted[key]
+        const latestValue = latest[key]
+        const localChanged = !jsonValuesEqual(submittedValue, baseValue)
+        const remoteChanged = !jsonValuesEqual(latestValue, baseValue)
+        if (localChanged && remoteChanged && !jsonValuesEqual(submittedValue, latestValue)) {
+          return undefined
+        }
+        const selected = localChanged ? submittedValue : latestValue
+        if (selected === undefined && !Object.hasOwn(localChanged ? submitted : latest, key)) {
+          Reflect.deleteProperty(rebased, key)
+        } else {
+          rebased[key] = structuredClone(selected)
+        }
+      }
+
+      return rebased as Item
+    }
+  )
 
 const rebaseConversationGraph = (
   base: PersistedChatSession['conversationGraph'],
@@ -214,11 +306,7 @@ const rebaseConversationGraph = (
     latest.branches,
     true
   )
-  const messages = rebaseConversationGraphCollection(
-    base.messages,
-    submitted.messages,
-    latest.messages
-  )
+  const messages = rebaseMessageCollection(base.messages, submitted.messages, latest.messages)
   const activities = rebaseConversationGraphCollection(
     base.activities,
     submitted.activities,
@@ -280,6 +368,9 @@ const rebaseSessionAfterRevisionConflict = (
   latest: PersistedChatSession
 ): PersistedChatSession | undefined => {
   const rebased: PersistedChatSession = structuredClone(latest)
+  const graphOwnsCompatibilityProjections = Boolean(
+    base.conversationGraph && submitted.conversationGraph && latest.conversationGraph
+  )
   const keys = new Set([
     ...Object.keys(base),
     ...Object.keys(submitted),
@@ -290,6 +381,12 @@ const rebaseSessionAfterRevisionConflict = (
     latest.status === 'waiting-plan-approval'
 
   for (const key of keys) {
+    if (
+      graphOwnsCompatibilityProjections &&
+      (key === 'messages' || key === 'activities' || key === 'activityGroups')
+    ) {
+      continue
+    }
     if (
       MAIN_OWNED_SESSION_FIELDS.has(key) ||
       key === 'updatedAt' ||
@@ -304,14 +401,25 @@ const rebaseSessionAfterRevisionConflict = (
     if (!localChanged) continue
     const remoteChanged = !sessionFieldValuesEqual(key, latestValue, baseValue)
     if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue)) {
-      if (key !== 'conversationGraph') return undefined
-      const graph = rebaseConversationGraph(
-        baseValue as PersistedChatSession['conversationGraph'],
-        submittedValue as PersistedChatSession['conversationGraph'],
-        latestValue as PersistedChatSession['conversationGraph']
-      )
-      if (!graph) return undefined
-      rebased.conversationGraph = graph
+      if (key === 'messages') {
+        const messages = rebaseMessageCollection(
+          baseValue as PersistedChatSession['messages'],
+          submittedValue as PersistedChatSession['messages'],
+          latestValue as PersistedChatSession['messages']
+        )
+        if (!messages) return undefined
+        rebased.messages = messages
+      } else if (key === 'conversationGraph') {
+        const graph = rebaseConversationGraph(
+          baseValue as PersistedChatSession['conversationGraph'],
+          submittedValue as PersistedChatSession['conversationGraph'],
+          latestValue as PersistedChatSession['conversationGraph']
+        )
+        if (!graph) return undefined
+        rebased.conversationGraph = graph
+      } else {
+        return undefined
+      }
       continue
     }
 
@@ -320,6 +428,21 @@ const rebaseSessionAfterRevisionConflict = (
     } else {
       Reflect.deleteProperty(rebased, key)
     }
+  }
+
+  // messages/activities/activityGroups are compatibility views of the active Branch. Rebasing them
+  // independently can project a concurrent Main insertion from the previous Branch onto a locally
+  // selected or newly edited Branch. Once all three snapshots carry a graph, derive those flat views
+  // from the rebased graph instead of treating them as separate authorities.
+  if (graphOwnsCompatibilityProjections && rebased.conversationGraph) {
+    rebased.messages = resolveActiveConversationMessages(rebased.conversationGraph).map(
+      projectConversationMessage
+    )
+    const projection = resolveActiveConversationActivities(rebased.conversationGraph)
+    if (projection.activities.length > 0) rebased.activities = projection.activities
+    else delete rebased.activities
+    if (projection.activityGroups.length > 0) rebased.activityGroups = projection.activityGroups
+    else delete rebased.activityGroups
   }
 
   rebased.revision = sessionRevision(latest)
@@ -345,6 +468,7 @@ const createOrderedSessionPersistence = (
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
   const acknowledgedRevisions = new Map<string, number>()
+  const acknowledgedSessions = new Map<string, PersistedChatSession>()
   let pendingLatest:
     | {
         target: string
@@ -353,6 +477,23 @@ const createOrderedSessionPersistence = (
       }
     | undefined
   let pendingLatestPromise: Promise<PersistedChatSession> | undefined
+
+  const acknowledgeSession = (session: PersistedChatSession): void => {
+    const revision = sessionRevision(session)
+    const acknowledged = acknowledgedSessions.get(session.id)
+    if (
+      acknowledged &&
+      (sessionRevision(acknowledged) > revision ||
+        (sessionRevision(acknowledged) === revision && acknowledged.updatedAt > session.updatedAt))
+    ) {
+      return
+    }
+    acknowledgedRevisions.set(
+      session.id,
+      Math.max(acknowledgedRevisions.get(session.id) ?? 0, revision)
+    )
+    acknowledgedSessions.set(session.id, structuredClone(session))
+  }
 
   const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
     pendingLatest = undefined
@@ -363,6 +504,22 @@ const createOrderedSessionPersistence = (
       () => undefined
     )
     return run
+  }
+
+  const saveSubmittedSession = async (
+    session: PersistedChatSession,
+    options?: SaveSessionOptions
+  ): Promise<PersistedChatSession> => {
+    const submitted = structuredClone(session)
+    submitted.revision = Math.max(
+      sessionRevision(submitted),
+      acknowledgedRevisions.get(submitted.id) ?? 0
+    )
+    const durable = options
+      ? await api.saveSession(submitted, options)
+      : await api.saveSession(submitted)
+    acknowledgeSession(durable)
+    return durable
   }
 
   const saveLatestSession = (
@@ -383,10 +540,7 @@ const createOrderedSessionPersistence = (
         pendingLatestPromise = undefined
       }
       return entry.task(entry.options).then((durable) => {
-        acknowledgedRevisions.set(
-          durable.id,
-          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
-        )
+        acknowledgeSession(durable)
         return durable
       })
     }
@@ -402,21 +556,29 @@ const createOrderedSessionPersistence = (
 
   return {
     saveLatestSession,
-    saveSession: (session, options) =>
+    seedAcknowledgedSessions: (sessions) => {
+      for (const session of sessions) {
+        acknowledgedRevisions.set(session.id, sessionRevision(session))
+        acknowledgedSessions.set(session.id, structuredClone(session))
+      }
+    },
+    getAcknowledgedSession: (sessionId) => {
+      const session = acknowledgedSessions.get(sessionId)
+      return session ? structuredClone(session) : undefined
+    },
+    saveSession: (session, options) => enqueue(() => saveSubmittedSession(session, options)),
+    saveSessionWithRecovery: (session, options, recover) =>
       enqueue(async () => {
         const submitted = structuredClone(session)
         submitted.revision = Math.max(
           sessionRevision(submitted),
           acknowledgedRevisions.get(submitted.id) ?? 0
         )
-        const durable = options
-          ? await api.saveSession(submitted, options)
-          : await api.saveSession(submitted)
-        acknowledgedRevisions.set(
-          durable.id,
-          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
-        )
-        return durable
+        try {
+          return await saveSubmittedSession(submitted, options)
+        } catch (error) {
+          return recover(error, submitted, saveSubmittedSession)
+        }
       }),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
     flush: () => queue.then(() => undefined)
@@ -435,16 +597,43 @@ const liveSessionPersistence = createOrderedSessionPersistence({
 
 const unresolvedSessionRevisionConflictTargets = new Set<string>()
 
-const saveSessionInOrder = async (session: PersistedChatSession): Promise<PersistedChatSession> => {
+const saveSessionInOrder = async (
+  session: PersistedChatSession,
+  persistence: OrderedSessionPersistence = liveSessionPersistence,
+  api: Pick<SessionPersistenceApi, 'loadOne'> = {
+    loadOne: (request) => window.api.sessions.loadOne(request)
+  }
+): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
-    const durable = await liveSessionPersistence.saveSession(session)
+    const durable = await persistence.saveSessionWithRecovery(
+      session,
+      undefined,
+      async (error, submitted, retry) => {
+        if (!isSessionRevisionConflictError(error)) throw error
+        const base = persistence.getAcknowledgedSession(submitted.id)
+        if (!base) throw error
+
+        let latest: PersistedChatSession | undefined
+        try {
+          latest = await api.loadOne({
+            projectId: submitted.projectId,
+            sessionId: submitted.id
+          })
+        } catch {
+          throw error
+        }
+        const rebased = latest
+          ? rebaseSessionAfterRevisionConflict(base, submitted, latest)
+          : undefined
+        if (!rebased) throw error
+        return retry(rebased)
+      }
+    )
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
   } catch (error) {
-    if (isSessionRevisionConflictError(error)) {
-      unresolvedSessionRevisionConflictTargets.add(target)
-    }
+    if (isSessionRevisionConflictError(error)) unresolvedSessionRevisionConflictTargets.add(target)
     throw error
   }
 }
@@ -744,6 +933,7 @@ const createStoreSaver = (
   const acknowledgedSessions = new Map(
     initial.sessions.map((session) => [session.id, toPersistedSession(session)])
   )
+  persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
 
   const recoverRevisionConflict = async (
     error: unknown,
@@ -854,22 +1044,23 @@ const createStoreSaver = (
                 let durableSession: PersistedChatSession
                 let recoveredRevisionConflict = false
                 try {
-                  durableSession = saveOptions
-                    ? await persistence.saveSession(persisted, saveOptions)
-                    : await persistence.saveSession(persisted)
-                } catch (error) {
-                  try {
-                    durableSession = await recoverRevisionConflict(
-                      error,
-                      persisted,
-                      saveOptions,
-                      api.saveSession
-                    )
-                    recoveredRevisionConflict = true
-                  } catch (finalError) {
-                    reportPersistenceError(finalError, 'session-save')
-                    throw finalError
-                  }
+                  durableSession = await persistence.saveSessionWithRecovery(
+                    persisted,
+                    saveOptions,
+                    async (error, submitted, retry) => {
+                      const recovered = await recoverRevisionConflict(
+                        error,
+                        submitted,
+                        saveOptions,
+                        retry
+                      )
+                      recoveredRevisionConflict = true
+                      return recovered
+                    }
+                  )
+                } catch (finalError) {
+                  reportPersistenceError(finalError, 'session-save')
+                  throw finalError
                 }
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 acknowledgedSessions.set(session.id, durableSession)
