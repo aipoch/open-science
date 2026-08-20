@@ -19916,9 +19916,7 @@ describe('ACP runtime session management', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     expect(fakeAgent.newSessions[0].mcpServers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: 'open-science-artifacts' })
-      ])
+      expect.arrayContaining([expect.objectContaining({ name: 'open-science-artifacts' })])
     )
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
