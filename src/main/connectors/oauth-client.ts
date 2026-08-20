@@ -142,6 +142,7 @@ export type OAuthClientProviderOptions = {
   serverId: string
   redirectUrl: string
   config: StoredCustomMcpOAuthConfig
+  clientSecret?: string
   state?: StoredCustomMcpOAuthState
   saveState?: (state: StoredCustomMcpOAuthState) => Promise<void>
   openExternal?: (url: string) => Promise<void> | void
@@ -158,6 +159,12 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   private readonly stateValue = randomUUID()
 
   constructor(private readonly options: OAuthClientProviderOptions) {
+    if (options.config.clientId && !options.config.authorizationServerUrl) {
+      throw new Error('Authorization server URL is required for a pre-registered client.')
+    }
+    if (options.clientSecret && !options.config.clientId) {
+      throw new Error('Client ID is required when a client secret is configured.')
+    }
     this.oauthState = { ...(options.state ?? {}) }
     this.oauthStateId = options.serverId
     this.saveState = options.saveState
@@ -178,6 +185,8 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
       redirect_uris: [this.options.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
+      // This metadata is used only for CIMD/DCR. For a pre-registered client the SDK selects the
+      // token-endpoint auth method from its client information and the authorization-server metadata.
       token_endpoint_auth_method: 'none',
       ...(this.options.config.scopes?.length ? { scope: this.options.config.scopes.join(' ') } : {})
     }
@@ -188,6 +197,15 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    // If pre-registered client credentials are configured, use them directly.
+    // This bypasses both URL-based client IDs (SEP-991) and dynamic client registration (RFC 7591).
+    if (this.options.config.clientId) {
+      return {
+        client_id: this.options.config.clientId,
+        ...(this.options.clientSecret ? { client_secret: this.options.clientSecret } : {})
+      }
+    }
+
     const clientInformation = this.oauthState.clientInformation
     if (
       clientInformation &&
@@ -243,17 +261,19 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    this.assertStaticClientIssuer(state)
     this.oauthState.discoveryState = state
     await this.persist()
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
-    return (
+    const state =
       this.oauthState.discoveryState ??
       (this.options.config.authorizationServerUrl
         ? { authorizationServerUrl: this.options.config.authorizationServerUrl }
         : undefined)
-    )
+    if (state) this.assertStaticClientIssuer(state)
+    return state
   }
 
   async invalidateCredentials(
@@ -268,5 +288,23 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
 
   private persist(): Promise<void> {
     return this.saveState?.({ ...this.oauthState }) ?? Promise.resolve()
+  }
+
+  private assertStaticClientIssuer(state: OAuthDiscoveryState): void {
+    const configuredIssuer = this.options.config.clientId
+      ? this.options.config.authorizationServerUrl
+      : undefined
+    if (!configuredIssuer) return
+
+    const expected = new URL(configuredIssuer).toString()
+    const discovered = [
+      state.authorizationServerUrl,
+      state.authorizationServerMetadata?.issuer
+    ].filter((value): value is string => Boolean(value))
+    if (discovered.some((value) => new URL(value).toString() !== expected)) {
+      throw new Error(
+        'Discovered authorization server does not match the pre-registered client issuer'
+      )
+    }
   }
 }

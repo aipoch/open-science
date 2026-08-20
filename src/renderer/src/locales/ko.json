@@ -3116,5 +3116,18 @@
   "Selected hosts are used to run jobs.": "선택한 호스트에서 작업을 실행합니다.",
   "Open settings for {{name}}": "{{name}} 설정 열기",
   "Change execution targets": "실행 대상 변경",
-  "Compute execution targets: {{names}}": "컴퓨팅 실행 대상: {{names}}"
+  "Compute execution targets: {{names}}": "컴퓨팅 실행 대상: {{names}}",
+  "Client ID": "클라이언트 ID",
+  "Pre-registered client ID": "사전 등록된 클라이언트 ID",
+  "Client secret": "클라이언트 시크릿",
+  "Leave blank to keep the saved secret": "저장된 시크릿을 유지하려면 비워 두세요",
+  "Pre-registered client secret": "사전 등록된 클라이언트 시크릿",
+  "The saved client secret will be removed.": "저장된 클라이언트 시크릿이 제거됩니다.",
+  "A client secret is saved securely.": "클라이언트 시크릿이 안전하게 저장되어 있습니다.",
+  "Keep saved client secret": "저장된 클라이언트 시크릿 유지",
+  "Remove saved client secret": "저장된 클라이언트 시크릿 제거",
+  "This imported Connector requires a client secret entered locally.": "가져온 커넥터에는 로컬에서 입력한 클라이언트 시크릿이 필요합니다.",
+  "Authorization server URL is required for a pre-registered client.": "사전 등록된 클라이언트에는 인증 서버 URL이 필요합니다.",
+  "Client ID is required when a client secret is configured.": "클라이언트 시크릿을 구성할 때 클라이언트 ID가 필요합니다.",
+  "Client metadata URL cannot be combined with a pre-registered client.": "클라이언트 메타데이터 URL은 사전 등록된 클라이언트와 함께 사용할 수 없습니다."
 }

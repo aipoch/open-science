@@ -3118,5 +3118,18 @@
   "Selected hosts are used to run jobs.": "所选主机用于运行任务。",
   "Open settings for {{name}}": "打开 {{name}} 的设置",
   "Change execution targets": "更改执行目标",
-  "Compute execution targets: {{names}}": "计算执行目标：{{names}}"
+  "Compute execution targets: {{names}}": "计算执行目标：{{names}}",
+  "Client ID": "客户端 ID",
+  "Pre-registered client ID": "预注册的客户端 ID",
+  "Client secret": "客户端密钥",
+  "Leave blank to keep the saved secret": "留空以保留已保存的密钥",
+  "Pre-registered client secret": "预注册的客户端密钥",
+  "The saved client secret will be removed.": "已保存的客户端密钥将被移除。",
+  "A client secret is saved securely.": "客户端密钥已安全保存。",
+  "Keep saved client secret": "保留已保存的客户端密钥",
+  "Remove saved client secret": "移除已保存的客户端密钥",
+  "This imported Connector requires a client secret entered locally.": "此导入的连接器需要在本地输入客户端密钥。",
+  "Authorization server URL is required for a pre-registered client.": "预注册客户端必须提供授权服务器 URL。",
+  "Client ID is required when a client secret is configured.": "配置客户端密钥时必须提供客户端 ID。",
+  "Client metadata URL cannot be combined with a pre-registered client.": "客户端元数据 URL 不能与预注册客户端同时使用。"
 }

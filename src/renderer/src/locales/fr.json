@@ -3390,5 +3390,18 @@
   "Open settings for {{name}}": "Ouvrir les paramètres de {{name}}",
   "Change execution targets": "Modifier les cibles d’exécution",
   "Compute execution target: {{name}}": "Cible d’exécution de calcul : {{name}}",
-  "Compute execution targets: {{names}}": "Cibles d’exécution de calcul : {{names}}"
+  "Compute execution targets: {{names}}": "Cibles d’exécution de calcul : {{names}}",
+  "Client ID": "ID client",
+  "Pre-registered client ID": "ID client préenregistré",
+  "Client secret": "Secret client",
+  "Leave blank to keep the saved secret": "Laissez vide pour conserver le secret enregistré",
+  "Pre-registered client secret": "Secret client préenregistré",
+  "The saved client secret will be removed.": "Le secret client enregistré sera supprimé.",
+  "A client secret is saved securely.": "Un secret client est enregistré de manière sécurisée.",
+  "Keep saved client secret": "Conserver le secret client enregistré",
+  "Remove saved client secret": "Supprimer le secret client enregistré",
+  "This imported Connector requires a client secret entered locally.": "Ce connecteur importé nécessite un secret client saisi localement.",
+  "Authorization server URL is required for a pre-registered client.": "L’URL du serveur d’autorisation est requise pour un client préenregistré.",
+  "Client ID is required when a client secret is configured.": "L’ID client est requis lorsqu’un secret client est configuré.",
+  "Client metadata URL cannot be combined with a pre-registered client.": "L’URL des métadonnées client ne peut pas être combinée avec un client préenregistré."
 }

@@ -260,19 +260,23 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
     const oauth: NonNullable<StoredCustomMcpServer['oauth']> = {}
     const clientMetadataUrl = asString(value.oauth.clientMetadataUrl)
     const authorizationServerUrl = asString(value.oauth.authorizationServerUrl)
+    const clientId = asString(value.oauth.clientId)
     const scopes = asStringArray(value.oauth.scopes)
       .map((scope) => scope.trim())
       .filter(Boolean)
     if (clientMetadataUrl) oauth.clientMetadataUrl = clientMetadataUrl
     if (authorizationServerUrl) oauth.authorizationServerUrl = authorizationServerUrl
     if (scopes.length) oauth.scopes = [...new Set(scopes)]
+    if (clientId) oauth.clientId = clientId
     server.oauth = oauth
   }
   const oauthRef = asString(value.oauthRef)
+  const oauthClientSecretRef = asString(value.oauthClientSecretRef)
   if (server.oauth) {
     delete server.headers
     delete server.headerRefs
     if (oauthRef) server.oauthRef = oauthRef
+    if (oauthClientSecretRef) server.oauthClientSecretRef = oauthClientSecretRef
   }
   const trustedAt = asNumber(value.trustedAt)
   if (trustedAt !== undefined) server.trustedAt = trustedAt

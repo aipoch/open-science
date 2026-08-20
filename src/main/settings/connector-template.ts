@@ -23,6 +23,7 @@ export type ConnectorTemplateSource = {
   environmentNames?: string[]
   headerNames?: string[]
   oauth?: ConnectorTemplateDefinition['oauth']
+  hasOAuthClientSecret?: boolean
 }
 
 type ParseOptions = {
@@ -43,8 +44,13 @@ const ROOT_FIELDS = new Set([
   'required_secrets',
   'oauth'
 ])
-const SECRET_FIELDS = new Set(['environment', 'headers'])
-const OAUTH_FIELDS = new Set(['client_metadata_url', 'authorization_server_url', 'scopes'])
+const SECRET_FIELDS = new Set(['environment', 'headers', 'oauth_client_secret'])
+const OAUTH_FIELDS = new Set([
+  'client_metadata_url',
+  'authorization_server_url',
+  'scopes',
+  'client_id'
+])
 const TRANSPORTS = new Set<CustomServerTransport>(['stdio', 'streamable_http', 'sse'])
 const SUSPICIOUS_QUERY_KEYS = new Set([
   'accesstoken',
@@ -270,10 +276,12 @@ const readOAuth = (
     maxItems: 32,
     maxLength: 128
   })
+  const clientId = readString(value.client_id, diagnostics, 'oauth.client_id', { max: 2_048 })
   return {
     ...(clientMetadataUrl ? { clientMetadataUrl } : {}),
     ...(authorizationServerUrl ? { authorizationServerUrl } : {}),
-    ...(scopes ? { scopes } : {})
+    ...(scopes ? { scopes } : {}),
+    ...(clientId ? { clientId } : {})
   }
 }
 
@@ -304,9 +312,20 @@ const readRequiredSecrets = (
     maxLength: 128,
     pattern: SAFE_HEADER_NAME
   })
+  const oauthClientSecret = value.oauth_client_secret
+  if (oauthClientSecret !== undefined && oauthClientSecret !== true) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.type',
+      'required_secrets.oauth_client_secret must be true.',
+      'required_secrets.oauth_client_secret'
+    )
+  }
   return {
     ...(environment ? { environment } : {}),
-    ...(headers ? { headers } : {})
+    ...(headers ? { headers } : {}),
+    ...(oauthClientSecret === true ? { oauthClientSecret: true } : {})
   }
 }
 
@@ -407,7 +426,8 @@ export const parseConnectorTemplate = (
   }
 
   rejectUnknownFields(parsed, ROOT_FIELDS, diagnostics)
-  if (parsed.schema_version !== 1) {
+  const schemaVersion = parsed.schema_version === 1 ? parsed.schema_version : undefined
+  if (!schemaVersion) {
     diagnostic(
       diagnostics,
       'error',
@@ -518,6 +538,33 @@ export const parseConnectorTemplate = (
       'OAuth and required header secrets cannot be configured together.'
     )
   }
+  if (oauth?.clientId && !oauth.authorizationServerUrl) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.oauth-issuer',
+      'A pre-registered OAuth client requires authorization_server_url.',
+      'oauth.authorization_server_url'
+    )
+  }
+  if (oauth?.clientId && oauth.clientMetadataUrl) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.oauth-registration',
+      'client_id cannot be combined with client_metadata_url.',
+      'oauth.client_id'
+    )
+  }
+  if (requiredSecrets?.oauthClientSecret && !oauth?.clientId) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.oauth-client-secret',
+      'An OAuth client secret requires oauth.client_id.',
+      'required_secrets.oauth_client_secret'
+    )
+  }
   validatePortableCommand(command, diagnostics)
   validateArgs(args, diagnostics)
 
@@ -542,11 +589,11 @@ export const parseConnectorTemplate = (
     }
   }
 
-  if (hasErrors(diagnostics) || !name || !displayName || !transport) {
+  if (hasErrors(diagnostics) || !schemaVersion || !name || !displayName || !transport) {
     return { diagnostics, ready: false }
   }
   const definition: ConnectorTemplateDefinition = {
-    schemaVersion: 1,
+    schemaVersion,
     kind: 'open-science.connector',
     name,
     displayName,
@@ -573,7 +620,19 @@ const templateJson = (definition: ConnectorTemplateDefinition): string =>
       ...(definition.command ? { command: definition.command } : {}),
       ...(definition.args ? { args: definition.args } : {}),
       ...(definition.url ? { url: definition.url } : {}),
-      ...(definition.requiredSecrets ? { required_secrets: definition.requiredSecrets } : {}),
+      ...(definition.requiredSecrets
+        ? {
+            required_secrets: {
+              ...(definition.requiredSecrets.environment
+                ? { environment: definition.requiredSecrets.environment }
+                : {}),
+              ...(definition.requiredSecrets.headers
+                ? { headers: definition.requiredSecrets.headers }
+                : {}),
+              ...(definition.requiredSecrets.oauthClientSecret ? { oauth_client_secret: true } : {})
+            }
+          }
+        : {}),
       ...(definition.oauth
         ? {
             oauth: {
@@ -583,7 +642,8 @@ const templateJson = (definition: ConnectorTemplateDefinition): string =>
               ...(definition.oauth.authorizationServerUrl
                 ? { authorization_server_url: definition.oauth.authorizationServerUrl }
                 : {}),
-              ...(definition.oauth.scopes ? { scopes: definition.oauth.scopes } : {})
+              ...(definition.oauth.scopes ? { scopes: definition.oauth.scopes } : {}),
+              ...(definition.oauth.clientId ? { client_id: definition.oauth.clientId } : {})
             }
           }
         : {})
@@ -605,13 +665,14 @@ export const buildConnectorTemplateExport = (
     ...(source.command ? { command: source.command } : {}),
     ...(source.args?.length ? { args: [...source.args] } : {}),
     ...(source.url ? { url: source.url } : {}),
-    ...(source.environmentNames?.length || source.headerNames?.length
+    ...(source.environmentNames?.length || source.headerNames?.length || source.hasOAuthClientSecret
       ? {
           requiredSecrets: {
             ...(source.environmentNames?.length
               ? { environment: [...new Set(source.environmentNames)] }
               : {}),
-            ...(source.headerNames?.length ? { headers: [...new Set(source.headerNames)] } : {})
+            ...(source.headerNames?.length ? { headers: [...new Set(source.headerNames)] } : {}),
+            ...(source.hasOAuthClientSecret ? { oauthClientSecret: true } : {})
           }
         }
       : {}),

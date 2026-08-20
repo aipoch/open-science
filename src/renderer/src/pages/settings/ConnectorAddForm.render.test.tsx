@@ -417,6 +417,49 @@ describe('ConnectorAddForm (remote server)', () => {
       }
     })
   })
+
+  it('requires an imported OAuth client secret locally and submits pre-registered credentials', async () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          initialTemplate={{
+            schemaVersion: 1,
+            kind: 'open-science.connector',
+            name: 'oauth-import',
+            displayName: 'OAuth Import',
+            transport: 'streamable_http',
+            url: 'https://mcp.example.test',
+            oauth: {
+              authorizationServerUrl: 'https://auth.example.test',
+              clientId: 'registered-client'
+            },
+            requiredSecrets: { oauthClientSecret: true }
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="Client ID"]')?.value).toBe(
+      'registered-client'
+    )
+    checkTrust()
+    expect(addButton()?.disabled).toBe(true)
+    setValue('Client secret', 'local-client-secret')
+    expect(addButton()?.disabled).toBe(false)
+
+    await act(async () => addButton()?.click())
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        oauth: expect.objectContaining({
+          authorizationServerUrl: 'https://auth.example.test',
+          clientId: 'registered-client',
+          clientSecret: 'local-client-secret'
+        })
+      })
+    )
+  })
 })
 
 describe('ConnectorAddForm (edit)', () => {
@@ -608,6 +651,49 @@ describe('ConnectorAddForm (edit)', () => {
         headers: { Authorization: 'Bearer replacement' },
         oauth: null
       })
+    )
+  })
+
+  it('keeps a saved OAuth client secret when blank and removes it only explicitly', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    const oauthServer = {
+      id: 'remote-static',
+      name: 'remote-static',
+      displayName: 'Remote static',
+      transport: 'streamable_http' as const,
+      enabled: false,
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        hasTokens: false,
+        hasClientSecret: true
+      }
+    }
+    act(() => {
+      root.render(<ConnectorAddForm editServer={oauthServer} onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => save?.click())
+    expect(updateCustomServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        oauth: expect.not.objectContaining({ clientSecret: expect.anything() })
+      })
+    )
+
+    updateCustomServer.mockClear()
+    setValue('Client secret', 'replacement-that-must-not-be-saved')
+    const remove = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Remove saved client secret'
+    )
+    act(() => remove?.click())
+    await act(async () => save?.click())
+    expect(updateCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({ oauth: expect.objectContaining({ clientSecret: null }) })
     )
   })
 

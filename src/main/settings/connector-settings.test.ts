@@ -588,7 +588,8 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers[0].oauth).toEqual({
       authorizationServerUrl: 'https://example.com/oauth',
       scopes: ['openid', 'profile'],
-      hasTokens: false
+      hasTokens: false,
+      hasClientSecret: false
     })
     expect(snapshot.customServers[0].availability).toBe('unauthenticated')
     await expect(service.setCustomServerEnabled({ id, enabled: true })).rejects.toThrow('Sign in')
@@ -609,6 +610,123 @@ describe('ConnectorSettingsModule', () => {
 
     const enabled = await service.setCustomServerEnabled({ id, enabled: true })
     expect(enabled.customServers[0].enabled).toBe(true)
+  })
+
+  it('stores a pre-registered client secret as an encrypted ref and applies explicit edit semantics', async () => {
+    const added = await addCustomServer({
+      name: 'oauth-static',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        clientSecret: 'local-client-secret'
+      }
+    })
+    const id = added.customServers[0].id
+
+    expect(added.customServers[0].oauth).toEqual({
+      authorizationServerUrl: 'https://auth.example.test',
+      clientId: 'registered-client',
+      hasTokens: false,
+      hasClientSecret: true
+    })
+    expect(JSON.stringify(added)).not.toContain('local-client-secret')
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).toContain('oauthClientSecretRef')
+    expect(storedJson).toContain('registered-client')
+    expect(storedJson).not.toContain('local-client-secret')
+    expect((await service.getConnectors())?.customMcpServers?.[0].oauthClientSecret).toBe(
+      'local-client-secret'
+    )
+    const exported = await service.buildCustomServerTemplateExport(id)
+    expect(exported.contents).not.toContain('local-client-secret')
+    expect(JSON.parse(exported.contents!).schema_version).toBe(1)
+    expect(JSON.parse(exported.contents!).oauth).toEqual({
+      authorization_server_url: 'https://auth.example.test',
+      client_id: 'registered-client'
+    })
+    expect(JSON.parse(exported.contents!).required_secrets).toEqual({
+      oauth_client_secret: true
+    })
+
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'static-token', token_type: 'Bearer' }
+    })
+    await service.updateCustomServer({
+      id,
+      displayName: 'Renamed static client',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client'
+      }
+    })
+    let stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauthClientSecretRef).toBeDefined()
+    expect(stored?.oauthRef).toBeDefined()
+
+    const cleared = await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        clientSecret: null
+      }
+    })
+    stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauthClientSecretRef).toBeUndefined()
+    expect(stored?.oauthRef).toBeUndefined()
+    expect(cleared.customServers[0].oauth?.hasClientSecret).toBe(false)
+  })
+
+  it('requires an authorization-server URL for a pre-registered client', async () => {
+    await expect(
+      addCustomServer({
+        name: 'oauth-static-without-issuer',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth: { clientId: 'registered-client' }
+      })
+    ).rejects.toThrow('Authorization server URL is required')
+  })
+
+  it('clears a saved client secret when its bound authorization-server issuer changes', async () => {
+    const added = await addCustomServer({
+      name: 'oauth-static-issuer-change',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth-one.example.test',
+        clientId: 'registered-client',
+        clientSecret: 'issuer-bound-secret'
+      }
+    })
+    const id = added.customServers[0].id
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'issuer-token', token_type: 'Bearer' }
+    })
+
+    const updated = await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth-two.example.test',
+        clientId: 'registered-client'
+      }
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauthClientSecretRef).toBeUndefined()
+    expect(stored?.oauthRef).toBeUndefined()
+    expect(updated.customServers[0]).toMatchObject({
+      enabled: false,
+      oauth: { hasClientSecret: false, hasTokens: false }
+    })
   })
 
   it('clears OAuth credentials when the remote endpoint changes', async () => {

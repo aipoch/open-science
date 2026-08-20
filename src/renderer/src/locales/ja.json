@@ -3118,5 +3118,18 @@
   "Selected hosts are used to run jobs.": "選択したホストでジョブを実行します。",
   "Open settings for {{name}}": "{{name}} の設定を開く",
   "Change execution targets": "実行先を変更",
-  "Compute execution targets: {{names}}": "Compute 実行先：{{names}}"
+  "Compute execution targets: {{names}}": "Compute 実行先：{{names}}",
+  "Client ID": "クライアント ID",
+  "Pre-registered client ID": "事前登録済みクライアント ID",
+  "Client secret": "クライアントシークレット",
+  "Leave blank to keep the saved secret": "保存済みのシークレットを維持するには空欄にします",
+  "Pre-registered client secret": "事前登録済みクライアントシークレット",
+  "The saved client secret will be removed.": "保存済みのクライアントシークレットは削除されます。",
+  "A client secret is saved securely.": "クライアントシークレットは安全に保存されています。",
+  "Keep saved client secret": "保存済みのクライアントシークレットを維持",
+  "Remove saved client secret": "保存済みのクライアントシークレットを削除",
+  "This imported Connector requires a client secret entered locally.": "このインポートされたコネクタには、ローカルで入力するクライアントシークレットが必要です。",
+  "Authorization server URL is required for a pre-registered client.": "事前登録済みクライアントには認可サーバー URL が必要です。",
+  "Client ID is required when a client secret is configured.": "クライアントシークレットを設定する場合はクライアント ID が必要です。",
+  "Client metadata URL cannot be combined with a pre-registered client.": "クライアントメタデータ URL を事前登録済みクライアントと併用することはできません。"
 }

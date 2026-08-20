@@ -189,9 +189,13 @@ describe('sanitizeCustomMcpServer', () => {
         oauth: {
           clientMetadataUrl: 'https://client.example.test/metadata.json',
           authorizationServerUrl: 42,
-          scopes: ['openid', ' openid ', 'profile', 42]
+          scopes: ['openid', ' openid ', 'profile', 42],
+          clientId: 'registered-client',
+          clientSecret: 'must-not-be-persisted'
         },
-        oauthRef: 'encrypted-oauth-state'
+        oauthRef: 'encrypted-oauth-state',
+        oauthClientSecretRef: 'encrypted-client-secret',
+        oauthClientSecret: 'must-not-be-persisted-either'
       })
     ).toEqual({
       id: 'srv-oauth',
@@ -202,9 +206,11 @@ describe('sanitizeCustomMcpServer', () => {
       enabled: true,
       oauth: {
         clientMetadataUrl: 'https://client.example.test/metadata.json',
-        scopes: ['openid', 'profile']
+        scopes: ['openid', 'profile'],
+        clientId: 'registered-client'
       },
-      oauthRef: 'encrypted-oauth-state'
+      oauthRef: 'encrypted-oauth-state',
+      oauthClientSecretRef: 'encrypted-client-secret'
     })
   })
 })

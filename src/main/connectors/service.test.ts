@@ -1037,6 +1037,56 @@ describe('ConnectorService', () => {
       expect(call).toHaveBeenCalledOnce()
     })
 
+    it('treats a pre-registered OAuth client-secret ref as security-sensitive', async () => {
+      const original = {
+        id: 'srv-oauth-static',
+        name: 'oauth-static',
+        displayName: 'OAuth static',
+        transport: 'streamable_http' as const,
+        url: 'https://mcp.example.test',
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test',
+          clientId: 'registered-client'
+        },
+        oauthClientSecretRef: 'enc:old-secret',
+        oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' as const } },
+        enabled: true
+      }
+      const replacement = { ...original, oauthClientSecretRef: 'enc:new-secret' }
+      let current = original
+      let approve: ((decision: 'once') => void) | undefined
+      const requestApproval = vi.fn(
+        () =>
+          new Promise<'once'>((resolve) => {
+            approve = resolve
+          })
+      )
+      const call = vi.fn()
+      const listTools = vi.fn().mockResolvedValue([{ name: 'lookup' }])
+      const svc = new ConnectorService({
+        mcpClientManager: { call: call as never, listTools },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          askToolIds: ['oauth-static/lookup'],
+          customMcpServers: [current]
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval
+      })
+
+      const pendingCall = svc.call('oauth-static', 'lookup', {}, internal)
+      await vi.waitFor(() => expect(requestApproval).toHaveBeenCalledOnce())
+      const guard = svc.beginCustomServerSecurityChange(original.id)
+      current = replacement
+      guard.commit(replacement)
+      approve?.('once')
+
+      await expect(pendingCall).rejects.toThrow('connector_configuration_changed')
+      expect(listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
     it('fails closed after a custom connector cannot authenticate or start, without exposing its error', async () => {
       const call = vi
         .fn()
