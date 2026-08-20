@@ -2,8 +2,9 @@ import { homedir } from 'node:os'
 
 // Composes the pre-redacted diagnostic block attached to a blocked database startup state. The
 // block is user-shareable by design: it feeds the GitHub issue draft opened from the startup
-// failure page, so every absolute path under the user's home directory is collapsed to `~` and the
-// stack is truncated to a fixed budget before it ever crosses IPC.
+// failure page, so every absolute path under the user's home directory is collapsed to `~`. The
+// budgets below are a generous IPC-safety ceiling; the precise fit to the GitHub issue-URL length
+// limit happens at link-build time (startup-issue.ts).
 
 type StartupDiagnosticsEnvironment = {
   appVersion: string
@@ -13,9 +14,9 @@ type StartupDiagnosticsEnvironment = {
   node: string
 }
 
-const MAX_CAUSE_DEPTH = 4
-const MAX_STACK_FRAMES = 12
-const MAX_DIAGNOSTICS_LENGTH = 4000
+const MAX_CAUSE_DEPTH = 8
+const MAX_STACK_FRAMES = 32
+const MAX_DIAGNOSTICS_LENGTH = 16000
 
 const TRUNCATION_MARKER = '… (truncated)'
 

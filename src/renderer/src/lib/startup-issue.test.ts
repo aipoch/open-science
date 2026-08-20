@@ -68,4 +68,25 @@ describe('buildStartupIssueUrl', () => {
     expect(url.length).toBeLessThanOrEqual(7800)
     expect(decodeURIComponent(url)).toContain('stack truncated')
   })
+
+  it('trims precisely to the URL budget instead of rounding down', () => {
+    const url = buildStartupIssueUrl({
+      ...baseError,
+      diagnostics: `App version: 0.9.2\n\n${'x'.repeat(50000)}`
+    })
+
+    // 'x' encodes 1:1, so the binary search lands within a few characters of the budget.
+    expect(url.length).toBeGreaterThan(7700)
+    expect(url.length).toBeLessThanOrEqual(7800)
+  })
+
+  it('keeps short diagnostics intact without a truncation note', () => {
+    const url = buildStartupIssueUrl({
+      ...baseError,
+      diagnostics: 'Error: boom\n    at f (/f.js:1:1)'
+    })
+
+    expect(decodeURIComponent(url)).toContain('at f (/f.js:1:1)')
+    expect(decodeURIComponent(url)).not.toContain('stack truncated')
+  })
 })

@@ -41,14 +41,27 @@ const buildStartupIssueBody = (
 const toIssueUrl = (error: DatabaseStartupError, diagnostics: string | undefined): string =>
   `${ISSUE_BASE_URL}?title=${encodeURIComponent(buildStartupIssueTitle(error))}&body=${encodeURIComponent(buildStartupIssueBody(error, diagnostics))}`
 
+const withTruncationNote = (diagnostics: string, end: number): string =>
+  `${diagnostics.slice(0, end).trimEnd()}\n${STACK_TRUNCATION_NOTE}`
+
 const fitDiagnosticsToUrl = (error: DatabaseStartupError): string | undefined => {
   const diagnostics = error.diagnostics
   if (!diagnostics) return undefined
-  let candidate = diagnostics
-  while (candidate && toIssueUrl(error, candidate).length > MAX_URL_LENGTH) {
-    candidate = candidate.slice(0, Math.floor(candidate.length / 2))
+  if (toIssueUrl(error, diagnostics).length <= MAX_URL_LENGTH) return diagnostics
+  // Binary search the longest prefix whose encoded URL still fits. Encoded length is not linear in
+  // the raw length (multibyte characters expand), so measure the real URL at each step.
+  let low = 0
+  let high = diagnostics.length
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2)
+    if (toIssueUrl(error, withTruncationNote(diagnostics, mid)).length <= MAX_URL_LENGTH) {
+      low = mid
+    } else {
+      high = mid - 1
+    }
   }
-  return candidate ? `${candidate.trimEnd()}\n${STACK_TRUNCATION_NOTE}` : undefined
+  const kept = diagnostics.slice(0, low).trimEnd()
+  return kept ? `${kept}\n${STACK_TRUNCATION_NOTE}` : undefined
 }
 
 const buildStartupIssueUrl = (error: DatabaseStartupError): string =>
