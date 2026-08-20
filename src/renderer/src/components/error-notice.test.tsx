@@ -13,7 +13,6 @@ describe('ErrorNotice', () => {
     render(<ErrorNotice title="Something broke" />)
 
     expect(screen.getByText('Something broke')).toBeTruthy()
-    expect(screen.queryByText('Why this happened')).toBeNull()
     expect(screen.queryByRole('button')).toBeNull()
   })
 
@@ -29,7 +28,12 @@ describe('ErrorNotice', () => {
         title="Broken"
         description="More detail"
         errorCode="some_code · 0009_migration"
-        help={{ why: 'Because reasons', how: 'Fix it this way' }}
+        help={{
+          whyLabel: 'Why this happened',
+          why: 'Because reasons',
+          howLabel: 'How to fix',
+          how: 'Fix it this way'
+        }}
         issueLink={{ label: 'Get help', tooltip: 'Opens a pre-filled draft', onClick: onIssue }}
         secondaryButton={{ label: 'Quit', onClick: onQuit }}
         primaryButton={{ label: 'Retry', onClick: onRetry, disabled: true }}
@@ -61,5 +65,21 @@ describe('ErrorNotice', () => {
 
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Quit' })).toBeNull()
+  })
+
+  it('shows a spinner and blocks clicks while a button is loading', () => {
+    const onRetry = vi.fn()
+    const { container } = render(
+      <ErrorNotice
+        title="t"
+        primaryButton={{ label: 'Retrying…', onClick: onRetry, loading: true }}
+      />
+    )
+
+    const retry = screen.getByRole('button', { name: /Retrying/ })
+    expect(retry).toHaveProperty('disabled', true)
+    expect(container.querySelector('.animate-spin')).not.toBeNull()
+    retry.click()
+    expect(onRetry).not.toHaveBeenCalled()
   })
 })

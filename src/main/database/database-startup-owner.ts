@@ -1,12 +1,15 @@
-import type { DatabaseStartupState } from '../../shared/database-startup'
+import type { DatabaseStartupState, StartupEnvironment } from '../../shared/database-startup'
 import { DatabaseMigrationError, type SchemaMigrationProgress } from './migration-service'
 
 type DatabaseStartupOwnerDeps = {
   reportBlocked: (error: DatabaseMigrationError) => void
   verifyDatabase: (onProgress: (progress: SchemaMigrationProgress) => void) => Promise<void>
-  // Optional: composes the pre-redacted environment + stack block shared through the "create an
-  // issue" draft. Kept injectable so the owner stays free of os/app-version concerns.
+  // Optional: composes the pre-redacted cause-chain stack shared through the "create an issue"
+  // draft. Kept injectable so the owner stays free of os concerns.
   buildDiagnostics?: (error: DatabaseMigrationError) => string | undefined
+  // Optional: runtime environment facts for the issue draft's Environment table. Collected by the
+  // caller, which owns the app version and runtime versions.
+  environment?: StartupEnvironment
 }
 
 type DatabaseStartupOwner = {
@@ -76,6 +79,7 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
             message: classified.message,
             retryable: classified.retryable,
             ...(classified.migrationId ? { migrationId: classified.migrationId } : {}),
+            ...(deps.environment ? { environment: deps.environment } : {}),
             ...(diagnostics ? { diagnostics } : {})
           }
         }

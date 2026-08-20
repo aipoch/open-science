@@ -126,7 +126,7 @@ describe('database startup owner', () => {
     )
   })
 
-  it('attaches pre-redacted diagnostics to the blocked state when a builder is provided', async () => {
+  it('attaches pre-redacted diagnostics and the environment to the blocked state', async () => {
     const verifyDatabase = vi.fn(async () => {
       throw new DatabaseMigrationError(
         'database_open_failed',
@@ -134,18 +134,26 @@ describe('database startup owner', () => {
         true
       )
     })
+    const environment = {
+      appVersion: '0.9.2',
+      platform: 'darwin',
+      arch: 'arm64',
+      electron: '37.2.0',
+      node: '22.17.0'
+    }
     const owner = createDatabaseStartupOwner({
       reportBlocked: vi.fn(),
       verifyDatabase,
+      environment,
       buildDiagnostics: (error) =>
-        error.code === 'database_open_failed' ? 'App version: 0.9.2\n\nError: boom' : undefined
+        error.code === 'database_open_failed' ? 'Error: boom\n    at f (/f.js:1:1)' : undefined
     })
 
     const blocked = await owner.start()
 
     expect(blocked).toMatchObject({
       phase: 'blocked',
-      error: { diagnostics: 'App version: 0.9.2\n\nError: boom' }
+      error: { diagnostics: 'Error: boom\n    at f (/f.js:1:1)', environment }
     })
   })
 

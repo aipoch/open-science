@@ -13,7 +13,7 @@ import {
 
 import { ErrorNotice, type ErrorNoticeTone } from '@/components/error-notice'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
-import { buildStartupIssueUrl } from '@/lib/startup-issue'
+import { openStartupIssueDraft } from '@/lib/startup-issue'
 import type {
   DatabaseStartupErrorCode,
   DatabaseStartupState
@@ -58,13 +58,13 @@ const BLOCKED_GUIDANCE: Partial<Record<DatabaseStartupErrorCode, BlockedGuidance
     tone: 'red',
     icon: ShieldX,
     why: "The database's migration record doesn't match this app — the file may have been copied from another installation or modified outside the app.",
-    how: "If you keep a backup of your data folder, restore it. Otherwise create an issue below — don't delete the database yourself."
+    how: "If you keep a backup of your data folder, restore it. Otherwise create an issue below with the error code — don't delete the database yourself."
   },
   database_validation_failed: {
     tone: 'red',
     icon: ShieldAlert,
     why: "Part of the stored data doesn't match the structure this version requires — usually left behind by an interrupted update.",
-    how: "Make sure you're on the latest version and relaunch. If it persists, create an issue below."
+    how: "Make sure you're on the latest version and relaunch. If it persists, create an issue below with the error code."
   },
   database_runtime_unavailable: {
     tone: 'red',
@@ -138,7 +138,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
 
   const openIssueDraft = (): void => {
     if (state.phase !== 'blocked') return
-    window.open(buildStartupIssueUrl(state.error), '_blank', 'noreferrer')
+    openStartupIssueDraft(state.error)
   }
 
   if (state.phase !== 'blocked') {
@@ -180,7 +180,16 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
         title={t("Open Science couldn't start")}
         description={t(error.message)}
         errorCode={error.migrationId ? `${error.code} · ${error.migrationId}` : error.code}
-        help={guidance ? { why: t(guidance.why), how: t(guidance.how) } : undefined}
+        help={
+          guidance
+            ? {
+                whyLabel: t('Why this happened'),
+                why: t(guidance.why),
+                howLabel: t('How to fix'),
+                how: t(guidance.how)
+              }
+            : undefined
+        }
         issueLink={{
           label: t('Still stuck? Create an issue for help'),
           tooltip: t(
@@ -194,7 +203,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
             ? {
                 label: retrying ? t('Retrying…') : t('Retry'),
                 onClick: retry,
-                disabled: retrying
+                loading: retrying
               }
             : undefined
         }

@@ -20,11 +20,20 @@ const buildStartupIssueBody = (
 ): string => {
   const environmentRows = [
     ['Error code', `\`${error.code}\``],
-    ...(error.migrationId ? [['Migration', `\`${error.migrationId}\``] as const] : [])
+    ...(error.migrationId ? [['Migration', `\`${error.migrationId}\``] as const] : []),
+    ...(error.environment
+      ? ([
+          [
+            'App version',
+            `${error.environment.appVersion} (${error.environment.platform}-${error.environment.arch})`
+          ],
+          ['Electron', `${error.environment.electron} · Node ${error.environment.node}`]
+        ] as const)
+      : [])
   ]
   const sections = [
     `## What happened\n\n${error.message}`,
-    `| | |\n| --- | --- |\n${environmentRows.map(([key, value]) => `| ${key} | ${value} |`).join('\n')}`,
+    `## Environment\n\n| | |\n| --- | --- |\n${environmentRows.map(([key, value]) => `| ${key} | ${value} |`).join('\n')}`,
     '## Steps to reproduce\n\n1. Launch Open Science\n2. The startup screen reports the error above'
   ]
   if (diagnostics) {
@@ -60,11 +69,22 @@ const fitDiagnosticsToUrl = (error: DatabaseStartupError): string | undefined =>
       high = mid - 1
     }
   }
-  const kept = diagnostics.slice(0, low).trimEnd()
-  return kept ? `${kept}\n${STACK_TRUNCATION_NOTE}` : undefined
+  return low > 0 ? withTruncationNote(diagnostics, low) : undefined
 }
 
 const buildStartupIssueUrl = (error: DatabaseStartupError): string =>
   toIssueUrl(error, fitDiagnosticsToUrl(error))
 
-export { ISSUE_BASE_URL, buildStartupIssueBody, buildStartupIssueTitle, buildStartupIssueUrl }
+// Opening the draft is a stateless side effect, so it stays a plain function rather than a hook —
+// there is no React state or lifecycle for a hook to manage.
+const openStartupIssueDraft = (error: DatabaseStartupError): void => {
+  window.open(buildStartupIssueUrl(error), '_blank', 'noreferrer')
+}
+
+export {
+  ISSUE_BASE_URL,
+  buildStartupIssueBody,
+  buildStartupIssueTitle,
+  buildStartupIssueUrl,
+  openStartupIssueDraft
+}

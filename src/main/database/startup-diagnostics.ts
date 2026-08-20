@@ -1,24 +1,19 @@
 import { homedir } from 'node:os'
 
-// Composes the pre-redacted diagnostic block attached to a blocked database startup state. The
-// block is user-shareable by design: it feeds the GitHub issue draft opened from the startup
-// failure page, so every absolute path under the user's home directory is collapsed to `~`. The
-// budgets below are a generous IPC-safety ceiling; the precise fit to the GitHub issue-URL length
-// limit happens at link-build time (startup-issue.ts).
-
-type StartupDiagnosticsEnvironment = {
-  appVersion: string
-  platform: string
-  arch: string
-  electron: string
-  node: string
-}
+// Composes the pre-redacted stack block attached to a blocked database startup state. The block is
+// user-shareable by design: it feeds the GitHub issue draft opened from the startup failure page,
+// so every absolute path under the user's home directory is collapsed to `~`. The budgets below are
+// a generous IPC-safety ceiling; the precise fit to the GitHub issue-URL length limit happens at
+// link-build time (startup-issue.ts). Environment facts travel separately in the typed
+// `environment` field (see shared/database-startup.ts).
 
 const MAX_CAUSE_DEPTH = 8
 const MAX_STACK_FRAMES = 32
 const MAX_DIAGNOSTICS_LENGTH = 16000
 
 const TRUNCATION_MARKER = '… (truncated)'
+const FURTHER_CAUSES_MARKER = '… (further causes omitted)'
+const NON_ERROR_CAUSE_MARKER = '… (a non-error cause was omitted)'
 
 const redactPaths = (text: string, home: string): string => {
   if (!home || home === '/') return text
@@ -38,10 +33,7 @@ const describeError = (error: unknown): { heading: string; frames: string[] } | 
   return undefined
 }
 
-const buildStartupDiagnostics = (
-  error: unknown,
-  env: StartupDiagnosticsEnvironment
-): string | undefined => {
+const buildStartupDiagnostics = (error: unknown): string | undefined => {
   const sections: string[] = []
   let remainingFrames = MAX_STACK_FRAMES
   let current: unknown = error
@@ -65,18 +57,16 @@ const buildStartupDiagnostics = (
     current = current instanceof Error ? current.cause : undefined
   }
   if (sections.length === 0) return undefined
-  if (describeError(current)) sections.push('… (further causes omitted)')
+  if (current !== undefined) {
+    sections.push(describeError(current) ? FURTHER_CAUSES_MARKER : NON_ERROR_CAUSE_MARKER)
+  }
 
-  const home = homedir()
-  const header = [
-    `App version: ${env.appVersion} (${env.platform}-${env.arch})`,
-    `Electron: ${env.electron} · Node: ${env.node}`
-  ].join('\n')
-  const body = redactPaths(sections.join('\nCaused by: '), home)
-  const diagnostics = `${header}\n\n${body}`
-  if (diagnostics.length <= MAX_DIAGNOSTICS_LENGTH) return diagnostics
-  return `${diagnostics.slice(0, MAX_DIAGNOSTICS_LENGTH - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`
+  const body = redactPaths(sections.join('\nCaused by: '), homedir())
+  if (body.length <= MAX_DIAGNOSTICS_LENGTH) return body
+  // Slice by code points, not UTF-16 code units, so a multibyte character astride the cut never
+  // leaves a lone surrogate in user-shared text.
+  const budget = MAX_DIAGNOSTICS_LENGTH - TRUNCATION_MARKER.length
+  return `${[...body].slice(0, budget).join('')}${TRUNCATION_MARKER}`
 }
 
 export { buildStartupDiagnostics }
-export type { StartupDiagnosticsEnvironment }

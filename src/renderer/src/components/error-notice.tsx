@@ -1,5 +1,4 @@
-import { CircleQuestionMark, type LucideIcon } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { CircleQuestionMark, LoaderCircle, type LucideIcon } from 'lucide-react'
 
 import { FlaskLogo } from '@/components/flask-logo'
 import { Button } from '@/components/ui/button'
@@ -7,8 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 
 // Generic error notice column: the brand mark is fixed, everything else is data-driven. Each
 // section renders only when its prop is present, so callers compose anything from a bare title to
-// a full troubleshooting card. Copy arrives as final display strings — callers translate; the
-// built-in help labels below are the only component-owned copy.
+// a full troubleshooting card. All copy arrives as final display strings — callers translate.
 
 type ErrorNoticeTone = 'teal' | 'amber' | 'red'
 
@@ -16,6 +14,8 @@ type ErrorNoticeButton = {
   label: string
   onClick: () => void
   disabled?: boolean
+  // Shows a spinner beside the label and disables the button while an action is in flight.
+  loading?: boolean
 }
 
 type ErrorNoticeProps = {
@@ -24,20 +24,35 @@ type ErrorNoticeProps = {
   title?: string
   description?: string
   errorCode?: string
-  help?: { why: string; how: string }
+  help?: { whyLabel: string; why: string; howLabel: string; how: string }
   issueLink?: { label: string; tooltip: string; onClick: () => void }
   secondaryButton?: ErrorNoticeButton
   primaryButton?: ErrorNoticeButton
 }
 
 // Semantic tones: teal = update the app, amber = transient / retryable, red = data or
-// installation integrity.
+// installation integrity. Classes resolve to the status token families registered in main.css.
 const TONE_CLASSES: Record<ErrorNoticeTone, string> = {
-  teal: 'bg-[oklch(0.93_0.03_195)] text-[oklch(0.47_0.105_184)] dark:bg-[oklch(0.32_0.05_200)] dark:text-[oklch(0.72_0.1_184)]',
+  teal: 'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground',
   amber:
-    'bg-[oklch(0.94_0.045_85)] text-[oklch(0.52_0.11_65)] dark:bg-[oklch(0.32_0.05_75)] dark:text-[oklch(0.78_0.11_75)]',
-  red: 'bg-[oklch(0.94_0.03_25)] text-[oklch(0.55_0.19_25)] dark:bg-[oklch(0.32_0.06_25)] dark:text-[oklch(0.72_0.16_25)]'
+    'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground',
+  red: 'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
 }
+
+const NoticeButton = ({
+  button,
+  variant
+}: {
+  button: ErrorNoticeButton
+  variant?: 'secondary'
+}): React.JSX.Element => (
+  <Button variant={variant} onClick={button.onClick} disabled={button.disabled || button.loading}>
+    {button.loading ? (
+      <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+    ) : null}
+    {button.label}
+  </Button>
+)
 
 const ErrorNotice = ({
   icon: Icon,
@@ -50,8 +65,6 @@ const ErrorNotice = ({
   secondaryButton,
   primaryButton
 }: ErrorNoticeProps): React.JSX.Element => {
-  const { t } = useTranslation()
-
   return (
     <section className="flex w-full max-w-md flex-col items-center gap-5">
       <FlaskLogo className="mb-1 h-auto w-1/3 text-text-300" />
@@ -83,16 +96,16 @@ const ErrorNotice = ({
       ) : null}
 
       {help ? (
-        <div className="flex w-full flex-col gap-3.5 rounded-2xl bg-[#f1f0eb] p-5 dark:bg-[#24231e]">
+        <div className="flex w-full flex-col gap-3.5 rounded-2xl bg-muted p-5">
           <div className="flex flex-col gap-1">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              {t('Why this happened')}
+              {help.whyLabel}
             </p>
             <p className="text-[13px] leading-6 text-foreground/90">{help.why}</p>
           </div>
           <div className="flex flex-col gap-1">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              {t('How to fix')}
+              {help.howLabel}
             </p>
             <p className="text-[13px] leading-6 text-foreground/90">{help.how}</p>
           </div>
@@ -101,20 +114,8 @@ const ErrorNotice = ({
 
       {secondaryButton !== undefined || primaryButton !== undefined ? (
         <div className="flex items-center gap-3">
-          {secondaryButton ? (
-            <Button
-              variant="secondary"
-              onClick={secondaryButton.onClick}
-              disabled={secondaryButton.disabled}
-            >
-              {secondaryButton.label}
-            </Button>
-          ) : null}
-          {primaryButton ? (
-            <Button onClick={primaryButton.onClick} disabled={primaryButton.disabled}>
-              {primaryButton.label}
-            </Button>
-          ) : null}
+          {secondaryButton ? <NoticeButton button={secondaryButton} variant="secondary" /> : null}
+          {primaryButton ? <NoticeButton button={primaryButton} /> : null}
         </div>
       ) : null}
 
@@ -140,4 +141,4 @@ const ErrorNotice = ({
 }
 
 export { ErrorNotice }
-export type { ErrorNoticeProps, ErrorNoticeTone }
+export type { ErrorNoticeButton, ErrorNoticeProps, ErrorNoticeTone }
