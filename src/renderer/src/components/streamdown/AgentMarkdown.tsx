@@ -259,9 +259,7 @@ const RichAgentMarkdown = memo(
       <div
         className={cn(
           'agent-markdown-root max-w-full min-w-0',
-          // Match the tallest loading row (including its optional status line) while the first
-          // streamed content is buffered so replacing it cannot collapse the scroll extent.
-          isAnimating && 'agent-markdown-streaming min-h-14'
+          isAnimating && 'agent-markdown-streaming'
         )}
       >
         <Streamdown
