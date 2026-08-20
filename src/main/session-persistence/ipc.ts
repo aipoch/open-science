@@ -1,5 +1,11 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
 
+import type { ApplicationCommandOutcome } from '../../shared/application-command-contract'
+import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
+import {
+  isSessionRevisionConflictError,
+  SESSION_REVISION_CONFLICT_ERROR_CODE
+} from '../../shared/session-persistence'
 import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
@@ -10,7 +16,6 @@ import type {
   SaveSessionManifestRequest,
   UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
-import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { resolveStorageRoot } from '../storage-root'
@@ -200,24 +205,43 @@ const registerSessionPersistenceIpcHandlers = (
   )
   ipcMainHandle(
     'sessions:save-session',
-    async (event, session: PersistedChatSession, options?: SaveSessionOptions) => {
+    async (
+      event,
+      session: PersistedChatSession,
+      options?: SaveSessionOptions
+    ): Promise<ApplicationCommandOutcome<PersistedChatSession>> => {
       const originClientId = getLifecycleClientId(event)
-      const durable = await withDataRootWrite(async () => {
-        const rendererOptions = sanitizeRendererSaveSessionOptions(options)
-        const result = rendererOptions
-          ? await handlers.saveSession(session, rendererOptions)
-          : await handlers.saveSession(session)
-        broadcastLifecycleEvent(
-          result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
-          {
-            session: result.session,
-            originClientId
-          }
-        )
-        return result.session
-      })
+      let durable: PersistedChatSession
+      try {
+        durable = await withDataRootWrite(async () => {
+          const rendererOptions = sanitizeRendererSaveSessionOptions(options)
+          const result = rendererOptions
+            ? await handlers.saveSession(session, rendererOptions)
+            : await handlers.saveSession(session)
+          broadcastLifecycleEvent(
+            result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
+            {
+              session: result.session,
+              originClientId
+            }
+          )
+          return result.session
+        })
+      } catch (error) {
+        if (!isSessionRevisionConflictError(error)) throw error
+        return Object.freeze({
+          ok: false,
+          error: Object.freeze({
+            code: SESSION_REVISION_CONFLICT_ERROR_CODE,
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Session revision conflict. Reload and retry.'
+          })
+        })
+      }
       void Promise.resolve(onSessionSaved?.(durable)).catch(() => undefined)
-      return durable
+      return Object.freeze({ ok: true, result: durable })
     }
   )
   ipcMainHandle('sessions:update-archive', async (event, request: UpdateSessionArchiveRequest) => {
