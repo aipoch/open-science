@@ -1,33 +1,32 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { mkdir, open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const TOKEN_FILE = 'web-token'
 const COOKIE_NAME = 'open_science_web_token'
 
-const restrictTokenPermissions = async (tokenPath: string): Promise<void> => {
-  await chmod(tokenPath, 0o600)
-}
-
 const loadOrCreateWebToken = async (configRoot: string): Promise<string> => {
   const tokenPath = join(configRoot, TOKEN_FILE)
-  let existing: string | undefined
-  try {
-    existing = (await readFile(tokenPath, 'utf8')).trim()
-  } catch {
-    // Create the token below.
-  }
-  if (existing && existing.length >= 32) {
-    await restrictTokenPermissions(tokenPath)
-    return existing
-  }
-
-  const token = randomBytes(32).toString('base64url')
   await mkdir(dirname(tokenPath), { recursive: true })
-  await writeFile(tokenPath, `${token}\n`, { encoding: 'utf8', mode: 0o600 })
-  await restrictTokenPermissions(tokenPath)
-  return token
+  const tokenFile = await open(
+    tokenPath,
+    constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW,
+    0o600
+  )
+  try {
+    await tokenFile.chmod(0o600)
+    const existing = (await tokenFile.readFile('utf8')).trim()
+    if (existing.length >= 32) return existing
+
+    const token = randomBytes(32).toString('base64url')
+    await tokenFile.truncate(0)
+    await tokenFile.write(`${token}\n`, 0, 'utf8')
+    return token
+  } finally {
+    await tokenFile.close()
+  }
 }
 
 const safeEqual = (left: string | undefined, right: string): boolean => {
