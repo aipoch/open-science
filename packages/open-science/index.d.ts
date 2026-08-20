@@ -116,6 +116,7 @@ export type Run = {
     outcome?: 'pass' | 'flagged' | null
     errorMessage?: string
   }
+  preferredComputeHostIds: string[]
 }
 
 export type SessionStatus =
@@ -207,6 +208,7 @@ export class OpenScienceClient {
       autoReviewEnabled?: boolean
       specialist?: string
       delegationPolicy?: DelegationPolicy
+      computeHostIds?: string[]
     },
     options?: RequestOptions
   ): Promise<Run>

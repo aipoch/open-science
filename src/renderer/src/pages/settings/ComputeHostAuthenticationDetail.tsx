@@ -187,18 +187,18 @@ export function ComputeHostAuthenticationDetail({
         text: modeChanged
           ? mode === 'ssh_config'
             ? t(
-                'SSH configuration verified and activated. Saved password deleted. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+                'SSH configuration verified and activated. Saved password deleted. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
               )
             : t(
-                'Password authentication verified and activated. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+                'Password authentication verified and activated. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
               )
           : usernameChanged
             ? t(
-                'Username changed. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+                'Username changed. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
               )
             : hasMaterialChange
               ? t(
-                  'Connection settings verified and saved. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+                  'Connection settings verified and saved. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
                 )
               : t('Authentication settings are already up to date.')
       })

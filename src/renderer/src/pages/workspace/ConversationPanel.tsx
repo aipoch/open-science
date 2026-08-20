@@ -73,6 +73,7 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { ComposerEditor } from './composer/ComposerEditor'
 import { appendArtifactMention, docToSkillIds } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
+import { ComposerComputeTargetIndicator } from './ComposerComputeTargetIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
 import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
@@ -271,8 +272,10 @@ type ConversationPanelAgentControls = {
   canChange: boolean
   autoReviewEnabled: boolean
   enabledComputeHosts: string[]
+  selectedComputeHosts?: string[]
   toggleAutoReview: (enabled: boolean) => void
-  toggleComputeHost: (providerId: string, enabled: boolean) => void
+  setComputeHostEnabled?: (providerId: string, enabled: boolean) => void
+  setComputeHostSelected?: (providerId: string, selected: boolean) => void
 }
 
 type ConversationPanelContextWindow = {
@@ -416,8 +419,10 @@ const ConversationPanel = ({
     canChange: canChangeAgentControls,
     autoReviewEnabled,
     enabledComputeHosts,
+    selectedComputeHosts = [],
     toggleAutoReview: onAutoReviewToggle,
-    toggleComputeHost: onComputeHostToggle
+    setComputeHostEnabled: onComputeHostEnabledChange = () => undefined,
+    setComputeHostSelected: onComputeHostSelectedChange = () => undefined
   } = agentControls
   const {
     usage: contextUsage,
@@ -463,6 +468,7 @@ const ConversationPanel = ({
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const settingsLoaded = useSettingsStore((state) => state.isLoaded)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const openSettingsToComputeHost = useSettingsStore((state) => state.openSettingsToComputeHost)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const stopSubmissionPendingSessionIdsRef = useRef(new Set<string>())
   const [stopSubmissionsBySessionId, setStopSubmissionsBySessionId] = useState(
@@ -484,6 +490,7 @@ const ConversationPanel = ({
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
   const [composerRestoreFocusRequest, setComposerRestoreFocusRequest] = useState<number>()
   const [agentControlsOpenRequest, setAgentControlsOpenRequest] = useState(0)
+  const [computeControlsOpenRequest, setComputeControlsOpenRequest] = useState(0)
 
   const openReportDialog = (): void => {
     setReportDialogEpoch((epoch) => epoch + 1)
@@ -1160,7 +1167,9 @@ const ConversationPanel = ({
                           grantActionsReadOnly
                           autoReviewDisabled
                           enabledComputeHosts={enabledComputeHosts}
-                          onComputeHostToggle={onComputeHostToggle}
+                          selectedComputeHosts={selectedComputeHosts}
+                          onComputeHostEnabledChange={onComputeHostEnabledChange}
+                          onComputeHostSelectedChange={onComputeHostSelectedChange}
                           onProfileChange={onPermissionProfileChange}
                           onAutoReviewChange={onAutoReviewToggle}
                           onRevokeGrant={onRevokePermissionGrant}
@@ -1636,7 +1645,9 @@ const ConversationPanel = ({
                           grantActionsReadOnly={false}
                           autoReviewDisabled={!canEditDraft}
                           enabledComputeHosts={enabledComputeHosts}
-                          onComputeHostToggle={onComputeHostToggle}
+                          selectedComputeHosts={selectedComputeHosts}
+                          onComputeHostEnabledChange={onComputeHostEnabledChange}
+                          onComputeHostSelectedChange={onComputeHostSelectedChange}
                           onProfileChange={onPermissionProfileChange}
                           onAutoReviewChange={onAutoReviewToggle}
                           onRevokeGrant={onRevokePermissionGrant}
@@ -1651,12 +1662,21 @@ const ConversationPanel = ({
                           specialistUnavailable={specialistUnavailable}
                           onSpecialistChange={onSpecialistChange}
                           openRequest={agentControlsOpenRequest}
+                          computeOpenRequest={computeControlsOpenRequest}
                         />
 
                         <ComposerSpecialistPicker
                           selectedId={specialistId}
                           readOnly={!canChangeAgentControls}
                           onChange={onSpecialistChange}
+                        />
+
+                        <ComposerComputeTargetIndicator
+                          targetProviderIds={selectedComputeHosts}
+                          onOpenTarget={() =>
+                            setComputeControlsOpenRequest((request) => request + 1)
+                          }
+                          onOpenSettings={openSettingsToComputeHost}
                         />
 
                         {/* Compatibility indicator for an explicit user selection while a turn is

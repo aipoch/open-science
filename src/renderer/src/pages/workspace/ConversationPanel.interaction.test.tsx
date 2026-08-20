@@ -470,8 +470,10 @@ const createPanelDefaults = (): PanelProps => ({
     canChange: true,
     autoReviewEnabled: true,
     enabledComputeHosts: [],
+    selectedComputeHosts: [],
     toggleAutoReview: vi.fn(),
-    toggleComputeHost: vi.fn()
+    setComputeHostEnabled: vi.fn(),
+    setComputeHostSelected: vi.fn()
   },
   contextWindow: {
     usage: undefined,

@@ -66,6 +66,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   skillImportEnabled: () => boolean
   contextEstimateInput: (sessionId: string) => SessionEstimateInput
   selectedContextWindow: (sessionId: string) => number | undefined
+  resolveComputeExecutionTargetIds?: (sessionId: string) => readonly string[]
   emitSkillActivities: (
     sessionId: string,
     promptTurn: number,
@@ -351,6 +352,7 @@ class AcpPromptTurnWorkflow {
         skillImportEnabled: env.skillImportEnabled(),
         skillImportTurnToken: turnToken,
         turnSkill: skill,
+        selectedComputeHostIds: env.resolveComputeExecutionTargetIds?.(sessionId) ?? [],
         ...(planContext ? { protectedContext: formatPlanProtectedContext(planContext) } : {}),
         ...(request.turnIntent === 'plan-first'
           ? { turnPromptReminders: [PLAN_FIRST_TURN_PROMPT_REMINDER] }

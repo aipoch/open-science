@@ -130,6 +130,7 @@ const createHarness = (
     preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
     providerReconnectPending?: () => boolean
+    resolveComputeExecutionTargetIds?: (sessionId: string) => readonly string[]
     sideChatClaim?: NonNullable<
       NonNullable<AcpPromptTurnWorkflowOptions['environment']['sideChatRelays']>['claim']
     >
@@ -300,6 +301,9 @@ const createHarness = (
       skillImportEnabled: () => true,
       contextEstimateInput: () => ({ frameworkId: 'opencode' }),
       selectedContextWindow: () => 128_000,
+      ...(input.resolveComputeExecutionTargetIds
+        ? { resolveComputeExecutionTargetIds: input.resolveComputeExecutionTargetIds }
+        : {}),
       emitSkillActivities,
       onProviderPromptAccepted,
       ...(input.sideChatClaim ? { sideChatRelays: { claim: input.sideChatClaim } } : {}),
@@ -736,6 +740,18 @@ describe('AcpPromptTurnWorkflow', () => {
     await handles.afterInteractionRelease()
     expect(harness.planLifecycle.beforeRelease).toHaveBeenCalledWith('s1', interaction)
     expect(harness.planLifecycle.afterRelease).toHaveBeenCalledWith('s1')
+  })
+
+  it('reads the current Session Compute execution targets for every Turn preparation', async () => {
+    const resolveComputeExecutionTargetIds = vi.fn(() => ['ssh:cedar-gpu'])
+    const harness = createHarness({ resolveComputeExecutionTargetIds })
+
+    await harness.workflow.run(request(), { kind: 'user' })
+
+    expect(resolveComputeExecutionTargetIds).toHaveBeenCalledWith('s1')
+    expect(harness.preparation).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedComputeHostIds: ['ssh:cedar-gpu'] })
+    )
   })
 
   it('passes rejected Plan continuation as protected guidance', async () => {

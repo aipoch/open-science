@@ -39,7 +39,14 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenuGroup: ({ children }: PropsWithChildren): React.JSX.Element => (
     <div data-testid="dropdown-group">{children}</div>
   ),
-  DropdownMenuSub: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenuSub: ({
+    children,
+    open
+  }: PropsWithChildren<{ open?: boolean }>): React.JSX.Element => (
+    <div data-testid="dropdown-sub" data-open={String(open ?? false)}>
+      {children}
+    </div>
+  ),
   // testids let tests tell a hover submenu trigger/content apart from an inline label/group,
   // so a regression that flattens a submenu into the primary panel is caught.
   DropdownMenuSubTrigger: ({ children }: PropsWithChildren): React.JSX.Element => (
@@ -52,16 +59,25 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     children,
     disabled,
     onSelect,
-    'data-testid': testId
+    'data-testid': testId,
+    role,
+    'aria-checked': ariaChecked,
+    'aria-label': ariaLabel
   }: PropsWithChildren<{
     disabled?: boolean
     onSelect?: (event: { preventDefault: () => void }) => void
     'data-testid'?: string
+    role?: string
+    'aria-checked'?: boolean
+    'aria-label'?: string
   }>): React.JSX.Element => (
     <button
       type="button"
       disabled={disabled}
       data-testid={testId}
+      role={role}
+      aria-checked={ariaChecked}
+      aria-label={ariaLabel}
       onClick={() => {
         const event = {
           prevented: false,
@@ -81,6 +97,15 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 vi.mock('@/components/ui/switch', () => ({
   Switch: ({ checked }: { checked?: boolean }): React.JSX.Element => (
     <span data-testid="auto-review-switch" data-checked={String(checked)} />
+  )
+}))
+
+vi.mock('@/components/ui/tooltip', () => ({
+  TooltipProvider: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  Tooltip: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  TooltipTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  TooltipContent: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <span data-testid="tooltip-content">{children}</span>
   )
 }))
 
@@ -223,6 +248,34 @@ describe('ComposerAgentControlsMenu', () => {
     ).toBe('true')
   })
 
+  it('opens the root menu and Compute submenu when the execution-target indicator requests it', () => {
+    const props = {
+      profile: 'ask' as const,
+      autoReviewEnabled: false,
+      enabledComputeHosts: ['ssh:cluster-1'],
+      onProfileChange: vi.fn(),
+      onAutoReviewChange: vi.fn(),
+      onComputeHostEnabledChange: vi.fn(),
+      onComputeHostSelectedChange: vi.fn()
+    }
+
+    act(() => {
+      root.render(<ComposerAgentControlsMenu {...props} computeOpenRequest={0} />)
+    })
+
+    act(() => {
+      root.render(<ComposerAgentControlsMenu {...props} computeOpenRequest={1} />)
+    })
+
+    expect(
+      container.querySelector('[data-testid="agent-controls-menu"]')?.getAttribute('data-open')
+    ).toBe('true')
+    const computeSubmenu = Array.from(
+      container.querySelectorAll('[data-testid="dropdown-sub"]')
+    ).find((candidate) => candidate.textContent?.includes('cluster-1'))
+    expect(computeSubmenu?.getAttribute('data-open')).toBe('true')
+  })
+
   it('changes Ask and Auto directly without a risk dialog', () => {
     const onProfileChange = vi.fn()
 
@@ -311,8 +364,13 @@ describe('ComposerAgentControlsMenu', () => {
     expect(findButton('Cancel').getAttribute('data-variant')).toBe('ghost')
     expect(findButton('Cancel').className).toContain('border-0')
     expect(findButton('Cancel').className).toContain('shadow-none')
-    expect(findButton('Enable').getAttribute('data-slot')).toBe('button')
-    expect(findButton('Enable').className).toContain('bg-amber-600')
+    const confirmButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) =>
+        candidate.textContent?.trim() === 'Enable' &&
+        candidate.getAttribute('data-slot') === 'button'
+    )
+    expect(confirmButton?.getAttribute('data-slot')).toBe('button')
+    expect(confirmButton?.className).toContain('bg-amber-600')
 
     const overlay = container.querySelector<HTMLElement>('[data-testid="full-access-overlay"]')
     const dialog = container.querySelector<HTMLElement>('[data-testid="full-access-dialog"]')
@@ -333,7 +391,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(title?.parentElement?.parentElement?.contains(description ?? null)).toBe(false)
     expect(description?.parentElement?.className).toContain('p-5')
 
-    act(() => findButton('Enable').click())
+    act(() => confirmButton?.click())
     expect(onProfileChange).toHaveBeenCalledWith('full')
   })
 
@@ -643,7 +701,8 @@ describe('ComposerAgentControlsMenu', () => {
           showSpecialist
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
-          onComputeHostToggle={vi.fn()}
+          onComputeHostEnabledChange={vi.fn()}
+          onComputeHostSelectedChange={vi.fn()}
         />
       )
     })
@@ -656,7 +715,11 @@ describe('ComposerAgentControlsMenu', () => {
     expect(
       findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
     ).toBe(true)
-    expect(findButton('cluster-1').disabled).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="compute-host-enabled-ssh:cluster-1"]'
+      )?.disabled
+    ).toBe(true)
     expect(
       container
         .querySelector('[data-testid="specialist-submenu-stub"]')
@@ -712,16 +775,18 @@ describe('ComposerAgentControlsMenu', () => {
     expect(onRevokeGrant).toHaveBeenCalledWith('shell:execute')
   })
 
-  it('renders SSH hosts from the compute store under the compute section', () => {
+  it('presents each host with direct Enable and Run state controls', () => {
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
-          enabledComputeHosts={[]}
+          enabledComputeHosts={['ssh:cluster-1']}
+          selectedComputeHosts={['ssh:cluster-1']}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
-          onComputeHostToggle={vi.fn()}
+          onComputeHostEnabledChange={vi.fn()}
+          onComputeHostSelectedChange={vi.fn()}
         />
       )
     })
@@ -729,47 +794,164 @@ describe('ComposerAgentControlsMenu', () => {
     expect(container.textContent).toContain('SSH')
     expect(container.textContent).toContain('cluster-1')
     expect(container.textContent).toContain('gpu-box')
+    expect(container.textContent).not.toContain('Session access')
+    expect(container.textContent).not.toContain('Available to Agent')
+    expect(container.textContent).not.toContain('Hidden from Agent')
+    const enabledControl = container.querySelector<HTMLButtonElement>(
+      '[data-testid="compute-host-enabled-ssh:cluster-1"]'
+    )
+    const runControl = container.querySelector<HTMLButtonElement>(
+      '[data-testid="compute-host-selected-ssh:cluster-1"]'
+    )
+    expect(enabledControl?.textContent).toBe('')
+    expect(runControl?.textContent).toBe('')
+    expect(enabledControl?.getAttribute('aria-label')).toBe('Disable cluster-1')
+    expect(
+      enabledControl
+        ?.querySelector('[data-testid="auto-review-switch"]')
+        ?.getAttribute('data-checked')
+    ).toBe('true')
+    expect(enabledControl?.parentElement?.className).toContain('min-h-8')
+    expect(enabledControl?.parentElement?.className).toContain('py-0.5')
+    expect(runControl?.getAttribute('role')).toBe('menuitemcheckbox')
+    expect(runControl?.getAttribute('aria-checked')).toBe('true')
+    expect(runControl?.getAttribute('aria-label')).toBe('Remove cluster-1 from run targets')
+    expect(container.textContent).toContain('Remove from target hosts')
+    expect(container.textContent).toContain('Select as target host to run jobs')
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="compute-host-selected-ssh:gpu-box"]'
+      )?.disabled
+    ).toBe(false)
     expect(container.textContent).toContain('Manage compute...')
   })
 
-  it('calls onComputeHostToggle with (providerId, true) when enabling a host', () => {
-    const onComputeHostToggle = vi.fn()
+  it('keeps the Compute summary stable when host state changes', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={['ssh:cluster-1', 'ssh:gpu-box']}
+          selectedComputeHosts={['ssh:cluster-1', 'ssh:gpu-box']}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostEnabledChange={vi.fn()}
+          onComputeHostSelectedChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Run jobs on a remote SSH host, or manage hosts.')
+    expect(container.textContent).not.toContain('2 execution targets selected.')
+  })
+
+  it('enables a hidden host as Available without selecting it', () => {
+    const onComputeHostEnabledChange = vi.fn()
+    const onComputeHostSelectedChange = vi.fn()
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
           enabledComputeHosts={[]}
+          selectedComputeHosts={[]}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
-          onComputeHostToggle={onComputeHostToggle}
+          onComputeHostEnabledChange={onComputeHostEnabledChange}
+          onComputeHostSelectedChange={onComputeHostSelectedChange}
         />
       )
     })
 
-    act(() => findButton('cluster-1').click())
+    const enable = container.querySelector<HTMLButtonElement>(
+      '[data-testid="compute-host-enabled-ssh:cluster-1"]'
+    )
+    act(() => enable?.click())
 
-    expect(onComputeHostToggle).toHaveBeenCalledWith('ssh:cluster-1', true)
+    expect(onComputeHostEnabledChange).toHaveBeenCalledWith('ssh:cluster-1', true)
+    expect(onComputeHostSelectedChange).not.toHaveBeenCalled()
   })
 
-  it('calls onComputeHostToggle with (providerId, false) when disabling an enabled host', () => {
-    const onComputeHostToggle = vi.fn()
+  it('toggles multiple enabled hosts in the Selected execution target pool independently', () => {
+    const onComputeHostSelectedChange = vi.fn()
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={['ssh:cluster-1', 'ssh:gpu-box']}
+          selectedComputeHosts={['ssh:cluster-1']}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostEnabledChange={vi.fn()}
+          onComputeHostSelectedChange={onComputeHostSelectedChange}
+        />
+      )
+    })
+
+    const cluster = container.querySelector<HTMLButtonElement>(
+      '[data-testid="compute-host-selected-ssh:cluster-1"]'
+    )
+    const gpu = container.querySelector<HTMLButtonElement>(
+      '[data-testid="compute-host-selected-ssh:gpu-box"]'
+    )
+    act(() => cluster?.click())
+    act(() => gpu?.click())
+
+    expect(onComputeHostSelectedChange).toHaveBeenNthCalledWith(1, 'ssh:cluster-1', false)
+    expect(onComputeHostSelectedChange).toHaveBeenNthCalledWith(2, 'ssh:gpu-box', true)
+  })
+
+  it('allows Run to select a host before it is enabled', () => {
+    const onComputeHostSelectedChange = vi.fn()
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={[]}
+          selectedComputeHosts={[]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostEnabledChange={vi.fn()}
+          onComputeHostSelectedChange={onComputeHostSelectedChange}
+        />
+      )
+    })
+
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="compute-host-selected-ssh:cluster-1"]')
+        ?.click()
+    )
+
+    expect(onComputeHostSelectedChange).toHaveBeenCalledWith('ssh:cluster-1', true)
+  })
+
+  it('disables a selected host through the primary Session access control', () => {
+    const onComputeHostEnabledChange = vi.fn()
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
           enabledComputeHosts={['ssh:cluster-1']}
+          selectedComputeHosts={['ssh:cluster-1']}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
-          onComputeHostToggle={onComputeHostToggle}
+          onComputeHostEnabledChange={onComputeHostEnabledChange}
+          onComputeHostSelectedChange={vi.fn()}
         />
       )
     })
 
-    act(() => findButton('cluster-1').click())
+    const disable = container.querySelector<HTMLButtonElement>(
+      '[data-testid="compute-host-enabled-ssh:cluster-1"]'
+    )
+    act(() => disable?.click())
 
-    expect(onComputeHostToggle).toHaveBeenCalledWith('ssh:cluster-1', false)
+    expect(onComputeHostEnabledChange).toHaveBeenCalledWith('ssh:cluster-1', false)
   })
 
   it('opens the settings panel from Manage compute...', () => {
@@ -804,7 +986,11 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(findButton('cluster-1').disabled).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="compute-host-enabled-ssh:cluster-1"]'
+      )?.disabled
+    ).toBe(true)
   })
 
   it('renders a Compute submenu trigger above the SSH hosts', () => {
@@ -816,7 +1002,8 @@ describe('ComposerAgentControlsMenu', () => {
           enabledComputeHosts={[]}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
-          onComputeHostToggle={vi.fn()}
+          onComputeHostEnabledChange={vi.fn()}
+          onComputeHostSelectedChange={vi.fn()}
         />
       )
     })
@@ -843,7 +1030,8 @@ describe('ComposerAgentControlsMenu', () => {
           showSpecialist
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
-          onComputeHostToggle={vi.fn()}
+          onComputeHostEnabledChange={vi.fn()}
+          onComputeHostSelectedChange={vi.fn()}
         />
       )
     })

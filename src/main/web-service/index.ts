@@ -6,7 +6,7 @@ import type { ApplicationCommandComposition } from '../application-command-compo
 import { createLogger } from '../logger'
 import type { ApplicationEventSource } from '../application-events'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
-import type { TaskAgentPort } from '../tasks/task-runner'
+import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type ExternalWebAccess, type RunningWebServer } from './http-server'
@@ -70,7 +70,8 @@ const createWebServiceController = (
     externalAccess,
     applicationEvents,
     taskAgent,
-    taskControls
+    taskControls,
+    computePreferences
   }: {
     applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
     requestQuit: () => void
@@ -78,6 +79,7 @@ const createWebServiceController = (
     applicationEvents: ApplicationEventSource
     taskAgent: TaskAgentPort
     taskControls?: TaskControlPorts
+    computePreferences: TaskComputePreferencePort
   },
   deps: Partial<WebServiceControllerDeps> = {}
 ): WebServiceController => {
@@ -100,7 +102,12 @@ const createWebServiceController = (
       pid: process.pid
     }))
   const tasks = new HeadlessTaskApi(
-    { commands: applicationCommands.task, agent: taskAgent, controls: taskControls },
+    {
+      commands: applicationCommands.task,
+      agent: taskAgent,
+      controls: taskControls,
+      computePreferences
+    },
     {
       subscribeEvents: (listener) =>
         applicationEvents.subscribe((event) => {

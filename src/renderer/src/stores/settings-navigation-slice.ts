@@ -14,6 +14,7 @@ export type SettingsNavigationState = {
   pendingSettingsPanel?: SettingsPanelId
   pendingSkillId?: string
   pendingSpecialistId?: string
+  pendingComputeHostId?: string
   pendingComputeAuthentication?: ComputeAuthenticationTarget
 }
 
@@ -24,6 +25,7 @@ export type SettingsNavigationActions = {
   openSettingsToSkill: (skillId: string) => void
   openSettingsToSpecialist: (specialistId: string) => void
   openSettingsToCompute: () => void
+  openSettingsToComputeHost: (providerId: string) => void
   openSettingsToComputeAuthentication: (
     providerId: string,
     errorCode: ComputeAuthenticationErrorCode
@@ -31,6 +33,7 @@ export type SettingsNavigationActions = {
   consumePendingSettingsPanel: () => void
   consumePendingSkill: () => void
   consumePendingSpecialist: () => void
+  consumePendingComputeHost: () => void
   consumePendingComputeAuthentication: () => void
 }
 
@@ -43,6 +46,7 @@ export const createInitialSettingsNavigationState = (): SettingsNavigationState 
   pendingSettingsPanel: undefined,
   pendingSkillId: undefined,
   pendingSpecialistId: undefined,
+  pendingComputeHostId: undefined,
   pendingComputeAuthentication: undefined
 })
 
@@ -59,6 +63,7 @@ export const createSettingsNavigationSlice = ({
       pendingSettingsPanel: panel,
       pendingSkillId: undefined,
       pendingSpecialistId: undefined,
+      pendingComputeHostId: undefined,
       pendingComputeAuthentication: undefined
     }),
 
@@ -68,6 +73,7 @@ export const createSettingsNavigationSlice = ({
       pendingSettingsPanel: undefined,
       pendingSkillId: undefined,
       pendingSpecialistId: undefined,
+      pendingComputeHostId: undefined,
       pendingComputeAuthentication: undefined
     }),
 
@@ -77,6 +83,7 @@ export const createSettingsNavigationSlice = ({
       pendingSettingsPanel: undefined,
       pendingSkillId: skillId,
       pendingSpecialistId: undefined,
+      pendingComputeHostId: undefined,
       pendingComputeAuthentication: undefined
     }),
 
@@ -86,6 +93,7 @@ export const createSettingsNavigationSlice = ({
       pendingSettingsPanel: undefined,
       pendingSkillId: undefined,
       pendingSpecialistId: specialistId,
+      pendingComputeHostId: undefined,
       pendingComputeAuthentication: undefined
     }),
 
@@ -95,6 +103,17 @@ export const createSettingsNavigationSlice = ({
       pendingSettingsPanel: 'compute',
       pendingSkillId: undefined,
       pendingSpecialistId: undefined,
+      pendingComputeHostId: undefined,
+      pendingComputeAuthentication: undefined
+    }),
+
+  openSettingsToComputeHost: (providerId) =>
+    setState({
+      isSettingsOpen: true,
+      pendingSettingsPanel: undefined,
+      pendingSkillId: undefined,
+      pendingSpecialistId: undefined,
+      pendingComputeHostId: providerId,
       pendingComputeAuthentication: undefined
     }),
 
@@ -104,6 +123,7 @@ export const createSettingsNavigationSlice = ({
       pendingSettingsPanel: undefined,
       pendingSkillId: undefined,
       pendingSpecialistId: undefined,
+      pendingComputeHostId: undefined,
       pendingComputeAuthentication: {
         providerId,
         errorCode,
@@ -114,5 +134,6 @@ export const createSettingsNavigationSlice = ({
   consumePendingSettingsPanel: () => setState({ pendingSettingsPanel: undefined }),
   consumePendingSkill: () => setState({ pendingSkillId: undefined }),
   consumePendingSpecialist: () => setState({ pendingSpecialistId: undefined }),
+  consumePendingComputeHost: () => setState({ pendingComputeHostId: undefined }),
   consumePendingComputeAuthentication: () => setState({ pendingComputeAuthentication: undefined })
 })

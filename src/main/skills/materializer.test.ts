@@ -13,7 +13,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { COMPUTE_SKILL_DIRECTORY, syncComputeSkillDoc } from '../compute/skill-doc'
+import { COMPUTE_SKILL_DIRECTORY } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
 import { ClaudeCodeSkillMaterializer } from './materializer'
 
@@ -275,7 +275,7 @@ describe('ClaudeCodeSkillMaterializer', () => {
     expect(await listSkillDirs(configDir)).toEqual([])
   })
 
-  it('preserves the current Compute host projection across a generic skill refresh', async () => {
+  it('refreshes Remote Compute from bundled static content without preserving host projection', async () => {
     const configDir = await skillsDir()
     const sourceDir = await mkdtemp(join(tmpdir(), 'src-remote-compute-ssh-'))
     await writeFile(
@@ -288,9 +288,7 @@ describe('ClaudeCodeSkillMaterializer', () => {
         '',
         '## Registered hosts',
         '',
-        '<!-- open-science:compute-hosts:start -->',
-        'Run `await host.compute.list()` to see all registered hosts.',
-        '<!-- open-science:compute-hosts:end -->',
+        'Run `await host.compute.listRegistered()` to see all registered hosts.',
         '',
         '## API reference',
         '',
@@ -310,25 +308,13 @@ describe('ClaudeCodeSkillMaterializer', () => {
     const materializer = new ClaudeCodeSkillMaterializer()
 
     await materializer.sync(configDir, [computeSkill])
-    await syncComputeSkillDoc(join(configDir, 'skills'), [
-      {
-        id: 'host-1',
-        providerId: 'ssh:biowulf',
-        displayName: 'biowulf',
-        shape: 'direct_ssh',
-        sshAlias: 'biowulf',
-        sshOverrides: undefined,
-        scratchRoot: undefined,
-        scratchPinned: false,
-        concurrencyLimit: undefined,
-        probeResult: undefined,
-        detailsDoc: '',
-        detailsUpdatedAt: undefined,
-        detailsUpdatedBy: undefined,
-        createdAt: 1,
-        updatedAt: 1
-      }
-    ])
+    await chmod(join(configDir, 'skills', COMPUTE_SKILL_DIRECTORY), 0o755)
+    await chmod(join(configDir, 'skills', COMPUTE_SKILL_DIRECTORY, 'SKILL.md'), 0o644)
+    await writeFile(
+      join(configDir, 'skills', COMPUTE_SKILL_DIRECTORY, 'SKILL.md'),
+      '---\nname: remote-compute-ssh\ndescription: stale\n---\n\nssh:biowulf\n',
+      'utf8'
+    )
 
     await materializer.sync(configDir, [{ ...computeSkill, updatedAt: 'v2' }])
 
@@ -336,8 +322,16 @@ describe('ClaudeCodeSkillMaterializer', () => {
       join(configDir, 'skills', COMPUTE_SKILL_DIRECTORY, 'SKILL.md'),
       'utf8'
     )
-    expect(doc).toContain('ssh:biowulf')
+    const secondConfigDir = await skillsDir()
+    await materializer.sync(secondConfigDir, [{ ...computeSkill, updatedAt: 'v2' }])
+    const secondDoc = await readFile(
+      join(secondConfigDir, 'skills', COMPUTE_SKILL_DIRECTORY, 'SKILL.md'),
+      'utf8'
+    )
+    expect(doc).not.toContain('ssh:biowulf')
+    expect(doc).not.toContain('open-science:compute-hosts')
     expect(doc).toContain('Bundled SSH guidance.')
+    expect(secondDoc).toBe(doc)
   })
 
   it('removes only the known legacy bare Compute Skill directory', async () => {

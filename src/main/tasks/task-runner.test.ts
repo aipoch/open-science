@@ -6,8 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
+import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
+import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import {
   TASK_REVIEW_DISPOSAL_BUDGET_MS,
   TaskRunner,
@@ -46,13 +49,15 @@ const session: PersistedChatSession = {
 }
 
 type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'sessions'> & {
-  sessions?: Partial<TaskSessionPort>
+  sessions?: Omit<Partial<TaskSessionPort>, 'save'> & {
+    save?: (session: PersistedChatSession) => Promise<PersistedChatSession | void>
+  }
 }
 
 const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   const defaultSessions: TaskSessionPort = {
     list: async () => [],
-    save: async () => undefined,
+    save: async (value) => value,
     setDelegationPolicy: async () => undefined
   }
   return new TaskRunner({
@@ -79,13 +84,272 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     runtimeEvents: { subscribe: () => () => undefined },
     specialists: { resolve: async (reference) => ({ id: reference }) },
     reviewer: { review: async () => ({ started: true }) },
+    computePreferences: {
+      withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+      set: async () => {
+        throw new Error('Unexpected Compute preference update.')
+      }
+    },
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides,
-    sessions: { ...defaultSessions, ...overrides.sessions }
+    sessions: {
+      ...defaultSessions,
+      ...overrides.sessions,
+      save: async (value) => (await overrides.sessions?.save?.(value)) ?? value
+    }
   })
 }
 describe('TaskRunner', () => {
+  it('returns the Session authority Compute preference from start, get, and wait', async () => {
+    const saved: PersistedChatSession[] = []
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+          return {
+            ...value,
+            enabledComputeHosts: ['ssh:alpha', 'ssh:beta'],
+            selectedComputeHosts: ['ssh:alpha', 'ssh:beta']
+          }
+        }
+      },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+        set: async () => {
+          throw new Error('Unexpected existing Session update.')
+        }
+      },
+      createId: (() => {
+        const ids = ['message-compute', 'run-compute', 'agent-compute']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Run the analysis.',
+      computeHostIds: ['ssh:alpha', 'ssh:alpha', 'ssh:beta']
+    })
+
+    expect(started.preferredComputeHostIds).toEqual(['ssh:alpha', 'ssh:beta'])
+    expect(runner.getRun(started.id).preferredComputeHostIds).toEqual(['ssh:alpha', 'ssh:beta'])
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({
+      preferredComputeHostIds: ['ssh:alpha', 'ssh:beta']
+    })
+    expect(saved[0]?.enabledComputeHosts).toEqual(['ssh:alpha', 'ssh:beta'])
+    expect(saved[0]?.selectedComputeHosts).toEqual(['ssh:alpha', 'ssh:beta'])
+  })
+
+  it.each([
+    { label: 'preserves an omitted preference', request: {}, expected: ['ssh:kept'] },
+    { label: 'clears an explicit empty preference', request: { computeHostIds: [] }, expected: [] },
+    {
+      label: 'replaces an explicit preference in first-occurrence order',
+      request: { computeHostIds: ['ssh:beta', 'ssh:alpha', 'ssh:beta'] },
+      expected: ['ssh:beta', 'ssh:alpha']
+    }
+  ])('$label when continuing a Session', async ({ request, expected }) => {
+    const existing = {
+      ...session,
+      enabledComputeHosts: ['ssh:kept', 'ssh:available'],
+      selectedComputeHosts: ['ssh:kept']
+    }
+    const set = vi.fn(async (_sessionId: string, providerIds: readonly string[]) => ({
+      ...existing,
+      enabledComputeHosts: [...new Set([...existing.enabledComputeHosts, ...providerIds])],
+      selectedComputeHosts: [...new Set(providerIds)]
+    }))
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save: async () => undefined },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+        set
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Continue the analysis.',
+      ...request
+    })
+
+    expect(started.preferredComputeHostIds).toEqual(expected)
+    if ('computeHostIds' in request)
+      expect(set).toHaveBeenCalledWith(existing.id, request.computeHostIds)
+    else expect(set).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid Compute preference atomically before a Conversation Turn starts', async () => {
+    const existing = { ...session, enabledComputeHosts: ['ssh:kept'] }
+    const save = vi.fn(async () => undefined)
+    const prompt = vi.fn(async () => undefined)
+    const resumeSession = vi.fn(async () => ({ sessionId: existing.id }))
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+        set: async () => {
+          throw new ComputeHostPreferenceValidationError('host_not_found', 'ssh:missing')
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession,
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt
+      }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Continue the analysis.',
+        computeHostIds: ['ssh:missing']
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: 'Compute Host not found: ssh:missing'
+    })
+    expect(save).not.toHaveBeenCalled()
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['an invalid provider id', 'local:invalid', 'Invalid Compute Host provider id: local:invalid'],
+    ['an unknown provider id', 'ssh:missing', 'Compute Host not found: ssh:missing']
+  ])(
+    'rejects %s for a new Session before creating an ACP Session',
+    async (_label, providerId, message) => {
+      const durableSessions = new Map<string, PersistedChatSession>()
+      const registry = new EnabledComputeHostsRegistry()
+      registry.set('existing-session', ['ssh:kept'])
+      const owner = new SessionEnabledComputeHostsOwner({
+        registry,
+        hostExists: async (candidate) => candidate === 'ssh:kept',
+        listHostIds: async () => ['ssh:kept'],
+        sessionAuthority: {
+          sessionProjectId: async (sessionId) => durableSessions.get(sessionId)?.projectId,
+          setSessionEnabledComputeHosts: async () => {
+            throw new Error('Unexpected existing Session update.')
+          },
+          pruneSessionEnabledComputeHosts: async () => ({
+            sessions: [],
+            previousSelections: []
+          })
+        },
+        withDataRootWrite: (operation) => operation()
+      })
+      const save = vi.fn(async (value: PersistedChatSession) => {
+        durableSessions.set(value.id, structuredClone(value))
+      })
+      const createSession = vi.fn(async () => ({ sessionId: 'must-not-create' }))
+      const resumeSession = vi.fn(async (request) => ({ sessionId: request.sessionId }))
+      const prompt = vi.fn(async () => undefined)
+      const runner = createRunner({
+        sessions: { list: async () => [...durableSessions.values()], save },
+        computePreferences: owner,
+        agent: {
+          withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+          listAttachedSessionIds: async () => [],
+          createSession,
+          resumeSession,
+          setPermissionProfile: async () => undefined,
+          cancelPrompt: async () => undefined,
+          prompt
+        }
+      })
+
+      await expect(
+        runner.startRun({
+          project: project.id,
+          prompt: 'Start the analysis.',
+          computeHostIds: [providerId]
+        })
+      ).rejects.toMatchObject({ code: 'invalid_request', message })
+
+      expect(createSession).not.toHaveBeenCalled()
+      expect(resumeSession).not.toHaveBeenCalled()
+      expect(prompt).not.toHaveBeenCalled()
+      expect(save).not.toHaveBeenCalled()
+      expect([...durableSessions.values()]).toEqual([])
+      expect(registry.get('existing-session')).toEqual(['ssh:kept'])
+      expect(registry.get('must-not-create')).toEqual([])
+    }
+  )
+
+  it('holds the Compute Host reservation through ACP creation and durable Session save', async () => {
+    let reserved = false
+    const save = vi.fn(async (value: PersistedChatSession) => {
+      expect(reserved).toBe(true)
+      return value
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [], save },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => {
+          reserved = true
+          try {
+            return await operation([...new Set(providerIds)])
+          } finally {
+            reserved = false
+          }
+        },
+        set: async () => {
+          throw new Error('Unexpected existing Session update.')
+        }
+      }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        prompt: 'Start the analysis.',
+        computeHostIds: ['ssh:cluster']
+      })
+    ).resolves.toMatchObject({
+      preferredComputeHostIds: ['ssh:cluster']
+    })
+    expect(save).toHaveBeenCalled()
+    expect(reserved).toBe(false)
+  })
+
+  it('preserves a generic new Session persistence error', async () => {
+    const persistenceFailure = new Error('Session store migration is unavailable.')
+    const createSession = vi.fn(async () => ({ sessionId: 'session-created' }))
+    const prompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => {
+          throw persistenceFailure
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession,
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt
+      }
+    })
+
+    await expect(
+      runner.startRun({ project: project.id, prompt: 'Start the analysis.' })
+    ).rejects.toBe(persistenceFailure)
+    expect(createSession).toHaveBeenCalledOnce()
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
   it('lists projects through its public interface', async () => {
     const projects: TaskProjectPort = {
       list: async () => [project],
@@ -159,7 +423,7 @@ describe('TaskRunner', () => {
     }
     const sessions: TaskSessionPort = {
       list: async () => [session],
-      save: async () => undefined,
+      save: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runner = createRunner({ projects, sessions })

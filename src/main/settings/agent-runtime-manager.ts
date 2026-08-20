@@ -31,10 +31,7 @@ import {
   syncConnectorSkillDocs,
   syncMaterializedCustomServerSkillDocs
 } from '../connectors/provision'
-import { ComputeHostRepository } from '../compute/repository'
 import { createLogger } from '../logger'
-import { getProjectDbClient } from '../projects/prisma-client'
-import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from '../compute/skill-doc'
 import type { SkillDirectoryLayout } from '../skills/materializer'
 import { writeAgentConfigFiles } from './agent-config-files'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
@@ -280,10 +277,6 @@ export type AgentRuntimeManagerOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
-  syncComputeSkillDocument?: (
-    skillsDir: string,
-    directoryLayout?: SkillDirectoryLayout
-  ) => Promise<void>
 }
 
 // Owns host runtime discovery, installation, executable preparation, and runtime-specific filesystem
@@ -313,10 +306,6 @@ export class AgentRuntimeManager {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly resolveProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
-  private readonly syncComputeSkillDocument: (
-    skillsDir: string,
-    directoryLayout?: SkillDirectoryLayout
-  ) => Promise<void>
 
   constructor(options: AgentRuntimeManagerOptions) {
     this.repository = options.repository
@@ -361,15 +350,6 @@ export class AgentRuntimeManager {
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
     this.resolveProxyEnvironment =
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
-    this.syncComputeSkillDocument =
-      options.syncComputeSkillDocument ??
-      (async (skillsDir, directoryLayout = 'app-owned') => {
-        if (!(await hasCanonicalComputeSkillDoc(skillsDir, directoryLayout))) return
-        const hosts = await new ComputeHostRepository(() =>
-          getProjectDbClient(this.storageRoot)
-        ).list()
-        await syncComputeSkillDoc(skillsDir, hosts, directoryLayout)
-      })
   }
 
   async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
@@ -702,10 +682,6 @@ export class AgentRuntimeManager {
     for (const failure of customSkillSync.failures) {
       log.warn('Failed to materialize custom Connector Skill doc', failure)
     }
-    await this.syncComputeSkillDocument(
-      join(configRoot, 'skills'),
-      options.directoryLayout ?? 'app-owned'
-    )
     return [
       ...bundledConnectorIds.map((id) => `mcp-${id}`),
       ...customSkillSync.materializedSkillNames

@@ -82,6 +82,7 @@ describe('OpenScienceClient', () => {
             cwd: '/workspace/research',
             status: 'running',
             startedAt: 1,
+            preferredComputeHostIds: ['ssh:authority'],
             artifacts: []
           }
         })
@@ -126,7 +127,8 @@ describe('OpenScienceClient', () => {
       prompt: 'Research this.',
       cwd: '/workspace/research',
       permissionProfile: 'auto',
-      skillIds: ['literature-review']
+      skillIds: ['literature-review'],
+      computeHostIds: ['ssh:alpha', 'ssh:beta']
     })
     const completed = await client.waitForRun(started.id)
 
@@ -146,7 +148,8 @@ describe('OpenScienceClient', () => {
           prompt: 'Research this.',
           cwd: '/workspace/research',
           permissionProfile: 'auto',
-          skillIds: ['literature-review']
+          skillIds: ['literature-review'],
+          computeHostIds: ['ssh:alpha', 'ssh:beta']
         })
       })
     )

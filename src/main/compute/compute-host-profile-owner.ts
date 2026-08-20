@@ -1,4 +1,4 @@
-import type { DetailsAuthor, ProbeResult } from '../../shared/compute'
+import type { ComputeHostDetails, DetailsAuthor, ProbeResult } from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
 import {
   classifyConnectionFailure,
@@ -233,12 +233,20 @@ export class ComputeHostProfileOwner {
     return result
   }
 
-  async getDetails(providerId: string): Promise<{ doc: string; isSkeleton: boolean }> {
+  async getDetails(providerId: string): Promise<ComputeHostDetails> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
-    if (host.detailsDoc) return { doc: host.detailsDoc, isSkeleton: false }
-    if (!host.probeResult?.ok) return { doc: '', isSkeleton: false }
-    return { doc: buildDetailsSkeleton(host.probeResult), isSkeleton: true }
+    if (host.detailsDoc) {
+      return { doc: host.detailsDoc, isSkeleton: false, probeResult: host.probeResult }
+    }
+    if (!host.probeResult?.ok) {
+      return { doc: '', isSkeleton: false, probeResult: host.probeResult }
+    }
+    return {
+      doc: buildDetailsSkeleton(host.probeResult),
+      isSkeleton: true,
+      probeResult: host.probeResult
+    }
   }
 
   async replaceDetails(

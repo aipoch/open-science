@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApplicationEventHub } from '../application-events'
 import type { ApplicationEventSource } from '../application-events'
 import type { ApplicationCommandComposition } from '../application-command-composition'
-import type { TaskAgentPort } from '../tasks/task-runner'
+import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
 
 type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
@@ -19,7 +19,11 @@ const makeController = (
     remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
     task: { commandNames: () => [], invoke: vi.fn() }
   },
-  runtime: { applicationEvents?: ApplicationEventSource; taskAgent?: TaskAgentPort } = {}
+  runtime: {
+    applicationEvents?: ApplicationEventSource
+    taskAgent?: TaskAgentPort
+    computePreferences?: TaskComputePreferencePort
+  } = {}
 ): {
   controller: ReturnType<typeof createWebServiceController>
   startServer: ReturnType<typeof vi.fn>
@@ -40,29 +44,33 @@ const makeController = (
   const writeState = vi.fn().mockResolvedValue(undefined)
   const removeState = vi.fn().mockResolvedValue(undefined)
 
-  const controller = createWebServiceController(
-    {
-      applicationCommands,
-      requestQuit,
-      applicationEvents: runtime.applicationEvents ?? new ApplicationEventHub(),
-      taskAgent: runtime.taskAgent ?? ({} as never)
-    },
-    {
-      startServer,
-      resolveConfigRoot: () => '/fake/root',
-      loadWebToken: async () => 'tok-123',
-      writeState,
-      removeState,
-      appInfo: () => ({
-        appPath: '/fake/app',
-        appName: 'Open Science',
-        appVersion: '9.9.9',
-        versions: { electron: 'e', chrome: 'c', node: 'n' },
-        pid: 4242
-      }),
-      ...overrides
+  const runtimePorts = {
+    applicationCommands,
+    requestQuit,
+    applicationEvents: runtime.applicationEvents ?? new ApplicationEventHub(),
+    taskAgent: runtime.taskAgent ?? ({} as never),
+    computePreferences: runtime.computePreferences ?? {
+      withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+      set: async () => {
+        throw new Error('Unexpected existing Session Compute preference update.')
+      }
     }
-  )
+  }
+  const controller = createWebServiceController(runtimePorts, {
+    startServer,
+    resolveConfigRoot: () => '/fake/root',
+    loadWebToken: async () => 'tok-123',
+    writeState,
+    removeState,
+    appInfo: () => ({
+      appPath: '/fake/app',
+      appName: 'Open Science',
+      appVersion: '9.9.9',
+      versions: { electron: 'e', chrome: 'c', node: 'n' },
+      pid: 4242
+    }),
+    ...overrides
+  })
 
   return {
     controller,
@@ -77,6 +85,70 @@ const makeController = (
 }
 
 describe('createWebServiceController', () => {
+  it('passes the Session Compute preference authority to the Task façade', async () => {
+    const project = {
+      id: 'project-compute',
+      name: 'Project',
+      description: '',
+      isExample: false,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const sessions: unknown[] = []
+    const applicationCommands = {
+      localWeb: { commandNames: () => [], invoke: vi.fn() },
+      remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+      task: {
+        commandNames: () => [],
+        invoke: vi.fn(async (name, invocation) => {
+          if (name === 'projects:list') return [project]
+          if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
+          if (name === 'sessions:save-session') {
+            const durable = {
+              ...(invocation.args[0] as object),
+              enabledComputeHosts: ['ssh:authority'],
+              selectedComputeHosts: ['ssh:authority']
+            }
+            sessions.push(durable)
+            return durable
+          }
+          throw new Error(`Unexpected Task command: ${name}`)
+        })
+      }
+    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    const reserve = vi.fn()
+    const h = makeController({}, vi.fn(), applicationCommands, {
+      taskAgent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: vi.fn(async () => []),
+        createSession: vi.fn(async () => ({ sessionId: 'session-compute' })),
+        resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
+        setPermissionProfile: vi.fn(async () => undefined),
+        cancelPrompt: vi.fn(async () => undefined),
+        prompt: vi.fn(async () => undefined)
+      },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => {
+          reserve(providerIds)
+          return operation([...new Set(providerIds)])
+        },
+        set: vi.fn(async () => {
+          throw new Error('Unexpected existing Session update.')
+        })
+      }
+    })
+
+    await h.controller.ensureStarted(44100, { attached: true })
+    const run = await h.lastOptions().tasks!.startRun({
+      project: project.id,
+      prompt: 'Research.',
+      computeHostIds: ['ssh:requested']
+    })
+
+    expect(run.preferredComputeHostIds).toEqual(['ssh:authority'])
+    expect(reserve).toHaveBeenCalledWith(['ssh:requested'])
+  })
+
   it('passes only Web command views to the server and the narrow Task view to its façade', async () => {
     const taskInvoke = vi.fn(async () => [])
     const applicationCommands = {
@@ -200,7 +272,7 @@ describe('createWebServiceController', () => {
       if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
       if (name === 'sessions:save-session') {
         sessions.splice(0, sessions.length, invocation.args[0])
-        return undefined
+        return invocation.args[0]
       }
       throw new Error(`Unexpected Task command: ${name}`)
     })

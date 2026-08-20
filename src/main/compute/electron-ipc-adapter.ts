@@ -24,7 +24,10 @@ const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
 
 type ComputeIpcAdapter = {
   handlers: ComputeHandlers
-  enabledHosts: Pick<SessionEnabledComputeHostsOwner, 'get' | 'set'>
+  enabledHosts: Pick<
+    SessionEnabledComputeHostsOwner,
+    'get' | 'set' | 'setHostEnabled' | 'setHostSelected'
+  >
 }
 
 const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdapter): void => {
@@ -134,7 +137,7 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   )
 
   // Per-session enabled Compute Hosts. Main commits Session authority before updating the runtime
-  // projection consulted by list_compute.
+  // projection consulted by legacy list_compute and canonical list_preferred.
   ipcMainHandle('compute:enabled-hosts:get', (_event, sessionId: string): string[] =>
     enabledHosts.get(sessionId)
   )
@@ -143,6 +146,32 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
     async (event, sessionId: string, providerIds: string[]) => {
       const originClientId = getLifecycleClientId(event)
       const session = await enabledHosts.set(sessionId, providerIds)
+      try {
+        broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
+      } catch {
+        // Lifecycle delivery cannot roll back committed Session authority.
+      }
+      return session
+    }
+  )
+  ipcMainHandle(
+    'compute:host-enabled:set',
+    async (event, sessionId: string, providerId: string, enabled: boolean) => {
+      const originClientId = getLifecycleClientId(event)
+      const session = await enabledHosts.setHostEnabled(sessionId, providerId, enabled)
+      try {
+        broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
+      } catch {
+        // Lifecycle delivery cannot roll back committed Session authority.
+      }
+      return session
+    }
+  )
+  ipcMainHandle(
+    'compute:host-selected:set',
+    async (event, sessionId: string, providerId: string, selected: boolean) => {
+      const originClientId = getLifecycleClientId(event)
+      const session = await enabledHosts.setHostSelected(sessionId, providerId, selected)
       try {
         broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
       } catch {

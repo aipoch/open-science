@@ -36,6 +36,7 @@ import type {
 } from '../delegation/session-records'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
+import * as computeHostAccess from '../compute/session-compute-host-access'
 import type { ProjectSessionDeletionState } from './repository'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
@@ -740,8 +741,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
-  // Specialist switching reads the latest durable Session and changes only this safe binding. Keep
-  // that intent inside the persistence boundary so every caller receives graph-conflict recovery.
   saveSessionSpecialistBinding(
     session: PersistedChatSession,
     specialistId: string | undefined,
@@ -777,13 +776,19 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
+  mutateSessionComputeHostAccess(
+    projectId: string,
+    sessionId: string,
+    mutation: computeHostAccess.SessionComputeHostAccessMutation
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.stateOwner.setEnabledComputeHosts(projectId, sessionId, mutation)
+    )
+  }
+
   pruneSessionEnabledComputeHosts(validProviderIds: readonly string[]): Promise<{
     sessions: PersistedChatSession[]
-    previousSelections: Array<{
-      projectId: string
-      sessionId: string
-      providerIds: string[]
-    }>
+    previousSelections: computeHostAccess.SessionComputeHostAccessPruneSnapshot[]
   }> {
     return this.operationScheduler.runGlobal(async () => {
       const scan = await this.repository.loadAllWithDiagnostics()
@@ -791,12 +796,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw new Error('Cannot prune Compute Hosts without a complete Session catalog.')
       }
       const validProviderIdSet = new Set(validProviderIds)
-      const previousSelections = scan.result.sessions.flatMap((session) => {
-        const providerIds = session.enabledComputeHosts ?? []
-        return providerIds.some((providerId) => !validProviderIdSet.has(providerId))
-          ? [{ projectId: session.projectId, sessionId: session.id, providerIds: [...providerIds] }]
-          : []
-      })
+      const previousSelections = computeHostAccess.computeHostAccessPruneSnapshots(
+        scan.result.sessions,
+        validProviderIdSet
+      )
       const sessions = await this.stateOwner.pruneEnabledComputeHosts(
         scan.result.sessions,
         validProviderIdSet
@@ -805,8 +808,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
-  // Joins late Session-owned side effects (for example Upload finalization) to the same ordering
-  // boundary as JSON save and deletion. The mutation is rejected after a Session/Project tombstone.
   runSessionMutation<Result>(
     projectId: string,
     sessionId: string,
@@ -822,8 +823,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       try {
         return await mutation()
       } finally {
-        // Artifact finalization can add a new binding without changing the Session graph. Force the
-        // next save to validate that new database scope before reusing a topology fingerprint.
+        // Force the next save to validate Artifact finalization's binding before reusing topology.
         this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       }
     })

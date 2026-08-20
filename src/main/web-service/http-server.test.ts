@@ -1041,7 +1041,8 @@ describe('startWebHttpServer', () => {
         cwd: '/workspace/research',
         status: 'running' as const,
         startedAt: 1,
-        artifacts: []
+        artifacts: [],
+        preferredComputeHostIds: []
       })),
       getRun: vi.fn(),
       cancelRun: vi.fn(),

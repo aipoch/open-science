@@ -533,6 +533,21 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
     expect(status.stdout_tail).toBe('hi\n')
     expect(status.remote_workdir).toBe('~/.openscience/jobs/job-42')
 
+    await expect(
+      service.getJobStatus('job-42', {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        providerId: 'ssh:biowulf'
+      })
+    ).resolves.toMatchObject({ job_id: 'job-42' })
+    await expect(
+      service.getJobStatus('job-42', {
+        projectId: 'proj-1',
+        sessionId: 'other-session',
+        providerId: 'ssh:biowulf'
+      })
+    ).rejects.toMatchObject({ code: 'host_unavailable' })
+
     // SSH runner should NOT have been called.
     expect((runner.run as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
   })
@@ -551,6 +566,13 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
     const service = makeOwner(runner, repo, undefined, jobRepo)
 
     await expect(service.getJobStatus('nonexistent')).rejects.toThrow(/No compute job/)
+    await expect(
+      service.getJobStatus('nonexistent', {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        providerId: 'ssh:biowulf'
+      })
+    ).rejects.toMatchObject({ code: 'host_unavailable' })
   })
 })
 
@@ -863,6 +885,21 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     expect(result.hidden_files).toEqual([])
     expect(result.output_files).toEqual([])
     expect(result.left_on_remote).toEqual([])
+
+    await expect(
+      service.getJobResult('job-result-1', {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        providerId: 'ssh:biowulf'
+      })
+    ).resolves.toMatchObject({ job_id: 'job-result-1' })
+    await expect(
+      service.getJobResult('job-result-1', {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        providerId: 'ssh:hidden'
+      })
+    ).rejects.toMatchObject({ code: 'host_unavailable' })
   })
 
   it('terminal but harvest not done: returns empty file lists without error', async () => {

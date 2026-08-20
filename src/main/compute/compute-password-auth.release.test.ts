@@ -113,7 +113,6 @@ describe('Compute password authentication release gate', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { vault, passwordAdapter }
     )
 

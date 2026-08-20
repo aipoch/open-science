@@ -386,6 +386,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const consumePendingSpecialist = useSettingsStore((state) => state.consumePendingSpecialist)
   const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
   const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
+  const pendingComputeHostId = useSettingsStore((state) => state.pendingComputeHostId)
+  const consumePendingComputeHost = useSettingsStore((state) => state.consumePendingComputeHost)
   const pendingComputeAuthentication = useSettingsStore(
     (state) => state.pendingComputeAuthentication
   )
@@ -487,6 +489,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setSeededSettingsPanel(undefined)
   }
 
+  const [seededComputeHostId, setSeededComputeHostId] = useState<string | undefined>()
+  if (open && pendingComputeHostId !== undefined && pendingComputeHostId !== seededComputeHostId) {
+    setSeededComputeHostId(pendingComputeHostId)
+    setHistory([
+      {
+        ...INITIAL_LOCATION,
+        panel: 'compute',
+        compute: { kind: 'detail', providerId: pendingComputeHostId }
+      }
+    ])
+    setHistoryIndex(0)
+  }
+  if (!open && seededComputeHostId !== undefined) {
+    setSeededComputeHostId(undefined)
+  }
+
   const [seededComputeAuthentication, setSeededComputeAuthentication] = useState<
     string | undefined
   >()
@@ -547,6 +565,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useEffect(() => {
     if (pendingSpecialistId !== undefined) consumePendingSpecialist()
   }, [pendingSpecialistId, consumePendingSpecialist])
+  useEffect(() => {
+    if (pendingComputeHostId !== undefined) consumePendingComputeHost()
+  }, [pendingComputeHostId, consumePendingComputeHost])
   useEffect(() => {
     if (pendingComputeAuthentication !== undefined) consumePendingComputeAuthentication()
   }, [pendingComputeAuthentication, consumePendingComputeAuthentication])

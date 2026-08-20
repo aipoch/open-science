@@ -76,7 +76,8 @@ describe('repl_loop local RPC transport', () => {
           "messageReceipt: 'messageReceipt' in host, message_receipt: 'message_receipt' in host, " +
           "resolveMessage: 'resolveMessage' in host, resolve_message: 'resolve_message' in host, " +
           "submitOutput: 'submitOutput' in host, submit_output: 'submit_output' in host, " +
-          "listCompute: 'listCompute' in host.compute, list_compute: 'list_compute' in host.compute, " +
+          "listRegistered: 'listRegistered' in host.compute, listPreferred: 'listPreferred' in host.compute, " +
+          "listEnabled: 'listEnabled' in host.compute, listCompute: 'listCompute' in host.compute, list_compute: 'list_compute' in host.compute, " +
           "callCommand: 'callCommand' in c, call_command: 'call_command' in c, " +
           "submitJob: 'submitJob' in c, submit_job: 'submit_job' in c, " +
           "attachJob: 'attachJob' in c, attach_job: 'attach_job' in c, " +
@@ -111,6 +112,9 @@ describe('repl_loop local RPC transport', () => {
         resolve_message: false,
         submitOutput: true,
         submit_output: false,
+        listRegistered: true,
+        listPreferred: true,
+        listEnabled: false,
         listCompute: true,
         list_compute: false,
         callCommand: true,
@@ -2872,6 +2876,35 @@ gate('repl_loop.js host.compute', () => {
       expect(r.result).toContain('ssh:biowulf')
       expect(received.method).toBe('computeCall')
       expect(received.params?.op).toBe('list')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('maps canonical and compatibility discovery methods to their operations', async () => {
+    next = {
+      status: 200,
+      body: { result: [{ provider_id: 'ssh:biowulf', display_name: 'biowulf' }] }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-42'
+    })
+    try {
+      const hosts = await send('return (await host.compute.listHosts())[0].provider_id')
+      expect(hosts.error).toBeNull()
+      expect(received.params?.op).toBe('list_hosts')
+      expect(received.params?.session_id).toBe('session-42')
+
+      const registered = await send('return (await host.compute.listRegistered())[0].provider_id')
+      expect(registered.error).toBeNull()
+      expect(received.params?.op).toBe('list_registered')
+
+      const preferred = await send('return (await host.compute.listPreferred())[0].provider_id')
+      expect(preferred.error).toBeNull()
+      expect(received.params?.op).toBe('list_preferred')
+      expect(received.params?.session_id).toBe('session-42')
     } finally {
       child.kill()
     }

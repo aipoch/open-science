@@ -177,7 +177,7 @@ const useLifecycleSync = ({
             store.applyDurableSessionProjection({
               source,
               session,
-              mode: 'enabled-compute-hosts-authority'
+              mode: 'compute-host-access-authority'
             })
           } else {
             store.upsertPersistedSession(session)

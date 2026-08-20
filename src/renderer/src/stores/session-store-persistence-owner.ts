@@ -120,7 +120,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'replace-persisted-if-current'
     | 'permission-authority'
     | 'runtime-context-authority'
-    | 'enabled-compute-hosts-authority'
+    | 'compute-host-access-authority'
     | 'delegated-authority'
 }
 
@@ -512,13 +512,12 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
 
-      if (mode === 'enabled-compute-hosts-authority') {
+      if (mode === 'compute-host-access-authority') {
         const projected: ChatSession = {
           ...current,
           revision: Math.max(sessionRevision(current), sessionRevision(session)),
-          enabledComputeHosts: session.enabledComputeHosts
-            ? [...session.enabledComputeHosts]
-            : undefined,
+          enabledComputeHosts: session.enabledComputeHosts && [...session.enabledComputeHosts],
+          selectedComputeHosts: session.selectedComputeHosts && [...session.selectedComputeHosts],
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)

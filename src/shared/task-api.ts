@@ -40,6 +40,8 @@ export type StartTaskRunRequest = {
   // Accepts an immutable Specialist ID or its stable Profile name. displayName is presentation-only.
   specialist?: string
   delegationPolicy?: DelegationPolicy
+  /** Selected execution-target provider IDs for this Session. Omit to preserve. */
+  computeHostIds?: string[]
 }
 
 export type TaskRunAttention = { kind: 'plan-approval'; plan: ActivePlanProjection }
@@ -77,6 +79,8 @@ export type TaskRun = {
   artifacts: ArtifactFile[]
   attention?: TaskRunAttention
   review?: TaskRunReview
+  /** Final selected execution-target provider IDs committed by the Session authority. */
+  preferredComputeHostIds: string[]
 }
 
 export type TaskSessionSummary = {

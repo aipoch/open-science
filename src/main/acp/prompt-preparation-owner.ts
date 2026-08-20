@@ -34,7 +34,10 @@ type NotebookTurnInputs = Readonly<{
 type AcpPromptPreparationOwnerOptions = Readonly<{
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
   imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
-  presentation: Pick<AcpSessionPresentationPolicy, 'buildTurnPromptPrefix' | 'continuationText'>
+  presentation: Pick<
+    AcpSessionPresentationPolicy,
+    'buildTurnPromptPrefix' | 'computeExecutionTargetReminder' | 'continuationText'
+  >
   contextUsage: Pick<
     ContextUsageTracker,
     | 'beginSession'
@@ -72,6 +75,7 @@ type AcpPromptPreparationInput = Readonly<{
   skillImportTurnToken: string
   turnSkill: TurnSkillHandle
   protectedContext?: string
+  selectedComputeHostIds?: readonly string[]
   turnPromptReminders?: readonly string[]
   signal: AbortSignal
   isCurrent: () => boolean
@@ -141,9 +145,13 @@ class AcpPromptPreparationOwner {
 
     try {
       const requestText = this.options.presentation.continuationText(input.request)
+      const computeExecutionTargetReminder =
+        this.options.presentation.computeExecutionTargetReminder(input.selectedComputeHostIds ?? [])
       const skillPreparation = await input.turnSkill.prepareProvider({
         frameworkId: input.backend.framework.id,
-        selectionText: input.request.text,
+        selectionText: [input.request.text, computeExecutionTargetReminder]
+          .filter((segment): segment is string => Boolean(segment))
+          .join('\n\n'),
         promptText: requestText,
         codex: {
           home: input.backend.adapter.codexHome,
@@ -167,6 +175,7 @@ class AcpPromptPreparationOwner {
           ...(skillPreparation.specialistSkillGuidance
             ? [skillPreparation.specialistSkillGuidance]
             : []),
+          ...(computeExecutionTargetReminder ? [computeExecutionTargetReminder] : []),
           ...(input.turnPromptReminders ?? [])
         ]
       })

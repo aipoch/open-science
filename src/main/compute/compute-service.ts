@@ -1,5 +1,6 @@
 import type {
   ComputeHost,
+  ComputeHostDetails,
   ComputeJob,
   DetailsAuthor,
   ExecResult,
@@ -13,6 +14,7 @@ import { ComputeHostProfileOwner } from './compute-host-profile-owner'
 import {
   ComputeJobWorkflowOwner,
   type ArtifactResolver,
+  type ComputeJobReadScope,
   type RawInputSpec
 } from './compute-job-workflow-owner'
 import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
@@ -31,7 +33,11 @@ import {
 export { parseProbeOutput } from './compute-host-profile-owner'
 export type { ProbeScriptOutput } from './compute-host-profile-owner'
 export { resolveInputs } from './compute-job-workflow-owner'
-export type { ArtifactResolver, RawInputSpec } from './compute-job-workflow-owner'
+export type {
+  ArtifactResolver,
+  ComputeJobReadScope,
+  RawInputSpec
+} from './compute-job-workflow-owner'
 
 export type ComputeServiceDependencies = Readonly<{
   runner: SshRunner
@@ -107,7 +113,7 @@ export class ComputeService {
     return Promise.all(hosts.map((host) => projectComputeCredentialStatus(host, credentialVault)))
   }
 
-  async getDetails(providerId: string): Promise<{ doc: string; isSkeleton: boolean }> {
+  async getDetails(providerId: string): Promise<ComputeHostDetails> {
     return this.hostProfiles.getDetails(providerId)
   }
 
@@ -185,12 +191,15 @@ export class ComputeService {
     return this.jobWorkflow.submitJob(providerId, intent, command, options, context)
   }
 
-  async getJobStatus(jobId: string): Promise<import('../../shared/compute').JobStatusResult> {
-    return this.jobWorkflow.getJobStatus(jobId)
+  async getJobStatus(
+    jobId: string,
+    scope?: ComputeJobReadScope
+  ): Promise<import('../../shared/compute').JobStatusResult> {
+    return this.jobWorkflow.getJobStatus(jobId, scope)
   }
 
-  async getJobResult(jobId: string): Promise<JobResult> {
-    return this.jobWorkflow.getJobResult(jobId)
+  async getJobResult(jobId: string, scope?: ComputeJobReadScope): Promise<JobResult> {
+    return this.jobWorkflow.getJobResult(jobId, scope)
   }
 
   async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {

@@ -116,7 +116,6 @@ describeIf('Compute password authentication real SSH certification', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { vault, passwordAdapter, connectionBroker: broker }
     )
     const creation = await handlers.createPassword({

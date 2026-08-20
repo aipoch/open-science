@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
+import { AgentComputeService } from '../compute/agent-compute-service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
 const fakeConnector = {
@@ -263,20 +264,82 @@ describe('mcpCall RPC', () => {
 })
 
 describe('computeCall RPC', () => {
-  it('routes computeCall op=call_command to the compute service', async () => {
+  it('uses the Session admission facade for discovery and guessed provider calls', async () => {
+    const callCommand = vi.fn(async () => ({}))
+    const raw = {
+      list: async () => [
+        {
+          providerId: 'ssh:enabled',
+          displayName: 'Enabled',
+          shape: 'direct_ssh',
+          probeResult: undefined
+        },
+        {
+          providerId: 'ssh:hidden',
+          displayName: 'Hidden',
+          shape: 'direct_ssh',
+          probeResult: undefined
+        }
+      ],
+      callCommand
+    }
+    const admitted = new AgentComputeService(raw as never, {
+      getEnabled: () => ['ssh:enabled'],
+      getSelected: () => ['ssh:enabled', 'ssh:hidden']
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: admitted
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const invoke = (params: Record<string, unknown>): Promise<Response> =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method: 'computeCall', params })
+      })
+
+    const catalog = await invoke({ op: 'list_hosts' })
+    await expect(catalog.json()).resolves.toEqual({
+      result: [
+        {
+          provider_id: 'ssh:enabled',
+          display_name: 'Enabled',
+          shape: 'direct_ssh',
+          status: 'not_probed',
+          role: 'selected'
+        }
+      ]
+    })
+
+    const guessed = await invoke({
+      op: 'call_command',
+      provider_id: 'ssh:hidden',
+      cmd: 'true',
+      intent: 'guess'
+    })
+    expect(guessed.status).toBe(500)
+    await expect(guessed.json()).resolves.toEqual({
+      error: 'Compute Host is unavailable for this Session.'
+    })
+    expect(callCommand).not.toHaveBeenCalled()
+  })
+
+  it('routes call_command for an Available Compute Host', async () => {
     const fakeResult = { exit_code: 0, stdout: 'hello', stderr: '', truncated: false }
     const fakeCompute = {
       callCommand: async (
+        context: { sessionId: string; projectId: string },
         providerId: string,
         cmd: string,
         intent: string,
         loginShell: boolean,
-        timeoutSeconds?: number,
-        context?: { sessionId: string; projectId: string }
+        timeoutSeconds?: number
       ) => ({
         ...fakeResult,
         _args: { providerId, cmd, intent, loginShell, timeoutSeconds, context }
-      })
+      }),
+      listCompute: () => ['ssh:preferred-elsewhere']
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
@@ -402,10 +465,10 @@ describe('computeCall RPC', () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       download: async (
+        context: { sessionId: string; projectId: string },
         providerId: string,
         remotePath: string,
-        dest: { kind: string },
-        context?: { sessionId: string; projectId: string }
+        dest: { kind: string }
       ) => ({
         ...fakeLocalFile,
         _args: { providerId, remotePath, destKind: dest.kind, context }
@@ -497,11 +560,131 @@ describe('computeCall RPC', () => {
     expect(body.result).toEqual(fakeHosts)
   })
 
-  it('routes computeCall op=details mode=read to getDetails', async () => {
+  it('separates enabled catalog and Session-selected host discovery', async () => {
+    const fakeHosts = [
+      {
+        providerId: 'ssh:cpu',
+        displayName: 'CPU cluster',
+        shape: 'scheduler_cluster',
+        probeResult: undefined,
+        detailsDoc: 'private cluster notes'
+      },
+      {
+        providerId: 'ssh:gpu',
+        displayName: 'GPU cluster',
+        shape: 'direct_ssh',
+        probeResult: {
+          ok: true,
+          probedAt: '2026-08-20T00:00:00.000Z',
+          exitCode: 0,
+          errorTail: null,
+          gpus: [{ type: 'H100', count: 8 }]
+        },
+        detailsDoc: 'another private document'
+      },
+      {
+        providerId: 'ssh:offline',
+        displayName: 'Offline cluster',
+        shape: 'direct_ssh',
+        probeResult: {
+          ok: false,
+          probedAt: '2026-08-20T00:00:00.000Z',
+          exitCode: 255,
+          errorTail: 'unreachable'
+        },
+        detailsDoc: 'failure notes'
+      }
+    ]
+    const enabledCatalog = [
+      {
+        provider_id: 'ssh:cpu',
+        display_name: 'CPU cluster',
+        shape: 'scheduler_cluster',
+        status: 'not_probed',
+        role: 'available'
+      },
+      {
+        provider_id: 'ssh:gpu',
+        display_name: 'GPU cluster',
+        shape: 'direct_ssh',
+        status: 'connected',
+        role: 'selected'
+      }
+    ]
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => fakeHosts,
+      listHosts: async () => enabledCatalog,
+      listRegistered: async () => enabledCatalog,
+      listPreferred: async () => enabledCatalog.filter((host) => host.role === 'selected'),
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {}
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const call = async (op: string): Promise<unknown> => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method: 'computeCall', params: { op } })
+      })
+      expect(response.status).toBe(200)
+      return ((await response.json()) as { result: unknown }).result
+    }
+
+    await expect(call('list_hosts')).resolves.toEqual(enabledCatalog)
+    await expect(call('list_registered')).resolves.toEqual(enabledCatalog)
+    await expect(call('list_preferred')).resolves.toEqual([
+      {
+        provider_id: 'ssh:gpu',
+        display_name: 'GPU cluster',
+        shape: 'direct_ssh',
+        status: 'connected',
+        role: 'selected'
+      }
+    ])
+    await expect(call('list')).resolves.toEqual(fakeHosts)
+  })
+
+  it('returns empty canonical discovery results when no hosts are enabled or selected', async () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async (providerId: string) => ({
+      listHosts: async () => [],
+      listRegistered: async () => [],
+      listPreferred: async () => [],
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {}
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const call = async (op: string): Promise<unknown> => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method: 'computeCall', params: { op } })
+      })
+      expect(response.status).toBe(200)
+      return ((await response.json()) as { result: unknown }).result
+    }
+
+    await expect(call('list_registered')).resolves.toEqual([])
+    await expect(call('list_preferred')).resolves.toEqual([])
+  })
+
+  it('returns an explicit empty probe snapshot when host details have never been probed', async () => {
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async (_sessionId: string, providerId: string) => ({
         doc: `doc for ${providerId}`,
         isSkeleton: false
       }),
@@ -522,9 +705,68 @@ describe('computeCall RPC', () => {
       })
     })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { result: { doc: string; isSkeleton: boolean } }
-    expect(body.result.doc).toBe('doc for ssh:biowulf')
-    expect(body.result.isSkeleton).toBe(false)
+    const body = (await res.json()) as {
+      result: { doc: string; isSkeleton: boolean; probe: unknown }
+    }
+    expect(body.result).toEqual({
+      doc: 'doc for ssh:biowulf',
+      isSkeleton: false,
+      probe: null
+    })
+  })
+
+  it('projects successful probe resources only through details mode=read', async () => {
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async () => ({
+        doc: 'Use the gpu queue.',
+        isSkeleton: false,
+        probeResult: {
+          ok: true,
+          probedAt: '2026-08-20T00:00:00.000Z',
+          exitCode: 0,
+          errorTail: null,
+          cpus: 64,
+          memMib: 524288,
+          gpus: [{ type: 'H100', count: 8 }],
+          detectedScheduler: 'slurm'
+        }
+      }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {}
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'details', provider_id: 'ssh:gpu', mode: 'read' }
+      })
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      result: {
+        doc: 'Use the gpu queue.',
+        isSkeleton: false,
+        probe: {
+          ok: true,
+          probed_at: '2026-08-20T00:00:00.000Z',
+          exit_code: 0,
+          error_tail: null,
+          cpus: 64,
+          mem_mib: 524288,
+          gpus: [{ type: 'H100', count: 8 }],
+          detected_scheduler: 'slurm'
+        }
+      }
+    })
   })
 
   it('routes computeCall op=details mode=append to appendDetails with author=agent', async () => {
@@ -533,7 +775,7 @@ describe('computeCall RPC', () => {
       callCommand: async () => ({}),
       list: async () => [],
       getDetails: async () => ({ doc: '', isSkeleton: false }),
-      appendDetails: async (providerId: string, args: unknown) => {
+      appendDetails: async (_sessionId: string, providerId: string, args: unknown) => {
         capturedArgs = { providerId, ...((args ?? {}) as object) }
       },
       replaceDetails: async () => {}
@@ -566,7 +808,7 @@ describe('computeCall RPC', () => {
       list: async () => [],
       getDetails: async () => ({ doc: '', isSkeleton: false }),
       appendDetails: async () => {},
-      replaceDetails: async (providerId: string, args: unknown) => {
+      replaceDetails: async (_sessionId: string, providerId: string, args: unknown) => {
         capturedArgs = { providerId, ...((args ?? {}) as object) }
       }
     }
@@ -624,14 +866,15 @@ describe('computeCall RPC', () => {
     expect(body.error).toMatch(/unknown details mode/i)
   })
 
-  it('routes computeCall op=submit_job with canonical arguments and trusted context', async () => {
+  it('routes submit_job for an Available Compute Host with canonical arguments', async () => {
     const captured: unknown[] = []
     const fakeJob = { job_id: 'job-42', status: 'queued' }
     const fakeCompute = {
       submitJob: async (...args: unknown[]) => {
         captured.push(...args)
         return fakeJob
-      }
+      },
+      listCompute: () => ['ssh:preferred-elsewhere']
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
@@ -664,6 +907,7 @@ describe('computeCall RPC', () => {
     expect(res.status).toBe(200)
     await expect(res.json()).resolves.toEqual({ result: fakeJob })
     expect(captured).toEqual([
+      { sessionId: 's-42', projectId: 'project-1' },
       'ssh:biowulf',
       'analyze data',
       'python analyze.py',
@@ -675,8 +919,7 @@ describe('computeCall RPC', () => {
         harvestConfig: JSON.stringify({ mode: 'manifest' }),
         timeoutSeconds: 600,
         workspaceCwd: 'workspace/project'
-      },
-      { sessionId: 's-42', projectId: 'project-1' }
+      }
     ])
   })
 
@@ -718,10 +961,10 @@ describe('computeCall RPC', () => {
 
   it('routes computeCall op=job_status to the compute service', async () => {
     const fakeStatus = { job_id: 'job-42', status: 'running' }
-    const seenJobIds: string[] = []
+    const seenCalls: unknown[][] = []
     const fakeCompute = {
-      getJobStatus: async (jobId: string) => {
-        seenJobIds.push(jobId)
+      getJobStatus: async (...args: unknown[]) => {
+        seenCalls.push(args)
         return fakeStatus
       }
     }
@@ -735,13 +978,15 @@ describe('computeCall RPC', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         method: 'computeCall',
-        params: { op: 'job_status', job_id: 'job-42' }
+        params: { op: 'job_status', provider_id: 'ssh:biowulf', job_id: 'job-42' }
       })
     })
 
     expect(res.status).toBe(200)
     await expect(res.json()).resolves.toEqual({ result: fakeStatus })
-    expect(seenJobIds).toEqual(['job-42'])
+    expect(seenCalls).toEqual([
+      [{ sessionId: 's-42', projectId: 'project-1' }, 'ssh:biowulf', 'job-42']
+    ])
   })
 
   it('routes computeCall op=job_result to getJobResult', async () => {
@@ -765,8 +1010,12 @@ describe('computeCall RPC', () => {
       replaceDetails: async () => {},
       submitJob: async () => ({}),
       getJobStatus: async () => ({}),
-      getJobResult: async (jobId: string) => ({ ...fakeResult, job_id: jobId }),
-      getEnabledComputeHosts: () => []
+      getJobResult: async (
+        _context: { sessionId: string; projectId: string },
+        _providerId: string,
+        jobId: string
+      ) => ({ ...fakeResult, job_id: jobId }),
+      listCompute: () => []
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
@@ -778,7 +1027,7 @@ describe('computeCall RPC', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         method: 'computeCall',
-        params: { op: 'job_result', job_id: 'job-42' }
+        params: { op: 'job_result', provider_id: 'ssh:biowulf', job_id: 'job-42' }
       })
     })
     expect(res.status).toBe(200)
@@ -800,7 +1049,7 @@ describe('computeCall RPC', () => {
       getJobResult: async () => {
         throw new Error('No compute job found with id "missing".')
       },
-      getEnabledComputeHosts: () => []
+      listCompute: () => []
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
@@ -812,7 +1061,7 @@ describe('computeCall RPC', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         method: 'computeCall',
-        params: { op: 'job_result', job_id: 'missing' }
+        params: { op: 'job_result', provider_id: 'ssh:biowulf', job_id: 'missing' }
       })
     })
     expect(res.status).toBe(500)

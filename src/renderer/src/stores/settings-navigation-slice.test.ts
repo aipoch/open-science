@@ -132,4 +132,18 @@ describe('settings navigation slice', () => {
       targetRequestId
     )
   })
+
+  it('opens the exact Compute Host detail target', () => {
+    store.getState().openSettingsToComputeHost('ssh:biowulf')
+
+    expect(store.getState()).toMatchObject({
+      isSettingsOpen: true,
+      pendingSettingsPanel: undefined,
+      pendingComputeHostId: 'ssh:biowulf',
+      pendingComputeAuthentication: undefined
+    })
+
+    store.getState().consumePendingComputeHost()
+    expect(store.getState().pendingComputeHostId).toBeUndefined()
+  })
 })

@@ -2915,6 +2915,29 @@ describe('normalizeSessionFile with activities', () => {
     expect(allInvalid?.enabledComputeHosts).toBeUndefined()
   })
 
+  it('migrates legacy Compute Host access while preserving an explicit empty selection', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+
+    const legacySelected = normalizeSessionFile({
+      ...base,
+      enabledComputeHosts: ['ssh:cluster-1', 'ssh:gpu-box']
+    })
+    const availableOnly = normalizeSessionFile({
+      ...base,
+      enabledComputeHosts: ['ssh:cluster-1'],
+      selectedComputeHosts: []
+    })
+    const repairedSubset = normalizeSessionFile({
+      ...base,
+      enabledComputeHosts: ['ssh:cluster-1'],
+      selectedComputeHosts: ['ssh:cluster-1', 'ssh:hidden', 'invalid']
+    })
+
+    expect(legacySelected?.selectedComputeHosts).toEqual(['ssh:cluster-1', 'ssh:gpu-box'])
+    expect(availableOnly?.selectedComputeHosts).toEqual([])
+    expect(repairedSubset?.selectedComputeHosts).toEqual(['ssh:cluster-1'])
+  })
+
   it.each([
     ['invalid route', { direction: 'to_parent', disposition: 'continued' }],
     ['missing running target', { omitTargetAttemptId: true }],

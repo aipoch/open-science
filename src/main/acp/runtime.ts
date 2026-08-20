@@ -248,6 +248,10 @@ type AcpRuntimeOptions = {
   // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
   // projectId carries the Project id. Returns undefined when absent or on lookup failure.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
+  // Reads the Session authority's current Compute execution targets at each Turn. The ids are used
+  // only to decide whether the fixed execution directive applies; host inventory stays in the
+  // runtime host.compute discovery seam.
+  resolveComputeExecutionTargetIds?: (sessionId: string) => readonly string[]
 }
 
 type AcpRuntimeArtifactOptions = {

@@ -17,6 +17,7 @@ import {
 import type { AcpPermissionGrant } from '../../../../shared/acp'
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -60,6 +61,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
@@ -89,7 +91,9 @@ type ComposerAgentControlsMenuProps = {
   // Compute hosts: the SSH section is appended below auto-review. Optional so the menu still
   // renders without a compute binding (e.g. in isolation tests); the composer passes both.
   enabledComputeHosts?: string[]
-  onComputeHostToggle?: (providerId: string, enabled: boolean) => void
+  selectedComputeHosts?: string[]
+  onComputeHostEnabledChange?: (providerId: string, enabled: boolean) => void
+  onComputeHostSelectedChange?: (providerId: string, selected: boolean) => void
   // Specialist submenu: shown when showSpecialist is true (the composer decides, mirroring the
   // old standalone picker's visibility rule). specialistReadOnly marks a bound session whose
   // identity is fixed; the menu's readOnly (session running) also locks it down.
@@ -99,6 +103,7 @@ type ComposerAgentControlsMenuProps = {
   specialistReadOnly?: boolean
   onSpecialistChange?: (specialistId: string | undefined) => void
   openRequest?: number
+  computeOpenRequest?: number
 }
 
 // `as const` (rather than a widened annotation) keeps the catalog keys as literals so t() stays
@@ -155,19 +160,24 @@ const ComposerAgentControlsMenu = ({
   onRevokeGrant,
   onClearGrants,
   enabledComputeHosts,
-  onComputeHostToggle,
+  selectedComputeHosts,
+  onComputeHostEnabledChange,
+  onComputeHostSelectedChange,
   showSpecialist = false,
   specialistId,
   specialistUnavailable = false,
   specialistReadOnly = false,
   onSpecialistChange,
-  openRequest
+  openRequest,
+  computeOpenRequest
 }: ComposerAgentControlsMenuProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const [mobilePermissionOpen, setMobilePermissionOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [computeMenuOpen, setComputeMenuOpen] = useState(false)
   const previousOpenRequest = useRef(openRequest)
+  const previousComputeOpenRequest = useRef(computeOpenRequest)
   const isMobile = useMediaQuery('(max-width: 767px)')
   const selectedProfile = permissionProfiles.find((candidate) => candidate.id === profile)!
   const SelectedIcon = selectedProfile.icon
@@ -203,18 +213,28 @@ const ComposerAgentControlsMenu = ({
 
   const sshHosts = hosts.filter((host) => host.sshAlias)
 
+  useEffect(() => {
+    if (
+      computeOpenRequest === undefined ||
+      computeOpenRequest === previousComputeOpenRequest.current
+    ) {
+      return
+    }
+    previousComputeOpenRequest.current = computeOpenRequest
+    setMenuOpen(true)
+    setComputeMenuOpen(true)
+    if (!isLoaded) void loadHosts()
+  }, [computeOpenRequest, isLoaded, loadHosts])
+
   const handleOpenChange = (open: boolean): void => {
     setMenuOpen(open)
-    if (!open) setMobilePermissionOpen(false)
+    if (!open) {
+      setMobilePermissionOpen(false)
+      setComputeMenuOpen(false)
+    }
     if (open && !isLoaded) {
       void loadHosts()
     }
-  }
-
-  // Single-select semantics live in the parent (onComputeHostToggle); here we just flip the
-  // clicked host and let the store/parent disable any previously enabled host.
-  const handleHostToggle = (providerId: string, currentlyEnabled: boolean): void => {
-    onComputeHostToggle?.(providerId, !currentlyEnabled)
   }
 
   const permissionOptions = (
@@ -488,7 +508,7 @@ const ComposerAgentControlsMenu = ({
                 <DropdownMenuSeparator />
               )}
 
-              <DropdownMenuSub>
+              <DropdownMenuSub open={computeMenuOpen} onOpenChange={setComputeMenuOpen}>
                 <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
                   <Server
                     className="size-4 shrink-0 text-text-200"
@@ -516,7 +536,6 @@ const ComposerAgentControlsMenu = ({
                   collisionPadding={8}
                   className="max-h-[calc(100dvh-1rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
                 >
-                  {/* SSH hosts are single-select; Manage compute opens the settings panel. */}
                   {sshHosts.length > 0 ? (
                     <>
                       <DropdownMenuLabel className="text-[10.5px] font-normal uppercase tracking-wide text-text-300">
@@ -525,36 +544,83 @@ const ComposerAgentControlsMenu = ({
                       <DropdownMenuGroup>
                         {sshHosts.map((host) => {
                           const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
+                          const isSelected =
+                            selectedComputeHosts?.includes(host.providerId) ?? false
                           return (
-                            <DropdownMenuItem
+                            <div
                               key={host.providerId}
-                              disabled={readOnly}
-                              onSelect={(event) => {
-                                event.preventDefault()
-                                handleHostToggle(host.providerId, isEnabled)
-                              }}
-                              className="items-center gap-2 px-2 py-1.5"
+                              className="flex min-h-8 items-center gap-0.5 rounded-lg px-2 py-0.5"
                             >
-                              <span
-                                className={cn(
-                                  'min-w-0 flex-1 truncate text-[13px] leading-5',
-                                  isEnabled
-                                    ? 'font-medium text-text-100'
-                                    : 'font-normal text-text-200'
-                                )}
-                              >
+                              <span className="min-w-0 flex-1 truncate text-[13px] text-text-100">
                                 {host.displayName}
                               </span>
-                              {/* pointer-events-none: the Switch is a visual indicator only;
-                                  the row's onSelect is the single toggle entry point. */}
-                              <Switch
-                                size="sm"
-                                checked={isEnabled}
-                                aria-hidden="true"
-                                tabIndex={-1}
-                                className="pointer-events-none"
-                              />
-                            </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={readOnly}
+                                role="menuitemcheckbox"
+                                aria-checked={isEnabled}
+                                aria-label={
+                                  isEnabled
+                                    ? t('Disable {{name}}', { name: host.displayName })
+                                    : t('Enable {{name}}', { name: host.displayName })
+                                }
+                                data-testid={`compute-host-enabled-${host.providerId}`}
+                                onSelect={(event) => {
+                                  event.preventDefault()
+                                  onComputeHostEnabledChange?.(host.providerId, !isEnabled)
+                                }}
+                                className="min-h-6 shrink-0 rounded-md px-1 py-0.5"
+                              >
+                                <Switch
+                                  size="sm"
+                                  checked={isEnabled}
+                                  tabIndex={-1}
+                                  aria-hidden="true"
+                                  className="pointer-events-none"
+                                />
+                              </DropdownMenuItem>
+                              <TooltipProvider delayDuration={300}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <DropdownMenuItem
+                                      disabled={readOnly}
+                                      role="menuitemcheckbox"
+                                      aria-checked={isSelected}
+                                      aria-label={
+                                        isSelected
+                                          ? t('Remove {{name}} from run targets', {
+                                              name: host.displayName
+                                            })
+                                          : t('Add {{name}} to run targets', {
+                                              name: host.displayName
+                                            })
+                                      }
+                                      data-testid={`compute-host-selected-${host.providerId}`}
+                                      onSelect={(event) => {
+                                        event.preventDefault()
+                                        onComputeHostSelectedChange?.(host.providerId, !isSelected)
+                                      }}
+                                      className={cn(
+                                        'size-6 min-h-6 shrink-0 justify-center rounded-md p-0',
+                                        isSelected
+                                          ? 'bg-primary/10 text-primary hover:bg-primary/15 data-[highlighted]:bg-primary/15 data-[highlighted]:text-primary'
+                                          : 'text-text-300'
+                                      )}
+                                    >
+                                      <ArrowRight
+                                        className="size-2.5"
+                                        strokeWidth={2.25}
+                                        aria-hidden="true"
+                                      />
+                                    </DropdownMenuItem>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-[11px]">
+                                    {isSelected
+                                      ? t('Remove from target hosts')
+                                      : t('Select as target host to run jobs')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
                           )
                         })}
                       </DropdownMenuGroup>
