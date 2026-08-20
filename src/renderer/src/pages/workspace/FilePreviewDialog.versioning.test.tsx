@@ -178,6 +178,40 @@ afterEach(() => {
 })
 
 describe('FilePreviewDialog managed version transitions', () => {
+  it('hides managed text actions and version navigation for a non-editable file', async () => {
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: 'upload-file-1',
+        sessionId: 'session-1',
+        displayName: 'README.md',
+        headVersionId: 'upload-v3',
+        selectedVersionId: 'upload-v3',
+        versions,
+        canEdit: false,
+        canDiff: true
+      }
+    })
+
+    await act(async () => {
+      root.render(<FilePreviewDialog item={versionThreeItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[aria-label="Edit README.md"]')).toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Compare README.md with its source version"]')
+    ).toBeNull()
+    expect(
+      document.body.querySelector('[data-testid="managed-preview-version-navigation"]')
+    ).toBeNull()
+    expect(document.body.textContent).toContain('Download file')
+    expect(document.body.querySelector('[aria-label="Close preview of README.md"]')).not.toBeNull()
+  })
+
   it('keeps version navigation working when onItemChange is omitted', async () => {
     await act(async () => {
       root.render(<FilePreviewDialog item={versionThreeItem} onClose={vi.fn()} />)

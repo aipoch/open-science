@@ -28,10 +28,11 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
-import type {
-  ManagedFileVersionDescriptor,
-  ManagedFileVersionDiffResult,
-  ManagedFileVersionInspectResult
+import {
+  MANAGED_TEXT_EDIT_EXTENSIONS,
+  type ManagedFileVersionDescriptor,
+  type ManagedFileVersionDiffResult,
+  type ManagedFileVersionInspectResult
 } from '../../../../shared/managed-file-versions'
 import {
   DropdownMenu,
@@ -67,6 +68,12 @@ type PreviewFileSurfaceProps = {
   leaveGuardScope?: string
   workbenchConnected?: boolean
   onItemChange?: (item: PreviewFileItem) => void
+}
+
+const hasManagedTextEditExtension = (filename: string): boolean => {
+  const extensionIndex = filename.lastIndexOf('.')
+  if (extensionIndex <= 0 || extensionIndex === filename.length - 1) return false
+  return MANAGED_TEXT_EDIT_EXTENSIONS.has(filename.slice(extensionIndex + 1).toLowerCase())
 }
 
 type PreviewFileSurfaceHandle = {
@@ -603,6 +610,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : undefined)
     const managedControlsInspect =
       managedInspect ?? (mode === 'diff' ? managedNavigationInspect : undefined)
+    // Editing, comparison, and managed version traversal are one text-version toolset. Files that
+    // cannot be edited keep universal preview actions but do not expose partial version controls.
+    const showManagedTextTools = managedControlsInspect?.canEdit === true
     const isSelectedManagedSourceText =
       managedInspect !== undefined && isDiffModeSourceTextVersion(managedInspect)
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
@@ -918,7 +928,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           tooltipClassName={tooltipClassName}
           managedControlsOnly={mode === 'edit'}
           managedControls={
-            managedControlsInspect ? (
+            showManagedTextTools && managedControlsInspect ? (
               mode === 'edit' ? (
                 <div className="flex h-7 shrink-0 items-center gap-1">
                   <Button
@@ -1004,12 +1014,15 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             ) : undefined
           }
         />
-        {!showProvenance && managedNavigationInspect ? (
+        {!showProvenance && managedNavigationInspect?.canEdit ? (
           <ManagedVersionNavigation
             inspect={managedNavigationInspect}
             onSelect={selectManagedVersion}
           />
-        ) : !showProvenance && !managedIdentity && lineage ? (
+        ) : !showProvenance &&
+          !managedIdentity &&
+          lineage &&
+          hasManagedTextEditExtension(resolvedPreviewItem.name) ? (
           <ArtifactVersionNavigation
             lineage={lineage}
             selectedVersionId={selectedVersionId}

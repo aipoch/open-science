@@ -1649,7 +1649,7 @@ describe('PreviewFileSurface Provenance entry', () => {
     expect(container.querySelector('[data-testid="preview-content"]')).toBeNull()
   })
 
-  it('switches Artifact versions while keeping the image preview open', async () => {
+  it('hides managed text actions and version navigation for a non-editable image', async () => {
     const managedArtifact = {
       ...item,
       managedFileId: 'artifact-1',
@@ -1705,29 +1705,56 @@ describe('PreviewFileSurface Provenance entry', () => {
       await Promise.resolve()
     })
 
-    const next = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Next file version"]'
-    )
-    expect(next).not.toBeNull()
-
-    await click(next)
-
-    expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Edit sin.png"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Compare sin.png with its source version"]')
+    ).toBeNull()
+    expect(container.querySelector('[data-testid="managed-preview-version-navigation"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
-    const navigation = container.querySelector('[data-testid="managed-preview-version-navigation"]')
-    expect(navigation?.textContent).toBe('v2')
-    expect(navigation?.querySelector('button[aria-label="Previous file version"]')).not.toBeNull()
-    expect(previewContentSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        item: expect.objectContaining({
-          id: 'artifact-1',
-          selectedVersionId: 'version-2',
-          versionNumber: 2,
-          path: 'artifact-version:project-1/session-1/artifact-1/version-2'
-        })
-      })
-    )
-    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+    expect(container.textContent).toContain('Download file')
+    expect(container.querySelector('[aria-label="Close preview of sin.png"]')).not.toBeNull()
+  })
+
+  it('hides legacy Artifact version navigation for a non-editable image', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      container.querySelector('[data-testid="artifact-preview-version-navigation"]')
+    ).toBeNull()
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    expect(container.textContent).toContain('Download file')
+    expect(container.querySelector('[aria-label="Close preview of sin.png"]')).not.toBeNull()
+  })
+
+  it('keeps legacy Artifact version navigation for an editable Markdown file', async () => {
+    const markdownDescriptor = { ...descriptor, name: 'report.md' }
+    window.api.artifacts.getLineage = vi.fn().mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'report.md',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Report' },
+      versions: [markdownDescriptor, { ...secondDescriptor, name: 'report.md' }]
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, title: 'report.md', name: 'report.md', format: 'markdown' }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      container.querySelector('[data-testid="artifact-preview-version-navigation"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="Edit report.md"]')).toBeNull()
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
   })
 
   it('refreshes a stale lineage when a GENERATED click selects a newly finalized version', async () => {
@@ -1758,7 +1785,9 @@ describe('PreviewFileSurface Provenance entry', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(container.textContent).toContain('v2')
+    expect(
+      container.querySelector('[data-testid="artifact-preview-version-navigation"]')
+    ).toBeNull()
 
     await act(async () => {
       usePreviewWorkbenchStore.getState().upsertAndActivateItem({
@@ -1776,7 +1805,9 @@ describe('PreviewFileSurface Provenance entry', () => {
       versionNumber: 3
     })
     expect(getLineage).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain('v3')
+    expect(
+      container.querySelector('[data-testid="artifact-preview-version-navigation"]')
+    ).toBeNull()
     expect(previewContentSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
         item: expect.objectContaining({
@@ -1788,7 +1819,7 @@ describe('PreviewFileSurface Provenance entry', () => {
     )
   })
 
-  it('refreshes version navigation when finalization increments the Session file revision', async () => {
+  it('refreshes image lineage without exposing non-editable version navigation', async () => {
     const getLineage = vi
       .fn()
       .mockResolvedValueOnce({
@@ -1830,9 +1861,8 @@ describe('PreviewFileSurface Provenance entry', () => {
       await Promise.resolve()
     })
     expect(
-      container.querySelector<HTMLButtonElement>('button[aria-label="Next Artifact version"]')
-        ?.disabled
-    ).toBe(true)
+      container.querySelector('[data-testid="artifact-preview-version-navigation"]')
+    ).toBeNull()
 
     await act(async () => {
       useSessionStore.setState({
@@ -1844,10 +1874,9 @@ describe('PreviewFileSurface Provenance entry', () => {
 
     expect(getLineage).toHaveBeenCalledTimes(2)
     expect(
-      container.querySelector<HTMLButtonElement>('button[aria-label="Next Artifact version"]')
-        ?.disabled
-    ).toBe(false)
-    expect(container.textContent).toContain('v2')
+      container.querySelector('[data-testid="artifact-preview-version-navigation"]')
+    ).toBeNull()
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
   })
 
   it('opens its menu above an expanded preview modal', async () => {
