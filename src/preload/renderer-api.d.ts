@@ -323,7 +323,8 @@ import type {
   MigrationOutcome,
   MigrationProgress,
   RevealAppStorageResult,
-  StorageInfo
+  StorageInfo,
+  StorageStatus
 } from '../shared/storage'
 import type { CliLauncherStatus } from '../shared/cli'
 import type { AppInfo, DownloadProgress, UpdateStatus } from '../shared/update'
@@ -989,6 +990,7 @@ export interface OpenScienceAPI {
     unregisterInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
   }
   storage: {
+    getStatus(): Promise<StorageStatus>
     getInfo(): Promise<StorageInfo>
     revealAppStorage(): Promise<RevealAppStorageResult>
     detectActive(): Promise<ActiveSessionInfo[]>

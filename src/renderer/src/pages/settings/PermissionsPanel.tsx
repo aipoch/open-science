@@ -356,7 +356,7 @@ const PermissionsPanel = ({
             variant="outline"
             size="sm"
             className="mt-3"
-            onClick={() => void load()}
+            onClick={() => void load({ force: true })}
           >
             {t('Try again')}
           </Button>

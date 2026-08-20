@@ -1,6 +1,10 @@
 import type { Prisma } from '@prisma/client'
 
 import type { ArtifactVersionEvidence } from '../../shared/artifact-provenance'
+import {
+  connectorEvidenceIsValid,
+  isConnectorProducerEvidence
+} from './provenance-producer-capture'
 
 type CoreEvidenceVersion = Prisma.ArtifactVersionGetPayload<{
   include: { artifact: true; inputs: true }
@@ -40,18 +44,29 @@ const validateArtifactCoreEvidence = (
   version: CoreEvidenceVersion
 ): void => {
   const producer = evidence.producer
+  const connectorProducer = isConnectorProducerEvidence(producer)
   const producerValid =
     version.producerRunId === null
-      ? version.notebookSessionId === null &&
-        version.producerRunIndex === null &&
-        version.executionSnapshotChecksum === null &&
-        evidence.execution_snapshot_checksum === undefined &&
-        evidence.reproduction_code === undefined &&
-        producer.state === 'unavailable' &&
-        evidence.execution_status.state === 'unavailable' &&
-        evidence.execution_status.reason === producer.reason &&
-        evidence.inputs.length === 0
+      ? connectorProducer
+        ? version.notebookSessionId === null &&
+          version.producerRunIndex === null &&
+          version.executionSnapshotChecksum === null &&
+          evidence.execution_snapshot_checksum === undefined &&
+          evidence.reproduction_code === undefined &&
+          evidence.execution_status.state === 'partial' &&
+          connectorEvidenceIsValid(evidence)
+        : version.notebookSessionId === null &&
+          version.producerRunIndex === null &&
+          version.executionSnapshotChecksum === null &&
+          evidence.execution_snapshot_checksum === undefined &&
+          evidence.connector_execution === undefined &&
+          evidence.reproduction_code === undefined &&
+          producer.state === 'unavailable' &&
+          evidence.execution_status.state === 'unavailable' &&
+          evidence.execution_status.reason === producer.reason &&
+          evidence.inputs.length === 0
       : producer.state === 'available' &&
+        !connectorProducer &&
         producer.notebook_session_id === version.notebookSessionId &&
         producer.producer_run_id === version.producerRunId &&
         producer.run_index === version.producerRunIndex &&
@@ -60,15 +75,18 @@ const validateArtifactCoreEvidence = (
         typeof evidence.reproduction_code === 'string'
   const environmentValid = evidence.environment
     ? producer.state === 'available' &&
+      !connectorProducer &&
       producer.environment_manifest_checksum === evidence.environment.source_manifest_checksum &&
       evidence.environment_status.state ===
         (evidence.environment.capture_status === 'complete' ? 'available' : 'partial') &&
       evidence.environment.complete === (evidence.environment.capture_status === 'complete')
     : evidence.environment_status.state === 'unavailable' &&
-      (producer.state === 'unavailable'
-        ? evidence.environment_status.reason === producer.reason
-        : producer.environment_manifest_checksum === undefined &&
-          ENVIRONMENT_UNAVAILABLE_REASONS.has(evidence.environment_status.reason))
+      (connectorProducer
+        ? evidence.environment_status.reason === 'environment-not-supported'
+        : producer.state === 'unavailable'
+          ? evidence.environment_status.reason === producer.reason
+          : producer.environment_manifest_checksum === undefined &&
+            ENVIRONMENT_UNAVAILABLE_REASONS.has(evidence.environment_status.reason))
   const inputsValid =
     evidence.inputs.length === version.inputs.length &&
     evidence.inputs.every((input, ordinal) => {

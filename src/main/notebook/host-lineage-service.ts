@@ -3,6 +3,7 @@ import type {
   ArtifactVersionEnvironmentEvidence,
   GetArtifactVersionProvenanceRequest
 } from '../../shared/artifact-provenance'
+import { isArtifactNotebookProducer } from '../../shared/artifact-provenance'
 import type {
   HostLineageDependencyRelation,
   HostLineageDirection,
@@ -124,17 +125,28 @@ const projectProducer = (
 ): HostLineageVersion['producer'] =>
   value.state === 'unavailable'
     ? { state: value.state, reason: value.reason }
-    : {
-        state: value.state,
-        notebook_session_id: value.notebook_session_id,
-        producer_run_id: value.producer_run_id,
-        run_index: value.run_index,
-        kernel_kind: value.kernel_kind,
-        association_method: value.association_method,
-        ...(value.environment_manifest_checksum
-          ? { environment_manifest_checksum: value.environment_manifest_checksum }
-          : {})
-      }
+    : isArtifactNotebookProducer(value)
+      ? {
+          state: value.state,
+          notebook_session_id: value.notebook_session_id,
+          producer_run_id: value.producer_run_id,
+          run_index: value.run_index,
+          kernel_kind: value.kernel_kind,
+          association_method: value.association_method,
+          ...(value.environment_manifest_checksum
+            ? { environment_manifest_checksum: value.environment_manifest_checksum }
+            : {})
+        }
+      : {
+          state: value.state,
+          kind: value.kind,
+          connector_id: value.connector_id,
+          tool_id: value.tool_id,
+          invocation_id: value.invocation_id,
+          implementation_version: value.implementation_version,
+          arguments_checksum: value.arguments_checksum,
+          association_method: value.association_method
+        }
 
 const projectEnvironment = (
   value: ArtifactVersionEnvironmentEvidence

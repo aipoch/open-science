@@ -230,11 +230,6 @@ const InstalledSpecialistsPanel = ({
 
   useEffect(() => {
     void load()
-
-    // Subscribe to catalog-changed push events so the list stays in sync.
-    if (typeof window.api?.specialist?.onCatalogChanged !== 'function') return
-    const unsub = window.api.specialist.onCatalogChanged(() => void load())
-    return unsub
   }, [load])
 
   useEffect(() => {

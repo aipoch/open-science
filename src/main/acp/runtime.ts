@@ -71,7 +71,10 @@ import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
-import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
+import type {
+  AppGeneratedArtifactProducer,
+  ArtifactRpcCapabilityBinding
+} from '../../shared/artifact-provenance'
 import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
@@ -2154,6 +2157,7 @@ class AcpRuntime {
       filename: string
       content: string
       mimeType?: string
+      producer?: AppGeneratedArtifactProducer
     }
   ): Promise<ArtifactFile> {
     if (!this.artifactTurns) {

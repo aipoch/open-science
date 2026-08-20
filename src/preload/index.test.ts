@@ -583,6 +583,7 @@ describe('preload bridge — public surface inventory', () => {
       'storage.discardMigratedCopy',
       'storage.dismissLegacyMovePrompt',
       'storage.getInfo',
+      'storage.getStatus',
       'storage.inspectDataRoot',
       'storage.migrate',
       'storage.onProgress',

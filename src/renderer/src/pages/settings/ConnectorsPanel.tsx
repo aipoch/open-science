@@ -119,6 +119,7 @@ export function ConnectorsPanel({
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
   const connectors = useSettingsStore((state) => state.connectors)
+  const connectorsLoaded = useSettingsStore((state) => state.connectorsLoaded)
   const customServers = useSettingsStore((state) => state.customServers)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
@@ -152,7 +153,9 @@ export function ConnectorsPanel({
   const [removing, setRemoving] = useState(false)
   const [checkingRemoval, setCheckingRemoval] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
-  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>(
+    connectorsLoaded ? 'ready' : 'loading'
+  )
   const [operationError, setOperationError] = useState<string | null>(null)
   const loadRequestRef = useRef(0)
   const removalCheckSequence = useRef(0)

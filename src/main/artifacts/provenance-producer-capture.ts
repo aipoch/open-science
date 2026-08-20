@@ -4,6 +4,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Prisma } from '@prisma/client'
 
 import type {
+  AppGeneratedArtifactProducer,
+  ArtifactConnectorArgumentValue,
   ArtifactProducerUnavailableReason,
   ArtifactVersionEvidence,
   CreateArtifactVersionRequest
@@ -16,13 +18,84 @@ import type {
 } from '../../shared/notebook'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { NotebookRunRepository } from '../notebook/repository'
-import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import {
+  canonicalJson,
+  isCanonicalJsonValue,
+  sha256,
+  type CanonicalJson
+} from './provenance-canonical'
 import {
   buildBoundedExecutionSnapshot,
   environmentEvidence,
   inputEvidence,
   resolveRunEnvironmentCapture
 } from './provenance-execution-evidence'
+
+const CONNECTOR_ARGUMENTS_MAX_BYTES = 64 * 1024
+const CONNECTOR_IDENTITY_MAX_LENGTH = 256
+
+const isConnectorProducerEvidence = (
+  producer: ArtifactVersionEvidence['producer']
+): producer is Extract<ArtifactVersionEvidence['producer'], { kind: 'connector' }> =>
+  producer.state === 'available' && 'kind' in producer && producer.kind === 'connector'
+
+const prepareConnectorExecution = (
+  producer: AppGeneratedArtifactProducer
+): {
+  normalizedArguments: { [key: string]: ArtifactConnectorArgumentValue }
+  argumentsChecksum: string
+} => {
+  const identities = [
+    ['id', producer.connectorId],
+    ['tool id', producer.toolId],
+    ['invocation id', producer.invocationId],
+    ['implementation version', producer.implementationVersion]
+  ] as const
+  for (const [label, value] of identities) {
+    if (
+      value.length === 0 ||
+      value.length > CONNECTOR_IDENTITY_MAX_LENGTH ||
+      Array.from(value).some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0
+        return codePoint <= 0x1f || codePoint === 0x7f
+      })
+    ) {
+      throw new Error(`Invalid Connector ${label}.`)
+    }
+  }
+  if (!isCanonicalJsonValue(producer.normalizedArguments)) {
+    throw new Error('Connector normalized arguments must be finite canonical JSON values.')
+  }
+  const serialized = canonicalJson(producer.normalizedArguments as CanonicalJson)
+  if (Buffer.byteLength(serialized, 'utf8') > CONNECTOR_ARGUMENTS_MAX_BYTES) {
+    throw new Error('Connector normalized arguments exceed the provenance evidence limit.')
+  }
+  return {
+    normalizedArguments: JSON.parse(serialized) as {
+      [key: string]: ArtifactConnectorArgumentValue
+    },
+    argumentsChecksum: sha256(serialized)
+  }
+}
+
+const connectorEvidenceIsValid = (evidence: ArtifactVersionEvidence): boolean => {
+  const producer = evidence.producer
+  const execution = evidence.connector_execution
+  if (
+    !isConnectorProducerEvidence(producer) ||
+    !execution ||
+    execution.schema_version !== 1 ||
+    !isCanonicalJsonValue(execution.normalized_arguments)
+  ) {
+    return false
+  }
+  const serialized = canonicalJson(execution.normalized_arguments as CanonicalJson)
+  return (
+    Buffer.byteLength(serialized, 'utf8') <= CONNECTOR_ARGUMENTS_MAX_BYTES &&
+    sha256(serialized) === execution.arguments_checksum &&
+    execution.arguments_checksum === producer.arguments_checksum
+  )
+}
 
 type ArtifactVersionProducerCapture =
   | {
@@ -31,6 +104,7 @@ type ArtifactVersionProducerCapture =
     }
   | {
       state: 'available'
+      kind: 'notebook'
       notebookSessionId: string
       producerRunId: string
       producerRunIndex: number
@@ -44,6 +118,17 @@ type ArtifactVersionProducerCapture =
       environmentCapture: NotebookRunEnvironmentCapture
       environmentManifest?: NotebookEnvironmentManifest
       environmentManifestChecksum?: string
+    }
+  | {
+      state: 'available'
+      kind: 'connector'
+      connectorId: string
+      toolId: string
+      invocationId: string
+      implementationVersion: string
+      normalizedArguments: AppGeneratedArtifactProducer['normalizedArguments']
+      argumentsChecksum: string
+      inputFiles: NotebookRunInputFile[]
     }
 
 type PreparedArtifactVersionPersistence = {
@@ -88,8 +173,25 @@ class ArtifactProvenanceProducerCapture {
   async captureProducer(
     request: CreateArtifactVersionRequest,
     createdAt: Date,
-    artifactChecksum: string
+    artifactChecksum: string,
+    appGeneratedProducer?: AppGeneratedArtifactProducer
   ): Promise<ArtifactVersionProducerCapture> {
+    if (appGeneratedProducer) {
+      const execution = prepareConnectorExecution(appGeneratedProducer)
+      const inputFiles = appGeneratedProducer.inputFiles ?? []
+      await this.validateInputReferences(request.projectId, inputFiles, 'Connector')
+      return {
+        state: 'available',
+        kind: 'connector',
+        connectorId: appGeneratedProducer.connectorId,
+        toolId: appGeneratedProducer.toolId,
+        invocationId: appGeneratedProducer.invocationId,
+        implementationVersion: appGeneratedProducer.implementationVersion,
+        normalizedArguments: execution.normalizedArguments,
+        argumentsChecksum: execution.argumentsChecksum,
+        inputFiles
+      }
+    }
     // Local files require an app-side observation before an Agent-declared run may become evidence.
     // Inline bytes have no file observation, so they retain the declared run only after the durable
     // Notebook Session and graph-scope checks below succeed.
@@ -235,6 +337,7 @@ class ArtifactProvenanceProducerCapture {
 
     return {
       state: 'available',
+      kind: 'notebook',
       notebookSessionId: request.notebookSessionId,
       producerRunId,
       producerRunIndex,
@@ -267,6 +370,9 @@ class ArtifactProvenanceProducerCapture {
     sizeBytes,
     createdAt
   }: PrepareVersionPersistenceInput): PreparedArtifactVersionPersistence {
+    const notebookProducer = producer.state === 'available' && producer.kind === 'notebook'
+    const connectorProducer = producer.state === 'available' && producer.kind === 'connector'
+    const producerInputs = producer.state === 'available' ? producer.inputFiles : []
     const evidence: ArtifactVersionEvidence = {
       app_session_id: request.appSessionId,
       artifact_id: artifactId,
@@ -283,12 +389,12 @@ class ArtifactProvenanceProducerCapture {
       environment_status:
         producer.state !== 'available'
           ? { reason: producer.reason, state: 'unavailable' }
-          : producer.environmentCapture.state === 'unavailable'
-            ? { reason: producer.environmentCapture.reason, state: 'unavailable' }
-            : { state: producer.environmentCapture.state },
-      ...(producer.state === 'available' &&
-      producer.environmentManifest &&
-      producer.environmentManifestChecksum
+          : connectorProducer
+            ? { reason: 'environment-not-supported', state: 'unavailable' }
+            : producer.environmentCapture.state === 'unavailable'
+              ? { reason: producer.environmentCapture.reason, state: 'unavailable' }
+              : { state: producer.environmentCapture.state },
+      ...(notebookProducer && producer.environmentManifest && producer.environmentManifestChecksum
         ? {
             environment: environmentEvidence(
               producer.environmentManifest,
@@ -297,38 +403,56 @@ class ArtifactProvenanceProducerCapture {
           }
         : {}),
       execution_status:
-        producer.state === 'available'
-          ? { state: 'available' }
-          : { reason: producer.reason, state: 'unavailable' },
+        producer.state !== 'available'
+          ? { reason: producer.reason, state: 'unavailable' }
+          : connectorProducer
+            ? { state: 'partial' }
+            : { state: 'available' },
       ...(producer.state === 'available'
-        ? {
-            execution_snapshot_checksum: producer.executionChecksum,
-            reproduction_code: producer.reproductionCode
-          }
+        ? notebookProducer
+          ? {
+              execution_snapshot_checksum: producer.executionChecksum,
+              reproduction_code: producer.reproductionCode
+            }
+          : {
+              connector_execution: {
+                schema_version: 1,
+                normalized_arguments: producer.normalizedArguments,
+                arguments_checksum: producer.argumentsChecksum
+              }
+            }
         : {}),
       filename: request.filename,
-      inputs:
-        producer.state === 'available'
-          ? producer.inputFiles.map((input, ordinal) => inputEvidence(input, ordinal))
-          : [],
+      inputs: producerInputs.map((input, ordinal) => inputEvidence(input, ordinal)),
       is_user_upload: false,
       ...(request.agentName ? { agent_name: request.agentName } : {}),
       producer:
-        producer.state === 'available'
-          ? {
-              association_method: producer.associationMethod,
-              kernel_kind: producer.kernelKind,
-              notebook_session_id: producer.notebookSessionId,
-              producer_run_id: producer.producerRunId,
-              run_index: producer.producerRunIndex,
-              ...(producer.environmentCapture.state !== 'unavailable'
-                ? {
-                    environment_manifest_checksum: producer.environmentCapture.manifestChecksum
-                  }
-                : {}),
-              state: 'available'
-            }
-          : { reason: producer.reason, state: 'unavailable' },
+        producer.state === 'unavailable'
+          ? { reason: producer.reason, state: 'unavailable' }
+          : producer.kind === 'notebook'
+            ? {
+                association_method: producer.associationMethod,
+                kernel_kind: producer.kernelKind,
+                notebook_session_id: producer.notebookSessionId,
+                producer_run_id: producer.producerRunId,
+                run_index: producer.producerRunIndex,
+                ...(producer.environmentCapture.state !== 'unavailable'
+                  ? {
+                      environment_manifest_checksum: producer.environmentCapture.manifestChecksum
+                    }
+                  : {}),
+                state: 'available'
+              }
+            : {
+                state: 'available',
+                kind: 'connector',
+                connector_id: producer.connectorId,
+                tool_id: producer.toolId,
+                invocation_id: producer.invocationId,
+                implementation_version: producer.implementationVersion,
+                arguments_checksum: producer.argumentsChecksum,
+                association_method: 'app-owned-handler'
+              },
       project_id: request.projectId,
       schema_version: 1,
       size_bytes: sizeBytes,
@@ -337,18 +461,17 @@ class ArtifactProvenanceProducerCapture {
     }
     const evidenceJson = canonicalJson(evidence as unknown as CanonicalJson)
     return {
-      notebookSessionId: producer.state === 'available' ? producer.notebookSessionId : undefined,
-      producerRunId: producer.state === 'available' ? producer.producerRunId : undefined,
-      producerRunIndex: producer.state === 'available' ? producer.producerRunIndex : undefined,
+      notebookSessionId: notebookProducer ? producer.notebookSessionId : undefined,
+      producerRunId: notebookProducer ? producer.producerRunId : undefined,
+      producerRunIndex: notebookProducer ? producer.producerRunIndex : undefined,
       evidenceJson,
       evidenceChecksum: sha256(evidenceJson),
-      executionSnapshotJson: producer.state === 'available' ? producer.executionJson : undefined,
-      executionSnapshotChecksum:
-        producer.state === 'available' ? producer.executionChecksum : undefined,
-      ...(producer.state === 'available' && producer.inputFiles.length > 0
+      executionSnapshotJson: notebookProducer ? producer.executionJson : undefined,
+      executionSnapshotChecksum: notebookProducer ? producer.executionChecksum : undefined,
+      ...(producerInputs.length > 0
         ? {
             inputs: {
-              create: producer.inputFiles.map((input, ordinal) => ({
+              create: producerInputs.map((input, ordinal) => ({
                 id: this.options.createId(),
                 ordinal,
                 inputFileVersionId: input.inputFileVersionId,
@@ -509,20 +632,25 @@ class ArtifactProvenanceProducerCapture {
 
   private async validateInputReferences(
     projectId: string,
-    inputs: NotebookRunInputFile[]
+    inputs: NotebookRunInputFile[],
+    producerLabel = 'Notebook'
   ): Promise<void> {
     for (const input of inputs) {
       const validation = await this.options.inputAuthority.validateVersion(projectId, input)
       if (validation.state === 'project-mismatch') {
-        throw new Error(`Notebook input belongs to another Project: ${input.inputFileVersionId}`)
+        throw new Error(
+          `${producerLabel} input belongs to another Project: ${input.inputFileVersionId}`
+        )
       }
       if (validation.state !== 'available') {
         const label = input.sourceKind === 'upload-version' ? 'Upload' : 'Artifact'
-        throw new Error(`Notebook ${label} input identity is corrupt: ${input.inputFileVersionId}`)
+        throw new Error(
+          `${producerLabel} ${label} input identity is corrupt: ${input.inputFileVersionId}`
+        )
       }
     }
   }
 }
 
-export { ArtifactProvenanceProducerCapture }
+export { ArtifactProvenanceProducerCapture, connectorEvidenceIsValid, isConnectorProducerEvidence }
 export type { ArtifactVersionProducerCapture, PreparedArtifactVersionPersistence }

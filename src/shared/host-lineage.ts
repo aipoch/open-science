@@ -74,6 +74,16 @@ export type HostLineageVersion = {
         environment_manifest_checksum?: string
       }
     | {
+        state: 'available'
+        kind: 'connector'
+        connector_id: string
+        tool_id: string
+        invocation_id: string
+        implementation_version: string
+        arguments_checksum: string
+        association_method: 'app-owned-handler'
+      }
+    | {
         state: 'unavailable'
         reason: 'producer-not-supplied' | 'producer-source-unverifiable'
       }

@@ -114,6 +114,7 @@ const SkillsPanel = ({
 }: SkillsPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
+  const skillsLoaded = useSettingsStore((state) => state.skillsLoaded)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
   const createSkill = useSettingsStore((state) => state.createSkill)
@@ -138,7 +139,9 @@ const SkillsPanel = ({
   const [exportError, setExportError] = useState<string | undefined>()
   const [exportStatus, setExportStatus] = useState<{ id: string; message: string } | undefined>()
   const [exportingId, setExportingId] = useState<string | undefined>()
-  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>(
+    skillsLoaded ? 'ready' : 'loading'
+  )
   const [toggleError, setToggleError] = useState<string | undefined>()
   const loadRequestRef = useRef(0)
   const exportInFlightRef = useRef(false)

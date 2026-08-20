@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 
 import type {
+  AppGeneratedArtifactProducer,
   ArtifactVersionFile,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
@@ -126,7 +127,8 @@ type ArtifactProvenanceVersionWriterOptions = {
   captureProducer: (
     request: CreateArtifactVersionRequest,
     createdAt: Date,
-    artifactChecksum: string
+    artifactChecksum: string,
+    appGeneratedProducer?: AppGeneratedArtifactProducer
   ) => Promise<ArtifactVersionProducerCapture>
   prepareVersionPersistence: (input: {
     request: CreateArtifactVersionRequest
@@ -162,7 +164,8 @@ class ArtifactProvenanceVersionWriter {
   async writeVersion(
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    appGeneratedProducer?: AppGeneratedArtifactProducer
   ): Promise<ArtifactVersionFile> {
     if (request.resourceReservationId) {
       if (
@@ -189,7 +192,12 @@ class ArtifactProvenanceVersionWriter {
 
     let version: ArtifactVersionFile
     try {
-      version = await this.writeVersionWithinSession(request, publishCompatibilityRouting, signal)
+      version = await this.writeVersionWithinSession(
+        request,
+        publishCompatibilityRouting,
+        signal,
+        appGeneratedProducer
+      )
     } catch (error) {
       if (request.resourceReservationId) {
         try {
@@ -222,7 +230,8 @@ class ArtifactProvenanceVersionWriter {
   private async writeVersionWithinSession(
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    appGeneratedProducer?: AppGeneratedArtifactProducer
   ): Promise<ArtifactVersionFile> {
     const sessionKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}`
     const previous =
@@ -236,7 +245,12 @@ class ArtifactProvenanceVersionWriter {
     await previous
 
     try {
-      return await this.writeVersionSerialized(request, publishCompatibilityRouting, signal)
+      return await this.writeVersionSerialized(
+        request,
+        publishCompatibilityRouting,
+        signal,
+        appGeneratedProducer
+      )
     } finally {
       release()
       if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
@@ -248,7 +262,8 @@ class ArtifactProvenanceVersionWriter {
   private async writeVersionSerialized(
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    appGeneratedProducer?: AppGeneratedArtifactProducer
   ): Promise<ArtifactVersionFile> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
@@ -356,7 +371,12 @@ class ArtifactProvenanceVersionWriter {
         throw new Error('Artifact write reservation checksum does not match staged content.')
       }
       const createdAt = this.options.now()
-      const producer = await this.options.captureProducer(request, createdAt, checksum)
+      const producer = await this.options.captureProducer(
+        request,
+        createdAt,
+        checksum,
+        appGeneratedProducer
+      )
       const persisted = await withVersionAllocationRetry(() =>
         client.$transaction(async (transaction) => {
           const origin = await transaction.fileOriginSession.upsert({

@@ -3,7 +3,10 @@ import { mkdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { ArtifactFile } from '../../shared/artifacts'
-import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
+import type {
+  AppGeneratedArtifactProducer,
+  ArtifactRpcCapabilityBinding
+} from '../../shared/artifact-provenance'
 import type { ArtifactRunContext } from '../artifacts/mcp-server'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -39,6 +42,7 @@ type ArtifactTurnWriteInput = {
   content: string
   mimeType?: string
   kind?: 'plan'
+  producer?: AppGeneratedArtifactProducer
 }
 
 type ArtifactTurnPublication = {
@@ -101,6 +105,7 @@ type ArtifactTurnProvenance = {
     content: string
     contentType?: string
     kind?: 'plan'
+    producer?: AppGeneratedArtifactProducer
   }) => Promise<ArtifactFile>
 }
 
@@ -341,7 +346,8 @@ class ArtifactTurnOwner {
           filename: input.filename,
           content: input.content,
           contentType: input.mimeType,
-          kind: input.kind
+          kind: input.kind,
+          producer: input.producer
         })
       : this.options.repository.writePendingFile({
           projectId: turn.projectId,

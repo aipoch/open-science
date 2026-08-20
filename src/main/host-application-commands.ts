@@ -37,7 +37,8 @@ import type {
   DiscardMigratedCopyResult,
   MigrationOutcome,
   RevealAppStorageResult,
-  StorageInfo
+  StorageInfo,
+  StorageStatus
 } from '../shared/storage'
 import type {
   AppInfo,
@@ -255,6 +256,9 @@ const storageCommands = Object.freeze({
     readonly [],
     void
   >('storage:dismiss-legacy-move-prompt'),
+  getStatus: defineApplicationCommand<'storage:get-status', readonly [], StorageStatus>(
+    'storage:get-status'
+  ),
   getInfo: defineApplicationCommand<'storage:get-info', readonly [], StorageInfo>(
     'storage:get-info'
   ),
@@ -366,6 +370,7 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
+    getStatus: () => Promise<StorageStatus>
     getInfo: () => Promise<StorageInfo>
     revealAppStorage: () => Promise<RevealAppStorageResult>
     detectActive: () => ActiveSessionInfo[]
@@ -539,6 +544,7 @@ const registerHostApplicationCommands = (
           dependencies.storage.discardMigratedCopy(args[0])
         ),
       'storage:dismiss-legacy-move-prompt': () => dependencies.storage.dismissLegacyMovePrompt(),
+      'storage:get-status': () => dependencies.storage.getStatus(),
       'storage:get-info': () => dependencies.storage.getInfo(),
       'storage:inspect-data-root': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:inspect-data-root', () =>

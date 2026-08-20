@@ -6,6 +6,7 @@ import type {
   ProvenanceNotebookOutput,
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
+import { isArtifactNotebookProducer } from '../../shared/artifact-provenance'
 import type {
   NotebookEnvironmentManifest,
   NotebookEnvironmentPackage,
@@ -467,7 +468,7 @@ const validateArtifactExecutionSnapshot = (
     snapshot.producerRunId !== expected.producerRunId ||
     snapshot.producerRunIndex !== expected.producerRunIndex ||
     expected.evidence.execution_snapshot_checksum !== expected.executionSnapshotChecksum ||
-    producer.state !== 'available' ||
+    !isArtifactNotebookProducer(producer) ||
     producer.producer_run_id !== expected.producerRunId ||
     producer.run_index !== expected.producerRunIndex ||
     snapshot.runs.length === 0 ||

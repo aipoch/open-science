@@ -82,6 +82,33 @@ describe('NotificationBell', () => {
     ).toBe(true)
   })
 
+  it('keeps the subtle background and red-dot treatment on unread rows only', async () => {
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const unreadRow = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.includes('Approval needed')
+    )
+    expect(unreadRow?.className).toContain('bg-bg-100/70')
+    expect(unreadRow?.querySelector('.size-1\\.5.bg-destructive')).not.toBeNull()
+
+    const current = useNotificationInboxStore.getState().items[0]
+    await act(async () => {
+      useNotificationInboxStore.setState({
+        unreadCount: 0,
+        items: current ? [{ ...current, readAt: Date.now() }] : []
+      })
+    })
+
+    const readRow = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.includes('Approval needed')
+    )
+    expect(readRow?.className).not.toContain('bg-bg-100/70')
+    expect(readRow?.querySelector('.size-1\\.5.bg-destructive')).toBeNull()
+  })
+
   it('uses the success color for completed task icons', async () => {
     const item = useNotificationInboxStore.getState().items[0]
     useNotificationInboxStore.setState({
@@ -228,6 +255,7 @@ describe('NotificationBell', () => {
     expect(message?.disabled).toBe(true)
     expect(message?.textContent).toContain('Session no longer available')
     expect(message?.textContent).not.toContain('Needs approval')
+    expect(message?.textContent?.match(/Session no longer available/g)).toHaveLength(1)
 
     if (message) message.disabled = false
     await act(async () => message?.click())
@@ -235,6 +263,23 @@ describe('NotificationBell', () => {
     expect(openSessionById).not.toHaveBeenCalled()
     expect(openProject).not.toHaveBeenCalled()
     expect(markRead).not.toHaveBeenCalled()
+  })
+
+  it('uses compact vertical spacing for message rows and group headings', async () => {
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const message = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.includes('Approval needed')
+    )
+    const heading = document.body.querySelector<HTMLElement>('[id$="-unread"]')
+
+    expect(message?.className).toContain('py-2')
+    expect(message?.className).not.toContain('py-2.5')
+    expect(heading?.className).toContain('pt-1.5')
+    expect(heading?.className).toContain('pb-0.5')
   })
 
   it('keeps opening passive and marks messages only through explicit actions', async () => {
@@ -298,6 +343,32 @@ describe('NotificationBell', () => {
     expect(replayConnectorApproval).toHaveBeenCalledWith('request-1')
     expect(enqueueApproval).toHaveBeenCalledWith(connectorRequest)
     expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
+  })
+
+  it('continues navigation when approval replay fails', async () => {
+    const openSessionById = vi.fn()
+    const markRead = vi.fn(async () => undefined)
+    window.api.settings.replayConnectorApproval = vi.fn(async () => {
+      throw new Error('approval replay failed')
+    })
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, sessionId: 'session-1' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 

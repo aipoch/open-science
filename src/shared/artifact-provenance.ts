@@ -228,6 +228,59 @@ export type ArtifactVersionInputEvidence = {
   strongest_association: NotebookInputAssociation
 }
 
+export type ArtifactConnectorArgumentValue =
+  | null
+  | boolean
+  | number
+  | string
+  | ArtifactConnectorArgumentValue[]
+  | { [key: string]: ArtifactConnectorArgumentValue }
+
+// Only app-owned Connector handlers may supply this receipt. It is deliberately not part of the
+// Artifact MCP/RPC request so a model or custom MCP server cannot promote its own claims to trusted
+// producer evidence.
+export type AppGeneratedArtifactProducer = {
+  kind: 'connector'
+  connectorId: string
+  toolId: string
+  invocationId: string
+  implementationVersion: string
+  normalizedArguments: { [key: string]: ArtifactConnectorArgumentValue }
+  inputFiles?: NotebookRunInputFile[]
+}
+
+export type ArtifactConnectorExecutionEvidence = {
+  schema_version: 1
+  normalized_arguments: { [key: string]: ArtifactConnectorArgumentValue }
+  arguments_checksum: string
+}
+
+export type ArtifactNotebookProducerEvidence = {
+  state: 'available'
+  notebook_session_id: string
+  producer_run_id: string
+  run_index: number
+  kernel_kind: NotebookKernelKind
+  association_method: 'agent-declared-and-session-validated' | 'server-inferred-file-observation'
+  environment_manifest_checksum?: string
+}
+
+export type ArtifactConnectorProducerEvidence = {
+  state: 'available'
+  kind: 'connector'
+  connector_id: string
+  tool_id: string
+  invocation_id: string
+  implementation_version: string
+  arguments_checksum: string
+  association_method: 'app-owned-handler'
+}
+
+export const isArtifactNotebookProducer = (
+  producer: ArtifactVersionEvidence['producer']
+): producer is ArtifactNotebookProducerEvidence =>
+  producer.state === 'available' && !('kind' in producer)
+
 export type ArtifactVersionEnvironmentEvidence = {
   capture_kind: 'completed-run'
   environment_name: string
@@ -350,19 +403,12 @@ export type ArtifactVersionEvidence = {
   is_user_upload: false
   reproduction_code?: string
   execution_snapshot_checksum?: string
+  connector_execution?: ArtifactConnectorExecutionEvidence
   execution_status: ArtifactVersionAvailability
   inputs: ArtifactVersionInputEvidence[]
   producer:
-    | {
-        state: 'available'
-        notebook_session_id: string
-        producer_run_id: string
-        run_index: number
-        kernel_kind: NotebookKernelKind
-        association_method:
-          'agent-declared-and-session-validated' | 'server-inferred-file-observation'
-        environment_manifest_checksum?: string
-      }
+    | ArtifactNotebookProducerEvidence
+    | ArtifactConnectorProducerEvidence
     | { state: 'unavailable'; reason: ArtifactProducerUnavailableReason }
   environment?: ArtifactVersionEnvironmentEvidence
   environment_status: ArtifactVersionAvailability

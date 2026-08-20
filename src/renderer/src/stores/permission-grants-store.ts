@@ -29,7 +29,8 @@ type PermissionGrantsStore = PermissionGrantSnapshot & {
   undo?: PermissionUndo
   undoQueue: PermissionUndo[]
   isRestoring: boolean
-  load: () => Promise<void>
+  loadedAt: number | null
+  load: (options?: { force?: boolean }) => Promise<void>
   revoke: (grants: PermissionGrantView[]) => Promise<void>
   extendUndo: (token: string) => Promise<number | undefined>
   restore: (token?: string) => Promise<void>
@@ -157,6 +158,7 @@ const withRestoredGrants = (
 }
 
 let latestLoadRequest = 0
+let loadRequestInFlight: Promise<void> | undefined
 let revokeRequestSequence = 0
 const pendingRevocations = new Map<number, Set<string>>()
 
@@ -194,33 +196,52 @@ const withoutUndoToken = (
 const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
   ...EMPTY_SNAPSHOT,
   status: 'idle',
+  loadedAt: null,
   undoQueue: [],
   isRestoring: false,
 
-  load: async () => {
+  load: (options = {}) => {
+    const state = get()
+    if (
+      !options.force &&
+      state.status === 'ready' &&
+      state.loadedAt !== null &&
+      Date.now() - state.loadedAt < 60_000
+    ) {
+      return Promise.resolve()
+    }
+    if (loadRequestInFlight && !options.force) return loadRequestInFlight
     const requestId = ++latestLoadRequest
     set({ status: 'loading', error: undefined })
-    try {
-      const snapshot = await window.api.permissions.list()
-      if (requestId !== latestLoadRequest) return
-      const normalized = {
-        ...snapshot,
-        version: snapshot.version ?? 0,
-        incompleteStores: snapshot.incompleteStores ?? []
+    const request = window.api.permissions.list().then(
+      (snapshot) => {
+        if (requestId !== latestLoadRequest) return
+        const normalized = {
+          ...snapshot,
+          version: snapshot.version ?? 0,
+          incompleteStores: snapshot.incompleteStores ?? []
+        }
+        set((current) =>
+          normalized.version < current.version
+            ? { status: 'ready', error: undefined, loadedAt: Date.now() }
+            : {
+                ...withoutPendingRevocations(normalized),
+                status: 'ready',
+                error: undefined,
+                loadedAt: Date.now()
+              }
+        )
+      },
+      (error: unknown) => {
+        if (requestId !== latestLoadRequest) return
+        set({ status: 'error', error: errorMessage(error) })
       }
-      set((state) =>
-        normalized.version < state.version
-          ? { status: 'ready', error: undefined }
-          : {
-              ...withoutPendingRevocations(normalized),
-              status: 'ready',
-              error: undefined
-            }
-      )
-    } catch (error) {
-      if (requestId !== latestLoadRequest) return
-      set({ status: 'error', error: errorMessage(error) })
-    }
+    )
+    const trackedRequest = request.finally(() => {
+      if (loadRequestInFlight === trackedRequest) loadRequestInFlight = undefined
+    })
+    loadRequestInFlight = trackedRequest
+    return trackedRequest
   },
 
   revoke: async (grants) => {
@@ -400,7 +421,8 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
   dismissUndo: (token) =>
     set((state) => (token ? withoutUndoToken(state, token) : nextUndoState(state.undoQueue))),
 
-  listen: () => window.api.permissions?.onChanged?.(() => void get().load()) ?? (() => undefined)
+  listen: () =>
+    window.api.permissions?.onChanged?.(() => void get().load({ force: true })) ?? (() => undefined)
 }))
 
 export { usePermissionGrantsStore }

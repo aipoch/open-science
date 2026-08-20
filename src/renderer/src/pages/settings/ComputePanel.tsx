@@ -1,5 +1,5 @@
 import { Folder, Info, Plus, Server } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { ComputeHost } from '../../../../shared/compute'
@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { useComputeStore } from '@/stores/compute-store'
+import { consumeComputeHostsPreload, useComputeStore } from '@/stores/compute-store'
 import { probedLabel } from './compute-probed-label'
 import { ComputeHostRemovalDialog } from './ComputeHostRemovalDialog'
 import { FileBrowserModal } from './FileBrowserModal'
@@ -144,6 +144,7 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
   const isLoaded = useComputeStore((state) => state.isLoaded)
   const loadError = useComputeStore((state) => state.loadError)
   const loadHosts = useComputeStore((state) => state.loadHosts)
+  const initialLoadStartedRef = useRef(false)
 
   // A short-lived confirmation message shown after a delete (the prototype's "confirmation toast").
   // Stores the removed host's name rather than a rendered sentence, so a language switch inside the
@@ -154,7 +155,11 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
   const [browserProviderId, setBrowserProviderId] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    void loadHosts()
+    // React StrictMode replays mount effects in development. Keep that replay from consuming the
+    // one-shot preload and then issuing a second read; a genuine remount receives a fresh ref.
+    if (initialLoadStartedRef.current) return
+    initialLoadStartedRef.current = true
+    if (!consumeComputeHostsPreload()) void loadHosts()
   }, [loadHosts])
 
   useEffect(() => {

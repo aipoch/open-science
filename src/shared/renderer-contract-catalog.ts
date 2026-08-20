@@ -380,7 +380,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('storage', 'storage', [
     ['cancelMigrate', 'storage:cancel-migrate', LOCAL], ['commitAndRelaunch', 'storage:commit-and-relaunch', LOCAL, STORAGE_PARENT],
     ['detectActive', 'storage:detect-active'], ['discardMigratedCopy', 'storage:discard-migrated-copy', LOCAL, STORAGE_PARENT],
-    ['dismissLegacyMovePrompt', 'storage:dismiss-legacy-move-prompt'], ['getInfo', 'storage:get-info'],
+    ['dismissLegacyMovePrompt', 'storage:dismiss-legacy-move-prompt'], ['getStatus', 'storage:get-status'], ['getInfo', 'storage:get-info'],
     ['inspectDataRoot', 'storage:inspect-data-root', LOCAL, STORAGE_PARENT], ['migrate', 'storage:migrate', LOCAL, STORAGE_PARENT],
     ['onProgress', 'storage:migrate-progress', EVENT], ['pickDirectory', 'storage:pick-directory', LOCAL],
     ['revealAppStorage', 'storage:reveal-app-storage', LOCAL], ['setDataRootAndRelaunch', 'storage:set-data-root-and-relaunch', LOCAL, STORAGE_ROOT],

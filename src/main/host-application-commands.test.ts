@@ -108,6 +108,14 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     abortFixLoop: vi.fn(() => undefined)
   },
   storage: {
+    getStatus: vi.fn(async () => ({
+      dataRoot: '/data',
+      isDefault: true,
+      defaultDataRoot: '/data',
+      defaultParent: '/',
+      dataRootMissing: false,
+      legacyDataMovePrompt: false
+    })),
     getInfo: vi.fn(async () => ({
       dataRoot: '/data',
       isDefault: true,
@@ -167,7 +175,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 52 request channels in their existing capability groups', () => {
+  it('defines the exact 53 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -185,7 +193,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(52)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(53)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -201,7 +209,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(52)
+    expect(router.dispatcher.commandNames()).toHaveLength(53)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -326,6 +334,7 @@ describe('Host application commands', () => {
       hostApplicationCommands.storage.dismissLegacyMovePrompt,
       invocation([])
     )
+    await router.dispatcher.invoke(hostApplicationCommands.storage.getStatus, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.storage.getInfo, invocation([]))
     await router.dispatcher.invoke(
       hostApplicationCommands.storage.inspectDataRoot,

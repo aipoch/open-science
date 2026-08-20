@@ -10,6 +10,7 @@ import type {
   RuntimeEnablement
 } from '../../../../shared/notebook-runtime'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
+import { useRuntimeSettingsStore } from '../../stores/runtime-settings-store'
 import { RuntimesPanel } from './RuntimesPanel'
 
 let container: HTMLDivElement
@@ -74,6 +75,16 @@ const enablement: RuntimeEnablement = { enabled: {}, installAuthorized: {} }
 
 beforeEach(() => {
   useNotebookEnvStore.setState(createInitialNotebookEnvState())
+  useRuntimeSettingsStore.setState({
+    envs: null,
+    enablement: {},
+    loaded: false,
+    checkedAt: null,
+    busy: false,
+    error: null,
+    packageCounts: {},
+    packageCountsLoaded: {}
+  })
   listEnvironments = vi.fn().mockResolvedValue({ python: pythonEnvs, r: rEnvs })
   listPackages = vi
     .fn()
@@ -172,7 +183,10 @@ describe('RuntimesPanel', () => {
     expect(section?.textContent).toContain('Custom runtime description')
     const recheck = section?.querySelector<HTMLButtonElement>('button')
     expect(recheck?.textContent).toContain('Recheck')
-    expect(recheck?.parentElement?.className).toContain('ml-auto')
+    expect(recheck?.parentElement?.parentElement?.className).toContain('ml-auto')
+    expect(section?.querySelector('[data-testid="runtimes-checked-at"]')?.textContent).toContain(
+      'Last checked'
+    )
   })
 
   it('disables Recheck until the initial registry load settles', async () => {

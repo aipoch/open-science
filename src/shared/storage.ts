@@ -7,7 +7,7 @@ export type UsageChild = { name: string; bytes: number }
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 
-export type StorageInfo = {
+export type StorageStatus = {
   dataRoot: string
   isDefault: boolean
   // The default data root and the parent that reproduces it. `defaultParent` is fed to the same
@@ -24,6 +24,9 @@ export type StorageInfo = {
   // the user hasn't yet answered the one-time "move it into the visible OpenScience folder" prompt.
   // Drives the first-run LegacyDataMoveDialog; once answered (moved/relocated/declined) it stays false.
   legacyDataMovePrompt: boolean
+}
+
+export type StorageInfo = StorageStatus & {
   usage: StorageUsage
   availableBytes: number
 }

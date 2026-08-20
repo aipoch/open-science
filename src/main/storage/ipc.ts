@@ -11,6 +11,7 @@ const registerStorageIpcHandlers = (
   deps: StorageIpcDeps,
   owner: StorageCommandOwner = createStorageCommandOwner(deps)
 ): void => {
+  ipcMainHandle('storage:get-status', () => owner.getStatus())
   ipcMainHandle('storage:get-info', () => owner.getInfo())
   ipcMainHandle('storage:reveal-app-storage', () => owner.revealAppStorage())
   ipcMainHandle('storage:dismiss-legacy-move-prompt', () => owner.dismissLegacyMovePrompt())

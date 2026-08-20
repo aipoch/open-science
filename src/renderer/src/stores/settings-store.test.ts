@@ -824,6 +824,21 @@ describe('settings store: startup loading', () => {
     })
   })
 
+  it('refreshes only the lightweight settings snapshot after startup', async () => {
+    api.getSettings
+      .mockResolvedValueOnce({ ...snapshot([]), onboardingCompletedAt: 111 })
+      .mockResolvedValueOnce({ ...snapshot([]), onboardingCompletedAt: 222 })
+
+    await useSettingsStore.getState().load()
+    await useSettingsStore.getState().load()
+
+    expect(api.getSettings).toHaveBeenCalledTimes(2)
+    expect(api.getPreflight).toHaveBeenCalledOnce()
+    expect(api.isEncryptionAvailable).toHaveBeenCalledOnce()
+    expect(api.isNpmAvailable).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().onboardingCompletedAt).toBe(222)
+  })
+
   it('keeps startup blocked after an IPC failure and recovers on retry', async () => {
     const rawError = new Error(
       'EACCES: /Users/private/.open-science/settings.json could not be read'
@@ -838,7 +853,7 @@ describe('settings store: startup loading', () => {
       loadError: 'Open Science could not load settings. Retry to continue.'
     })
     expect(useSettingsStore.getState().loadError).not.toContain('/Users/private')
-    expect(warn).toHaveBeenCalledWith('Settings startup loading failed', rawError)
+    expect(warn).toHaveBeenCalledWith('Settings loading failed', rawError)
 
     await expect(useSettingsStore.getState().load()).resolves.toBe(true)
     expect(useSettingsStore.getState()).toMatchObject({

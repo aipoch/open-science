@@ -539,6 +539,20 @@ describe('package-listing workflows', () => {
     expect(counts).toEqual({ '/managed/a': 2, '/usr/bin/python3': 1 })
   })
 
+  it('reuses the validated environment snapshot for package counts after Settings discovery', async () => {
+    discoveryState.python = [fakeEnv('app-managed', '/managed/a')]
+    discoveryState.r = [fakeEnv('app-managed', '/managed/r')]
+    const workflows = fakeWorkflows(async () => [{ name: 'numpy', version: '2.1.3' }])
+
+    await workflows.listEnvironments()
+    expect(discoveryState.calls).toEqual(['python', 'r'])
+
+    await workflows.listPackageCounts({ language: 'python' })
+    await workflows.listPackageCounts({ language: 'r' })
+
+    expect(discoveryState.calls).toEqual(['python', 'r'])
+  })
+
   it('maps a failed listing to null (badge omitted) without failing the other envs', async () => {
     discoveryState.python = [
       fakeEnv('app-managed', '/managed/a'),

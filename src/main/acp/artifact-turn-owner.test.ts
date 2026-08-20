@@ -204,7 +204,18 @@ describe('ArtifactTurnOwner', () => {
 
     await Promise.all([
       owner.write(root, { filename: 'root.txt', content: 'root' }),
-      owner.write(parallel, { filename: 'parallel.txt', content: 'parallel' })
+      owner.write(parallel, {
+        filename: 'parallel.txt',
+        content: 'parallel',
+        producer: {
+          kind: 'connector',
+          connectorId: 'molecule',
+          toolId: 'preview_molecule',
+          invocationId: 'connector-call-1',
+          implementationVersion: '1',
+          normalizedArguments: { filename: 'parallel.txt' }
+        }
+      })
     ])
     await owner.finalize(root)
     await owner.dispose(root)
@@ -235,7 +246,13 @@ describe('ArtifactTurnOwner', () => {
         artifactRunId: 'artifact-run-100-2',
         agentFrameId: 'parallel-frame',
         runtimeSegmentId: 'parallel-segment',
-        promptMessageId: 'parallel-prompt'
+        promptMessageId: 'parallel-prompt',
+        producer: expect.objectContaining({
+          kind: 'connector',
+          connectorId: 'molecule',
+          toolId: 'preview_molecule',
+          invocationId: 'connector-call-1'
+        })
       })
     ])
     expect(issuedBindings).toEqual([
