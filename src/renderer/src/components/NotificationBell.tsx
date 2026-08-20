@@ -233,7 +233,7 @@ const NotificationBell = ({
 
   const openItem = async (item: NotificationInboxItem): Promise<void> => {
     if (item.targetInvalidatedAt !== undefined) return
-    if (item.readAt === undefined) await markRead([item.id])
+    if (item.readAt === undefined) void markRead([item.id]).catch(() => undefined)
     const replayedApproval = await replayPendingApproval(item)
     if (item.sessionId) {
       useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
