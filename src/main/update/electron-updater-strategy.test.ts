@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Logger } from '../logger'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
-import { createDelegatedSafeInstallGate } from './strategy'
+import { createActiveResearchSafeInstallGate } from './strategy'
 import {
   clearApplicationShutdownTrigger,
   currentApplicationShutdownTrigger
@@ -554,6 +554,20 @@ describe('ElectronUpdaterStrategy', () => {
     )
   })
 
+  it('can install silently without relaunching for a headless caller', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+    markUpdateReady(updater)
+
+    await strategy.apply({ relaunch: false })
+
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, false)
+  })
+
   it('rolls back the update shutdown trigger when quitAndInstall throws', async () => {
     const updater = new FakeUpdater()
     updater.quitAndInstall.mockImplementation(() => {
@@ -597,7 +611,7 @@ describe('ElectronUpdaterStrategy', () => {
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
-      installGate: createDelegatedSafeInstallGate(() => true, backendTeardownGate)
+      installGate: createActiveResearchSafeInstallGate(() => ['delegated'], backendTeardownGate)
     })
     markUpdateReady(updater)
 
@@ -605,7 +619,33 @@ describe('ElectronUpdaterStrategy', () => {
 
     expect(status).toMatchObject({
       state: 'error',
-      error: expect.stringMatching(/subagents are still running/i)
+      error: expect.stringMatching(/subagents are still running/i),
+      blockedBy: ['delegated']
+    })
+    expect(backendTeardownGate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('blocks restart for root-agent, notebook, and reviewer work without tearing them down', async () => {
+    const updater = new FakeUpdater()
+    const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: createActiveResearchSafeInstallGate(
+        () => ['agent', 'notebook', 'reviewer'],
+        backendTeardownGate
+      )
+    })
+    markUpdateReady(updater)
+
+    const status = await strategy.apply()
+
+    expect(status).toMatchObject({
+      state: 'error',
+      error: expect.stringMatching(/research work is still running/i),
+      blockedBy: ['agent', 'notebook', 'reviewer']
     })
     expect(backendTeardownGate).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).not.toHaveBeenCalled()

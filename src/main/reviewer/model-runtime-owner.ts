@@ -88,6 +88,10 @@ class ReviewerModelRuntimeOwner {
     return admission
   }
 
+  hasActiveWork(): boolean {
+    return this.activeRuntimes.size > 0 || this.pendingAdmissions.size > 0
+  }
+
   private async admitOwned(): Promise<ReviewerModelRuntimeAdmission> {
     if (this.shuttingDown) throw new Error('Reviewer model runtime is shutting down.')
     const captured = await this.options.captureModel()

@@ -19,6 +19,10 @@ import { locateApp } from './locate-app.mjs'
 const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 30_000
 const STOP_TIMEOUT_MS = 15_000
+const UPDATE_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000
+const UPDATE_CLI_RPC_CAPABILITY = 'update-cli-v1'
+const UPDATE_BLOCKED_EXIT_CODE = 5
+const UPDATE_MANUAL_ACTION_EXIT_CODE = 6
 const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
@@ -28,6 +32,7 @@ Commands:
   stop        Gracefully stop the backend
   status      Show backend status
   url         Print the authenticated web URL
+  update      Check, download, and apply an application update
   codex login [--force]
   project list
   project create <name> [--description <text>] [--agent-context <text> | --agent-context-file <path>]
@@ -72,7 +77,7 @@ Options:
   --output <path>        Artifact download destination
   --yes                  Confirm the offline rollback conversion
   --no-open              Do not open the browser after start
-  --no-sandbox           Disable Chromium's process sandbox (security risk; start only)
+  --no-sandbox           Disable Chromium's process sandbox (security risk; start/update only)
   --force                Sign in again even when Codex credentials already exist
   --json                 Emit one machine-readable result
   -h, --help             Show this help`
@@ -216,8 +221,8 @@ export const parseCliArgs = (argv) => {
   if (options.cancelOnTimeout && options.timeoutMs === undefined) {
     throw new CliUsageError('--cancel-on-timeout requires --timeout-ms.')
   }
-  if (options.noSandbox && command !== 'start') {
-    throw new CliUsageError('--no-sandbox requires start.')
+  if (options.noSandbox && command !== 'start' && command !== 'update') {
+    throw new CliUsageError('--no-sandbox requires start or update.')
   }
   if (options.yes && command !== 'rollback-to-0.7.3') {
     throw new CliUsageError('--yes requires rollback-to-0.7.3.')
@@ -227,6 +232,9 @@ export const parseCliArgs = (argv) => {
   }
   if (options.force && (command !== 'codex' || subcommand !== 'login')) {
     throw new CliUsageError('--force requires codex login.')
+  }
+  if (command === 'update' && positionals.length > 0) {
+    throw new CliUsageError('update accepts no arguments.')
   }
   const isProjectCreate = command === 'project' && subcommand === 'create'
   const isProjectUpdate = command === 'project' && subcommand === 'update'
@@ -464,7 +472,7 @@ export const formatStartupFailure = (outcome, logTail, options) => {
       'Open Science could not start because Chromium sandboxing is unavailable on this host.',
       logTail,
       'This can occur when an AppImage mount cannot provide the SUID permissions required by Chromium; some Linux hosts also restrict unprivileged user namespaces.',
-      'For an explicit rootless fallback, run "open-science start --no-sandbox".',
+      'For an explicit rootless fallback, run "open-science start --no-sandbox" or retry an update with "open-science update --no-sandbox".',
       "Warning: --no-sandbox disables Chromium's process sandbox and reduces security. Prefer the Debian package or a host configuration that supports sandboxed startup."
     ]
       .filter(Boolean)
@@ -485,7 +493,7 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
     deps.log(`Open Science is already running (PID ${existing.pid}).`)
     if (options.open) openBrowser(url)
     else deps.log('Run "open-science url" to print a browser login URL.')
-    return
+    return { state: existing, started: false }
   }
 
   const app = await locateApp({ appPath: options.appPath })
@@ -539,6 +547,7 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
   deps.log(`Open Science started (PID ${state.pid}).`)
   if (options.open) openBrowser(url)
   else deps.log('Run "open-science url" to print a browser login URL.')
+  return { state, started: true }
 }
 
 const findCurrentState = async (options, deps = DEFAULT_DEPS) => {
@@ -731,6 +740,223 @@ export const rollbackCommand = async (options, dependencies = {}) => {
   deps.log(`Preserved newer Data Root: ${manifest.preservedDataRoot}`)
   deps.log(`Converted Sessions: ${manifest.sessionsConverted}`)
   deps.log(`You can now install and start Open Science ${manifest.targetVersion}.`)
+}
+
+const UPDATE_DOWNLOAD_PAGE = 'https://www.aipoch.com/open-science'
+const UPDATE_BOOTSTRAPS = new WeakMap()
+
+const updateResult = (status, outcome, extras = {}) => ({
+  outcome,
+  current: status.current,
+  ...(status.latest ? { latest: status.latest } : {}),
+  ...extras
+})
+
+const updateBootstrap = async (client) => {
+  let bootstrap = UPDATE_BOOTSTRAPS.get(client)
+  if (!bootstrap) {
+    bootstrap = await client.health()
+    UPDATE_BOOTSTRAPS.set(client, bootstrap)
+  }
+  return bootstrap
+}
+
+const supportsApplicationCommand = async (client, channel) => {
+  const bootstrap = await updateBootstrap(client)
+  return Array.isArray(bootstrap.rpcChannels) && bootstrap.rpcChannels.includes(channel)
+}
+
+const invokeApplicationCommand = async (client, channel, args = []) => {
+  const bootstrap = await updateBootstrap(client)
+  if (!Array.isArray(bootstrap.rpcChannels) || !bootstrap.rpcChannels.includes(channel)) {
+    throw new OpenScienceApiError(`Open Science does not support ${channel}.`, {
+      code: 'command_unavailable'
+    })
+  }
+  if (!Number.isInteger(bootstrap.rpcProtocolVersion)) {
+    throw new OpenScienceApiError('Open Science does not expose a compatible RPC protocol.', {
+      code: 'command_unavailable'
+    })
+  }
+
+  const response = await client.fetch(`${client.baseUrl}/rpc/${encodeURIComponent(channel)}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${client.token}`,
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-open-science-client': 'open-science-cli'
+    },
+    body: JSON.stringify({ protocolVersion: bootstrap.rpcProtocolVersion, args }),
+    signal: AbortSignal.timeout(UPDATE_REQUEST_TIMEOUT_MS)
+  })
+  let payload
+  try {
+    payload = await response.json()
+  } catch {
+    throw new OpenScienceApiError('Open Science RPC returned an invalid response.', {
+      code: 'invalid_response',
+      status: response.status
+    })
+  }
+  if (
+    !response.ok ||
+    payload?.protocolVersion !== bootstrap.rpcProtocolVersion ||
+    typeof payload?.ok !== 'boolean'
+  ) {
+    throw new OpenScienceApiError(
+      payload?.error?.message ?? 'Open Science RPC returned an invalid response.',
+      { code: payload?.error?.code ?? 'invalid_response', status: response.status }
+    )
+  }
+  if (!payload.ok) {
+    throw new OpenScienceApiError(payload.error?.message ?? 'Open Science command failed.', {
+      code: payload.error?.code ?? 'command_failed',
+      status: response.status
+    })
+  }
+  return payload.result
+}
+
+const downloadWithProgress = async (client, options, deps) => {
+  let settled = false
+  const download = deps
+    .invokeCommand(client, 'update:download', [{ nonInteractive: true }])
+    .finally(() => {
+      settled = true
+    })
+  // Observe rejection immediately while the polling loop is active; the final await below still
+  // preserves it for the caller.
+  void download.catch(() => undefined)
+
+  let lastPercent
+  while (!settled) {
+    await deps.sleep(500)
+    if (settled || options.json) continue
+    const status = await deps.invokeCommand(client, 'update:get-status')
+    if (status.state !== 'downloading' || !Number.isFinite(status.progress)) continue
+    const percent = Math.max(0, Math.min(100, Math.round(status.progress)))
+    if (percent === lastPercent) continue
+    lastPercent = percent
+    deps.log(`Downloading update: ${percent}%`)
+  }
+  return await download
+}
+
+export const updateCommand = async (options, dependencies = {}) => {
+  const quietLog = options.json ? () => {} : (...args) => console.log(...args)
+  const deps = {
+    ensureService: (startOptions) => startCommand(startOptions, { ...DEFAULT_DEPS, log: quietLog }),
+    connect: (connectOptions) => connectToOpenScience(connectOptions),
+    sleep,
+    getBootstrap: updateBootstrap,
+    supportsCommand: supportsApplicationCommand,
+    invokeCommand: invokeApplicationCommand,
+    log: (...args) => console.log(...args),
+    setExitCode: (code) => {
+      process.exitCode = code
+    },
+    ...dependencies
+  }
+  await deps.ensureService({ ...options, open: false })
+  const client = await deps.connect({ configRoot: options.configRoot })
+  let result
+
+  const supports = (channel) => deps.supportsCommand(client, channel)
+  const bootstrap = await deps.getBootstrap(client)
+  if (!bootstrap.rpcCapabilities?.includes(UPDATE_CLI_RPC_CAPABILITY)) {
+    const status = { current: bootstrap.appVersion ?? 'unknown' }
+    result = updateResult(status, 'manual-action-required', {
+      nextAction: `Install the latest Open Science release from ${UPDATE_DOWNLOAD_PAGE}, then run this command again.`
+    })
+  } else if (!(await supports('update:check'))) {
+    throw new Error(
+      'The running Open Science version advertises update CLI support without update:check.'
+    )
+  } else {
+    if (!options.json) deps.log('Checking for Open Science updates...')
+    let status = await deps.invokeCommand(client, 'update:check')
+    if (status.state === 'error') throw new Error(status.error ?? 'Update check failed.')
+
+    if (status.state === 'up-to-date') {
+      result = updateResult(status, 'up-to-date')
+    } else if (status.state !== 'available' && status.state !== 'ready') {
+      throw new Error(`Update check ended in an unexpected state: ${status.state}`)
+    } else {
+      if (status.state === 'available') {
+        if (!(await supports('update:download'))) {
+          result = updateResult(status, 'manual-action-required', {
+            nextAction: `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+          })
+        } else {
+          if (!options.json) {
+            deps.log(`Open Science ${status.latest ?? 'update'} is available. Downloading...`)
+          }
+          status = await downloadWithProgress(client, options, deps)
+          if (status.state === 'error') throw new Error(status.error ?? 'Update download failed.')
+          if (status.state !== 'ready') {
+            result = updateResult(status, 'manual-action-required', {
+              nextAction: `No compatible update artifact is available. Install it manually from ${UPDATE_DOWNLOAD_PAGE}.`
+            })
+          }
+        }
+      }
+
+      if (!result && status.state === 'ready') {
+        if (status.applyKind !== 'restart') {
+          const installerPath = status.localPath
+          result = updateResult(status, 'manual-action-required', {
+            ...(installerPath ? { installerPath } : {}),
+            nextAction: installerPath
+              ? `Run the installer at ${installerPath}, then start Open Science again.`
+              : `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+          })
+        } else if (!(await supports('update:apply'))) {
+          result = updateResult(status, 'manual-action-required', {
+            nextAction: `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+          })
+        } else {
+          if (!options.json) deps.log('Applying the update without opening the desktop app...')
+          status = await deps.invokeCommand(client, 'update:apply', [{ relaunch: false }])
+          if (status.blockedBy?.length) {
+            result = updateResult(status, 'blocked', { blockedBy: status.blockedBy })
+          } else if (status.state === 'error') {
+            throw new Error(status.error ?? 'Update apply failed.')
+          } else if (status.state === 'applying') {
+            result = updateResult(status, 'install-started')
+          } else {
+            throw new Error(`Update apply ended in an unexpected state: ${status.state}`)
+          }
+        }
+      }
+    }
+  }
+
+  deps.log(options.json ? JSON.stringify(result) : formatUpdateResult(result))
+  if (result.outcome === 'blocked') deps.setExitCode(UPDATE_BLOCKED_EXIT_CODE)
+  if (result.outcome === 'manual-action-required') {
+    deps.setExitCode(UPDATE_MANUAL_ACTION_EXIT_CODE)
+  }
+  return result
+}
+
+const formatUpdateResult = (result) => {
+  if (result.outcome === 'up-to-date') {
+    return `Open Science ${result.current} is up to date.`
+  }
+  if (result.outcome === 'install-started') {
+    return `Installation of Open Science ${result.latest ?? 'update'} was handed off to the platform updater. The desktop app will not be opened; verify the installed version after the updater exits.`
+  }
+  if (result.outcome === 'blocked') {
+    return `Update blocked by active research: ${result.blockedBy.join(', ')}.`
+  }
+  return [
+    `Open Science ${result.latest ?? result.current} requires a manual install.`,
+    result.installerPath ? `Installer: ${result.installerPath}` : undefined,
+    result.nextAction
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 const readPrompt = async (options, deps) => {
@@ -1069,7 +1295,7 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
   return exitCode
 }
 
-export const runCli = async (argv = process.argv.slice(2)) => {
+export const runCli = async (argv = process.argv.slice(2), dependencies = {}) => {
   const parsed = parseCliArgs(argv)
   const { command, options } = parsed
   if (options.help || !command || command === '-h' || command === '--help') {
@@ -1080,6 +1306,7 @@ export const runCli = async (argv = process.argv.slice(2)) => {
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)
+  else if (command === 'update') await updateCommand(options, dependencies.update)
   else if (command === 'codex' && parsed.subcommand === 'login') await codexLoginCommand(options)
   else if (command === 'rollback-to-0.7.3') await rollbackCommand(options)
   else if (TASK_COMMANDS.has(command)) await runTaskCommand(parsed)

@@ -4,6 +4,8 @@ import { APPLICATION_COMMAND_ERROR_CODES } from './application-command-contract'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
 
 export const WEB_RPC_PROTOCOL_VERSION = 1 as const
+export const WEB_RPC_CAPABILITY_UPDATE_CLI_V1 = 'update-cli-v1' as const
+export const WEB_RPC_CAPABILITIES = [WEB_RPC_CAPABILITY_UPDATE_CLI_V1] as const
 // v3 requires ACP consumers to apply acp:event incrementally. Reject cached v2 pages after a Main
 // upgrade so they request a reload instead of silently waiting for removed per-chunk state frames.
 export const WEB_EVENT_STREAM_PROTOCOL_VERSION = 3 as const
@@ -108,6 +110,7 @@ export const webRpcBootstrapSchema = z
       })
       .strict(),
     restrictedRpcChannels: z.array(z.string()).optional(),
+    rpcCapabilities: z.array(z.string()).optional(),
     rpcChannels: z.array(z.string()).superRefine((channels, context) => {
       for (const channel of channels) {
         if (isWebRpcChannel(channel)) continue

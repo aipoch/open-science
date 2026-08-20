@@ -39,7 +39,12 @@ import type {
   RevealAppStorageResult,
   StorageInfo
 } from '../shared/storage'
-import type { AppInfo, UpdateStatus } from '../shared/update'
+import type {
+  AppInfo,
+  UpdateApplyOptions,
+  UpdateDownloadOptions,
+  UpdateStatus
+} from '../shared/update'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -284,12 +289,18 @@ const storageCommands = Object.freeze({
 })
 
 const updateCommands = Object.freeze({
-  apply: defineApplicationCommand<'update:apply', readonly [], UpdateStatus>('update:apply'),
+  apply: defineApplicationCommand<
+    'update:apply',
+    readonly [options?: UpdateApplyOptions],
+    UpdateStatus
+  >('update:apply'),
   cancel: defineApplicationCommand<'update:cancel', readonly [], UpdateStatus>('update:cancel'),
   check: defineApplicationCommand<'update:check', readonly [], UpdateStatus>('update:check'),
-  download: defineApplicationCommand<'update:download', readonly [], UpdateStatus>(
-    'update:download'
-  ),
+  download: defineApplicationCommand<
+    'update:download',
+    readonly [options?: UpdateDownloadOptions],
+    UpdateStatus
+  >('update:download'),
   getAppInfo: defineApplicationCommand<'update:get-app-info', readonly [], AppInfo>(
     'update:get-app-info'
   ),
@@ -553,13 +564,13 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[8], {
-      'update:apply': ({ callerContext }) =>
-        localCommand(callerContext, 'update:apply', () => dependencies.update.apply()),
+      'update:apply': ({ args, callerContext }) =>
+        localCommand(callerContext, 'update:apply', () => dependencies.update.apply(args[0])),
       'update:cancel': ({ callerContext }) =>
         localCommand(callerContext, 'update:cancel', () => dependencies.update.cancel()),
       'update:check': () => dependencies.update.check(),
-      'update:download': ({ callerContext }) =>
-        localCommand(callerContext, 'update:download', () => dependencies.update.download()),
+      'update:download': ({ args, callerContext }) =>
+        localCommand(callerContext, 'update:download', () => dependencies.update.download(args[0])),
       'update:get-app-info': () => dependencies.update.getAppInfo(),
       'update:get-status': () => dependencies.update.getStatus()
     })

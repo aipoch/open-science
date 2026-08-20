@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
-import { isNewer, type UpdateStatus } from '../../shared/update'
+import { isNewer, type UpdateApplyOptions, type UpdateStatus } from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
 import { fetchManifest } from './manifest'
@@ -484,7 +484,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // Triggered by the user's "Restart to update" click once the download is ready. On Windows,
   // isSilent=true bypasses the assisted NSIS wizard and isForceRunAfter=true relaunches into the new
   // version. Other updaters ignore isSilent.
-  async apply(): Promise<UpdateStatus> {
+  async apply(options: UpdateApplyOptions = {}): Promise<UpdateStatus> {
     // Ignore stale/out-of-order renderer calls until electron-updater reports a completed download,
     // then claim the update synchronously so repeat clicks or concurrent renderers cannot start a
     // second teardown/install. The broadcast also gives the renderer immediate feedback during the
@@ -499,11 +499,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       fields: { strategy: 'in-place' }
     })
 
-    // Stop the agent + notebook process trees BEFORE handing off to the installer. Its uninstall step
-    // deletes the running app's files, and on Windows an executable/DLL still mapped by a background
-    // child (agent CLI, python kernel, conda) is locked — the classic "Failed to uninstall old
-    // application files" error. If the teardown is degraded (budget elapsed, or taskkill fell back and
-    // may have left grandchildren), refuse the install rather than fail mid-uninstall: the gate is
+    // Stop the agent, Reviewer, and notebook process trees BEFORE handing off to the installer. Its
+    // uninstall step deletes the running app's files, and on Windows an executable/DLL still mapped by
+    // a background child (agent CLI, python kernel, conda) is locked — the classic "Failed to uninstall
+    // old application files" error. If the teardown is degraded (budget elapsed, or taskkill fell back
+    // and may have left grandchildren), refuse the install rather than fail mid-uninstall: the gate is
     // non-latching, so the app stays usable and the user can retry (fewer live processes next time).
     if (this.installGate) {
       operation.phase('install-gate')
@@ -532,15 +532,18 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
           ...this.status,
           state: 'error',
           error:
-            readiness.blockedBy === 'delegated-work'
+            readiness.blockedBy?.length === 1 && readiness.blockedBy[0] === 'delegated'
               ? 'Subagents are still running. Return to their tasks and stop them before restarting to update.'
-              : 'Could not fully stop background processes before updating. Please try again.'
+              : readiness.blockedBy?.length
+                ? 'Research work is still running. Stop it before restarting to update.'
+                : 'Could not fully stop background processes before updating. Please try again.',
+          ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy } : {})
         })
         operation.fail(new Error('Install gate refused'), {
           reason: 'install-gate-refused',
           gateCompleted: readiness.completed,
           processTreesReaped: readiness.reaped,
-          ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy } : {})
+          ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy.join(',') } : {})
         })
         return this.status
       }
@@ -552,7 +555,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
     try {
-      this.updater.quitAndInstall(true, true)
+      this.updater.quitAndInstall(true, options.relaunch ?? true)
     } catch (error) {
       rollbackTrigger()
       this.pendingInstallRollback = undefined

@@ -66,7 +66,9 @@ describe('ReviewerModelRuntimeOwner', () => {
         }
       })
 
+      expect(owner.hasActiveWork()).toBe(false)
       const admission = await owner.admit()
+      expect(owner.hasActiveWork()).toBe(true)
 
       expect(admission.model).toBe(target.model.id)
       expect(admission.reviewerAcpRuntime).toBe(fixedRuntime)
@@ -85,6 +87,7 @@ describe('ReviewerModelRuntimeOwner', () => {
       ).toThrow('no longer available')
 
       await admission.release()
+      expect(owner.hasActiveWork()).toBe(false)
       expect(shutdownForQuit).toHaveBeenCalledOnce()
     }
   )
@@ -154,6 +157,7 @@ describe('ReviewerModelRuntimeOwner', () => {
 
     const admission = owner.admit()
     await vi.waitFor(() => expect(resolveTarget).toHaveBeenCalledOnce())
+    expect(owner.hasActiveWork()).toBe(true)
     let shutdownFinished = false
     const shutdown = owner.shutdown().then(() => {
       shutdownFinished = true
@@ -169,6 +173,7 @@ describe('ReviewerModelRuntimeOwner', () => {
 
     await expect(admission).rejects.toThrow('shutting down')
     await shutdown
+    expect(owner.hasActiveWork()).toBe(false)
     expect(releaseBridge).toHaveBeenCalledOnce()
     expect(createRuntime).not.toHaveBeenCalled()
   })

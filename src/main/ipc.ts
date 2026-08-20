@@ -291,7 +291,8 @@ import {
 } from './storage-root'
 import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
-import { createDelegatedSafeInstallGate } from './update/strategy'
+import { createActiveResearchSafeInstallGate } from './update/strategy'
+import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 import { createUploadCommandOwner } from './uploads/command-owner'
@@ -2325,7 +2326,8 @@ const createApplicationModules = async (
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Update handling is deliberately constructed below, after this dependency is complete.
   let reviewerModelRuntimeShutdown:
-    Pick<ReviewerModelRuntimeOwner, 'shutdown' | 'shutdownForUpdateGate'> | undefined
+    | Pick<ReviewerModelRuntimeOwner, 'hasActiveWork' | 'shutdown' | 'shutdownForUpdateGate'>
+    | undefined
   const shutdownCoordinator = new BackendShutdownCoordinator({
     runtime: {
       shutdownForQuit: async () => {
@@ -2351,8 +2353,16 @@ const createApplicationModules = async (
   // quit the running app to install.
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: createDelegatedSafeInstallGate(
-      () => getActiveDelegatedSessions().length > 0,
+    installGate: createActiveResearchSafeInstallGate(
+      () => {
+        const blockers: UpdateBlocker[] = detectActiveSessions({
+          runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+          delegated: { getActiveDelegatedSessions },
+          notebook: notebookService
+        }).map((session) => session.kind)
+        if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+        return blockers
+      },
       () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
     )
   })

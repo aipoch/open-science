@@ -12,6 +12,13 @@ export type UpdateManifest = {
 export type UpdateState =
   'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'applying' | 'error'
 
+export type UpdateBlocker = 'agent' | 'delegated' | 'notebook' | 'reviewer'
+
+// Call intent stays transient and transport-neutral. Desktop callers omit these options; headless
+// callers use them to avoid native dialogs and desktop relaunches.
+export type UpdateDownloadOptions = { nonInteractive?: boolean }
+export type UpdateApplyOptions = { relaunch?: boolean }
+
 // The single status the main process broadcasts and the renderer store mirrors.
 export type UpdateStatus = {
   state: UpdateState
@@ -27,6 +34,9 @@ export type UpdateStatus = {
   downloadProgress?: import('./download-progress').DownloadProgress
   localPath?: string // set when state === 'ready'
   error?: string
+  // Active research that prevented an in-place install. This is deliberately not a new UpdateState:
+  // the operation still failed, while callers that need automation can distinguish a safe block.
+  blockedBy?: UpdateBlocker[]
   // How the renderer applies a ready update: open the downloaded installer (mac manual reinstall) or
   // restart into an in-place electron-updater install (win/linux). Set by the active strategy.
   applyKind?: 'installer' | 'restart'

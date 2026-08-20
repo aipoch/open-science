@@ -26,6 +26,7 @@ import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
 import {
+  WEB_RPC_CAPABILITIES,
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
   isWebRpcChannel,
   WEB_RPC_PROTOCOL_VERSION,
@@ -606,6 +607,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         json(response, 200, {
           ...(auth.ok ? options.bootstrap : remoteWebBootstrap(options.bootstrap)),
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
           rpcChannels,
           eventStream: internalEventStream.cursor(),
           restrictedRpcChannels
