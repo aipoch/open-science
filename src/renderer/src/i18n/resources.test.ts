@@ -841,6 +841,7 @@ describe('mandatory product glossary', () => {
     /\.skill\b/g,
     /skill:\/\//g,
     /host\.skill\b/g,
+    /host\.mcp\("[^"]+", …\)/g,
     /AGENTS\.md/g,
     /ssh-agent/g,
     /setup-token/g,

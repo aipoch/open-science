@@ -2137,7 +2137,7 @@
   "Use {{name}}": "Использовать {{name}}",
   "Used by Auto-review": "Используется автопроверкой",
   "Used by the Main Agent and will be kept.": "Используется главным агентом и будет сохранён.",
-  "Used by host.mcp(\"{{name}}\", …), Specialists, and the generated MCP skill.": "Используется host.mcp (\"{{name}}\", …), специалистами и сгенерированным навыком MCP.",
+  "Used by host.mcp(\"{{name}}\", …), Specialists, and the generated MCP skill.": "Используется host.mcp(\"{{name}}\", …), специалистами и сгенерированным навыком MCP.",
   "Used only for GitHub Skill requests and encrypted with system credential storage.": "Используется только для запросов навыка GitHub и зашифрована с помощью хранилища учётных данных системы.",
   "User": "Пользователь",
   "User uploads": "Загрузки пользователя",
