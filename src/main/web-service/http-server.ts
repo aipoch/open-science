@@ -50,7 +50,14 @@ import { TaskApiError, type HeadlessTaskApi } from './task-api'
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
+const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
 const gzipAsync = promisify(gzip)
+const STATIC_RESPONSE_SECURITY_HEADERS = {
+  'content-security-policy':
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer'
+} as const
 
 // Remote Browser access is an application session, not authority over native host lifecycle and
 // shell integration. The catalog keeps that authority decision aligned with renderer installation.
@@ -85,6 +92,7 @@ type WebServerOptions = {
   staticRoot: string
   applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb'>
   applicationEvents: ApplicationEventSource
+  eventHeartbeatIntervalMs?: number
   externalAccess?: ExternalWebAccess
   tasks?: Pick<
     HeadlessTaskApi,
@@ -526,6 +534,7 @@ const serveStatic = async (
     const acceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] ?? ''))
     const body = canCompress && acceptsGzip ? await gzipAsync(content) : content
     response.writeHead(200, {
+      ...STATIC_RESPONSE_SECURITY_HEADERS,
       'content-type': MIME_TYPES[extension] ?? 'application/octet-stream',
       'content-length': String(body.byteLength),
       'cache-control': filePath.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000',
@@ -537,6 +546,7 @@ const serveStatic = async (
   } catch {
     const message = 'Web UI is not built. Run npm run build:web first.'
     response.writeHead(503, {
+      ...STATIC_RESPONSE_SECURITY_HEADERS,
       'content-type': 'text/plain; charset=utf-8',
       'content-length': String(Buffer.byteLength(message))
     })
@@ -549,6 +559,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const externalSockets = new Map<WebSocket, string | undefined>()
   const publicEventSockets = new Set<WebSocket>()
   const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
+  const livenessSockets = new Set<WebSocket>()
+  const awaitingPong = new WeakSet<WebSocket>()
   const internalEventStream = new InternalWebEventStream()
   const commandClient = createApplicationCommandClient()
   const clientLeases = new ClientLeaseRegistry((clientId) => {
@@ -802,8 +814,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       externalSockets.delete(socket)
       publicEventSockets.delete(socket)
       internalEventSockets.delete(socket)
+      livenessSockets.delete(socket)
       lease.release()
     })
+    socket.on('pong', () => awaitingPong.delete(socket))
+    if (url.searchParams.get('liveness') === '1') livenessSockets.add(socket)
     if (url.pathname === '/api/v1/events') {
       publicEventSockets.add(socket)
     } else {
@@ -877,6 +892,24 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   const address = server.address()
   const port = typeof address === 'object' && address ? address.port : options.port
+  const eventHeartbeatInterval = setInterval(() => {
+    const publicHeartbeat = JSON.stringify({
+      type: 'connection.heartbeat',
+      data: { timestamp: Date.now() }
+    })
+    const internalHeartbeat = internalEventStream.heartbeat()
+    for (const socket of livenessSockets) {
+      if (socket.readyState !== WebSocket.OPEN) continue
+      if (awaitingPong.has(socket)) {
+        socket.terminate()
+        continue
+      }
+      awaitingPong.add(socket)
+      socket.ping()
+      if (publicEventSockets.has(socket)) socket.send(publicHeartbeat)
+      else if (internalEventSockets.has(socket)) socket.send(internalHeartbeat)
+    }
+  }, options.eventHeartbeatIntervalMs ?? DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS)
 
   return {
     port,
@@ -888,6 +921,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
     },
     close: async () => {
+      clearInterval(eventHeartbeatInterval)
       removeBroadcastSink()
       removeTaskProgressSink?.()
       for (const socket of sockets) socket.close()

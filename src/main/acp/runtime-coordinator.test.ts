@@ -725,7 +725,63 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
-  it('rejects prompt admission when the turn ends without provider acceptance', async () => {
+  it('acknowledges a blocking provider prompt after local dispatch without waiting for output', async () => {
+    const completion = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        skipProviderPromptAccepted: true,
+        prompt: () => completion.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const admission = coordinator.startPrompt({
+      sessionId: session.sessionId,
+      text: 'Wait for the blocking model response.'
+    })
+    const outcome = Promise.race([
+      admission.then(
+        () => 'acknowledged' as const,
+        () => 'rejected' as const
+      ),
+      new Promise<'still-pending'>((resolve) => setImmediate(() => resolve('still-pending')))
+    ])
+
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+    await expect(outcome).resolves.toBe('acknowledged')
+    expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+
+    completion.resolve({ stopReason: 'end_turn' })
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
+  })
+
+  it('rejects an immediately failed runtime dispatch before acknowledging application admission', async () => {
+    const failure = new Error('Active session disposed')
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          skipProviderPromptAccepted: true,
+          prompt: () => Promise.reject(failure)
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+
+    await expect(
+      coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+    ).rejects.toBe(failure)
+  })
+
+  it('keeps application admission independent from a missing provider acceptance update', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>
         createFakeRuntime({
@@ -739,7 +795,7 @@ describe('AcpRuntimeCoordinator', () => {
 
     await expect(
       coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
-    ).rejects.toThrow('ACP prompt ended before provider acceptance.')
+    ).resolves.toBeUndefined()
   })
 
   it('does not report provider acceptance when dispatch fails before acceptance', async () => {

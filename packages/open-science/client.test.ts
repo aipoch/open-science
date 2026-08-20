@@ -13,6 +13,31 @@ const response = (status: number, payload: unknown): Response =>
     headers: { 'content-type': 'application/json' }
   })
 
+class ControllableWebSocket {
+  static instance: ControllableWebSocket
+
+  readonly listeners = new Map<string, Array<(event: { data?: string }) => void>>()
+  closed = false
+
+  constructor(readonly url: URL) {
+    ControllableWebSocket.instance = this
+  }
+
+  addEventListener(name: string, listener: (event: { data?: string }) => void): void {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), listener])
+  }
+
+  emit(name: string, event: { data?: string } = {}): void {
+    for (const listener of this.listeners.get(name) ?? []) listener(event)
+  }
+
+  close(): void {
+    if (this.closed) return
+    this.closed = true
+    this.emit('close')
+  }
+}
+
 const roots: string[] = []
 
 afterEach(async () => {
@@ -200,6 +225,44 @@ describe('OpenScienceClient', () => {
     }
   })
 
+  it('stops waiting when the timeout expires during an in-flight polling request', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetch = vi.fn((_input: string, init?: RequestInit) => {
+        const signal = init?.signal
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      })
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'secret-token',
+        fetch
+      })
+      let outcome: unknown = 'still-pending'
+
+      void client.waitForRun('run-1', { timeoutMs: 500 }).then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+      expect(fetch).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(500)
+
+      expect(outcome).toMatchObject({
+        code: 'timeout',
+        message: 'Timed out waiting for run run-1.'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('cancels one run through the explicit server operation', async () => {
     const fetch = vi.fn().mockResolvedValue(
       response(200, {
@@ -259,6 +322,36 @@ describe('OpenScienceClient', () => {
     expect(client).not.toHaveProperty('runtime')
   })
 
+  it('honors caller cancellation while a polling request is in flight', async () => {
+    const fetch = vi.fn((_input: string, init?: RequestInit) => {
+      const signal = init?.signal
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'secret-token',
+      fetch
+    })
+    const abortController = new AbortController()
+    const cancellation = new Error('caller cancelled the in-flight poll')
+    let outcome: unknown = 'still-pending'
+
+    void client.waitForRun('run-1', { signal: abortController.signal }).then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: unknown) => {
+        outcome = error
+      }
+    )
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    abortController.abort(cancellation)
+
+    await vi.waitFor(() => expect(outcome).toBe(cancellation))
+  })
+
   it('surfaces stable API errors without including the authentication token', async () => {
     const fetch = vi.fn().mockResolvedValue(
       response(404, {
@@ -277,6 +370,154 @@ describe('OpenScienceClient', () => {
       message: 'Project not found: missing'
     })
     await expect(client.listSessions('missing')).rejects.not.toThrow('do-not-leak')
+  })
+
+  it('applies the client request timeout while an SDK request is in flight', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetch = vi.fn((_input: string, init?: RequestInit) => {
+        const signal = init?.signal
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      })
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'secret-token',
+        fetch,
+        requestTimeoutMs: 30_000
+      })
+      let outcome: unknown = 'still-pending'
+
+      void client.getRun('run-1').then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(outcome).toMatchObject({ code: 'timeout' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the request timeout active while a JSON response body is being consumed', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetch = vi.fn((_input: string, init?: RequestInit) => {
+        const signal = init?.signal
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+            })
+        } as Response)
+      })
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'secret-token',
+        fetch,
+        requestTimeoutMs: 30_000
+      })
+      let outcome: unknown = 'still-pending'
+
+      void client.getRun('run-1').then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(outcome).toMatchObject({ code: 'timeout' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the request timeout active while an artifact response body is streaming', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetch = vi.fn((_input: string, init?: RequestInit) => {
+        const signal = init?.signal
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                signal?.addEventListener('abort', () => controller.error(signal.reason), {
+                  once: true
+                })
+              }
+            }),
+            { status: 200 }
+          )
+        )
+      })
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'secret-token',
+        fetch,
+        requestTimeoutMs: 30_000
+      })
+      const response = await client.downloadArtifact('artifact-1')
+      let outcome: unknown = 'still-pending'
+      void response.text().then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(outcome).toMatchObject({ code: 'timeout' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('honors per-request cancellation while an SDK request is in flight', async () => {
+    const fetch = vi.fn((_input: string, init?: RequestInit) => {
+      const signal = init?.signal
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'secret-token',
+      fetch
+    })
+    const abortController = new AbortController()
+    const cancellation = new Error('caller cancelled the SDK request')
+    let outcome: unknown = 'still-pending'
+
+    void client.getRun('run-1', { signal: abortController.signal }).then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: unknown) => {
+        outcome = error
+      }
+    )
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    abortController.abort(cancellation)
+
+    await vi.waitFor(() => expect(outcome).toBe(cancellation))
   })
 
   it('covers project, session, artifact, and authenticated download operations', async () => {
@@ -386,6 +627,12 @@ describe('OpenScienceClient', () => {
     })
     const events = client.events({ WebSocket: FakeWebSocket as never })[Symbol.asyncIterator]()
     FakeWebSocket.instance.emit('open')
+    FakeWebSocket.instance.emit('message', {
+      data: JSON.stringify({
+        type: 'connection.heartbeat',
+        data: { timestamp: 100 }
+      })
+    })
     const first = events.next()
     FakeWebSocket.instance.emit('message', {
       data: JSON.stringify(PUBLIC_TERMINAL_FIXTURE)
@@ -442,8 +689,163 @@ describe('OpenScienceClient', () => {
     expect(FakeWebSocket.instance.url.pathname).toBe('/api/v1/events')
     expect(FakeWebSocket.instance.url.searchParams.get('token')).toBe('token-1')
     expect(FakeWebSocket.instance.url.searchParams.get('client')).toMatch(/^sdk-/)
+    expect(FakeWebSocket.instance.url.searchParams.get('liveness')).toBe('1')
     await events.return?.()
     expect(FakeWebSocket.instance.closed).toBe(true)
+  })
+
+  it('rejects event readiness when the socket reports a connection error', async () => {
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: ControllableWebSocket as never })
+
+    ControllableWebSocket.instance.emit('error')
+
+    await expect(events.ready).rejects.toMatchObject({
+      code: 'event_stream_failed',
+      message: 'Open Science event stream failed.'
+    })
+  })
+
+  it('fails a ready event iterator when the connection stops receiving liveness frames', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'token-1',
+        fetch: vi.fn()
+      })
+      const events = client.events({
+        idleTimeoutMs: 25,
+        WebSocket: ControllableWebSocket as never
+      })
+      const iterator = events[Symbol.asyncIterator]()
+      ControllableWebSocket.instance.emit('open')
+      await events.ready
+      let outcome: unknown = 'still-pending'
+      void iterator.next().then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(outcome).toMatchObject({
+        code: 'timeout',
+        message: 'Open Science event stream timed out after 25 milliseconds.'
+      })
+      expect(ControllableWebSocket.instance.closed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects event readiness when the socket closes before opening', async () => {
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: ControllableWebSocket as never })
+    let outcome: unknown = 'still-pending'
+    void events.ready.then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: unknown) => {
+        outcome = error
+      }
+    )
+
+    ControllableWebSocket.instance.emit('close')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(outcome).toMatchObject({ code: 'event_stream_failed' })
+  })
+
+  it('rejects event readiness with the caller reason when cancelled before opening', async () => {
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const abortController = new AbortController()
+    const cancellation = new Error('caller cancelled event setup')
+    const events = client.events({
+      signal: abortController.signal,
+      WebSocket: ControllableWebSocket as never
+    })
+
+    abortController.abort(cancellation)
+
+    await expect(events.ready).rejects.toBe(cancellation)
+    expect(ControllableWebSocket.instance.closed).toBe(true)
+  })
+
+  it('reports malformed event JSON through the async iterator failure channel', async () => {
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: ControllableWebSocket as never })
+    const iterator = events[Symbol.asyncIterator]()
+    ControllableWebSocket.instance.emit('open')
+    await events.ready
+    let iteratorOutcome: unknown = 'still-pending'
+    void iterator.next().then(
+      () => {
+        iteratorOutcome = 'resolved'
+      },
+      (error: unknown) => {
+        iteratorOutcome = error
+      }
+    )
+    let callbackError: unknown
+
+    try {
+      ControllableWebSocket.instance.emit('message', { data: '{not-json' })
+    } catch (error) {
+      callbackError = error
+    }
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(callbackError).toBeUndefined()
+    expect(iteratorOutcome).toMatchObject({ code: 'event_stream_invalid_message' })
+    expect(ControllableWebSocket.instance.closed).toBe(true)
+  })
+
+  it('fails closed when more than 1024 events are buffered without a consumer', async () => {
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: ControllableWebSocket as never })
+    const iterator = events[Symbol.asyncIterator]()
+    ControllableWebSocket.instance.emit('open')
+    await events.ready
+
+    for (let sequence = 1; sequence <= 1_025; sequence += 1) {
+      ControllableWebSocket.instance.emit('message', {
+        data: JSON.stringify({
+          type: 'run.event',
+          data: { sequence }
+        })
+      })
+    }
+
+    await expect(iterator.next()).rejects.toMatchObject({ code: 'event_stream_overflow' })
+    expect(ControllableWebSocket.instance.closed).toBe(true)
   })
 
   it('discovers a daemon from its state and token files before returning a client', async () => {

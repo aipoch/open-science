@@ -318,6 +318,17 @@ const streamResponse = async (
   response.end()
 }
 
+const readResponseText = async (upstream: Response, onActivity: () => void): Promise<string> => {
+  if (!upstream.body) throw new Error('native Responses upstream returned no body')
+  const decoder = new TextDecoder()
+  let body = ''
+  for await (const chunk of upstream.body) {
+    onActivity()
+    body += decoder.decode(chunk, { stream: true })
+  }
+  return body + decoder.decode()
+}
+
 const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): JsonObject[] => {
   const byNamespace = new Map<string, JsonObject[]>()
   for (const tool of tools) {
@@ -741,7 +752,11 @@ export class NativeResponsesCompatibilityProxy {
         armStreamIdleTimeout()
         await streamResponse(upstream, response, aliases, armStreamIdleTimeout)
       } else if (responseType === 'json') {
-        const payload = restoreNativeResponsesPayload(await upstream.json(), aliases)
+        armStreamIdleTimeout()
+        const payload = restoreNativeResponsesPayload(
+          JSON.parse(await readResponseText(upstream, armStreamIdleTimeout)),
+          aliases
+        )
         response.writeHead(upstream.status, copyResponseHeaders(upstream))
         response.end(JSON.stringify(payload))
       } else {

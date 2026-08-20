@@ -1,6 +1,7 @@
 export type PermissionProfile = 'ask' | 'auto' | 'full'
 export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
+export type RequestOptions = { signal?: AbortSignal; timeoutMs?: number }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunProgressPhase =
   | 'accepted'
@@ -158,14 +159,18 @@ export class OpenScienceClient {
     token: string
     fetch?: typeof globalThis.fetch
     sleep?: (milliseconds: number) => Promise<void>
+    requestTimeoutMs?: number
   })
-  health(): Promise<unknown>
-  listProjects(): Promise<Project[]>
-  createProject(request: {
-    name: string
-    description?: string
-    agentContext?: string
-  }): Promise<Project>
+  health(options?: RequestOptions): Promise<unknown>
+  listProjects(options?: RequestOptions): Promise<Project[]>
+  createProject(
+    request: {
+      name: string
+      description?: string
+      agentContext?: string
+    },
+    options?: RequestOptions
+  ): Promise<Project>
   updateProject(
     projectId: string,
     request: {
@@ -173,11 +178,12 @@ export class OpenScienceClient {
       name?: string
       description?: string
       agentContext?: string
-    }
+    },
+    options?: RequestOptions
   ): Promise<Project>
-  listSessions(projectId?: string): Promise<Session[]>
-  getSession(sessionId: string): Promise<Session>
-  getSessionPlan(sessionId: string): Promise<SessionPlan | null>
+  listSessions(projectId?: string, options?: RequestOptions): Promise<Session[]>
+  getSession(sessionId: string, options?: RequestOptions): Promise<Session>
+  getSessionPlan(sessionId: string, options?: RequestOptions): Promise<SessionPlan | null>
   respondSessionPlan(
     sessionId: string,
     response:
@@ -186,22 +192,26 @@ export class OpenScienceClient {
           artifactVersionId: string
           expectedRevision: number
         }
-      | { feedback: string }
+      | { feedback: string },
+    options?: RequestOptions
   ): Promise<PlanResponse>
-  startRun(request: {
-    project: string
-    prompt: string
-    cwd?: string
-    sessionId?: string
-    permissionProfile?: PermissionProfile
-    skillIds?: string[]
-    turnIntent?: TurnIntent
-    autoReviewEnabled?: boolean
-    specialist?: string
-    delegationPolicy?: DelegationPolicy
-  }): Promise<Run>
-  getRun(runId: string): Promise<Run>
-  cancelRun(runId: string): Promise<Run>
+  startRun(
+    request: {
+      project: string
+      prompt: string
+      cwd?: string
+      sessionId?: string
+      permissionProfile?: PermissionProfile
+      skillIds?: string[]
+      turnIntent?: TurnIntent
+      autoReviewEnabled?: boolean
+      specialist?: string
+      delegationPolicy?: DelegationPolicy
+    },
+    options?: RequestOptions
+  ): Promise<Run>
+  getRun(runId: string, options?: RequestOptions): Promise<Run>
+  cancelRun(runId: string, options?: RequestOptions): Promise<Run>
   waitForRun(
     runId: string,
     options?: {
@@ -211,9 +221,10 @@ export class OpenScienceClient {
       timeoutMs?: number
     }
   ): Promise<Run>
-  listArtifacts(sessionId: string): Promise<Artifact[]>
-  downloadArtifact(artifactId: string, options?: { signal?: AbortSignal }): Promise<Response>
+  listArtifacts(sessionId: string, options?: RequestOptions): Promise<Artifact[]>
+  downloadArtifact(artifactId: string, options?: RequestOptions): Promise<Response>
   events(options?: {
+    idleTimeoutMs?: number
     signal?: AbortSignal
     WebSocket?: typeof globalThis.WebSocket
   }): AsyncIterable<
@@ -226,4 +237,6 @@ export function connectToOpenScience(options?: {
   configRoot?: string
   env?: Record<string, string | undefined>
   fetch?: typeof globalThis.fetch
+  requestTimeoutMs?: number
+  signal?: AbortSignal
 }): Promise<OpenScienceClient>

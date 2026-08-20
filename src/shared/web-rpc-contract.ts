@@ -140,6 +140,15 @@ export const webRpcEventReadySchema = z
   })
   .strict()
 
+export const webRpcEventHeartbeatSchema = z
+  .object({
+    kind: z.literal('heartbeat'),
+    protocolVersion: z.literal(WEB_EVENT_STREAM_PROTOCOL_VERSION),
+    streamId: z.string().min(1),
+    latestSequence: z.number().int().nonnegative()
+  })
+  .strict()
+
 export const webRpcEventResyncRequiredSchema = z
   .object({
     kind: z.literal('resync-required'),
@@ -153,6 +162,7 @@ export const webRpcEventResyncRequiredSchema = z
 export const webRpcEventMessageSchema = z.discriminatedUnion('kind', [
   webRpcEventSchema,
   webRpcEventReadySchema,
+  webRpcEventHeartbeatSchema,
   webRpcEventResyncRequiredSchema
 ])
 

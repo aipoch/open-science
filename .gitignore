@@ -73,6 +73,7 @@ docs/superpowers/
 local/
 
 # Agent and AI assistant local state
+.hallmark/
 .codegraph/
 .mcp.json
 .codex/
