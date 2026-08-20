@@ -1328,7 +1328,32 @@ describe('Russian catalog quality', () => {
     ['System Tags stay first', 'Системные теги всегда остаются в начале'],
     ['Reorder {{tag}}', 'Изменить порядок тега {{tag}}'],
     ['Moved {{tag}} to position {{position}}.', 'Тег {{tag}} перемещён на позицию {{position}}.'],
-    ['Could not reorder Tags. Try again.', 'Не удалось изменить порядок тегов. Попробуйте снова.']
+    ['Could not reorder Tags. Try again.', 'Не удалось изменить порядок тегов. Попробуйте снова.'],
+    [
+      'Could not stop background processes before updating. Please try again.',
+      'Не удалось остановить фоновые процессы перед обновлением. Повторите попытку.'
+    ],
+    [
+      'Could not fully stop background processes before updating. Please try again.',
+      'Не удалось завершить все фоновые процессы перед обновлением. Повторите попытку.'
+    ],
+    [
+      'Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.',
+      'Отмените обновление, затем в разделе «Настройки → Общие → Диагностика» нажмите «Показать», чтобы найти файл журнала. Полностью закройте Open Science, снова откройте приложение и повторите обновление. Если ошибка повторится, проверьте, нет ли в журнале локальных путей к файлам, и передайте его разработчику или <issueLink>создайте обращение на GitHub</issueLink>.'
+    ],
+    ['Why this happened', 'Почему это произошло'],
+    ['How to fix', 'Как исправить'],
+    ['Still stuck? Create an issue for help', 'Проблема не решена? Создать обращение'],
+    [
+      'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.',
+      'На GitHub откроется заранее заполненное обращение с кодом ошибки, версией приложения и стеком вызовов. Личные пути в файловой системе будут скрыты (домашняя папка заменена на ~). Проверьте содержимое перед отправкой. При желании раздел со стеком вызовов можно удалить.'
+    ],
+    ['Skill import menu — 8 states', 'Меню импорта навыков — 8 состояний'],
+    ['Import', 'Импортировать'],
+    ['Upload skills', 'Загрузить навыки'],
+    ['Import from GitHub', 'Импортировать из GitHub'],
+    ['Import installed skills', 'Импортировать установленные навыки'],
+    ['Scan global skill folders', 'Найти навыки в глобальных папках']
   ])('keeps proofread Russian copy for %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
   })
