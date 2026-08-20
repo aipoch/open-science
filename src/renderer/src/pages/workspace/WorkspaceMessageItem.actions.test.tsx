@@ -308,21 +308,30 @@ describe('WorkspaceMessageItem user message actions', () => {
     act(() => notifyResize?.())
 
     const showMore = getButton('Show more')
-    expect(content.classList.contains('max-h-[12lh]')).toBe(true)
+    const ellipsis = container.querySelector<HTMLElement>(
+      '[data-slot="user-message-collapse-ellipsis"]'
+    )
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
     expect(content.classList.contains('overflow-hidden')).toBe(true)
+    expect(ellipsis?.textContent?.trim()).toBe('…')
+    expect(ellipsis?.getAttribute('aria-hidden')).toBe('true')
+    expect(showMore.classList.contains('mt-1')).toBe(true)
     expect(showMore.getAttribute('aria-expanded')).toBe('false')
     expect(showMore.getAttribute('aria-controls')).toBe(content.id)
 
     await click(showMore)
 
-    expect(content.classList.contains('max-h-[12lh]')).toBe(false)
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(false)
     expect(content.classList.contains('overflow-hidden')).toBe(false)
+    expect(container.querySelector('[data-slot="user-message-collapse-ellipsis"]')).toBeNull()
     const showLess = getButton('Show less')
+    expect(showLess.classList.contains('mt-2')).toBe(true)
     expect(showLess.getAttribute('aria-expanded')).toBe('true')
 
     await click(showLess)
 
-    expect(content.classList.contains('max-h-[12lh]')).toBe(true)
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
+    expect(container.querySelector('[data-slot="user-message-collapse-ellipsis"]')).not.toBeNull()
     expect(getButton('Show more').getAttribute('aria-expanded')).toBe('false')
   })
 
@@ -339,7 +348,7 @@ describe('WorkspaceMessageItem user message actions', () => {
     act(() => notifyResize?.())
 
     expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
-    expect(content.classList.contains('max-h-[12lh]')).toBe(false)
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(false)
   })
 
   it('remeasures structured content and uses a non-interactive summary while collapsed', async () => {
