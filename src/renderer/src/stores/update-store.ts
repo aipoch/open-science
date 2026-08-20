@@ -7,7 +7,7 @@ type UpdateStore = {
   status: UpdateStatus
   // Whether the update confirmation dialog is open (opened from the capsule or the settings button).
   isDialogOpen: boolean
-  init: () => void
+  init: () => () => void
   check: () => Promise<void>
   openDialog: () => void
   closeDialog: () => void
@@ -15,6 +15,8 @@ type UpdateStore = {
   cancel: () => Promise<void>
   apply: () => Promise<void>
 }
+
+let cleanupUpdateSubscriptions: (() => void) | undefined
 
 // Single source of truth for update state in the renderer. The main process broadcasts every
 // transition; this store mirrors it so the settings section and the external capsule agree.
@@ -28,8 +30,9 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   // existed, so its broadcast was dropped). Degrades to a no-op when the preload bridge is absent
   // (e.g. a stray dev/preview mount).
   init: () => {
+    cleanupUpdateSubscriptions?.()
     const api = window.api?.update
-    if (!api) return
+    if (!api) return () => undefined
     void api
       .getAppInfo()
       .then((info) =>
@@ -39,7 +42,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     // immediately a status (electron-updater does on every tick) would otherwise wipe the speed the
     // progress event just set. Preserve downloadProgress across a status update while downloading so
     // DownloadProgressLine keeps rendering speed/ETA on Win/Linux.
-    api.onStatus((status) =>
+    const removeStatusListener = api.onStatus((status) =>
       set((s) => ({
         status: {
           ...status,
@@ -47,7 +50,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         }
       }))
     )
-    api.onProgress((progress) =>
+    const removeProgressListener = api.onProgress((progress) =>
       set((s) => ({
         status: {
           ...s.status,
@@ -65,6 +68,17 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       // Only apply the startup snapshot if no live broadcast has updated us yet.
       if (get().status.state === 'idle') set({ status })
     })
+
+    let active = true
+    const cleanup = (): void => {
+      if (!active) return
+      active = false
+      removeStatusListener?.()
+      removeProgressListener?.()
+      if (cleanupUpdateSubscriptions === cleanup) cleanupUpdateSubscriptions = undefined
+    }
+    cleanupUpdateSubscriptions = cleanup
+    return cleanup
   },
 
   check: async () => {

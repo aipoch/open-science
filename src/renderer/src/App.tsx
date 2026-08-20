@@ -308,9 +308,7 @@ const AppContent = (): React.JSX.Element | null => {
   }, [appShellPresentation])
 
   // Load app info and subscribe to update-status broadcasts once at startup.
-  useEffect(() => {
-    initUpdates()
-  }, [initUpdates])
+  useEffect(() => initUpdates(), [initUpdates])
 
   useEffect(() => listenForPermissionChanges(), [listenForPermissionChanges])
   useEffect(() => listenForNotificationChanges(), [listenForNotificationChanges])

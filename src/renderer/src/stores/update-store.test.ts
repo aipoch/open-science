@@ -44,6 +44,38 @@ describe('useUpdateStore', () => {
     expect(onProgress).toHaveBeenCalled()
   })
 
+  it('keeps only one active status/progress subscription when init runs twice', () => {
+    const statusListeners = new Set<(status: unknown) => void>()
+    const progressListeners = new Set<(progress: unknown) => void>()
+    ;(window as unknown as { api: unknown }).api = {
+      update: {
+        getAppInfo: () => new Promise(() => undefined),
+        getStatus: () => new Promise(() => undefined),
+        onStatus: (listener: (status: unknown) => void) => {
+          statusListeners.add(listener)
+          return () => statusListeners.delete(listener)
+        },
+        onProgress: (listener: (progress: unknown) => void) => {
+          progressListeners.add(listener)
+          return () => progressListeners.delete(listener)
+        },
+        check: vi.fn(),
+        download: vi.fn(),
+        apply: vi.fn()
+      }
+    }
+
+    useUpdateStore.getState().init()
+    const cleanup = useUpdateStore.getState().init() as unknown as (() => void) | undefined
+
+    expect(statusListeners).toHaveLength(1)
+    expect(progressListeners).toHaveLength(1)
+
+    cleanup?.()
+    expect(statusListeners).toHaveLength(0)
+    expect(progressListeners).toHaveLength(0)
+  })
+
   it('init hydrates from getStatus when the store is still idle', async () => {
     ;(window as unknown as { api: unknown }).api = {
       update: {
