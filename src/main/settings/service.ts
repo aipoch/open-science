@@ -691,7 +691,7 @@ class SettingsService {
   ): Promise<ImportAgentHomeSkillsResult> {
     return this.skills.importAgentHomeSkills(request)
   }
-  // Computes the two startup gates, re-checking the claude path each call as the design requires.
+  // Computes the startup gates from a fresh or immediate startup-chain runtime probe.
   async getPreflight(): Promise<Preflight> {
     return this.runtimeManager.getPreflight(this.providers)
   }
