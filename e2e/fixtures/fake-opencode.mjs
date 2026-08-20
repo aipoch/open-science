@@ -33,6 +33,7 @@ const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
+const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
 const DELEGATION_INHERITED_SPECIALIST_PROMPT =
   'Run the production inherited Specialist delegation journey.'
@@ -486,7 +487,10 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(TOOL_LAYOUT_SHIFT_PROMPT)) {
+        if (
+          prompt.includes(TOOL_LAYOUT_SHIFT_PROMPT) ||
+          prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)
+        ) {
           // Keep the completed tool group on screen before streaming the final Markdown so the
           // renderer test can observe whether the existing row moves while the next row mounts.
           await context.client.notify(acp.methods.client.session.update, {
@@ -508,6 +512,9 @@ if (process.argv.includes('--version')) {
               status: 'completed'
             }
           })
+          if (prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)) {
+            process.stderr.write('Layout fixture status.\n')
+          }
           await delay(750)
 
           const finalMessageId = `e2e-message-${nextMessageId++}`
