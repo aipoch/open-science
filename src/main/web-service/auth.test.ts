@@ -42,6 +42,18 @@ describe('web authentication', () => {
     }
   )
 
+  it.runIf(process.platform !== 'win32')('repairs and reuses a read-only token file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'open-science-web-auth-'))
+    dirs.push(dir)
+    const tokenPath = join(dir, 'web-token')
+    const existing = 'c'.repeat(43)
+    await writeFile(tokenPath, `${existing}\n`, { mode: 0o400 })
+    await chmod(tokenPath, 0o400)
+
+    expect(await loadOrCreateWebToken(dir)).toBe(existing)
+    expect((await stat(tokenPath)).mode & 0o777).toBe(0o600)
+  })
+
   it.runIf(process.platform !== 'win32')(
     'rejects a symlinked token without modifying its target',
     async () => {
