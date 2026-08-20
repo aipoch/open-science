@@ -7,11 +7,26 @@ type DatabaseStartupErrorCode =
   | 'database_validation_failed'
   | 'database_startup_unavailable'
 
+// Runtime environment facts shown in the issue draft's Environment table. Collected in the main
+// process, which owns the app version and runtime versions.
+type StartupEnvironment = {
+  appVersion: string
+  platform: string
+  arch: string
+  electron: string
+  node: string
+}
+
 type DatabaseStartupError = {
   code: DatabaseStartupErrorCode
   message: string
   migrationId?: string
   retryable: boolean
+  environment?: StartupEnvironment
+  // Pre-redacted cause-chain stack for the "create an issue" draft. Composed in the main process,
+  // which owns the original error cause chain; the renderer only embeds it verbatim into the
+  // GitHub issue URL.
+  diagnostics?: string
 }
 
 type DatabaseStartupState =
@@ -28,4 +43,9 @@ const DATABASE_STARTUP_CHANNELS = {
 } as const
 
 export { DATABASE_STARTUP_CHANNELS }
-export type { DatabaseStartupError, DatabaseStartupErrorCode, DatabaseStartupState }
+export type {
+  DatabaseStartupError,
+  DatabaseStartupErrorCode,
+  DatabaseStartupState,
+  StartupEnvironment
+}

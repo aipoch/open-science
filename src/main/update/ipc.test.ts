@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { APP } from '../../shared/app-config'
 import type { UpdateStrategy } from './strategy'
 
-const handlers = new Map<string, () => unknown>()
+const handlers = new Map<string, (...args: unknown[]) => unknown>()
 
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: (channel: string, handler: () => unknown) => handlers.set(channel, handler)
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+      handlers.set(channel, handler)
   }
 }))
 
@@ -43,6 +44,12 @@ describe('registerUpdateIpcHandlers', () => {
     expect(registerUpdateIpcHandlers(strategy, owner)).toBe(strategy)
     expect(handlers.get('update:get-app-info')?.()).toMatchObject({ name: 'Injected' })
     await expect(handlers.get('update:check')?.()).resolves.toBe(status)
+    await expect(handlers.get('update:download')?.({}, { nonInteractive: true })).resolves.toBe(
+      status
+    )
+    await expect(handlers.get('update:apply')?.({}, { relaunch: false })).resolves.toBe(status)
+    expect(owner.download).toHaveBeenCalledWith({ nonInteractive: true })
+    expect(owner.apply).toHaveBeenCalledWith({ relaunch: false })
     expect(strategy.check).not.toHaveBeenCalled()
   })
 

@@ -20,7 +20,8 @@ import {
   reportCliError,
   rollbackCommand,
   runCli,
-  runTaskCommand
+  runTaskCommand,
+  updateCommand
 } from './cli.mjs'
 
 const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
@@ -213,6 +214,17 @@ describe('task CLI', () => {
       'codex login accepts no arguments.'
     )
     expect(() => parseCliArgs(['status', '--force'])).toThrow('--force requires codex login.')
+  })
+
+  it('parses application update output and rejects positional arguments', () => {
+    expect(parseCliArgs(['update', '--json', '--no-sandbox'])).toEqual({
+      command: 'update',
+      options: { open: true, json: true, noSandbox: true }
+    })
+    expect(() => parseCliArgs(['update', 'latest'])).toThrow('update accepts no arguments.')
+    expect(() => parseCliArgs(['status', '--no-sandbox'])).toThrow(
+      '--no-sandbox requires start or update.'
+    )
   })
 
   it('reads a prompt file, waits for completion, and emits one JSON result', async () => {
@@ -1249,6 +1261,370 @@ describe('task CLI', () => {
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }
+  })
+
+  it('applies an in-place update without relaunching the desktop app', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string, args?: unknown[]) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart'
+        }
+      }
+      if (channel === 'update:apply') {
+        expect(args).toEqual([{ relaunch: false }])
+        return {
+          state: 'applying',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart'
+        }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const log = vi.fn()
+
+    await expect(
+      updateCommand(
+        { open: true, json: true },
+        {
+          ensureService: vi.fn().mockResolvedValue({ started: true }),
+          connect: vi.fn().mockResolvedValue({}),
+          getBootstrap: vi.fn().mockResolvedValue({
+            appVersion: '1.0.0',
+            rpcCapabilities: ['update-cli-v1']
+          }),
+          supportsCommand: vi.fn().mockResolvedValue(true),
+          invokeCommand,
+          log,
+          setExitCode: vi.fn()
+        }
+      )
+    ).resolves.toEqual({ outcome: 'install-started', current: '1.0.0', latest: '1.1.0' })
+
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual({
+      outcome: 'install-started',
+      current: '1.0.0',
+      latest: '1.1.0'
+    })
+  })
+
+  it('uses the authenticated local Web RPC envelope for update commands', async () => {
+    const fetch = vi.fn(async (url: string) => {
+      const channel = decodeURIComponent(url.split('/rpc/')[1] ?? '')
+      const result =
+        channel === 'update:check'
+          ? {
+              state: 'ready',
+              current: '1.0.0',
+              latest: '1.1.0',
+              applyKind: 'restart'
+            }
+          : {
+              state: 'applying',
+              current: '1.0.0',
+              latest: '1.1.0',
+              applyKind: 'restart'
+            }
+      return new Response(JSON.stringify({ protocolVersion: 1, ok: true, result }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    })
+    const client = {
+      health: vi.fn().mockResolvedValue({
+        appVersion: '1.0.0',
+        rpcProtocolVersion: 1,
+        rpcCapabilities: ['update-cli-v1'],
+        rpcChannels: ['update:check', 'update:apply']
+      }),
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'local-token',
+      fetch
+    }
+
+    await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: false }),
+        connect: vi.fn().mockResolvedValue(client),
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[0][0]).toBe('http://127.0.0.1:44100/rpc/update%3Acheck')
+    expect(fetch.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        authorization: 'Bearer local-token',
+        'x-open-science-client': 'open-science-cli'
+      }),
+      body: JSON.stringify({ protocolVersion: 1, args: [{ relaunch: false }] })
+    })
+  })
+
+  it('downloads a manual installer non-interactively and returns exit code 6', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string, args?: unknown[]) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'available',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer'
+        }
+      }
+      if (channel === 'update:download') {
+        expect(args).toEqual([{ nonInteractive: true }])
+        return {
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          localPath: 'C:\\Users\\test\\Downloads\\Open-Science.exe'
+        }
+      }
+      if (channel === 'storage:detect-active') return []
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const setExitCode = vi.fn()
+
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        sleep: vi.fn().mockResolvedValue(undefined),
+        log: vi.fn(),
+        setExitCode
+      }
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'manual-action-required',
+      installerPath: 'C:\\Users\\test\\Downloads\\Open-Science.exe'
+    })
+    expect(setExitCode).toHaveBeenCalledWith(6)
+  })
+
+  it('reports an already-current installation without downloading or applying', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return { state: 'up-to-date', current: '1.1.0', latest: '1.1.0' }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+
+    const ensureService = vi.fn().mockResolvedValue({ started: false })
+    const result = await updateCommand(
+      { open: true, json: true, noSandbox: true },
+      {
+        ensureService,
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.1.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(result).toEqual({ outcome: 'up-to-date', current: '1.1.0', latest: '1.1.0' })
+    expect(ensureService).toHaveBeenCalledWith(
+      expect.objectContaining({ open: false, noSandbox: true })
+    )
+    expect(invokeCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['a failed transfer', 'Network connection lost'],
+    ['a checksum failure', 'Downloaded update checksum mismatch']
+  ])('surfaces %s as a command failure', async (_case, message) => {
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'available',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer'
+        }
+      }
+      if (channel === 'update:download') {
+        return {
+          state: 'error',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          error: message
+        }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+
+    await expect(
+      updateCommand(
+        { open: true, json: true },
+        {
+          ensureService: vi.fn().mockResolvedValue({ started: true }),
+          connect: vi.fn().mockResolvedValue({}),
+          getBootstrap: vi.fn().mockResolvedValue({
+            appVersion: '1.0.0',
+            rpcCapabilities: ['update-cli-v1']
+          }),
+          supportsCommand: vi.fn().mockResolvedValue(true),
+          invokeCommand,
+          sleep: vi.fn().mockResolvedValue(undefined),
+          log: vi.fn(),
+          setExitCode: vi.fn()
+        }
+      )
+    ).rejects.toThrow(message)
+  })
+
+  it('prints observable download progress in human-readable mode', async () => {
+    const ready = {
+      state: 'ready',
+      current: '1.0.0',
+      latest: '1.1.0',
+      applyKind: 'installer',
+      localPath: '/data/update/Open-Science.dmg'
+    }
+    let finishDownload: ((status: typeof ready) => void) | undefined
+    const download = new Promise<typeof ready>((resolve) => {
+      finishDownload = resolve
+    })
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'available',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer'
+        }
+      }
+      if (channel === 'update:download') return download
+      if (channel === 'update:get-status') {
+        finishDownload?.(ready)
+        return {
+          state: 'downloading',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          progress: 37
+        }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const log = vi.fn()
+
+    await updateCommand(
+      { open: true, json: false },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        sleep: vi.fn().mockResolvedValue(undefined),
+        log,
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(log).toHaveBeenCalledWith('Downloading update: 37%')
+  })
+
+  it('reports active research blockers with exit code 5 and keeps the service running', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart'
+        }
+      }
+      if (channel === 'update:apply') {
+        return {
+          state: 'error',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart',
+          blockedBy: ['agent', 'notebook'],
+          error: 'Research work is still running.'
+        }
+      }
+      if (channel === 'storage:detect-active') return [{ kind: 'agent' }]
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const setExitCode = vi.fn()
+
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        log: vi.fn(),
+        setExitCode
+      }
+    )
+
+    expect(result).toEqual({
+      outcome: 'blocked',
+      current: '1.0.0',
+      latest: '1.1.0',
+      blockedBy: ['agent', 'notebook']
+    })
+    expect(setExitCode).toHaveBeenCalledWith(5)
+    expect(invokeCommand).not.toHaveBeenCalledWith({}, 'storage:detect-active')
+  })
+
+  it('falls back when a legacy app advertises update channels without the CLI capability', async () => {
+    const setExitCode = vi.fn()
+    const supportsCommand = vi.fn().mockResolvedValue(true)
+    const invokeCommand = vi.fn()
+
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({ bootstrap: { appVersion: '0.9.0' } }),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '0.9.0',
+          rpcChannels: ['update:check', 'update:download', 'update:apply']
+        }),
+        supportsCommand,
+        invokeCommand,
+        log: vi.fn(),
+        setExitCode
+      }
+    )
+
+    expect(result).toMatchObject({ outcome: 'manual-action-required', current: '0.9.0' })
+    expect(setExitCode).toHaveBeenCalledWith(6)
+    expect(supportsCommand).not.toHaveBeenCalled()
+    expect(invokeCommand).not.toHaveBeenCalled()
   })
 
   it('emits structured machine errors with stable exit codes', () => {

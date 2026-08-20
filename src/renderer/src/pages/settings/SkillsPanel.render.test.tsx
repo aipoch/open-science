@@ -275,6 +275,63 @@ describe('SkillsPanel (list view)', () => {
     expect(filters?.compareDocumentPosition(actions!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
+  it('keeps matching import menus in Add skill and the Imported group', () => {
+    const onNavigate = vi.fn()
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+
+    const importedGroup = document.body.querySelector<HTMLElement>(
+      '[data-slot="skills-source-group"][data-source="imported"]'
+    )
+    expect(importedGroup?.textContent).toContain('Skills you imported into Open Science.')
+    expect(importedGroup?.textContent).toContain('No imported skills yet.')
+
+    const importButton = Array.from(
+      importedGroup?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Import')
+    expect(importButton?.getAttribute('data-variant')).toBe('outline')
+    expect(importButton?.className).toContain('whitespace-nowrap')
+
+    openRadixMenu(importButton)
+    const importedGroupItems = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    )
+    expect(importedGroupItems.map((item) => item.textContent)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Upload skills'),
+        expect.stringContaining('Import from GitHub'),
+        expect.stringContaining('Import installed skills')
+      ])
+    )
+    clickRadixMenuItem(
+      importedGroupItems.find((item) => item.textContent?.includes('Import from GitHub'))
+    )
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'import' })
+
+    const importedDisclosure = importedGroup?.querySelector<HTMLButtonElement>(
+      'button[aria-expanded="true"]'
+    )
+    act(() => importedDisclosure?.click())
+    expect(importedGroup?.textContent).not.toContain('No imported skills yet.')
+    expect(importedGroup?.contains(importButton ?? null)).toBe(true)
+
+    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Add skill')
+    )
+    openRadixMenu(addSkill)
+    const addSkillItems = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    )
+    expect(addSkillItems.map((item) => item.textContent)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Upload skills'),
+        expect.stringContaining('Import from GitHub'),
+        expect.stringContaining('Import installed skills')
+      ])
+    )
+  })
+
   it('shows the default-on conversation import preference and lets the user disable it', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)

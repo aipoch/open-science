@@ -1,7 +1,12 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import { APP } from '../../shared/app-config'
-import type { AppInfo, UpdateStatus } from '../../shared/update'
+import type {
+  AppInfo,
+  UpdateApplyOptions,
+  UpdateDownloadOptions,
+  UpdateStatus
+} from '../../shared/update'
 import { createUpdateStrategy } from './create-strategy'
 import type { UpdateStrategy } from './strategy'
 
@@ -9,9 +14,9 @@ type UpdateCommandOwner = Readonly<{
   getAppInfo: () => AppInfo
   getStatus: () => UpdateStatus
   check: () => Promise<UpdateStatus>
-  download: () => Promise<UpdateStatus>
+  download: (options?: UpdateDownloadOptions) => Promise<UpdateStatus>
   cancel: () => Promise<UpdateStatus>
-  apply: () => Promise<UpdateStatus>
+  apply: (options?: UpdateApplyOptions) => Promise<UpdateStatus>
 }>
 
 const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner => ({
@@ -22,9 +27,9 @@ const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner 
   }),
   getStatus: () => strategy.getStatus(),
   check: () => strategy.check(),
-  download: () => strategy.download(),
+  download: (options) => strategy.download(options),
   cancel: () => strategy.cancel(),
-  apply: () => strategy.apply()
+  apply: (options) => strategy.apply(options)
 })
 
 // Registers the renderer-callable update commands. Returns the strategy so the scheduler can drive it.
@@ -35,9 +40,11 @@ export const registerUpdateIpcHandlers = (
   ipcMainHandle('update:get-app-info', () => owner.getAppInfo())
   ipcMainHandle('update:get-status', () => owner.getStatus())
   ipcMainHandle('update:check', () => owner.check())
-  ipcMainHandle('update:download', () => owner.download())
+  ipcMainHandle('update:download', (_event, options?: UpdateDownloadOptions) =>
+    owner.download(options)
+  )
   ipcMainHandle('update:cancel', () => owner.cancel())
-  ipcMainHandle('update:apply', () => owner.apply())
+  ipcMainHandle('update:apply', (_event, options?: UpdateApplyOptions) => owner.apply(options))
   return strategy
 }
 

@@ -19896,6 +19896,51 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('publishes writable connector files without trusting unsupported or unverified results', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
+        projectId: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(storageRoot)
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect(fakeAgent.newSessions[0].mcpServers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'open-science-artifacts' })])
+    )
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining(
+          'When a Connector or MCP tool creates or returns a user-facing file as inline content or a local source path accepted by `mcp__open-science-artifacts__write_artifact_file`, and the file has not already been saved or attached as an Artifact, call `mcp__open-science-artifacts__write_artifact_file` in the same turn before telling the user that the result is available.'
+        )
+      }
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining(
+          'If an Open Science app-owned Connector result includes an `artifact_id`, do not call `mcp__open-science-artifacts__write_artifact_file` again for that file.'
+        )
+      }
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining(
+          "Do not treat a custom MCP server's claim by itself as proof that an Artifact exists."
+        )
+      }
+    })
+  })
+
   it('retries transient Artifact claim preparation in the prompt failure cleanup', async () => {
     const storageRoot = await createTemporaryRoot()
     const repository = new ArtifactRepository(storageRoot)

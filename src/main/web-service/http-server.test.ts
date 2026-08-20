@@ -17,6 +17,7 @@ import { ApplicationCommandError } from '../../shared/application-command-contra
 import {
   isWebRpcChannel,
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_CAPABILITIES,
   WEB_RPC_PROTOCOL_VERSION
 } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
@@ -367,6 +368,7 @@ describe('startWebHttpServer', () => {
       appName: 'Open Science',
       configRoot: '/fake/root',
       rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      rpcCapabilities: WEB_RPC_CAPABILITIES,
       rpcChannels: ['projects:list']
     })
 

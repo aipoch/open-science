@@ -1,9 +1,15 @@
-import type { DatabaseStartupState } from '../../shared/database-startup'
+import type { DatabaseStartupState, StartupEnvironment } from '../../shared/database-startup'
 import { DatabaseMigrationError, type SchemaMigrationProgress } from './migration-service'
 
 type DatabaseStartupOwnerDeps = {
   reportBlocked: (error: DatabaseMigrationError) => void
   verifyDatabase: (onProgress: (progress: SchemaMigrationProgress) => void) => Promise<void>
+  // Optional: composes the pre-redacted cause-chain stack shared through the "create an issue"
+  // draft. Kept injectable so the owner stays free of os concerns.
+  buildDiagnostics?: (error: DatabaseMigrationError) => string | undefined
+  // Optional: runtime environment facts for the issue draft's Environment table. Collected by the
+  // caller, which owns the app version and runtime versions.
+  environment?: StartupEnvironment
 }
 
 type DatabaseStartupOwner = {
@@ -60,13 +66,21 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
         } catch {
           // A diagnostic sink failure must not bypass the database compatibility gate.
         }
+        let diagnostics: string | undefined
+        try {
+          diagnostics = deps.buildDiagnostics?.(classified)
+        } catch {
+          // Diagnostics are a best-effort aid for issue reports; they must not mask the block.
+        }
         const blocked: DatabaseStartupState = {
           phase: 'blocked',
           error: {
             code: classified.code,
             message: classified.message,
             retryable: classified.retryable,
-            ...(classified.migrationId ? { migrationId: classified.migrationId } : {})
+            ...(classified.migrationId ? { migrationId: classified.migrationId } : {}),
+            ...(deps.environment ? { environment: deps.environment } : {}),
+            ...(diagnostics ? { diagnostics } : {})
           }
         }
         publish(blocked)

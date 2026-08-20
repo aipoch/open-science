@@ -76,6 +76,14 @@
   --color-status-failure-dark-foreground: var(--color-rose-400);
   --color-status-failure-dark-emphasis: var(--color-rose-300);
   --color-status-failure-dark-code: var(--color-rose-900);
+  --color-status-info-surface: var(--color-teal-100);
+  --color-status-info-foreground: var(--color-teal-700);
+  --color-status-info-dark-surface: var(--color-teal-950);
+  --color-status-info-dark-foreground: var(--color-teal-300);
+  --color-status-warning-surface: var(--color-amber-100);
+  --color-status-warning-foreground: var(--color-amber-700);
+  --color-status-warning-dark-surface: var(--color-amber-950);
+  --color-status-warning-dark-foreground: var(--color-amber-400);
   --color-success-000: var(--success-000);
   --color-syntax-keyword: var(--syntax-keyword);
   --color-syntax-string: var(--syntax-string);

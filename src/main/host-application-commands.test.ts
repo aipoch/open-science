@@ -342,10 +342,16 @@ describe('Host application commands', () => {
       hostApplicationCommands.storage.validateDataRoot,
       invocation([parent])
     )
-    await router.dispatcher.invoke(hostApplicationCommands.update.apply, invocation([]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.update.apply,
+      invocation([{ relaunch: false }])
+    )
     await router.dispatcher.invoke(hostApplicationCommands.update.cancel, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.update.check, invocation([]))
-    await router.dispatcher.invoke(hostApplicationCommands.update.download, invocation([]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.update.download,
+      invocation([{ nonInteractive: true }])
+    )
     await router.dispatcher.invoke(hostApplicationCommands.update.getAppInfo, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.update.getStatus, invocation([]))
 
@@ -370,6 +376,8 @@ describe('Host application commands', () => {
     expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent)
     expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root)
+    expect(dependencies.update.apply).toHaveBeenCalledWith({ relaunch: false })
+    expect(dependencies.update.download).toHaveBeenCalledWith({ nonInteractive: true })
 
     const ownerMethods = Object.values(dependencies).flatMap((owner) => Object.values(owner))
     expect(

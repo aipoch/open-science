@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
+import { unwrapApplicationCommandOutcome } from '../shared/application-command-contract'
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
 import type { OpenScienceAPI } from './renderer-api'
 
@@ -196,8 +197,10 @@ const api: OpenScienceAPI = {
     // Loads one durable Session without scanning unrelated Project/Session files.
     loadOne: (request) => electronRendererContracts.invoke('sessions.loadOne', request),
     // Persists a single sanitized session file.
-    saveSession: (session, options) =>
-      electronRendererContracts.invoke('sessions.saveSession', session, options),
+    saveSession: async (session, options) =>
+      unwrapApplicationCommandOutcome(
+        await electronRendererContracts.invoke('sessions.saveSession', session, options)
+      ),
     updateArchive: (request) => electronRendererContracts.invoke('sessions.updateArchive', request),
     // Removes one session file.
     deleteSession: (request) => electronRendererContracts.invoke('sessions.deleteSession', request),

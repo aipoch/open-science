@@ -5,7 +5,12 @@ import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, shell } from 'electron'
 
 import { APP } from '../../shared/app-config'
-import { isNewer, selectDownload, type UpdateStatus } from '../../shared/update'
+import {
+  isNewer,
+  selectDownload,
+  type UpdateDownloadOptions,
+  type UpdateStatus
+} from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
 import { downloadInstaller } from './downloader'
@@ -30,6 +35,8 @@ export type UpdateServiceDeps = {
   // Resolves where to save the installer, or null if the user cancels. Injected in tests; the
   // default is platform-aware (see resolveSavePath).
   promptSavePath?: (defaultFileName: string) => Promise<string | null>
+  // Resolves a deterministic target without opening a native dialog (CLI/headless downloads).
+  defaultDownloadPath?: (defaultFileName: string) => string
   // Filesystem + shell hooks, injected in tests so apply never touches Electron/disk.
   fileExists?: (path: string) => boolean
   openPath?: (path: string) => Promise<string>
@@ -85,6 +92,7 @@ export class UpdateService implements UpdateStrategy {
   private readonly manifestUrl: string
   private readonly broadcast: UpdateBroadcast
   private readonly promptSavePath: (defaultFileName: string) => Promise<string | null>
+  private readonly defaultDownloadPath: (defaultFileName: string) => string
   private readonly fileExists: (path: string) => boolean
   private readonly openPath: (path: string) => Promise<string>
   private readonly openExternal: (url: string) => Promise<void>
@@ -105,6 +113,8 @@ export class UpdateService implements UpdateStrategy {
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.promptSavePath = deps.promptSavePath ?? ((name) => this.resolveSavePath(name))
+    this.defaultDownloadPath =
+      deps.defaultDownloadPath ?? ((name) => join(app.getPath('userData'), `update-${name}`))
     this.fileExists = deps.fileExists ?? existsSync
     this.openPath = deps.openPath ?? ((path) => shell.openPath(path))
     this.openExternal = deps.openExternal ?? ((url) => shell.openExternal(url))
@@ -209,7 +219,7 @@ export class UpdateService implements UpdateStrategy {
     }
   }
 
-  async download(): Promise<UpdateStatus> {
+  async download(options: UpdateDownloadOptions = {}): Promise<UpdateStatus> {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. The abort claim
     // below is synchronous (before any await) so this guard and a cancel() during the drain both target
     // a consistent slot — a cancel while a retry is still draining must abort it, not be a no-op.
@@ -269,11 +279,19 @@ export class UpdateService implements UpdateStrategy {
         // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt —
         // leaves the status untouched (stays 'available').
         operation.phase('select-target')
-        const targetPath = await this.promptSavePath(installerFileName(download.url))
+        const defaultFileName = installerFileName(download.url)
+        const targetPath = options.nonInteractive
+          ? this.defaultDownloadPath(defaultFileName)
+          : await this.promptSavePath(defaultFileName)
         if (!targetPath) {
           operation.cancel({ reason: 'target-selection' })
           return
         }
+        if (abort.signal.aborted) return
+
+        // The CLI target is deterministic. Drop an older completed artifact before final rename so a
+        // repeated command cannot fail merely because the same release filename is already staged.
+        if (options.nonInteractive) await this.removeFile(targetPath)
         if (abort.signal.aborted) return
 
         // First time this session that we download to this exact path: drop any <target>.part left by
@@ -301,7 +319,18 @@ export class UpdateService implements UpdateStrategy {
         operation.phase('transfer')
         const localPath = await downloadInstaller(download, targetPath, {
           fetchImpl: this.fetchImpl,
-          onProgress: (progress) => this.broadcast('update:progress', progress),
+          onProgress: (progress) => {
+            if (abort.signal.aborted) return
+            this.setStatus({
+              ...this.status,
+              state: 'downloading',
+              progress: progress.percent ?? this.status.progress,
+              downloadedBytes: progress.transferred,
+              totalBytes: progress.total ?? this.status.totalBytes,
+              downloadProgress: progress
+            })
+            this.broadcast('update:progress', progress)
+          },
           signal: abort.signal
         })
         this.setStatus({

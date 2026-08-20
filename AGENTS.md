@@ -151,6 +151,36 @@ The suite checks: no empty strings, placeholder parity, correct plural categorie
 Trans tags, no orphaned catalog keys, no missing translations for every `t()` call site, and no
 bare JSX text nodes left unwrapped.
 
+## Reusable error surfaces
+
+### ErrorNotice (`src/renderer/src/components/error-notice.tsx`)
+
+The generic error display. The flask brand mark is fixed; every other section is an optional prop
+and renders only when provided:
+
+- `icon` + `tone` — `teal` (update the app), `amber` (transient / retryable), `red` (data or
+  installation integrity). Tones resolve to the `status-info` / `status-warning` /
+  `status-failure` token families registered in `main.css` and documented in `docs/design.md` —
+  do not reintroduce inline `oklch()`/hex values.
+- `title`, `description`, `errorCode`
+- `help` — `{ whyLabel, why, howLabel, how }`
+- `issueLink` — `{ label, tooltip, onClick }`
+- `secondaryButton` / `primaryButton` — `{ label, onClick, disabled?, loading? }`; `loading` shows
+  a spinner and disables the button.
+
+All copy arrives as final display strings — the **caller** translates with `t()`; the component
+holds no user-visible copy of its own. Current consumer: `DatabaseStartupGate`. New error surfaces
+should compose `ErrorNotice` instead of rolling their own layout.
+
+### Startup issue draft helpers (`src/renderer/src/lib/startup-issue.ts`)
+
+- `buildStartupIssueUrl(error)` — GitHub `issues/new` URL with a prefilled title and body
+  (What happened / Environment / Steps to reproduce / Error stack). Oversized stacks are trimmed
+  by binary search against the real percent-encoded URL length (~7800-char budget).
+- `openStartupIssueDraft(error)` — opens that URL in a new browser window. This is a stateless
+  side effect, so it stays a plain function: don't wrap it in a hook unless React state or
+  lifecycle actually gets involved.
+
 ## Known patterns
 
 ### Radix Tooltip + DropdownMenu/Dialog trigger: tooltip reopens after the menu closes
