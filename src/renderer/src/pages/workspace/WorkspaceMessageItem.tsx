@@ -1147,7 +1147,7 @@ const WorkspaceMessageItemImpl = ({
     <MessageScrollerItem
       key={message.id}
       messageId={message.id}
-      disableContainment={message.status === 'streaming' || isAssistantPresenting}
+      disableContainment={message.status === 'streaming' || isAssistantPresenting || isEditing}
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >
