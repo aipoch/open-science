@@ -47,22 +47,22 @@ npm run dev
 Exécutez les commandes d'installation, de développement et de validation depuis
 la racine du dépôt :
 
-| Intention         | Commande à la racine                                           |
-| ----------------- | -------------------------------------------------------------- |
-| Installer         | `npm install`                                                  |
-| Lancer            | `npm run dev`                                                  |
-| Test ciblé        | `npm test -- <affected-test-path> [-t '<test pattern>']`       |
-| Tests de module   | `npm run test:module -- <module-id>`                           |
-| Tests impactés    | `npm run test:affected -- --base <base> --head <head>`         |
-| Typecheck Node    | `npm run typecheck:node`                                       |
-| Typecheck Web     | `npm run typecheck:web`                                        |
-| Lint              | `npm run lint`                                                 |
-| Repli complet     | `npm run typecheck`, `npm run lint`, puis `npm test`           |
-| UI E2E            | `npm run build:e2e`, puis `npm run test:e2e`                   |
-| Parcours UI       | `npm run build:e2e`, puis `npm run test:e2e:journey`           |
-| Espace de travail | `npm run build:e2e`, puis `npm run test:e2e:workspace`         |
-| Accessibilité     | `npm run build:e2e`, puis `npm run test:e2e:accessibility`     |
-| Visuel            | `npm run build:e2e`, puis `npm run test:e2e:visual`            |
+| Intention         | Commande à la racine                                       |
+| ----------------- | ---------------------------------------------------------- |
+| Installer         | `npm install`                                              |
+| Lancer            | `npm run dev`                                              |
+| Test ciblé        | `npm test -- <affected-test-path> [-t '<test pattern>']`   |
+| Tests de module   | `npm run test:module -- <module-id>`                       |
+| Tests impactés    | `npm run test:affected -- --base <base> --head <head>`     |
+| Typecheck Node    | `npm run typecheck:node`                                   |
+| Typecheck Web     | `npm run typecheck:web`                                    |
+| Lint              | `npm run lint`                                             |
+| Repli complet     | `npm run typecheck`, `npm run lint`, puis `npm test`       |
+| UI E2E            | `npm run build:e2e`, puis `npm run test:e2e`               |
+| Parcours UI       | `npm run build:e2e`, puis `npm run test:e2e:journey`       |
+| Espace de travail | `npm run build:e2e`, puis `npm run test:e2e:workspace`     |
+| Accessibilité     | `npm run build:e2e`, puis `npm run test:e2e:accessibility` |
+| Visuel            | `npm run build:e2e`, puis `npm run test:e2e:visual`        |
 
 Créez les worktrees Git uniquement sous le répertoire `.worktree/<name>` du
 dépôt, chaque branche de changement étant basée sur la branche par défaut. Ne
@@ -78,12 +78,12 @@ demandée.
 Lisez le document propriétaire existant avant de modifier l'un de ces domaines,
 puis exécutez ses contrôles ciblés :
 
-| Domaine  | Document propriétaire                                                                   | Contrôles ciblés                                                                                          |
-| -------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Renderer | [Spécification de conception](../design.md)                                             | `npm run typecheck:web` ; tests ciblés sous `src/renderer/`                                               |
-| Notebook | [Architecture actuelle](../PRD.md#8-current-architecture-what-is-actually-implemented)  | `npm run typecheck:node` ; tests ciblés sous `src/main/notebook/`                                         |
-| Settings | [Conception des paramètres](../design.md#settings)                                      | `npm run typecheck` ; tests ciblés sous `src/main/settings/` et `src/renderer/src/pages/settings/`        |
-| ACP      | [Architecture actuelle](../PRD.md#8-current-architecture-what-is-actually-implemented)  | `npm run typecheck:node` ; tests ciblés sous `src/main/acp/`                                              |
+| Domaine  | Document propriétaire                                                                  | Contrôles ciblés                                                                                   |
+| -------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Renderer | [Spécification de conception](../design.md)                                            | `npm run typecheck:web` ; tests ciblés sous `src/renderer/`                                        |
+| Notebook | [Architecture actuelle](../PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node` ; tests ciblés sous `src/main/notebook/`                                  |
+| Settings | [Conception des paramètres](../design.md#settings)                                     | `npm run typecheck` ; tests ciblés sous `src/main/settings/` et `src/renderer/src/pages/settings/` |
+| ACP      | [Architecture actuelle](../PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node` ; tests ciblés sous `src/main/acp/`                                       |
 
 ## Structure du projet
 
