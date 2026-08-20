@@ -22,6 +22,7 @@ const LANGUAGE_NAMES = {
   'zh-Hant': '繁體中文',
   ja: '日本語',
   ko: '한국어',
+  fr: 'Français',
   ru: 'Русский'
 } as const satisfies Record<Locale, string>
 

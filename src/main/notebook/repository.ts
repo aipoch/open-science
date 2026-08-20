@@ -11,7 +11,13 @@ import type {
 } from '../../shared/notebook'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { createLogger } from '../logger'
+import {
+  DurableJsonRecoveryBarrierError,
+  readDurableJsonFile,
+  writeDurableJsonFile
+} from '../storage/durable-json-file'
+import { decodeVersionedJson } from '../storage/versioned-json-decoder'
 import { decodeRunDocumentDataPaths, encodeRunDocumentDataPaths } from './run-document-data-paths'
 import {
   createFrameNotebookLane,
@@ -23,6 +29,7 @@ const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
 const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
 const MAX_DOCUMENT_READ_ATTEMPTS = 2
+const log = createLogger('notebook:persistence')
 
 type DocumentFileIdentity = { mtimeMs: number; size: number; ino: number }
 
@@ -94,6 +101,96 @@ const isMissingFileError = (error: unknown): boolean =>
 
 const persistedScopeValue = (value: unknown): string =>
   value === undefined || value === null ? '<missing>' : (JSON.stringify(value) ?? String(value))
+
+class UnsupportedNotebookDocumentVersionError extends DurableJsonRecoveryBarrierError {
+  constructor() {
+    super('Notebook document version is not supported.')
+  }
+}
+
+class CorruptNotebookDocumentError extends Error {
+  constructor() {
+    super('Notebook document is corrupt.')
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const notebookRunCandidate = (value: unknown): boolean => {
+  if (!isRecord(value)) return false
+  if (
+    typeof value.runId !== 'string' ||
+    typeof value.cellId !== 'string' ||
+    (value.source !== 'agent' && value.source !== 'user') ||
+    typeof value.script !== 'string' ||
+    !['queued', 'running', 'completed', 'failed', 'timeout', 'interrupted', 'cancelled'].includes(
+      String(value.status)
+    ) ||
+    typeof value.startedAt !== 'number' ||
+    !Number.isFinite(value.startedAt) ||
+    (value.kernelKind !== undefined &&
+      value.kernelKind !== 'python' &&
+      value.kernelKind !== 'r' &&
+      value.kernelKind !== 'repl' &&
+      value.kernelKind !== 'bash')
+  ) {
+    return false
+  }
+  if (
+    value.workingFiles !== undefined &&
+    (!Array.isArray(value.workingFiles) ||
+      value.workingFiles.some((file) => !isRecord(file) || typeof file.path !== 'string'))
+  ) {
+    return false
+  }
+  if (
+    value.artifacts !== undefined &&
+    (!Array.isArray(value.artifacts) ||
+      value.artifacts.some(
+        (artifact) =>
+          !isRecord(artifact) ||
+          typeof artifact.path !== 'string' ||
+          (typeof artifact.projectId !== 'string' && typeof artifact.projectName !== 'string')
+      ))
+  ) {
+    return false
+  }
+  return true
+}
+
+const notebookDocumentCandidate = (value: unknown): NotebookRunDocument | undefined =>
+  isRecord(value) && Array.isArray(value.runs) ? (value as NotebookRunDocument) : undefined
+
+function assertNotebookDocumentShape(value: unknown): asserts value is NotebookRunDocument {
+  if (!isRecord(value)) throw new CorruptNotebookDocumentError()
+  const kernel = isRecord(value.kernel) ? value.kernel : undefined
+  if (
+    (typeof value.projectId !== 'string' && typeof value.projectName !== 'string') ||
+    typeof value.sessionId !== 'string' ||
+    typeof value.workspaceCwd !== 'string' ||
+    typeof value.notebookSessionRoot !== 'string' ||
+    typeof value.dataRoot !== 'string' ||
+    !kernel ||
+    typeof kernel.runtimeRoot !== 'string' ||
+    !Array.isArray(value.runs) ||
+    value.runs.some((run) => !notebookRunCandidate(run))
+  ) {
+    throw new CorruptNotebookDocumentError()
+  }
+}
+
+const decodeNotebookDocument = (contents: string): NotebookRunDocument => {
+  const decoded = decodeVersionedJson(contents, {
+    currentVersion: 1,
+    readVersion: (value) =>
+      typeof value === 'object' && value !== null && 'version' in value ? value.version : undefined,
+    decode: notebookDocumentCandidate
+  })
+  if (decoded.status === 'unsupported') throw new UnsupportedNotebookDocumentVersionError()
+  if (decoded.status === 'corrupt') throw new CorruptNotebookDocumentError()
+  return decoded.value
+}
 
 // The physical notebooks/<projectId>/<sessionId>/run.json path is the ownership boundary. Validate
 // the persisted identity before decoding paths or normalizing request-derived fields so a misplaced
@@ -332,8 +429,9 @@ class NotebookRunRepository {
     const filePath = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, request.lane)
 
     const read = await readDurableJsonFile(filePath, (contents) => {
-      const document: unknown = JSON.parse(contents)
+      const document = decodeNotebookDocument(contents)
       assertNotebookDocumentOwnership(document, projectId, sessionId)
+      assertNotebookDocumentShape(document)
       return document
     })
     if (read.status === 'found') {
@@ -554,7 +652,22 @@ class NotebookRunRepository {
 
   async readSessionDocuments(projectId: string, sessionId: string): Promise<NotebookRunDocument[]> {
     const documents: NotebookRunDocument[] = []
-    const legacy = await this.findExisting(projectId, sessionId)
+    const legacy = await this.findExisting(projectId, sessionId).catch((error) => {
+      if (
+        error instanceof CorruptNotebookDocumentError ||
+        error instanceof UnsupportedNotebookDocumentVersionError
+      ) {
+        log.warn('skipping unreadable Notebook document', {
+          projectId,
+          sessionId,
+          lane: 'root',
+          status:
+            error instanceof UnsupportedNotebookDocumentVersionError ? 'unsupported' : 'corrupt'
+        })
+        return null
+      }
+      throw error
+    })
     if (legacy) documents.push(legacy)
 
     const framesRoot = join(
@@ -572,7 +685,21 @@ class NotebookRunRepository {
       if (!entry.isDirectory()) continue
       const lane = createFrameNotebookLane(projectId, sessionId, entry.name)
       const document = await this.loadExisting(projectId, sessionId, lane).catch((error) => {
-        if (isMissingFileError(error)) return undefined
+        if (
+          isMissingFileError(error) ||
+          error instanceof CorruptNotebookDocumentError ||
+          error instanceof UnsupportedNotebookDocumentVersionError
+        ) {
+          log.warn('skipping unreadable Notebook document', {
+            projectId,
+            sessionId,
+            lane: 'frame',
+            frameId: entry.name,
+            status:
+              error instanceof UnsupportedNotebookDocumentVersionError ? 'unsupported' : 'corrupt'
+          })
+          return undefined
+        }
         throw error
       })
       if (document) documents.push(document)
@@ -682,8 +809,9 @@ class NotebookRunRepository {
       } catch (error) {
         if (!isMissingFileError(error)) throw error
         const recovered = await readDurableJsonFile(filePath, (contents) => {
-          const document: unknown = JSON.parse(contents)
+          const document = decodeNotebookDocument(contents)
           assertNotebookDocumentOwnership(document, safeProjectId, safeSessionId)
+          assertNotebookDocumentShape(document)
           return document
         })
         if (recovered.status === 'missing') throw error
@@ -698,8 +826,9 @@ class NotebookRunRepository {
         return cached.document
       }
       const read = await readDurableJsonFile(filePath, (contents) => {
-        const document: unknown = JSON.parse(contents)
+        const document = decodeNotebookDocument(contents)
         assertNotebookDocumentOwnership(document, safeProjectId, safeSessionId)
+        assertNotebookDocumentShape(document)
         return document
       })
       if (read.status === 'missing') throw new Error(`Notebook document disappeared: ${filePath}`)

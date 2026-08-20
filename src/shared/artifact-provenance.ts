@@ -448,7 +448,11 @@ export type ArtifactVersionProvenance = {
       }
     | {
         state: 'unavailable'
-        reason: 'not-loaded' | 'message-snapshot-pending' | 'message-snapshot-corrupt'
+        reason:
+          | 'not-loaded'
+          | 'message-snapshot-pending'
+          | 'message-snapshot-unsupported'
+          | 'message-snapshot-corrupt'
       }
   review:
     | {

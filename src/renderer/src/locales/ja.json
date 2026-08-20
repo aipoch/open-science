@@ -1838,6 +1838,7 @@
   "The gateway root; a trailing <code>/v1</code> is added automatically. Choose the API format below to match the endpoint.": "ゲートウェイのルート。末尾の <code>/v1</code> が自動的に追加されます。エンドポイントに一致する API 形式を以下から選択します。",
   "The immutable Execution Log was bounded; the reconstruction may include a provenance-gap comment.": "変更できない実行ログの一部が省略されています。再構築された内容には、来歴情報の欠落を示すコメントが含まれる場合があります。",
   "The immutable message snapshot is not available for this version ({{reason}}).": "不変のメッセージ スナップショットは、このバージョン ({{reason}}) では使用できません。",
+  "This message snapshot was created by a newer version of Open Science. Update the app to view it.": "このメッセージスナップショットは、より新しいバージョンの Open Science で作成されました。表示するにはアプリを更新してください。",
   "The installer could not be started.": "インストーラーを起動できませんでした。",
   "The internet is reachable.": "インターネットにアクセスできます。",
   "The latest Agent total remains authoritative while local categories update.": "ローカル カテゴリが更新される間、最新のエージェント合計が引き続き信頼されます。",

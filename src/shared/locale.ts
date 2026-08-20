@@ -5,7 +5,7 @@
 // The locales that actually paint. Script subtags are the canonical form: 'zh-Hans' / 'zh-Hant'
 // rather than 'zh-CN' / 'zh-TW', because the script is what selects the catalog — a Traditional
 // reader in Singapore and one in Taiwan get the same copy.
-export const LOCALES = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const
+export const LOCALES = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru'] as const
 export type Locale = (typeof LOCALES)[number]
 
 // The fallback when nothing matches, and the source language every catalog is authored against.
@@ -56,6 +56,7 @@ const matchTag = (tag: string): Locale | undefined => {
   const [language, ...rest] = parts
 
   if (language === 'en') return 'en'
+  if (language === 'fr') return 'fr'
   if (language === 'ja') return 'ja'
   if (language === 'ko') return 'ko'
   if (language === 'ru') return 'ru'
@@ -71,7 +72,7 @@ const matchTag = (tag: string): Locale | undefined => {
 }
 
 // Resolves a *prioritized* list of host language tags to the locale to use, walking the list in
-// order so a user whose languages are ['fr', 'zh-CN', 'en'] lands on zh-Hans rather than skipping
+// order so a user whose languages are ['de', 'zh-CN', 'en'] lands on zh-Hans rather than skipping
 // straight to the default. This is standard BCP-47 lookup behavior, and the reason we read the whole
 // list instead of only navigator.language. Falls back to English when nothing matches.
 export const resolveLocaleFromTags = (tags: readonly string[]): Locale => {

@@ -129,7 +129,7 @@ ci/ai-pr-review
 - 이름, 구조, 관용적 표현을 포함해 주변 코드 스타일을 따릅니다.
 - 형식 지정은 Prettier가 처리합니다. `npm run format`은 선택 사항이지만 저장소 전체의 파일을 다시 쓰므로 커밋 전에 변경 사항을 검토하세요.
 - ESLint로 린트를 강제합니다. `npm run lint`를 실행하세요.
-- 사용자에게 보이는 문자열을 `react-i18next`의 `t()` 번역 함수로 감싸세요. 해당 번역을 `src/renderer/src/locales/ja.json`(일본어), `src/renderer/src/locales/ko.json`(한국어), `src/renderer/src/locales/zh-Hans.json`(중국어 간체), `src/renderer/src/locales/zh-Hant.json`(중국어 번체)에 추가합니다. 영어 텍스트를 번역 키로 사용하고 코드 주석과 문서는 영어로 유지합니다.
+- 사용자에게 보이는 문자열을 `react-i18next`의 `t()` 번역 함수로 감싸세요. 해당 번역을 `src/renderer/src/locales/fr.json`(프랑스어), `src/renderer/src/locales/ja.json`(일본어), `src/renderer/src/locales/ko.json`(한국어), `src/renderer/src/locales/zh-Hans.json`(중국어 간체), `src/renderer/src/locales/zh-Hant.json`(중국어 번체)에 추가합니다. 영어 텍스트를 번역 키로 사용하고 코드 주석과 문서는 영어로 유지합니다.
 
 ## 검증 정책
 

@@ -67,8 +67,8 @@ const decodeRun = (run: NotebookRunRecord, dataRoot: string | undefined): Notebo
   ...run,
   cwdBefore: decodeDataPath(run.cwdBefore, dataRoot),
   cwdAfter: decodeDataPath(run.cwdAfter, dataRoot),
-  workingFiles: run.workingFiles.map((file) => decodeWorkingFile(file, dataRoot)),
-  artifacts: run.artifacts.map((artifact) => decodeArtifact(artifact, dataRoot))
+  workingFiles: (run.workingFiles ?? []).map((file) => decodeWorkingFile(file, dataRoot)),
+  artifacts: (run.artifacts ?? []).map((artifact) => decodeArtifact(artifact, dataRoot))
 })
 
 // Encodes a notebook run.json document's data-root paths (roots, cwds, working files, artifacts)

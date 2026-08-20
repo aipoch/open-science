@@ -32,6 +32,8 @@ const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
+const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
+const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
 const DELEGATION_INHERITED_SPECIALIST_PROMPT =
   'Run the production inherited Specialist delegation journey.'
@@ -485,7 +487,47 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(TOOL_ORDER_PROMPT)) {
+        if (
+          prompt.includes(TOOL_LAYOUT_SHIFT_PROMPT) ||
+          prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)
+        ) {
+          // Keep the completed tool group on screen before streaming the final Markdown so the
+          // renderer test can observe whether the existing row moves while the next row mounts.
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'e2e-layout-tool-1',
+              title: 'Prepare layout fixture',
+              kind: 'other',
+              status: 'in_progress'
+            }
+          })
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'e2e-layout-tool-1',
+              title: 'Layout probe completed',
+              status: 'completed'
+            }
+          })
+          if (prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)) {
+            process.stderr.write('Layout fixture status.\n')
+          }
+          await delay(750)
+
+          const finalMessageId = `e2e-message-${nextMessageId++}`
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: finalMessageId,
+              content: { type: 'text', text: 'Layout fixture complete.' }
+            }
+          })
+          reply = ''
+        } else if (prompt.includes(TOOL_ORDER_PROMPT)) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
           const intentMessageId = `e2e-message-${nextMessageId++}`
           // A long intent text, chunked quickly so live pacing trails far behind arrival.

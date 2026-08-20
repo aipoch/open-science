@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsRepository } from '../settings/repository'
 import { LocalePreferenceOwner } from './owner'
-import { translateNativeMessage } from './main-process-messages'
+import { englishMessages, translateNativeMessage } from './main-process-messages'
 
 const roots: string[] = []
 
@@ -60,10 +60,11 @@ describe('LocalePreferenceOwner', () => {
   it('rejects invalid renderer input and translates native messages with interpolation', async () => {
     const owner = new LocalePreferenceOwner(['en-US'], await createRepository())
 
-    expect(() => owner.setPreference('fr')).toThrow('Invalid language preference')
+    expect(() => owner.setPreference('de')).toThrow('Invalid language preference')
     expect(translateNativeMessage('ja', 'Quit')).toBe('終了')
     expect(translateNativeMessage('ko', 'Quit')).toBe('종료')
     expect(translateNativeMessage('ru', 'Quit')).toBe('Выйти')
+    expect(translateNativeMessage('fr', 'Quit')).toBe('Quitter')
     expect(
       translateNativeMessage(
         'zh-Hans',
@@ -85,5 +86,12 @@ describe('LocalePreferenceOwner', () => {
       'В выбранной папке уже существуют 5 Notebook.',
       'В выбранной папке уже существует 21 Notebook.'
     ])
+  })
+
+  it('keeps French high punctuation attached to the preceding text', () => {
+    const keys = Object.keys(englishMessages) as Array<keyof typeof englishMessages>
+    const offenders = keys.filter((key) => / [;:?!]/.test(translateNativeMessage('fr', key)))
+
+    expect(offenders).toEqual([])
   })
 })

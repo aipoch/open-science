@@ -1946,6 +1946,7 @@
   "The gateway root; a trailing <code>/v1</code> is added automatically. Choose the API format below to match the endpoint.": "Корневой URL шлюза; завершающий <code>/v1</code> добавляется автоматически. Выберите ниже формат API, соответствующий конечной точке.",
   "The immutable Execution Log was bounded; the reconstruction may include a provenance-gap comment.": "Неразрушимый журнал выполнения был ограничен; восстановление может включать комментарий о пропущенной линии происхождения.",
   "The immutable message snapshot is not available for this version ({{reason}}).": "Неразрушимая копия сообщения недоступна для этой версии ({{reason}}).",
+  "This message snapshot was created by a newer version of Open Science. Update the app to view it.": "Этот снимок сообщения создан в более новой версии Open Science. Обновите приложение, чтобы его просмотреть.",
   "The installer could not be started.": "Не удалось запустить установщик.",
   "The internet is reachable.": "Интернет доступен.",
   "The latest Agent total remains authoritative while local categories update.": "Последняя версия агента остаётся авторитетной, а локальные категории обновляются.",

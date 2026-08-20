@@ -235,6 +235,121 @@ describe('notebook run repository', () => {
     })
   })
 
+  it('keeps readable Notebook documents available when one Frame document is corrupt', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane: createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    })
+    const corruptLane = createFrameNotebookLane(projectId, sessionId, 'corrupt-frame')
+    const corruptDocument = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane: corruptLane
+    })
+    await writeFile(join(corruptDocument.notebookSessionRoot, 'run.json'), '{ not-json', 'utf8')
+
+    await expect(
+      new NotebookRunRepository(root).readSessionDocuments(projectId, sessionId)
+    ).resolves.toEqual([expect.objectContaining({ projectId, sessionId })])
+  })
+
+  it('keeps readable Notebook documents available when one Frame has a corrupt shape', async () => {
+    const root = await createStorageRoot()
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const repository = new NotebookRunRepository(root)
+    await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane: createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    })
+    const corruptDocument = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane: createFrameNotebookLane(projectId, sessionId, 'corrupt-frame')
+    })
+    const filePath = join(corruptDocument.notebookSessionRoot, 'run.json')
+    const malformed = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>
+    malformed.runs = [null]
+    await writeFile(filePath, JSON.stringify(malformed), 'utf8')
+
+    await expect(
+      new NotebookRunRepository(root).readSessionDocuments(projectId, sessionId)
+    ).resolves.toEqual([expect.objectContaining({ projectId, sessionId })])
+  })
+
+  it('does not treat an unversioned Notebook document as registered legacy data', async () => {
+    const root = await createStorageRoot()
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const document = await new NotebookRunRepository(root).loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane: createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    })
+    const filePath = join(document.notebookSessionRoot, 'run.json')
+    const unversioned = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>
+    delete unversioned.version
+    await writeFile(filePath, JSON.stringify(unversioned), 'utf8')
+
+    await expect(
+      new NotebookRunRepository(root).readSessionDocuments(projectId, sessionId)
+    ).resolves.toEqual([])
+  })
+
+  it('does not rewrite a Notebook document created by a newer app version', async () => {
+    const root = await createStorageRoot()
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const document = await new NotebookRunRepository(root).loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane
+    })
+    const filePath = join(document.notebookSessionRoot, 'run.json')
+    const futureDocument = {
+      ...JSON.parse(await readFile(filePath, 'utf8')),
+      version: 2,
+      futureNotebookState: { mustSurvive: true }
+    }
+    const futureBytes = `${JSON.stringify(futureDocument, null, 2)}\n`
+    await writeFile(filePath, futureBytes, 'utf8')
+
+    await expect(
+      new NotebookRunRepository(root).appendRun({
+        projectId,
+        sessionId,
+        lane,
+        run: {
+          runId: 'new-run',
+          cellId: 'cell-new-run',
+          source: 'agent',
+          kernelKind: 'python',
+          script: '1',
+          status: 'completed',
+          startedAt: 1,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          artifacts: [],
+          workingFiles: []
+        }
+      })
+    ).rejects.toThrow('Notebook document version is not supported.')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(futureBytes)
+  })
+
   it('creates run.json under the notebook session workspace with runtime and data roots', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

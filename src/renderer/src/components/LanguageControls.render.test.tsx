@@ -64,6 +64,7 @@ describe('LanguageSelect', () => {
       '繁體中文',
       '日本語',
       '한국어',
+      'Français',
       'Русский'
     ])
   })
@@ -141,6 +142,24 @@ describe('LanguageSelect', () => {
     expect(i18next.language).toBe('ru')
     expect(document.documentElement.lang).toBe('ru')
     expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('Язык интерфейса')
+  })
+
+  it('switches to French copy from the language picker', () => {
+    render(<LanguageSelect />)
+    openRadixMenu(container.querySelector('button'))
+
+    const french = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
+      option.textContent?.includes('Français')
+    )
+    clickRadixMenuItem(french as HTMLElement)
+
+    expect(useLocaleStore.getState().preference).toBe('fr')
+    expect(useLocaleStore.getState().locale).toBe('fr')
+    expect(i18next.language).toBe('fr')
+    expect(document.documentElement.lang).toBe('fr')
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
+      "Langue de l'interface"
+    )
   })
 })
 

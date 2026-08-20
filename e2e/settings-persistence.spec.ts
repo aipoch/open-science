@@ -92,6 +92,19 @@ const localizedSettingsCases = [
     appearance: 'Внешний вид',
     interfaceLanguage: 'Язык интерфейса',
     closeSettings: 'Закрыть настройки'
+  },
+  {
+    language: 'French',
+    pickerLabel: 'Français',
+    locale: 'fr',
+    projects: 'Projets',
+    modelSettings: 'Paramètres du modèle',
+    settings: 'Paramètres',
+    openNavigation: 'Ouvrir la navigation des paramètres',
+    general: 'Général',
+    appearance: 'Apparence',
+    interfaceLanguage: "Langue de l'interface",
+    closeSettings: 'Fermer les paramètres'
   }
 ] as const
 

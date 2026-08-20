@@ -19,6 +19,7 @@ import type {
   ResetPasswordHostPersistence
 } from './compute-auth-owner'
 import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import { decodeVersionedJson } from '../storage/versioned-json-decoder'
 import { ComputeConnectionError } from './connection-broker'
 
 // Only the computeHost delegate is needed; typing to this subset keeps the repository unit-testable
@@ -38,16 +39,138 @@ type ComputeHostClient = Pick<
 // projects/repository.ts).
 type ComputeHostClientProvider = () => Promise<ComputeHostClient>
 
-// JSON columns are parsed defensively: a corrupt value degrades to undefined rather than throwing, so
-// one bad row cannot break loading the whole host list.
-const parseJson = <T>(value: string | null): T | undefined => {
-  if (value === null) return undefined
-  try {
-    return JSON.parse(value) as T
-  } catch {
+const COMPUTE_JSON_SCHEMA_VERSION = 1
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const readSchemaVersion = (value: unknown): unknown =>
+  isRecord(value) && 'schemaVersion' in value ? value.schemaVersion : undefined
+
+const decodeSshOverrides = (value: unknown): SshOverrides | undefined => {
+  if (!isRecord(value)) return undefined
+  if (value.user !== undefined && typeof value.user !== 'string') return undefined
+  if (
+    value.port !== undefined &&
+    (typeof value.port !== 'number' || !Number.isFinite(value.port))
+  ) {
     return undefined
   }
+  if (value.identityFile !== undefined && typeof value.identityFile !== 'string') return undefined
+
+  return {
+    ...(typeof value.user === 'string' ? { user: value.user } : {}),
+    ...(typeof value.port === 'number' ? { port: value.port } : {}),
+    ...(typeof value.identityFile === 'string' ? { identityFile: value.identityFile } : {})
+  }
 }
+
+const authenticationErrorCodes = new Set([
+  'credential_required',
+  'credential_unavailable',
+  'secure_storage_unavailable',
+  'authentication_failed',
+  'credential_conflict',
+  'credential_change_blocked_by_jobs',
+  'host_key_unknown',
+  'host_key_changed',
+  'host_unreachable',
+  'timeout',
+  'create_failed',
+  'reset_failed',
+  'unsupported_auth_configuration'
+])
+
+const decodeProbeResult = (value: unknown): ProbeResult | undefined => {
+  if (!isRecord(value)) return undefined
+  if (typeof value.ok !== 'boolean' || typeof value.probedAt !== 'string') return undefined
+  if (value.exitCode !== null && typeof value.exitCode !== 'number') return undefined
+  if (value.errorTail !== null && typeof value.errorTail !== 'string') return undefined
+  if (
+    value.authenticationCode !== undefined &&
+    (typeof value.authenticationCode !== 'string' ||
+      !authenticationErrorCodes.has(value.authenticationCode))
+  ) {
+    return undefined
+  }
+  if (
+    value.authenticationRevision !== undefined &&
+    (typeof value.authenticationRevision !== 'number' ||
+      !Number.isInteger(value.authenticationRevision))
+  ) {
+    return undefined
+  }
+  if (value.os !== undefined && typeof value.os !== 'string') return undefined
+  for (const numericField of ['cpus', 'memMib'] as const) {
+    if (
+      value[numericField] !== undefined &&
+      (typeof value[numericField] !== 'number' || !Number.isFinite(value[numericField]))
+    ) {
+      return undefined
+    }
+  }
+  if (
+    value.gpus !== undefined &&
+    (!Array.isArray(value.gpus) ||
+      value.gpus.some(
+        (gpu) =>
+          !isRecord(gpu) ||
+          typeof gpu.type !== 'string' ||
+          typeof gpu.count !== 'number' ||
+          !Number.isFinite(gpu.count)
+      ))
+  ) {
+    return undefined
+  }
+  if (
+    value.detectedScheduler !== undefined &&
+    value.detectedScheduler !== 'slurm' &&
+    value.detectedScheduler !== 'pbs' &&
+    value.detectedScheduler !== 'lsf' &&
+    value.detectedScheduler !== 'none'
+  ) {
+    return undefined
+  }
+
+  return {
+    ok: value.ok,
+    probedAt: value.probedAt,
+    exitCode: value.exitCode,
+    errorTail: value.errorTail,
+    ...(value.authenticationCode !== undefined
+      ? { authenticationCode: value.authenticationCode as ProbeResult['authenticationCode'] }
+      : {}),
+    ...(typeof value.authenticationRevision === 'number'
+      ? { authenticationRevision: value.authenticationRevision }
+      : {}),
+    ...(typeof value.os === 'string' ? { os: value.os } : {}),
+    ...(typeof value.cpus === 'number' ? { cpus: value.cpus } : {}),
+    ...(typeof value.memMib === 'number' ? { memMib: value.memMib } : {}),
+    ...(Array.isArray(value.gpus) ? { gpus: value.gpus as ProbeResult['gpus'] } : {}),
+    ...(value.detectedScheduler !== undefined
+      ? { detectedScheduler: value.detectedScheduler as ProbeResult['detectedScheduler'] }
+      : {})
+  }
+}
+
+// Existing unversioned values remain readable as legacy data. Unsupported and corrupt payloads are
+// deliberately omitted from the domain object instead of being mistaken for the current schema.
+const parseComputeJson = <T>(
+  value: string | null,
+  decode: (value: unknown) => T | undefined
+): T | undefined => {
+  if (value === null) return undefined
+  const result = decodeVersionedJson(value, {
+    currentVersion: COMPUTE_JSON_SCHEMA_VERSION,
+    readVersion: readSchemaVersion,
+    decode,
+    decodeUnversioned: decode
+  })
+  return result.status === 'valid' || result.status === 'legacy' ? result.value : undefined
+}
+
+const serializeProbeResult = (result: ProbeResult): string =>
+  JSON.stringify({ schemaVersion: COMPUTE_JSON_SCHEMA_VERSION, ...result })
 
 // Narrows the free-text shape column back to the domain union, defaulting unknown values to
 // 'direct_ssh' so a corrupt row still renders as a plain host rather than crashing.
@@ -92,7 +215,7 @@ const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => (
   displayName: row.displayName,
   shape: asShape(row.shape),
   sshAlias: row.sshAlias,
-  sshOverrides: parseJson<SshOverrides>(row.sshOverrides),
+  sshOverrides: parseComputeJson(row.sshOverrides, decodeSshOverrides),
   authentication: {
     mode: asAuthenticationMode(row.authenticationMode ?? 'ssh_config'),
     credentialStatus:
@@ -107,7 +230,7 @@ const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => (
   scratchRoot: row.scratchRoot ?? undefined,
   scratchPinned: row.scratchPinned,
   concurrencyLimit: row.concurrencyLimit ?? undefined,
-  probeResult: parseJson<ProbeResult>(row.probeResult),
+  probeResult: parseComputeJson(row.probeResult, decodeProbeResult),
   detailsDoc: row.detailsDoc,
   detailsUpdatedAt: row.detailsUpdatedAt?.getTime(),
   detailsUpdatedBy: asAuthor(row.detailsUpdatedBy),
@@ -125,7 +248,9 @@ const serializeOverrides = (overrides: SshOverrides | undefined): string | null 
     clean.port = overrides.port
   }
   if (overrides.identityFile?.trim()) clean.identityFile = overrides.identityFile.trim()
-  return Object.keys(clean).length === 0 ? null : JSON.stringify(clean)
+  return Object.keys(clean).length === 0
+    ? null
+    : JSON.stringify({ schemaVersion: COMPUTE_JSON_SCHEMA_VERSION, ...clean })
 }
 
 // Owns ComputeHost reads/writes. The client is resolved lazily per call so schema-ensure failures can
@@ -168,7 +293,13 @@ class ComputeHostRepository {
     const client = await this.getClient()
     const rows = await client.computeHost.findMany({ orderBy: { createdAt: 'desc' } })
 
-    return rows.map((row) => toHost(row))
+    return rows.flatMap((row) => {
+      try {
+        return [toHost(row)]
+      } catch {
+        return []
+      }
+    })
   }
 
   // Returns a single host by its provider id ("ssh:<alias>") or null when it no longer exists.
@@ -314,7 +445,7 @@ class ComputeHostRepository {
     const updated = await client.computeHost.updateMany({
       where: { providerId, authenticationRevision },
       data: {
-        probeResult: JSON.stringify(result),
+        probeResult: serializeProbeResult(result),
         shape
       }
     })
@@ -594,7 +725,7 @@ class ComputeHostRepository {
       await client.computeHost.updateMany({
         where: { providerId, authenticationRevision: result.authenticationRevision },
         data: {
-          probeResult: JSON.stringify(result),
+          probeResult: serializeProbeResult(result),
           shape
         }
       })
@@ -603,7 +734,7 @@ class ComputeHostRepository {
     await client.computeHost.update({
       where: { providerId },
       data: {
-        probeResult: JSON.stringify(result),
+        probeResult: serializeProbeResult(result),
         shape
       }
     })

@@ -1838,6 +1838,7 @@
   "The gateway root; a trailing <code>/v1</code> is added automatically. Choose the API format below to match the endpoint.": "게이트웨이 루트. 후행 <code>/v1</code>이 자동으로 추가됩니다. 아래에서 엔드포인트와 일치하는 API 형식을 선택하세요.",
   "The immutable Execution Log was bounded; the reconstruction may include a provenance-gap comment.": "불변 실행 로그가 제한되었습니다. 재구성에는 출처 격차 설명이 포함될 수 있습니다.",
   "The immutable message snapshot is not available for this version ({{reason}}).": "이 버전에서는 변경 불가능한 메시지 스냅샷을 사용할 수 없습니다({{reason}}).",
+  "This message snapshot was created by a newer version of Open Science. Update the app to view it.": "이 메시지 스냅샷은 더 최신 버전의 Open Science에서 생성되었습니다. 보려면 앱을 업데이트하세요.",
   "The installer could not be started.": "설치 프로그램을 시작할 수 없습니다.",
   "The internet is reachable.": "인터넷에 접속할 수 있습니다.",
   "The latest Agent total remains authoritative while local categories update.": "지역 카테고리가 업데이트되는 동안 최신 에이전트 총계는 여전히 신뢰할 수 있습니다.",

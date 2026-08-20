@@ -1142,7 +1142,15 @@ const WorkspaceMessageItemImpl = ({
             </div>
           )
         ) : (
-          <div className={cn(assistantMessageSurfaceClassName, 'select-text overflow-visible')}>
+          <div
+            className={cn(
+              assistantMessageSurfaceClassName,
+              'select-text overflow-visible',
+              // Match the tallest loading row while initial content is buffered so replacing it
+              // cannot collapse the workspace scroll extent. Side chat keeps its natural geometry.
+              isAssistantPresenting && 'min-h-14'
+            )}
+          >
             {message.content ? (
               <PresentedAgentMarkdown
                 content={assistantPresentation.content}
