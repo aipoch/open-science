@@ -120,8 +120,8 @@ class TagRepository {
     if (!current) throw new Error('Tag not found.')
     if (current.systemKey) throw new Error('System Tags cannot be edited.')
     try {
-      await client.tag.update({
-        where: { id: request.id },
+      const result = await client.tag.updateMany({
+        where: { id: request.id, updatedAt: new Date(request.expectedUpdatedAt) },
         data: {
           name,
           nameKey,
@@ -129,6 +129,7 @@ class TagRepository {
           colorKey: request.colorKey
         }
       })
+      if (result.count === 0) throw new Error('Tag changed since it was loaded.')
     } catch (error) {
       duplicateNameError(error)
     }

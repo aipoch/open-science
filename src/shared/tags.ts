@@ -86,7 +86,7 @@ export const createTagRequestSchema = z
   })
   .strict()
 export const updateTagRequestSchema = createTagRequestSchema
-  .extend({ id: z.string().min(1) })
+  .extend({ id: z.string().min(1), expectedUpdatedAt: z.number().int().positive() })
   .strict()
 export const deleteTagRequestSchema = z.object({ id: z.string().min(1) }).strict()
 export const setTagAssignmentRequestSchema = tagResourceRefSchema

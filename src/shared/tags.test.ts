@@ -54,6 +54,23 @@ describe('tag application command contracts', () => {
     ).toThrow()
   })
 
+  it('requires the Tag version expected by an update', () => {
+    const request = {
+      id: 'custom',
+      name: 'Analysis',
+      iconKey: 'tag',
+      colorKey: 'blue',
+      expectedUpdatedAt: 42
+    } as const
+
+    expect(tagApplicationCommandContracts.update.args.parse([request])).toEqual([request])
+    expect(() =>
+      tagApplicationCommandContracts.update.args.parse([
+        { id: 'custom', name: 'Analysis', iconKey: 'tag', colorKey: 'blue' }
+      ])
+    ).toThrow()
+  })
+
   it('accepts only a strict ordered Tag id list', () => {
     expect(tagApplicationCommandContracts.reorder.args.parse([{ tagIds: ['a', 'b'] }])).toEqual([
       { tagIds: ['a', 'b'] }

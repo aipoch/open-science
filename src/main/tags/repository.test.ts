@@ -94,9 +94,46 @@ describe('TagRepository', () => {
         id: tag.id,
         name: expandingName,
         iconKey: 'tag',
-        colorKey: 'blue'
+        colorKey: 'blue',
+        expectedUpdatedAt: tag.updatedAt
       })
     ).rejects.toThrow('Tag name is too long.')
+  })
+
+  it('rejects an update from a stale Tag snapshot without overwriting the winner', async () => {
+    await repository.create({ name: 'Research', iconKey: 'tag', colorKey: 'blue' })
+    const staleTag = (await repository.snapshot(0)).tags.find(
+      (candidate) => 'name' in candidate && candidate.name === 'Research'
+    )!
+
+    while (Date.now() <= staleTag.updatedAt) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+    await repository.update({
+      id: staleTag.id,
+      name: 'Current research',
+      iconKey: 'book-open',
+      colorKey: 'green',
+      expectedUpdatedAt: staleTag.updatedAt
+    })
+
+    await expect(
+      repository.update({
+        id: staleTag.id,
+        name: 'Research',
+        iconKey: 'star',
+        colorKey: 'amber',
+        expectedUpdatedAt: staleTag.updatedAt
+      })
+    ).rejects.toThrow('Tag changed since it was loaded.')
+    expect((await repository.snapshot(1)).tags).toContainEqual(
+      expect.objectContaining({
+        id: staleTag.id,
+        name: 'Current research',
+        iconKey: 'book-open',
+        colorKey: 'green'
+      })
+    )
   })
 
   it('stores many-to-many assignments and cascades custom Tag deletion', async () => {
