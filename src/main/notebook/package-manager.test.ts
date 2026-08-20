@@ -1570,13 +1570,14 @@ describe('installPackages shared pkgs cache lock', () => {
             path: cachePath,
             lockKey: micromambaCacheLockKey(cachePath)
           })
-        }
+        },
+        onCacheMaintenanceSettled: () => void order.push('settled')
       }
     )
 
     expect(result.ok).toBe(true)
     expect(existsSync(stalePackage)).toBe(false)
-    expect(order).toEqual(['clean', 'install'])
+    expect(order).toEqual(['clean', 'settled', 'install'])
     expect(cleanArgs).toEqual(['--no-rc', 'clean', '--packages', '--yes'])
     expect(cleanEnv).toMatchObject({
       MAMBA_ROOT_PREFIX: root,
@@ -1597,15 +1598,16 @@ describe('installPackages shared pkgs cache lock', () => {
 
     const result = await installPackages(
       { language: 'python', packages: ['numpy'] },
-      { ...base, spawn }
+      { ...base, spawn, onCacheMaintenanceSettled: () => void order.push('settled') }
     )
 
     expect(result.ok).toBe(true)
-    expect(order).toEqual(['clean-failed', 'install'])
+    expect(order).toEqual(['clean-failed', 'settled', 'install'])
   })
 
   it('does not continue when the cleanup worker cannot be confirmed stopped', async () => {
     let installStarted = false
+    const onCacheMaintenanceSettled = vi.fn()
     const spawn: InstallSpawn = async (_command, args) => {
       if (isCacheClean(args)) {
         throw new Error(`${CHILD_UNCONFIRMED}: cleanup worker may still be running`)
@@ -1615,9 +1617,13 @@ describe('installPackages shared pkgs cache lock', () => {
     }
 
     await expect(
-      installPackages({ language: 'python', packages: ['numpy'] }, { ...base, spawn })
+      installPackages(
+        { language: 'python', packages: ['numpy'] },
+        { ...base, spawn, onCacheMaintenanceSettled }
+      )
     ).rejects.toThrow(CHILD_UNCONFIRMED)
     expect(installStarted).toBe(false)
+    expect(onCacheMaintenanceSettled).not.toHaveBeenCalled()
   })
 
   it.each(['legacy', 'selected'] as const)(

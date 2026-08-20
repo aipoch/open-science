@@ -231,6 +231,38 @@ describe('NotebookPackageMutationOwner', () => {
     expect(options.runtimeRepair.quarantineProtectedIdentity).not.toHaveBeenCalled()
   })
 
+  it('clears settled cache-maintenance child evidence before the installer transaction', async () => {
+    let operationId = ''
+    const { owner, target, runtimeRoot } = ownerHarness({
+      environmentStateTracker: {
+        markPackageMutationDirty: vi.fn(async (_target, mutation) => {
+          operationId = mutation.operationId
+        }),
+        refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+      },
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onBeforeSpawn?.()
+        deps?.onChild?.(process.pid)
+        await vi.waitFor(async () => {
+          expect((await pending(runtimeRoot))[0]).toMatchObject({ childPid: process.pid })
+        })
+
+        await (
+          deps as (typeof deps & { onCacheMaintenanceSettled?: () => Promise<void> }) | undefined
+        )?.onCacheMaintenanceSettled?.()
+
+        expect(readOperationChild(runtimeRoot, operationId)).toBeUndefined()
+        const [record] = await pending(runtimeRoot)
+        expect(record).not.toHaveProperty('childPid')
+        expect(record).not.toHaveProperty('childStartedAt')
+        expect(record).not.toHaveProperty('childStartToken')
+        return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+  })
+
   it('fails closed without dirtying or spawning when the journal cannot begin', async () => {
     const { owner, options, target, runtimeRoot } = ownerHarness()
     writeFileSync(operationJournalPath(runtimeRoot), '{not-json', 'utf8')

@@ -89,6 +89,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const root = makeRoot()
     const cachePath = join(root, 'pkgs')
     const order: string[] = []
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
+    let operationId = ''
     const provisioner = new DefaultRuntimeProvisioner(
       makeDeps(root, {
         platform: 'linux',
@@ -100,11 +102,21 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
         },
         maintainCache: async (cache, onBeforeSpawn, onChild) => {
           expect(cache.path).toBe(cachePath)
-          expect(onBeforeSpawn).toEqual(expect.any(Function))
-          expect(onChild).toEqual(expect.any(Function))
+          onBeforeSpawn()
+          onChild(process.pid)
+          await vi.waitFor(async () => {
+            const [record] = await journal.pending()
+            operationId = record.operationId
+            expect(record).toMatchObject({ childPid: process.pid })
+          })
           order.push('clean')
         },
         runArgv: async (argv) => {
+          expect(readOperationChild(root, operationId)).toBeUndefined()
+          const [record] = await journal.pending()
+          expect(record).not.toHaveProperty('childPid')
+          expect(record).not.toHaveProperty('childStartedAt')
+          expect(record).not.toHaveProperty('childStartToken')
           order.push('create')
           const prefix = argv[argv.findIndex((a) => a === '--prefix' || a === '-p') + 1]
           const bin = pythonBin(prefix)

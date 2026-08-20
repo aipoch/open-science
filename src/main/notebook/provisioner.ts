@@ -355,12 +355,15 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private maintainCacheBeforeMutation(
     cache: MicromambaCache,
     onBeforeSpawn: () => void,
-    onChild: (pid: number) => void
+    onChild: (pid: number) => void,
+    onSettled: () => Promise<void>
   ): Promise<void> {
     const maintainCache = this.deps.maintainCache
     if (!maintainCache) return Promise.resolve()
-    return maintainPackageCacheBestEffort(this.cacheLockKeys(cache), () =>
-      maintainCache(cache, onBeforeSpawn, onChild)
+    return maintainPackageCacheBestEffort(
+      this.cacheLockKeys(cache),
+      () => maintainCache(cache, onBeforeSpawn, onChild),
+      onSettled
     )
   }
 
@@ -542,7 +545,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // `run` performs the actual spawn(s). It MUST pass `onBeforeSpawn` and `onChild` to runArgv so the
     // per-spawn intent is re-armed and the PID recorded around EACH spawn (an op may spawn more than
     // once: create + cache-repair retry).
-    run: (onBeforeSpawn: () => void, onChild: (pid: number) => void) => Promise<void>
+    run: (
+      onBeforeSpawn: () => void,
+      onChild: (pid: number) => void,
+      onCacheMaintenanceSettled: () => Promise<void>
+    ) => Promise<void>
   ): Promise<void> {
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
     const operationId = randomUUID()
@@ -581,9 +588,21 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         .update(operationId, { childPid, childStartedAt, childStartToken })
         .catch(() => undefined)
     }
+    const onCacheMaintenanceSettled = async (): Promise<void> => {
+      // A cleanup child borrows this prefix operation's recovery barrier only while it is alive. Clear
+      // that settled identity before continuing so a crash between cleanup and the prefix write cannot
+      // be recovered as though cleanup had interrupted the environment mutation. Awaiting update also
+      // serializes behind the fire-and-forget PID write above.
+      await journal.update(operationId, {
+        childPid: undefined,
+        childStartedAt: undefined,
+        childStartToken: undefined
+      })
+      removeOperationChildSync(this.deps.root, operationId)
+    }
     let retainForRecovery = false
     try {
-      await run(onBeforeSpawn, onChild)
+      await run(onBeforeSpawn, onChild, onCacheMaintenanceSettled)
     } catch (error) {
       // A teardown whose child tree could NOT be confirmed stopped: a worker may still be writing the
       // prefix, so KEEP the sidecar + journal record (recovery blocks) instead of clearing them.
@@ -1154,8 +1173,13 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       name,
       prefix,
       `create-${language}`,
-      async (onBeforeSpawn, onChild) => {
-        await this.maintainCacheBeforeMutation(this.cache, onBeforeSpawn, onChild)
+      async (onBeforeSpawn, onChild, onCacheMaintenanceSettled) => {
+        await this.maintainCacheBeforeMutation(
+          this.cache,
+          onBeforeSpawn,
+          onChild,
+          onCacheMaintenanceSettled
+        )
         return this.runWithMaxPathRecovery(() =>
           withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
             // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
@@ -1276,13 +1300,23 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       spec.name,
       prefix,
       `upgrade-${spec.language}`,
-      async (onBeforeSpawn, onChild) => {
+      async (onBeforeSpawn, onChild, onCacheMaintenanceSettled) => {
         // Fetch adapters seed relocation-critical archives into root/pkgs before this journaled section.
         // Clean only unused extracted directories, then seed any selected short cache. Running the child
         // here lets the existing upgrade journal supervise it without a new durable operation kind.
-        await this.maintainCacheBeforeMutation(fetchCache, onBeforeSpawn, onChild)
+        await this.maintainCacheBeforeMutation(
+          fetchCache,
+          onBeforeSpawn,
+          onChild,
+          onCacheMaintenanceSettled
+        )
         if (selected.cache.path !== fetchCache.path) {
-          await this.maintainCacheBeforeMutation(selected.cache, onBeforeSpawn, onChild)
+          await this.maintainCacheBeforeMutation(
+            selected.cache,
+            onBeforeSpawn,
+            onChild,
+            onCacheMaintenanceSettled
+          )
         }
         await this.seedBundleCache(bundle, selected.cache)
         await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
@@ -1384,12 +1418,22 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       spec.name,
       prefix,
       `create-${spec.language}`,
-      async (onBeforeSpawn, onChild) => {
+      async (onBeforeSpawn, onChild, onCacheMaintenanceSettled) => {
         // Fetch completes before cleanup so its child can reuse this materialize journal. Tarballs stay
         // intact for future offline relocation; only unused extracted package directories are reclaimed.
-        await this.maintainCacheBeforeMutation(fetchCache, onBeforeSpawn, onChild)
+        await this.maintainCacheBeforeMutation(
+          fetchCache,
+          onBeforeSpawn,
+          onChild,
+          onCacheMaintenanceSettled
+        )
         if (selected.cache.path !== fetchCache.path) {
-          await this.maintainCacheBeforeMutation(selected.cache, onBeforeSpawn, onChild)
+          await this.maintainCacheBeforeMutation(
+            selected.cache,
+            onBeforeSpawn,
+            onChild,
+            onCacheMaintenanceSettled
+          )
         }
         await this.seedBundleCache(bundle, selected.cache)
         await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)

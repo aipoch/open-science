@@ -131,6 +131,18 @@ class NotebookPackageMutationOwner {
                 void journal
                   .update(operationId, { childPid, childStartedAt, childStartToken })
                   .catch(() => undefined)
+              },
+              onCacheMaintenanceSettled: async () => {
+                // Cache cleanup reuses this operation's recovery barrier while its child is alive, but
+                // it is not the installer transaction. Clear its settled identity before a dry-run or
+                // real install can begin so a crash in that gap cannot be recovered as an interrupted
+                // package mutation. Awaiting update also serializes behind the fire-and-forget PID write.
+                await journal.update(operationId, {
+                  childPid: undefined,
+                  childStartedAt: undefined,
+                  childStartToken: undefined
+                })
+                removeOperationChildSync(runtimeRoot, operationId)
               }
             })
             installerDurationMs = Date.now() - installerStartedAt

@@ -166,6 +166,9 @@ export type InstallDeps = {
   onChild?: (pid: number) => void
   // Invoked synchronously right before EACH spawn so the caller can (re)record the per-spawn intent.
   onBeforeSpawn?: () => void
+  // Invoked after cache maintenance has either completed or failed with its child confirmed stopped.
+  // The journal owner uses it to clear the maintenance child's evidence before any solver/install spawn.
+  onCacheMaintenanceSettled?: () => Promise<void> | void
 }
 
 const DEFAULT_CONDA_CHANNEL = 'conda-forge'
@@ -1172,7 +1175,8 @@ export async function installPackages(
             code: 'MICROMAMBA_CACHE_CLEAN_EXIT'
           })
         }
-      }
+      },
+      deps.onCacheMaintenanceSettled
     )
     return condaCacheMaintenance
   }

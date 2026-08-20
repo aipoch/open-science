@@ -20,7 +20,8 @@ export const packageCacheCleanArgv = (micromamba: string): string[] => [
 // its recovery evidence and refuse to start another cache writer.
 export const maintainPackageCacheBestEffort = async (
   cacheLockKeys: string[],
-  run: () => Promise<void>
+  run: () => Promise<void>,
+  onSettled?: () => Promise<void> | void
 ): Promise<void> => {
   try {
     await withExclusiveCacheLocks(cacheLockKeys, run)
@@ -28,4 +29,5 @@ export const maintainPackageCacheBestEffort = async (
     if (isChildUnconfirmedError(error)) throw error
     logger.warn('package cache maintenance failed', diagnosticErrorFields(error))
   }
+  await onSettled?.()
 }
