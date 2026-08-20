@@ -1353,7 +1353,11 @@ describe('Russian catalog quality', () => {
     ['Upload skills', 'Загрузить навыки'],
     ['Import from GitHub', 'Импортировать из GitHub'],
     ['Import installed skills', 'Импортировать установленные навыки'],
-    ['Scan global skill folders', 'Найти навыки в глобальных папках']
+    ['Scan global skill folders', 'Найти навыки в глобальных папках'],
+    ['{{count}} more messages_one', 'Ещё {{count}} сообщение'],
+    ['{{count}} more messages_few', 'Ещё {{count}} сообщения'],
+    ['{{count}} more messages_many', 'Ещё {{count}} сообщений'],
+    ['{{count}} more messages_other', 'Ещё {{count}} сообщения']
   ])('keeps proofread Russian copy for %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
   })
