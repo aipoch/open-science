@@ -39,6 +39,10 @@ import { SettingsIconAction, SettingsSection } from './SettingsLayout'
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
 const REMOTE_ACCESS_FRESH_MS = 60_000
 type CopyStatus = 'idle' | 'copied' | 'error'
+type RemoteControlPanelComponent = {
+  (): React.JSX.Element
+  preload(): Promise<RemoteAccessSnapshot>
+}
 
 let cachedRemoteAccess: { snapshot: RemoteAccessSnapshot; loadedAt: number } | undefined
 let cachedRemoteAccessOwner: Window['api']['remoteAccess'] | undefined
@@ -199,7 +203,7 @@ const BrowserAccessSteps = ({ t }: { t: TFunction }): React.JSX.Element => (
   </div>
 )
 
-export const RemoteControlPanel = (): React.JSX.Element => {
+export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
 
