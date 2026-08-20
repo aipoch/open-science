@@ -1354,6 +1354,18 @@ describe('Russian catalog quality', () => {
     ['Import from GitHub', 'Импортировать из GitHub'],
     ['Import installed skills', 'Импортировать установленные навыки'],
     ['Scan global skill folders', 'Найти навыки в глобальных папках'],
+    [
+      'Could not scan storage usage. Try again.',
+      'Не удалось подсчитать объём занятого места. Повторите попытку.'
+    ],
+    ['Last checked {{time}}', 'Последняя проверка: {{time}}'],
+    ['Last scanned {{time}}', 'Последнее сканирование: {{time}}'],
+    ['Refresh', 'Обновить'],
+    ["Settings panel couldn't be loaded.", 'Не удалось загрузить раздел настроек.'],
+    [
+      'Reload Open Science to try loading this panel again.',
+      'Перезапустите Open Science, чтобы снова попробовать загрузить этот раздел.'
+    ],
     ['{{count}} more messages_one', 'Ещё {{count}} сообщение'],
     ['{{count}} more messages_few', 'Ещё {{count}} сообщения'],
     ['{{count}} more messages_many', 'Ещё {{count}} сообщений'],
