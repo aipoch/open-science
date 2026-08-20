@@ -12,8 +12,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 
-import logo from '@/assets/logo.png'
-import logoDark from '@/assets/logo-dark.png'
+import { FlaskLogo } from '@/components/flask-logo'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -190,12 +189,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
       aria-live="polite"
     >
       <section className="flex w-full max-w-md flex-col items-center gap-5">
-        <img src={logo} alt={t('Open Science')} className="mb-1 h-auto w-1/2 dark:hidden" />
-        <img
-          src={logoDark}
-          alt={t('Open Science')}
-          className="mb-1 hidden h-auto w-1/2 dark:block"
-        />
+        <FlaskLogo className="mb-1 h-auto w-1/3 text-text-300" />
 
         <div className="flex w-full items-start gap-4">
           {GuidanceIcon && guidance ? (
