@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
@@ -54,7 +55,10 @@ const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
+const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
+const MIN_TASK_IDEMPOTENCY_ENTRY_BYTES = 16 * 1024
 const MAX_IDEMPOTENCY_KEY_LENGTH = 255
+const MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH = 4_096
 const gzipAsync = promisify(gzip)
 const STATIC_RESPONSE_SECURITY_HEADERS = {
   'content-security-policy':
@@ -294,50 +298,83 @@ class IdempotencyConflictError extends Error {
   }
 }
 
+class IdempotencyUnavailableError extends Error {
+  constructor() {
+    super('Idempotency replay capacity is temporarily unavailable.')
+    this.name = 'IdempotencyUnavailableError'
+  }
+}
+
 type TaskIdempotencyEntry = {
   fingerprint: string
   expiresAt: number
+  reservedBytes: number
   result: Promise<unknown>
 }
 
-class TaskIdempotencyRegistry {
+export class TaskIdempotencyRegistry {
   private readonly entries = new Map<string, TaskIdempotencyEntry>()
+  private reservedBytes = 0
 
-  run<Result>(
+  constructor(
+    private readonly maxEntries = MAX_TASK_IDEMPOTENCY_ENTRIES,
+    private readonly maxBytes = MAX_TASK_IDEMPOTENCY_BYTES,
+    private readonly now: () => number = Date.now
+  ) {}
+
+  async run<Result>(
     scope: string,
     fingerprint: string,
+    reservedBytes: number,
     operation: () => Promise<Result>
   ): Promise<Result> {
-    const now = Date.now()
+    const now = this.now()
     for (const [key, entry] of this.entries) {
-      if (entry.expiresAt <= now) this.entries.delete(key)
+      if (entry.expiresAt <= now) this.delete(key, entry)
     }
 
     const existing = this.entries.get(scope)
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new IdempotencyConflictError()
-      // Refresh insertion order so bounded eviction retains recently retried operations.
-      this.entries.delete(scope)
-      this.entries.set(scope, existing)
       return existing.result as Promise<Result>
     }
 
-    const result = Promise.resolve().then(operation)
+    if (
+      this.entries.size >= this.maxEntries ||
+      reservedBytes > this.maxBytes - this.reservedBytes
+    ) {
+      throw new IdempotencyUnavailableError()
+    }
+
+    const result = Promise.resolve()
+      .then(operation)
+      .catch((error: unknown) => {
+        if (error instanceof TaskApiError) {
+          throw new TaskApiError(
+            error.code,
+            error.message.slice(0, MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH)
+          )
+        }
+        throw new Error(INTERNAL_SERVER_ERROR_MESSAGE)
+      })
     this.entries.set(scope, {
       fingerprint,
       expiresAt: now + TASK_IDEMPOTENCY_TTL_MS,
+      reservedBytes,
       result
     })
-    while (this.entries.size > MAX_TASK_IDEMPOTENCY_ENTRIES) {
-      const oldest = this.entries.keys().next().value
-      if (oldest === undefined) break
-      this.entries.delete(oldest)
-    }
+    this.reservedBytes += reservedBytes
     return result
   }
 
   clear(): void {
     this.entries.clear()
+    this.reservedBytes = 0
+  }
+
+  private delete(key: string, entry: TaskIdempotencyEntry): void {
+    if (!this.entries.delete(key)) return
+    this.reservedBytes -= entry.reservedBytes
   }
 }
 
@@ -364,7 +401,15 @@ const runIdempotentTask = <Result>(
   const key = idempotencyKey(request)
   if (key === undefined) return operation()
   const scope = JSON.stringify([callerContext.location, request.method, url.pathname, key])
-  return registry.run(scope, JSON.stringify(body), operation)
+  const serializedBody = JSON.stringify(body)
+  const fingerprint = createHash('sha256').update(serializedBody).digest('hex')
+  // Project responses may retain request-derived strings; reserve twice the UTF-8 body plus fixed
+  // Promise/result/error overhead so the registry has both an entry limit and a memory budget.
+  const reservedBytes = Math.max(
+    MIN_TASK_IDEMPOTENCY_ENTRY_BYTES,
+    Buffer.byteLength(serializedBody) * 2 + MIN_TASK_IDEMPOTENCY_ENTRY_BYTES
+  )
+  return registry.run(scope, fingerprint, reservedBytes, operation)
 }
 
 const assertExternalAuthorizationCurrent = (
@@ -391,6 +436,12 @@ const taskError = (response: ServerResponse, error: unknown): void => {
   if (error instanceof IdempotencyConflictError) {
     json(response, 409, {
       error: { code: 'idempotency_conflict', message: error.message }
+    })
+    return
+  }
+  if (error instanceof IdempotencyUnavailableError) {
+    json(response, 503, {
+      error: { code: 'idempotency_unavailable', message: error.message }
     })
     return
   }

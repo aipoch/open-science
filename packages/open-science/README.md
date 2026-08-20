@@ -30,7 +30,9 @@ caller signal to every in-flight polling request as well as the delay between po
 
 For retry-safe project creation and Run starts, pass the same `idempotencyKey` in the final options
 argument on every attempt. The daemon replays the first response for up to 24 hours while it remains
-running; reusing a key with a different request body fails with `idempotency_conflict`.
+running; reusing a key with a different request body fails with `idempotency_conflict`. If the
+bounded replay registry is full, a new unique key fails with `idempotency_unavailable` rather than
+evicting an existing guarantee.
 
 The `project` request field and the `listSessions(projectId)` argument both require a Project ID.
 Project display names are not accepted as routing identifiers.

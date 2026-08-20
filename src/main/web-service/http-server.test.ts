@@ -25,6 +25,7 @@ import type { CallerContext } from '../caller-context'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
   startWebHttpServer,
+  TaskIdempotencyRegistry,
   type ExternalWebAccessAuthorization,
   type RunningWebServer
 } from './http-server'
@@ -89,6 +90,23 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('preserves valid idempotency entries when replay capacity is full', async () => {
+    const registry = new TaskIdempotencyRegistry(2, 8_192)
+    const first = vi.fn().mockResolvedValue('first result')
+
+    await expect(registry.run('first', 'first fingerprint', 4_096, first)).resolves.toBe(
+      'first result'
+    )
+    await registry.run('second', 'second fingerprint', 4_096, async () => 'second result')
+    await expect(
+      registry.run('third', 'third fingerprint', 4_096, async () => 'third result')
+    ).rejects.toThrow('Idempotency replay capacity is temporarily unavailable.')
+    await expect(registry.run('first', 'first fingerprint', 4_096, first)).resolves.toBe(
+      'first result'
+    )
+    expect(first).toHaveBeenCalledOnce()
+  })
+
   it('serves static resources with browser security policies', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
