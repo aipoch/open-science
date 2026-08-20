@@ -224,6 +224,7 @@ describe('createProductionProvisioner', () => {
       {
         runner: { initialPath: primary, resolve: async () => compatibility },
         fetchBundle: async () => ({ lockPath }),
+        maintainCache: async () => undefined,
         runArgv,
         verify: async () => undefined
       }
@@ -249,6 +250,7 @@ describe('createProductionProvisioner', () => {
       },
       {
         runner: { initialPath: mmPath, resolve: async () => mmPath },
+        maintainCache: async () => undefined,
         runArgv,
         verify: async () => undefined
       }

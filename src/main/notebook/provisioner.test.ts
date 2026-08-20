@@ -77,6 +77,7 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
       writeFileSync(bin, 'x')
       created.push(argv[1])
     },
+    maintainCache: async () => undefined,
     verify: async (): Promise<void> => undefined,
     now: () => 't-now',
     ...overrides
@@ -84,6 +85,30 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
 }
 
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
+  it('maintains the selected cache before materializing the runtime', async () => {
+    const root = makeRoot()
+    const order: string[] = []
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        maintainCache: async (cache) => {
+          expect(cache.path).toBe(selectMicromambaCache(root).path)
+          order.push('clean')
+        },
+        runArgv: async (argv) => {
+          order.push('create')
+          const prefix = argv[argv.findIndex((a) => a === '--prefix' || a === '-p') + 1]
+          const bin = pythonBin(prefix)
+          mkdirSync(join(bin, '..'), { recursive: true })
+          writeFileSync(bin, 'x')
+        }
+      })
+    )
+
+    await provisioner.provisionPython(() => undefined)
+
+    expect(order).toEqual(['clean', 'create'])
+  })
+
   it('materializes python, stamps the marker, and emits monotonic progress ending at 1', async () => {
     const root = makeRoot()
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
@@ -1253,6 +1278,7 @@ const makeNamedEnvDeps = (
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
     },
+    maintainCache: async () => undefined,
     verify: async () => undefined,
     ...overrides
   }
@@ -1260,6 +1286,25 @@ const makeNamedEnvDeps = (
 }
 
 describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
+  it('maintains the cache before the online create', async () => {
+    const root = makeRoot()
+    const order: string[] = []
+    const { deps } = makeNamedEnvDeps(root, {
+      maintainCache: async () => void order.push('clean'),
+      runArgv: async (argv) => {
+        order.push('create')
+        const prefix = argv[argv.indexOf('--prefix') + 1]
+        const bin = pythonBin(prefix)
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+      }
+    })
+
+    await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+
+    expect(order).toEqual(['clean', 'create'])
+  })
+
   it('builds the create argv from the base floor + user packages (deduped), targeting envs/<name>', async () => {
     const root = makeRoot()
     const { deps, argvs } = makeNamedEnvDeps(root)
@@ -1646,7 +1691,9 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
     const prefix = envPrefix(root, DEFAULT_PY_ENV)
     mkdirSync(join(prefix, 'conda-meta'), { recursive: true }) // conda-meta but no python bin
     let condaMetaAtCreate: boolean | undefined
+    const maintainCache = vi.fn(async () => undefined)
     const deps = makeDeps(root, {
+      maintainCache,
       runArgv: async (argv) => {
         const p = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
         condaMetaAtCreate = existsSync(join(p, 'conda-meta'))
@@ -1658,6 +1705,7 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
     await new DefaultRuntimeProvisioner(deps).restoreRelocatedEnvs(() => {})
     expect(condaMetaAtCreate).toBe(false) // the wedged prefix was cleared before create
     expect(existsSync(pythonBin(prefix))).toBe(true) // rebuilt
+    expect(maintainCache).not.toHaveBeenCalled() // the copied cache is the offline restore source
   })
 
   it('keeps a valid prefix AND its lock when the ready-marker write fails (no destructive rebuild)', async () => {

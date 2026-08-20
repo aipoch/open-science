@@ -34,6 +34,10 @@ import {
   selectMicromambaCache,
   type MicromambaCache
 } from './micromamba-cache'
+import {
+  maintainPackageCacheBestEffort,
+  packageCacheCleanArgv
+} from './micromamba-cache-maintenance'
 import { recoverWindowsMaxPathPackage } from './micromamba-cache-recovery'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
 import { CHILD_UNCONFIRMED, killAndConfirmExit } from './provisioner-runtime'
@@ -1139,12 +1143,40 @@ export async function installPackages(
       canonicalize: deps.micromambaEnv?.canonicalize
     })
   ]
+  // A single install request may run a dry-run and a real transaction. Maintain the persistent cache
+  // once, before whichever conda subprocess comes first, so old versions are reclaimed without adding
+  // duplicate scans. Cleanup is deliberately outside the prefix-write journal: it never writes the
+  // target environment, and maintainPackageCacheBestEffort owns the cache-exclusive lock and failure
+  // isolation.
+  let condaCacheMaintenance: Promise<void> | undefined
+  const maintainCondaCache = (command: string): Promise<void> => {
+    if (condaCacheMaintenance) return condaCacheMaintenance
+    const context = resolveCondaContext()
+    const argv = packageCacheCleanArgv(command)
+    condaCacheMaintenance = maintainPackageCacheBestEffort(
+      condaCacheKeys(context.cache),
+      async () => {
+        const result = await baseSpawn(argv[0], argv.slice(1), {
+          ...context.env,
+          MAMBA_ROOT_PREFIX: root,
+          CONDA_PKGS_DIRS: context.cache.path
+        })
+        if (result.code !== 0) {
+          throw Object.assign(new Error('micromamba package cache maintenance failed'), {
+            code: 'MICROMAMBA_CACHE_CLEAN_EXIT'
+          })
+        }
+      }
+    )
+    return condaCacheMaintenance
+  }
   // A dry-run may refresh repodata in the shared package cache, so it takes the same in-process cache
   // locks as a real transaction. It deliberately does NOT reuse the install journal hooks: the solver
   // cannot write the target prefix, and recording it as an `install` would make a crash after a harmless
   // probe quarantine an untouched runtime at the next startup.
   const runCondaPreflight: InstallSpawn = async (command, args) => {
     const context = resolveCondaContext()
+    await maintainCondaCache(command)
     return withSharedCacheLocks(condaCacheKeys(context.cache), () =>
       baseSpawn(command, args, context.env)
     )
@@ -1156,6 +1188,7 @@ export async function installPackages(
   ): Promise<SpawnResult> => {
     const context = resolveCondaContext()
     const cacheKeys = condaCacheKeys(context.cache)
+    await maintainCondaCache(command)
     const result = await withSharedCacheLocks(cacheKeys, () =>
       // Thread onBeforeSpawn so the {spawning} intent sidecar is written BEFORE conda spawns, exactly as
       // the pip path does. Without it, a crash in the spawn→onChild window leaves no sidecar, and recovery

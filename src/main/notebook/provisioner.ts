@@ -41,6 +41,10 @@ import {
   type MicromambaCache
 } from './micromamba-cache'
 import {
+  maintainPackageCacheBestEffort,
+  packageCacheCleanArgv
+} from './micromamba-cache-maintenance'
+import {
   caBundleEnv,
   createFromLockArgv,
   createFromPackagesArgv,
@@ -165,6 +169,10 @@ export type ProvisionerDeps = {
     cache?: MicromambaCache,
     maxCacheRelativePath?: number
   ) => Promise<void>
+  // Runs micromamba's supported unused-package/tarball cleanup with MAMBA_ROOT_PREFIX bound to this
+  // provisioner's root. Optional only for directly-constructed test provisioners; production always
+  // wires it in createProductionProvisioner.
+  maintainCache?: (cache: MicromambaCache) => Promise<void>
   // Verifies `<bin> --version`; rejects otherwise.
   verify: (bin: string, prefix: string) => Promise<void>
   // Clock injection for the ready-marker timestamp.
@@ -329,6 +337,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       cache.lockKey,
       micromambaCacheLockKey(pkgsCache(this.deps.root), { platform: this.deps.platform })
     ]
+  }
+
+  private maintainCacheBeforeMutation(cache: MicromambaCache = this.cache): Promise<void> {
+    const maintainCache = this.deps.maintainCache
+    if (!maintainCache) return Promise.resolve()
+    return maintainPackageCacheBestEffort(this.cacheLockKeys(cache), () => maintainCache(cache))
   }
 
   private async seedBundleCache(bundle: FetchedBundle, cache: MicromambaCache): Promise<void> {
@@ -1109,6 +1123,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Named environments are the only online-solving path. Resolve/probe the channel here so normal
     // application startup and offline default-runtime provisioning never wait for mirror selection.
     const channel = await this.resolveChannel()
+    await this.maintainCacheBeforeMutation(this.cache)
     // Journal the create (child PID + prefix) so a crash mid-create is recovered like any other prefix
     // write: a survivor is killed and, if unconfirmed, the prefix is blocked so a later create/remove
     // can't race it. Take the shared pkgs cache lock (+ MAX_PATH recovery) for the whole prefix cleanup
@@ -1235,6 +1250,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // must not delete an incomplete extraction mid-upgrade, and a Windows path-limit failure is retried
     // once after a short cache recovery.
     const selected = this.cacheForBundle(spec, bundle)
+    await this.maintainCacheBeforeMutation(selected.cache)
     await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     await this.withJournaledPrefixWrite(
@@ -1331,6 +1347,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
     // packages before the create, so a Windows path-limit blocker doesn't fail the first attempt.
     const selected = this.cacheForBundle(spec, bundle)
+    await this.maintainCacheBeforeMutation(selected.cache)
     await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     // Journal the create (child PID + prefix) so a process death mid-materialize is reconciled at next
@@ -1570,6 +1587,7 @@ export type ProductionProvisionerDeps = {
   runner?: MicromambaRunner
   fetchBundle?: ProvisionerDeps['fetchBundle']
   runArgv?: ProvisionerDeps['runArgv']
+  maintainCache?: ProvisionerDeps['maintainCache']
   verify?: ProvisionerDeps['verify']
 }
 
@@ -1655,6 +1673,18 @@ export const createProductionProvisioner = (
         onBeforeSpawn
       )
     },
+    maintainCache:
+      deps.maintainCache ??
+      (async (runCache) => {
+        const selected = await runner.resolve()
+        await runMicromamba(packageCacheCleanArgv(selected), {
+          ...micromambaSpawnEnv(opts.root, opts.caBundle, {
+            selectCache: () => runCache
+          }),
+          MAMBA_ROOT_PREFIX: opts.root,
+          CONDA_PKGS_DIRS: runCache.path
+        })
+      }),
     verify: deps.verify ?? ((bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv })),
     isPrefixBlocked: opts.isPrefixBlocked,
     clearPrefixBlock: opts.clearPrefixBlock,

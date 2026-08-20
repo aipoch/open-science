@@ -44,12 +44,29 @@ const baseDeps = (root: string, over: Partial<ProvisionerDeps> = {}): Provisione
     const prefix = argv[pIdx + 1]
     touchBin(logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix))
   },
+  maintainCache: async () => undefined,
   verify: async () => undefined,
   now: () => 't2',
   ...over
 })
 
 describe('upgradeIfNeeded', () => {
+  it('maintains the selected cache before an offline upgrade mutation', async () => {
+    const root = makeRoot()
+    touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
+    writeReadyMarker(root, DEFAULT_ENV_VERSION - 1, 't1')
+    const order: string[] = []
+
+    await new DefaultRuntimeProvisioner(
+      baseDeps(root, {
+        maintainCache: async () => void order.push('clean'),
+        runArgv: async () => void order.push('install')
+      })
+    ).upgradeIfNeeded(() => undefined)
+
+    expect(order).toEqual(['clean', 'install'])
+  })
+
   it('is a no-op when already at the expected version', async () => {
     const root = makeRoot()
     touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
