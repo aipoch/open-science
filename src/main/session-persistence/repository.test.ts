@@ -1490,6 +1490,15 @@ describe('session persistence repository (per-session files)', () => {
     ])
   })
 
+  it('drops the saved revision when deleting a Session', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await expect(repository.saveSession(createSession())).resolves.toMatchObject({ revision: 1 })
+
+    await repository.deleteSession('project-a', 'session-1')
+
+    await expect(repository.saveSession(createSession())).resolves.toMatchObject({ revision: 1 })
+  })
+
   it('keeps valid primary JSON when removing a superseded quarantine fails', async () => {
     const root = await createStorageRoot()
     const session = createSession()
