@@ -665,6 +665,320 @@ describe('artifact provenance repository', () => {
     })
   })
 
+  it('persists a trusted app-owned Connector execution receipt with its generated Version', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-connector-provenance-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: new ArtifactRepository(storageRoot)
+    })
+    const normalizedArguments = {
+      filename: 'caffeine',
+      smiles: 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C'
+    }
+    const argumentsChecksum = createHash('sha256')
+      .update(JSON.stringify(normalizedArguments))
+      .digest('hex')
+
+    const version = await repository.writeAppGeneratedVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'OpenCode',
+      filename: 'caffeine.mol',
+      content: 'generated molecule bytes',
+      contentType: 'chemical/x-mdl-molfile',
+      producer: {
+        kind: 'connector',
+        connectorId: 'molecule',
+        toolId: 'preview_molecule',
+        invocationId: 'connector-call-1',
+        implementationVersion: '1',
+        normalizedArguments
+      }
+    })
+
+    await expect(
+      repository.getVersionProvenance({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+    ).resolves.toMatchObject({
+      evidence: {
+        producer: {
+          state: 'available',
+          kind: 'connector',
+          connector_id: 'molecule',
+          tool_id: 'preview_molecule',
+          invocation_id: 'connector-call-1',
+          implementation_version: '1',
+          arguments_checksum: argumentsChecksum,
+          association_method: 'app-owned-handler'
+        },
+        connector_execution: {
+          schema_version: 1,
+          normalized_arguments: normalizedArguments,
+          arguments_checksum: argumentsChecksum
+        },
+        execution_status: { state: 'partial' },
+        environment_status: { state: 'unavailable', reason: 'environment-not-supported' },
+        inputs: []
+      }
+    })
+  })
+
+  it('ignores Connector producer claims attached to the ordinary Artifact create request', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-untrusted-connector-provenance-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    await compatibilityRepository.writePendingFile({
+      projectId: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'untrusted.mol',
+      source: { kind: 'inline', content: 'untrusted bytes', encoding: 'utf8' }
+    })
+
+    const untrustedRequest = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      writeOperationId: 'write-1',
+      writeRequestChecksum: 'a'.repeat(64),
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      filename: 'untrusted.mol',
+      sourceKind: 'inline' as const,
+      producer: {
+        kind: 'connector',
+        connectorId: 'custom-mcp',
+        toolId: 'spoof_producer',
+        invocationId: 'untrusted-call-1',
+        implementationVersion: '1',
+        normalizedArguments: {}
+      }
+    }
+
+    const version = await repository.createVersion(untrustedRequest)
+
+    await expect(
+      repository.getVersionProvenance({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+    ).resolves.toMatchObject({
+      evidence: {
+        producer: { state: 'unavailable', reason: 'producer-not-supplied' },
+        execution_status: { state: 'unavailable', reason: 'producer-not-supplied' }
+      }
+    })
+  })
+
+  it('links a verified Upload Version as an input to a Connector-generated Artifact Version', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-connector-upload-provenance-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: new ArtifactRepository(storageRoot)
+    })
+    const inputContent = 'CC(=O)Oc1ccccc1C(=O)O\n'
+    const inputChecksum = createHash('sha256').update(inputContent).digest('hex')
+    const inputStorageKey =
+      'uploads/project-1/source-session/upload-1/versions/upload-version-1/content'
+    const inputPath = join(storageRoot, ...inputStorageKey.split('/'))
+    await mkdir(dirname(inputPath), { recursive: true })
+    await writeFile(inputPath, inputContent)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'source-session' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'source-session',
+        filename: 'aspirin.smi',
+        originalFilename: 'aspirin.smi',
+        versions: {
+          create: {
+            id: 'upload-version-1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: inputStorageKey,
+            filename: 'aspirin.smi',
+            originalFilename: 'aspirin.smi',
+            contentType: 'chemical/x-daylight-smiles',
+            sizeBytes: BigInt(Buffer.byteLength(inputContent)),
+            checksum: inputChecksum,
+            createdAt: new Date('2026-08-20T06:00:00.000Z')
+          }
+        }
+      }
+    })
+
+    const version = await repository.writeAppGeneratedVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      filename: 'aspirin.mol',
+      content: 'generated molecule bytes',
+      contentType: 'chemical/x-mdl-molfile',
+      producer: {
+        kind: 'connector',
+        connectorId: 'molecule',
+        toolId: 'preview_molecule',
+        invocationId: 'connector-call-1',
+        implementationVersion: '1',
+        normalizedArguments: { filename: 'aspirin.mol' },
+        inputFiles: [
+          {
+            inputFileVersionId: 'upload-version-1',
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceVersionNumber: 1,
+            sourceCreatedAt: '2026-08-20T06:00:00.000Z',
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'source-session',
+            filename: 'aspirin.smi',
+            contentType: 'chemical/x-daylight-smiles',
+            sizeBytes: Buffer.byteLength(inputContent),
+            checksum: inputChecksum,
+            storageKey: inputStorageKey,
+            association: 'resolver-accessed'
+          }
+        ]
+      }
+    })
+
+    await expect(
+      repository.readDependencyRelations({
+        projectId: 'project-1',
+        versionId: version.versionId,
+        direction: 'up'
+      })
+    ).resolves.toEqual([
+      {
+        versionId: version.versionId,
+        dependsOnVersionId: 'upload-version-1',
+        ordinal: 0,
+        sourceKind: 'upload-version',
+        inputFilename: 'aspirin.smi',
+        association: 'resolver-accessed'
+      }
+    ])
+    await expect(
+      repository.getVersionProvenance({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+    ).resolves.toMatchObject({
+      evidence: {
+        inputs: [
+          {
+            input_file_version_id: 'upload-version-1',
+            source_kind: 'upload-version',
+            source_file_id: 'upload-1',
+            strongest_association: 'resolver-accessed'
+          }
+        ]
+      }
+    })
+  })
+
+  it('fails closed when a Connector claims an unverifiable Upload Version input', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-connector-upload-rejection-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: new ArtifactRepository(storageRoot),
+      inputAuthority: {
+        validateVersion: async () => ({ state: 'unavailable' })
+      }
+    })
+
+    await expect(
+      repository.writeAppGeneratedVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        filename: 'aspirin.mol',
+        content: 'generated molecule bytes',
+        producer: {
+          kind: 'connector',
+          connectorId: 'molecule',
+          toolId: 'preview_molecule',
+          invocationId: 'connector-call-1',
+          implementationVersion: '1',
+          normalizedArguments: { filename: 'aspirin.mol' },
+          inputFiles: [
+            {
+              inputFileVersionId: 'missing-upload-version',
+              sourceKind: 'upload-version',
+              sourceFileId: 'upload-1',
+              sourceProjectId: 'project-1',
+              sourceSessionId: 'source-session',
+              filename: 'aspirin.smi',
+              sizeBytes: 1,
+              checksum: 'a'.repeat(64),
+              storageKey: 'uploads/untrusted/content',
+              association: 'resolver-accessed'
+            }
+          ]
+        }
+      })
+    ).rejects.toThrow('Connector Upload input identity is corrupt: missing-upload-version')
+    await expect(
+      repository.listRunVersions({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+    ).resolves.toEqual([])
+  })
+
   it('resolves finalized native Versions in first-occurrence request order without paths', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-version-descriptors-'))
     const client = createProjectDbClient(storageRoot)

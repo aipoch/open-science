@@ -2,7 +2,7 @@
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (40–41) · pre-emit critique: P5 H5 E5 S5 R5 V4
  */
-import { Bell, CheckCheck, CircleAlert, CircleCheck, ShieldCheck, X } from 'lucide-react'
+import { Bell, CheckCheck, X } from 'lucide-react'
 import {
   type CSSProperties,
   useCallback,
@@ -24,7 +24,19 @@ import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { NotificationErrorBoundary } from './NotificationErrorBoundary'
+import { NotificationEventIcon } from './NotificationEventIcon'
+import {
+  isVisibleNotificationBell,
+  NOTIFICATION_CENTER_OPENED_EVENT,
+  OPEN_NOTIFICATION_CENTER_EVENT,
+  type OpenNotificationCenterDetail
+} from './notification-bell-events'
+import { presentNotificationInbox } from './notification-inbox-presentation'
+import { runNotificationTask } from './notification-safety'
 
 type NotificationBellProps = Readonly<{
   className?: string
@@ -32,16 +44,6 @@ type NotificationBellProps = Readonly<{
   align?: 'start' | 'center' | 'end'
   onOpen?: () => void
 }>
-
-const iconFor = (item: NotificationInboxItem): React.JSX.Element => {
-  if (item.kind === 'authorization.required') {
-    return <ShieldCheck className="size-4" strokeWidth={2} aria-hidden="true" />
-  }
-  if (item.kind === 'task.completed') {
-    return <CircleCheck className="size-4" strokeWidth={2} aria-hidden="true" />
-  }
-  return <CircleAlert className="size-4" strokeWidth={2} aria-hidden="true" />
-}
 
 const actionLabel = (
   item: NotificationInboxItem,
@@ -75,7 +77,7 @@ const actionLabel = (
 
 const VIEWPORT_MARGIN = 8
 const PANEL_GAP = 8
-const PANEL_MAX_WIDTH = 368
+const PANEL_MAX_WIDTH = 408
 const MOBILE_MESSAGE_CENTER_QUERY = '(max-width: 47.999rem)'
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
@@ -100,7 +102,7 @@ const replayPendingApproval = async (item: NotificationInboxItem): Promise<boole
 
 // One shared entry point for Home, desktop Workspace, and the always-visible mobile conversation
 // header. The backend owns read state, so multiple rendered bells always converge after one action.
-const NotificationBell = ({
+const NotificationBellContent = ({
   className,
   side = 'bottom',
   align = 'end',
@@ -137,6 +139,9 @@ const NotificationBell = ({
   const refresh = useNotificationInboxStore((state) => state.refresh)
   const markRead = useNotificationInboxStore((state) => state.markRead)
   const markAllRead = useNotificationInboxStore((state) => state.markAllRead)
+  const sessions = useSessionStore((state) => state.sessions)
+  const projects = useProjectStore((state) => state.projects)
+  const groups = presentNotificationInbox(items, sessions, projects)
 
   const updatePanelPosition = useCallback((): void => {
     if (isMobile) return
@@ -210,6 +215,20 @@ const NotificationBell = ({
   }, [isMobile, open])
 
   useEffect(() => {
+    const openFromLiveToast = (event: Event): void => {
+      const trigger = triggerRef.current
+      if (!trigger || !isVisibleNotificationBell(trigger)) return
+      const requestedBellId = (event as CustomEvent<OpenNotificationCenterDetail>).detail?.bellId
+      if (requestedBellId && requestedBellId !== panelId) return
+      setOpen(true)
+      onOpen?.()
+      runNotificationTask(refresh)
+    }
+    window.addEventListener(OPEN_NOTIFICATION_CENTER_EVENT, openFromLiveToast)
+    return () => window.removeEventListener(OPEN_NOTIFICATION_CENTER_EVENT, openFromLiveToast)
+  }, [onOpen, panelId, refresh])
+
+  useEffect(() => {
     if (!open) return
     const closeOutside = (event: PointerEvent): void => {
       const target = event.target as Node
@@ -233,23 +252,38 @@ const NotificationBell = ({
 
   const openItem = async (item: NotificationInboxItem): Promise<void> => {
     if (item.targetInvalidatedAt !== undefined) return
-    if (item.readAt === undefined) void markRead([item.id]).catch(() => undefined)
-    const replayedApproval = await replayPendingApproval(item)
-    if (item.sessionId) {
-      useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
-      setOpen(false)
-    } else if (item.projectId) {
-      useNavigationStore.getState().openProject(item.projectId, 'notification')
-      setOpen(false)
-    } else if (replayedApproval) {
-      setOpen(false)
+    let replayedApproval = false
+    try {
+      replayedApproval = await replayPendingApproval(item)
+    } catch {
+      // Replaying an optional approval must not block navigation to the durable task.
     }
+
+    try {
+      if (item.sessionId) {
+        useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
+        setOpen(false)
+      } else if (item.projectId) {
+        useNavigationStore.getState().openProject(item.projectId, 'notification')
+        setOpen(false)
+      } else if (replayedApproval) {
+        setOpen(false)
+      } else {
+        if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
+        return
+      }
+    } catch {
+      return
+    }
+    if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
   }
 
   return (
     <div ref={rootRef} className="relative inline-flex shrink-0">
       <button
         ref={triggerRef}
+        data-notification-bell-trigger="true"
+        data-notification-bell-id={panelId}
         type="button"
         aria-label={
           unreadCount > 0
@@ -262,8 +296,9 @@ const NotificationBell = ({
           const nextOpen = !open
           setOpen(nextOpen)
           if (nextOpen) {
+            window.dispatchEvent(new Event(NOTIFICATION_CENTER_OPENED_EVENT))
             onOpen?.()
-            void refresh()
+            runNotificationTask(refresh)
           }
         }}
         className={cn(
@@ -345,7 +380,7 @@ const NotificationBell = ({
                   <button
                     type="button"
                     disabled={unreadCount === 0}
-                    onClick={() => void markAllRead()}
+                    onClick={() => runNotificationTask(markAllRead)}
                     className={cn(
                       'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-text-100 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 disabled:cursor-default disabled:opacity-40',
                       isMobile ? 'h-11 text-sm' : 'h-8 text-xs'
@@ -371,79 +406,120 @@ const NotificationBell = ({
                       {status === 'loading' ? t('Loading messages…') : t('No messages yet.')}
                     </div>
                   ) : (
-                    items.map((item) => {
-                      const label = actionLabel(item, t)
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => void openItem(item)}
-                          disabled={item.targetInvalidatedAt !== undefined}
-                          className={cn(
-                            'group flex w-full items-start gap-2.5 rounded-lg px-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-                            isMobile ? 'py-3' : 'py-2.5',
-                            item.readAt === undefined && 'bg-bg-100/70',
-                            item.targetInvalidatedAt !== undefined &&
-                              'cursor-default hover:bg-transparent active:bg-transparent'
-                          )}
+                    groups.map((group) => (
+                      <section key={group.key} aria-labelledby={`${panelId}-${group.key}`}>
+                        <div
+                          id={`${panelId}-${group.key}`}
+                          className="px-2.5 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-300"
                         >
-                          <span
-                            className={cn(
-                              'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-bg-300 text-text-100',
-                              item.kind === 'authorization.required' && 'text-session-waiting',
-                              item.kind === 'task.completed' && 'text-success-000',
-                              item.kind === 'task.failed' && 'text-danger-000'
-                            )}
-                          >
-                            {iconFor(item)}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-start gap-2">
-                              <span
-                                className={cn(
-                                  'min-w-0 flex-1 truncate font-semibold text-text-000',
-                                  isMobile ? 'text-sm' : 'text-xs'
-                                )}
-                              >
-                                {t(item.title)}
-                              </span>
-                              <span
-                                className={cn(
-                                  'shrink-0 tabular-nums text-text-300',
-                                  isMobile ? 'text-xs' : 'text-[10px]'
-                                )}
-                              >
-                                {relativeTime(item.createdAt)}
-                              </span>
-                            </span>
-                            <span
+                          {t(group.label)}
+                        </div>
+                        {group.items.map((presented) => {
+                          const item = presented.notification
+                          const label = actionLabel(item, t)
+                          const eventLabel = label ?? t(item.title)
+                          const detail =
+                            presented.detailPreview ??
+                            (presented.sessionTitle ? undefined : t(item.summary))
+                          const contextLabel =
+                            presented.projectName ??
+                            (item.targetInvalidatedAt !== undefined
+                              ? t('Session no longer available')
+                              : undefined)
+                          const showEventLabel =
+                            item.targetInvalidatedAt === undefined &&
+                            (presented.sessionTitle !== undefined || label !== undefined)
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => void openItem(item)}
+                              disabled={item.targetInvalidatedAt !== undefined}
                               className={cn(
-                                'mt-0.5 line-clamp-2 block text-text-100',
-                                isMobile ? 'text-sm leading-5' : 'text-[11px] leading-4'
+                                'group flex w-full items-start gap-2.5 rounded-lg px-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                                isMobile ? 'py-2.5' : 'py-2',
+                                item.readAt === undefined && 'bg-bg-100/70',
+                                item.targetInvalidatedAt !== undefined &&
+                                  'cursor-default hover:bg-transparent active:bg-transparent'
                               )}
                             >
-                              {t(item.summary)}
-                            </span>
-                            {label ? (
                               <span
                                 className={cn(
-                                  'mt-1 inline-flex rounded bg-bg-300 px-1.5 py-0.5 text-text-100',
-                                  isMobile ? 'text-xs' : 'text-[10px]'
+                                  'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-bg-300 text-text-100',
+                                  item.kind === 'authorization.required' && 'text-session-waiting',
+                                  item.kind === 'task.completed' && 'text-success-000',
+                                  item.kind === 'task.failed' && 'text-danger-000'
                                 )}
                               >
-                                {label}
+                                <NotificationEventIcon notification={item} />
                               </span>
-                            ) : null}
-                          </span>
-                          {item.readAt === undefined ? (
-                            <span
-                              className="mt-2 size-1.5 shrink-0 rounded-full bg-destructive"
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                        </button>
-                      )
-                    })
+                              <span className="min-w-0 flex-1">
+                                <span
+                                  className={cn(
+                                    'flex min-w-0 items-center gap-1.5 text-text-300',
+                                    isMobile ? 'text-xs' : 'text-[10px]'
+                                  )}
+                                >
+                                  {contextLabel ? (
+                                    <span className="min-w-0 flex-1 truncate">{contextLabel}</span>
+                                  ) : (
+                                    <span className="min-w-0 flex-1" />
+                                  )}
+                                  <span className="shrink-0 tabular-nums">
+                                    {relativeTime(item.createdAt)}
+                                  </span>
+                                </span>
+                                <span className="mt-0.5 flex items-start gap-2">
+                                  <span
+                                    className={cn(
+                                      'min-w-0 flex-1 truncate font-semibold text-text-000',
+                                      isMobile ? 'text-sm' : 'text-xs'
+                                    )}
+                                  >
+                                    {presented.sessionTitle ?? t(item.title)}
+                                  </span>
+                                </span>
+                                {detail ? (
+                                  <span
+                                    className={cn(
+                                      'mt-0.5 block truncate text-text-100',
+                                      isMobile ? 'text-sm leading-5' : 'text-[11px] leading-4'
+                                    )}
+                                  >
+                                    {detail}
+                                  </span>
+                                ) : null}
+                                {showEventLabel ? (
+                                  <span
+                                    className={cn(
+                                      'mt-0.5 inline-flex items-center gap-1.5 font-medium',
+                                      isMobile ? 'text-xs' : 'text-[10px]',
+                                      item.kind === 'task.completed' && 'text-success-000',
+                                      item.kind === 'task.failed' && 'text-danger-000',
+                                      (item.kind === 'task.needs-attention' ||
+                                        item.kind === 'authorization.required') &&
+                                        'text-session-waiting'
+                                    )}
+                                  >
+                                    <span
+                                      className="size-1.5 rounded-full bg-current"
+                                      aria-hidden="true"
+                                    />
+                                    {eventLabel}
+                                  </span>
+                                ) : null}
+                              </span>
+                              {item.readAt === undefined ? (
+                                <span
+                                  className="mt-2 size-1.5 shrink-0 rounded-full bg-destructive"
+                                  aria-hidden="true"
+                                />
+                              ) : null}
+                            </button>
+                          )
+                        })}
+                      </section>
+                    ))
                   )}
                 </div>
               </div>
@@ -454,5 +530,11 @@ const NotificationBell = ({
     </div>
   )
 }
+
+const NotificationBell = (props: NotificationBellProps): React.JSX.Element => (
+  <NotificationErrorBoundary>
+    <NotificationBellContent {...props} />
+  </NotificationErrorBoundary>
+)
 
 export { NotificationBell }

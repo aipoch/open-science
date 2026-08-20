@@ -1,4 +1,8 @@
+import { randomUUID } from 'node:crypto'
+
 import { renderMoleculeStructure } from './descriptors/molecule'
+import type { ArtifactFile } from '../../shared/artifacts'
+import type { AppGeneratedArtifactProducer } from '../../shared/artifact-provenance'
 
 // Minimal view of the app runtime's artifact writer, so the handler stays testable with a fake. The
 // session id routes the write to the run of the session that invoked the tool.
@@ -9,8 +13,9 @@ export type MoleculeArtifactWriter = {
       filename: string
       content: string
       mimeType?: string
+      producer?: AppGeneratedArtifactProducer
     }
-  ): Promise<{ id: string; name: string; path: string }>
+  ): Promise<ArtifactFile>
 }
 
 const MOLFILE_MIME = 'chemical/x-mdl-molfile'
@@ -19,7 +24,7 @@ const MOLFILE_MIME = 'chemical/x-mdl-molfile'
 // then save it as a canonical .mol artifact on the current turn. The saved molecule-format artifact is
 // auto-opened in the preview panel by the renderer (workspace-events), so no extra IPC is needed.
 export const createMoleculePreviewHandler =
-  (writer: MoleculeArtifactWriter) =>
+  (writer: MoleculeArtifactWriter, options: { createInvocationId?: () => string } = {}) =>
   async (
     args: Record<string, unknown>,
     context: { sessionId?: string } = {},
@@ -40,12 +45,26 @@ export const createMoleculePreviewHandler =
     const artifact = await writer.writeArtifactForCurrentRun(context.sessionId, {
       filename: result.filename_suggestion,
       content: result.molfile,
-      mimeType: MOLFILE_MIME
+      mimeType: MOLFILE_MIME,
+      producer: {
+        kind: 'connector',
+        connectorId: 'molecule',
+        toolId: 'preview_molecule',
+        invocationId: (options.createInvocationId ?? randomUUID)(),
+        implementationVersion: '1',
+        normalizedArguments: {
+          inputKind: typeof args.smiles === 'string' ? 'smiles' : 'molfile',
+          filename: result.filename_suggestion,
+          smiles: result.smiles
+        }
+      }
     })
 
     return {
       valid: true,
-      artifact_id: artifact.id,
+      artifact_id: artifact.artifactId ?? artifact.id,
+      ...(artifact.versionId ? { version_id: artifact.versionId } : {}),
+      ...(artifact.versionNumber ? { version_number: artifact.versionNumber } : {}),
       filename: artifact.name,
       smiles: result.smiles,
       formula: result.formula,

@@ -11,6 +11,7 @@ import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { NotificationLiveToast } from '@/components/NotificationLiveToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
@@ -665,6 +666,7 @@ const AppContent = (): React.JSX.Element | null => {
           onDismiss={lifecycleSync.dismissNotice}
           onView={lifecycleSync.viewNotice}
         />
+        <NotificationLiveToast />
         <PermissionUndoSnackbar />
       </div>
       <WebEventRecoveryDialog

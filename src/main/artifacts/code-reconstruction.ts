@@ -11,6 +11,7 @@ import type {
   ProvenanceNotebookOutput,
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
+import { isArtifactNotebookProducer } from '../../shared/artifact-provenance'
 import type { NotebookKernelKind } from '../../shared/notebook'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
@@ -181,7 +182,7 @@ const sourceState = (
     return { state: 'unavailable', reason: 'execution-unavailable' }
   }
   const producer = provenance.evidence.producer
-  if (producer.state !== 'available') {
+  if (!isArtifactNotebookProducer(producer)) {
     return { state: 'unavailable', reason: 'producer-unavailable' }
   }
   const producerRun = provenance.execution.runs.find(
