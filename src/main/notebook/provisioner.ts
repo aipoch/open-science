@@ -1262,7 +1262,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // must not delete an incomplete extraction mid-upgrade, and a Windows path-limit failure is retried
     // once after a short cache recovery.
     const selected = this.cacheForBundle(spec, bundle)
-    if (selected.cache.lockKey !== fetchCache.lockKey) {
+    if (selected.cache.path !== fetchCache.path) {
       await this.maintainCacheBeforeMutation(selected.cache)
     }
     await this.seedBundleCache(bundle, selected.cache)
@@ -1365,7 +1365,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
     // packages before the create, so a Windows path-limit blocker doesn't fail the first attempt.
     const selected = this.cacheForBundle(spec, bundle)
-    if (selected.cache.lockKey !== fetchCache.lockKey) {
+    if (selected.cache.path !== fetchCache.path) {
       await this.maintainCacheBeforeMutation(selected.cache)
     }
     await this.seedBundleCache(bundle, selected.cache)

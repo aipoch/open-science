@@ -92,7 +92,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const provisioner = new DefaultRuntimeProvisioner(
       makeDeps(root, {
         platform: 'linux',
-        cache: { path: cachePath, lockKey: cachePath },
+        // macOS may canonicalize the legacy lock key (/var -> /private/var) while preserving this path.
+        cache: { path: cachePath, lockKey: 'selected-cache-key' },
         fetchBundle: async () => {
           order.push('fetch')
           return { lockPath: join(root, 'python.lock') }
