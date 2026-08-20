@@ -1865,6 +1865,57 @@ describe('SettingsPage layout', () => {
     expect(remoteAccess.detect).toHaveBeenCalledOnce()
   })
 
+  it('invalidates the Remote control cache when a pairing request arrives while the panel is closed', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            onChanged: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const initialSnapshot = {
+      canManage: false,
+      canManagePairing: true,
+      mode: 'remoteit' as const,
+      enabled: true,
+      lifecycle: 'running' as const,
+      remoteIt: { installed: true, loggedIn: true, registered: true },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    const updatedSnapshot = {
+      ...initialSnapshot,
+      pendingRequests: [
+        {
+          id: 'pending-after-close',
+          code: '654321',
+          browser: 'Safari',
+          platform: 'macOS',
+          requestedAt: Date.now(),
+          expiresAt: Date.now() + 60_000
+        }
+      ]
+    }
+    remoteAccess.getSnapshot
+      .mockResolvedValueOnce(initialSnapshot)
+      .mockResolvedValueOnce(updatedSnapshot)
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Model')?.click())
+
+    const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
+    act(() => lifecycleListener?.())
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('Safari · macOS')
+    expect(document.body.textContent).toContain('654321')
+  })
+
   it('does not let an older initial detection overwrite a newer lifecycle snapshot', async () => {
     const remoteAccess = (
       window as unknown as {

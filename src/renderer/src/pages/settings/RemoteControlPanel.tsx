@@ -45,12 +45,40 @@ let cachedRemoteAccessOwner: Window['api']['remoteAccess'] | undefined
 let remoteAccessLoadInFlight: Promise<RemoteAccessSnapshot> | undefined
 let remoteAccessRequestGeneration = 0
 let remoteAccessPanelMounts = 0
+let remoteAccessChangeOwner: Window['api']['remoteAccess'] | undefined
+let unsubscribeRemoteAccessChanges: (() => void) | undefined
+const remoteAccessChangeListeners = new Set<() => void>()
 
 const beginRemoteAccessRequest = (): number => ++remoteAccessRequestGeneration
 const beginRemoteAccessLoad = (): number =>
   remoteAccessLoadInFlight ? remoteAccessRequestGeneration : beginRemoteAccessRequest()
 const isCurrentRemoteAccessRequest = (generation: number): boolean =>
   generation === remoteAccessRequestGeneration
+
+const ensureRemoteAccessChangeSubscription = (): void => {
+  const remoteAccess = window.api.remoteAccess
+  if (remoteAccessChangeOwner === remoteAccess && unsubscribeRemoteAccessChanges) return
+
+  unsubscribeRemoteAccessChanges?.()
+  remoteAccessChangeOwner = remoteAccess
+  unsubscribeRemoteAccessChanges = remoteAccess.onChanged(() => {
+    if (remoteAccessChangeOwner !== remoteAccess) return
+
+    // Keep the event subscription alive while the panel is closed. The next mount must not reuse
+    // a snapshot that predates a pairing request or lifecycle change.
+    cachedRemoteAccess = undefined
+    cachedRemoteAccessOwner = undefined
+    remoteAccessLoadInFlight = undefined
+    beginRemoteAccessRequest()
+    remoteAccessChangeListeners.forEach((listener) => listener())
+  })
+}
+
+const subscribeToRemoteAccessChanges = (listener: () => void): (() => void) => {
+  ensureRemoteAccessChangeSubscription()
+  remoteAccessChangeListeners.add(listener)
+  return () => remoteAccessChangeListeners.delete(listener)
+}
 
 const freshRemoteAccessSnapshot = (): RemoteAccessSnapshot | undefined =>
   cachedRemoteAccessOwner === window.api.remoteAccess &&
@@ -123,6 +151,7 @@ const loadRemoteAccessSnapshot = async (
   force = false,
   generation = beginRemoteAccessLoad()
 ): Promise<RemoteAccessSnapshot> => {
+  ensureRemoteAccessChangeSubscription()
   const cached = !force ? freshRemoteAccessSnapshot() : undefined
   if (cached) {
     if (isActive()) onInitial(cached)
@@ -234,7 +263,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       .finally(() => {
         if (active && isCurrentRemoteAccessRequest(generation)) setBusy(null)
       })
-    const unsubscribe = window.api.remoteAccess.onChanged(() => {
+    const unsubscribe = subscribeToRemoteAccessChanges(() => {
       // Lifecycle broadcasts are progress updates for an in-flight action. They must not clear
       // `busy`; only the Promise that started the mode change or Detect operation may do that.
       if (active) void refresh(false, false)
