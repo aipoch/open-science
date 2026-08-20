@@ -1,8 +1,6 @@
 import {
   ChevronDown,
   Download,
-  FileUp,
-  FolderInput,
   Info,
   ListChecks,
   MessagesSquare,
@@ -36,6 +34,7 @@ import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
 import { SkillBulkManageView } from './SkillBulkManageView'
+import { SkillImportMenu, SkillImportMenuItems } from './SkillImportMenu'
 import { SettingsLoadNotice, SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import {
@@ -89,7 +88,7 @@ const SOURCE_GROUPS = [
   {
     source: 'imported',
     labelKey: 'Imported',
-    subtitleKey: 'Skills you added from GitHub.'
+    subtitleKey: 'Skills you imported into Open Science.'
   },
   {
     source: 'personal',
@@ -455,36 +454,15 @@ const SkillsPanel = ({
                   </span>
                 </span>
               </DropdownMenuItem>
-              <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'upload' })}>
-                <FileUp className="size-4 shrink-0" aria-hidden="true" />
-                <span className="flex flex-col">
-                  <span>{t('Upload skills')}</span>
-                  <span className="text-xs text-muted-foreground">{t('Pick SKILL.md files')}</span>
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
-                <Download className="size-4 shrink-0" aria-hidden="true" />
-                <span className="flex flex-col">
-                  <span>{t('Import from GitHub')}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {t('Add a skill from a repo')}
-                  </span>
-                </span>
-              </DropdownMenuItem>
-              {canImportInstalledSkills ? (
-                <DropdownMenuItem
-                  className="gap-2.5"
-                  onSelect={() => onNavigate({ kind: 'import-agent-home' })}
-                >
-                  <FolderInput className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="flex flex-col">
-                    <span>{t('Import installed skills')}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {t('Scan global skill folders')}
-                    </span>
-                  </span>
-                </DropdownMenuItem>
-              ) : null}
+              <SkillImportMenuItems
+                onUploadSkills={() => onNavigate({ kind: 'upload' })}
+                onImportFromGitHub={() => onNavigate({ kind: 'import' })}
+                onImportInstalledSkills={
+                  canImportInstalledSkills
+                    ? () => onNavigate({ kind: 'import-agent-home' })
+                    : undefined
+                }
+              />
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -524,26 +502,39 @@ const SkillsPanel = ({
           const expanded = !collapsed[group.source]
 
           return (
-            <div key={group.source}>
-              <button
-                type="button"
-                aria-expanded={expanded}
-                onClick={() =>
-                  setCollapsed((prev) => ({ ...prev, [group.source]: !prev[group.source] }))
-                }
-                className="flex w-full flex-col items-start gap-0.5 text-left"
-              >
-                <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
-                  {t(group.labelKey)}
-                  <ChevronDown
-                    className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
-                      expanded ? '' : '-rotate-90'
-                    }`}
-                    aria-hidden="true"
+            <div key={group.source} data-slot="skills-source-group" data-source={group.source}>
+              <div className="flex items-start justify-between gap-3">
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  onClick={() =>
+                    setCollapsed((prev) => ({ ...prev, [group.source]: !prev[group.source] }))
+                  }
+                  className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left"
+                >
+                  <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
+                    {t(group.labelKey)}
+                    <ChevronDown
+                      className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
+                        expanded ? '' : '-rotate-90'
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </span>
+                  <span className="text-xs text-muted-foreground">{t(group.subtitleKey)}</span>
+                </button>
+                {group.source === 'imported' ? (
+                  <SkillImportMenu
+                    onUploadSkills={() => onNavigate({ kind: 'upload' })}
+                    onImportFromGitHub={() => onNavigate({ kind: 'import' })}
+                    onImportInstalledSkills={
+                      canImportInstalledSkills
+                        ? () => onNavigate({ kind: 'import-agent-home' })
+                        : undefined
+                    }
                   />
-                </span>
-                <span className="text-xs text-muted-foreground">{t(group.subtitleKey)}</span>
-              </button>
+                ) : null}
+              </div>
 
               {expanded ? (
                 rows.length > 0 ? (
