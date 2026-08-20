@@ -105,6 +105,49 @@ describe('diagnostic operation', () => {
     })
   })
 
+  it('records opt-in cumulative and phase CPU deltas without changing default diagnostics', () => {
+    const { logger, records } = createRecordingLogger()
+    const cpuSamples = [
+      { user: 1_000, system: 500 },
+      { user: 4_000, system: 1_500 },
+      { user: 7_500, system: 2_000 }
+    ]
+    const operation = startDiagnosticOperation(logger, {
+      operation: 'session-hydration',
+      operationId: 'session-1',
+      now: () => 0,
+      cpuUsage: () => cpuSamples.shift() ?? { user: 0, system: 0 }
+    })
+
+    operation.phase('load-authority')
+    operation.complete()
+
+    expect(records[1]).toMatchObject({
+      data: {
+        phase: 'load-authority',
+        cpuIntervalPhase: 'operation-start',
+        cpuUserMs: 3,
+        cpuSystemMs: 1,
+        cpuTotalMs: 4,
+        phaseCpuUserMs: 3,
+        phaseCpuSystemMs: 1,
+        phaseCpuTotalMs: 4
+      }
+    })
+    expect(records[2]).toMatchObject({
+      data: {
+        phase: 'load-authority',
+        cpuIntervalPhase: 'load-authority',
+        cpuUserMs: 6.5,
+        cpuSystemMs: 1.5,
+        cpuTotalMs: 8,
+        phaseCpuUserMs: 3.5,
+        phaseCpuSystemMs: 0.5,
+        phaseCpuTotalMs: 4
+      }
+    })
+  })
+
   it('completes with duration and the latest phase', () => {
     const { logger, records } = createRecordingLogger()
     let timestamp = 100

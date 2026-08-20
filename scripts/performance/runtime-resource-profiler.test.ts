@@ -3,6 +3,7 @@ import type { ProcessSnapshotEntry, ProcessTreeSnapshot } from './process-snapsh
 import {
   ProcessCpuTracker,
   mergeResourceSample,
+  parseSessionHydrationDiagnostic,
   renderSummaryMarkdown,
   summarizeSamples,
   validatePhase,
@@ -168,5 +169,74 @@ describe('runtime resource profiler', () => {
     expect(() => validateSampleInterval(100)).toThrow('sampleIntervalMs')
     expect(validatePhase('notebook-tool')).toBe('notebook-tool')
     expect(() => validatePhase('User project')).toThrow('lowercase kebab-case')
+  })
+
+  it('retains only whitelisted scalar Session hydration performance fields', () => {
+    expect(
+      parseSessionHydrationDiagnostic({
+        capturedAt: 2_000,
+        message: '[session-persistence] operation phase',
+        data: {
+          operation: 'session-hydration',
+          operationId: 'operation-1',
+          phase: 'authority-loaded',
+          cpuIntervalPhase: 'load-authority',
+          elapsedMs: 25,
+          phaseDurationMs: 20,
+          cpuTotalMs: 12,
+          phaseCpuTotalMs: 8,
+          sessionCount: 3,
+          secretPath: '/private/research'
+        }
+      })
+    ).toEqual({
+      capturedAt: 2_000,
+      event: 'phase',
+      operationId: 'operation-1',
+      phase: 'authority-loaded',
+      cpuIntervalPhase: 'load-authority',
+      elapsedMs: 25,
+      phaseDurationMs: 20,
+      cpuTotalMs: 12,
+      phaseCpuTotalMs: 8,
+      sessionCount: 3
+    })
+    expect(
+      parseSessionHydrationDiagnostic({
+        capturedAt: 2_000,
+        message: '[settings] operation phase',
+        data: { operation: 'session-hydration', operationId: 'operation-2' }
+      })
+    ).toBeUndefined()
+  })
+
+  it('renders Session hydration CPU intervals in the local summary', () => {
+    const summary = summarizeSamples(
+      [],
+      {
+        startedAt: 1_000,
+        endedAt: 2_000,
+        sampleIntervalMs: 1_000,
+        nodeVersion: '22.0.0'
+      },
+      [
+        {
+          capturedAt: 1_100,
+          event: 'phase',
+          operationId: 'operation-1',
+          phase: 'authority-loaded',
+          cpuIntervalPhase: 'load-authority',
+          phaseDurationMs: 20,
+          phaseCpuUserMs: 6,
+          phaseCpuSystemMs: 2,
+          phaseCpuTotalMs: 8
+        }
+      ]
+    )
+
+    expect(summary.sessionHydrationTrace).toHaveLength(1)
+    expect(renderSummaryMarkdown(summary)).toContain(
+      'load-authority | authority-loaded | 20.0 | 6.0 | 2.0 | 8.0'
+    )
   })
 })

@@ -122,7 +122,8 @@ const launchEnvironment = (
   fakeAgentBinRoot?: string,
   inheritedEnvironment: NodeJS.ProcessEnv = process.env,
   fakeRemoteItRoot?: string,
-  windowMode: E2eWindowMode = 'hidden'
+  windowMode: E2eWindowMode = 'hidden',
+  sessionPerformanceTrace = false
 ): Record<string, string> => {
   const environment: Record<string, string> = {}
 
@@ -133,6 +134,7 @@ const launchEnvironment = (
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
+  if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (environment.OPEN_SCIENCE_E2E_EXECUTABLE) {
     environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   }
@@ -158,7 +160,8 @@ const launchOpenScience = async (
   fakeAgentEnabled: boolean,
   fakeRemoteItEnabled: boolean,
   fakeRemoteItRoot: string,
-  windowMode: E2eWindowMode
+  windowMode: E2eWindowMode,
+  sessionPerformanceTrace: boolean
 ): Promise<ElectronApplication> => {
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
@@ -168,7 +171,8 @@ const launchOpenScience = async (
       fakeAgentEnabled ? fakeAgentBinRoot : undefined,
       process.env,
       fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
-      windowMode
+      windowMode,
+      sessionPerformanceTrace
     )
   })
 
@@ -574,7 +578,8 @@ class ElectronAppHarness implements ElectronApp {
       this.fakeAgentEnabled,
       this.fakeRemoteItEnabled,
       this.roots.fakeRemoteItRoot,
-      this.windowMode
+      this.windowMode,
+      this.resourceProfiler !== undefined
     )
     await this.resourceProfiler?.attach(this.application)
     this.currentPage = await openMainWindow(

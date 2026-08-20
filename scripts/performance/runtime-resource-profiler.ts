@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { arch, platform } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ElectronApplication } from 'playwright'
+import type { ConsoleMessage, ElectronApplication } from 'playwright'
 import {
   readProcessTree,
   type ProcessKind,
@@ -10,10 +10,11 @@ import {
   type ProcessTreeSnapshot
 } from './process-snapshot'
 
-const PROFILE_SCHEMA_VERSION = 1
+const PROFILE_SCHEMA_VERSION = 2
 const DEFAULT_SAMPLE_INTERVAL_MS = 1_000
 const MIN_SAMPLE_INTERVAL_MS = 250
 const MAX_SAMPLE_INTERVAL_MS = 10_000
+const SESSION_TRACE_MESSAGE_PREFIX = '[session-persistence] operation '
 
 type ElectronProcessMetric = {
   creationTime: number
@@ -97,7 +98,38 @@ type RuntimeProfileSummary = {
   sampleCount: number
   sampleIntervalMs: number
   schemaVersion: number
+  sessionHydrationTrace: SessionHydrationTraceEvent[]
   startedAt: number
+}
+
+type SessionHydrationTraceEvent = {
+  capturedAt: number
+  event: 'started' | 'phase' | 'completed' | 'cancelled' | 'failed'
+  operationId: string
+  phase?: string
+  cpuIntervalPhase?: string
+  elapsedMs?: number
+  phaseDurationMs?: number
+  durationMs?: number
+  cpuUserMs?: number
+  cpuSystemMs?: number
+  cpuTotalMs?: number
+  phaseCpuUserMs?: number
+  phaseCpuSystemMs?: number
+  phaseCpuTotalMs?: number
+  sessionCount?: number
+  warningCount?: number
+  projectDirectoryCount?: number
+  sessionFileCount?: number
+  sessionBytes?: number
+  recoveryFailureCount?: number
+  degradedReconciliationCount?: number
+}
+
+type SessionHydrationDiagnosticInput = {
+  capturedAt: number
+  data: unknown
+  message: string
 }
 
 type RuntimeProfileResult = {
@@ -114,6 +146,69 @@ type RuntimeResourceProfilerOptions = {
   readTree?: (rootPid: number) => Promise<ProcessTreeSnapshot>
   runId?: string
   sampleIntervalMs?: number
+}
+
+const SESSION_TRACE_NUMBER_FIELDS = [
+  'elapsedMs',
+  'phaseDurationMs',
+  'durationMs',
+  'cpuUserMs',
+  'cpuSystemMs',
+  'cpuTotalMs',
+  'phaseCpuUserMs',
+  'phaseCpuSystemMs',
+  'phaseCpuTotalMs',
+  'sessionCount',
+  'warningCount',
+  'projectDirectoryCount',
+  'sessionFileCount',
+  'sessionBytes',
+  'recoveryFailureCount',
+  'degradedReconciliationCount'
+] as const satisfies readonly (keyof SessionHydrationTraceEvent)[]
+
+const parseSessionHydrationDiagnostic = ({
+  capturedAt,
+  data,
+  message
+}: SessionHydrationDiagnosticInput): SessionHydrationTraceEvent | undefined => {
+  if (
+    !message.startsWith(SESSION_TRACE_MESSAGE_PREFIX) ||
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data)
+  ) {
+    return undefined
+  }
+  const record = data as Record<string, unknown>
+  if (record.operation !== 'session-hydration' || typeof record.operationId !== 'string') {
+    return undefined
+  }
+  const outcome = record.outcome
+  const event: SessionHydrationTraceEvent['event'] =
+    outcome === 'started'
+      ? 'started'
+      : outcome === 'completed' || outcome === 'cancelled' || outcome === 'failed'
+        ? outcome
+        : typeof record.phase === 'string'
+          ? 'phase'
+          : 'started'
+  const trace: SessionHydrationTraceEvent = {
+    capturedAt,
+    event,
+    operationId: record.operationId
+  }
+  if (typeof record.phase === 'string') trace.phase = record.phase
+  if (typeof record.cpuIntervalPhase === 'string') {
+    trace.cpuIntervalPhase = record.cpuIntervalPhase
+  }
+  for (const field of SESSION_TRACE_NUMBER_FIELDS) {
+    const value = record[field]
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      Object.assign(trace, { [field]: value })
+    }
+  }
+  return trace
 }
 
 type CpuIdentityState = {
@@ -211,7 +306,8 @@ const summarizeSamples = (
     nodeVersion: string
     sampleIntervalMs: number
     startedAt: number
-  }
+  },
+  sessionHydrationTrace: readonly SessionHydrationTraceEvent[] = []
 ): RuntimeProfileSummary => {
   const byPhase = new Map<string, RuntimeResourceSample[]>()
   for (const sample of samples) {
@@ -276,6 +372,7 @@ const summarizeSamples = (
     incompleteSampleCount: samples.filter(
       (sample) => !sample.processTreeComplete || !sample.electronMetricsComplete
     ).length,
+    sessionHydrationTrace: sessionHydrationTrace.map((event) => ({ ...event })),
     phases
   }
 }
@@ -308,6 +405,28 @@ const renderSummaryMarkdown = (summary: RuntimeProfileSummary): string => {
       topRssRole ?? 'unavailable'
     ].join(' | ')
   })
+  const sessionTraceRows = summary.sessionHydrationTrace
+    .filter((event) => event.phaseCpuTotalMs !== undefined)
+    .map((event) =>
+      [
+        event.cpuIntervalPhase ?? 'unavailable',
+        event.event === 'phase' ? (event.phase ?? 'phase') : event.event,
+        formatNumber(event.phaseDurationMs ?? 0),
+        formatNumber(event.phaseCpuUserMs ?? 0),
+        formatNumber(event.phaseCpuSystemMs ?? 0),
+        formatNumber(event.phaseCpuTotalMs ?? 0)
+      ].join(' | ')
+    )
+  const sessionTraceSection =
+    sessionTraceRows.length === 0
+      ? ''
+      : `
+## Session hydration CPU trace
+
+CPU interval | Boundary/outcome | Wall ms | CPU user ms | CPU system ms | CPU total ms
+--- | --- | ---: | ---: | ---: | ---:
+${sessionTraceRows.join('\n')}
+`
   return `# Runtime resource profile
 
 - Platform: ${summary.platform}/${summary.architecture}
@@ -319,6 +438,7 @@ const renderSummaryMarkdown = (summary: RuntimeProfileSummary): string => {
 Phase | Included/total | CPU mean % | CPU p95 % | CPU peak % | CPU end % | RSS start MB | RSS peak MB | RSS end MB | RSS delta MB | Process peak | Top CPU role | Top RSS role
 --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---
 ${rows.join('\n')}
+${sessionTraceSection}
 
 RSS is the sum of per-process resident sets and can double-count shared pages. It is intended for
 same-machine trend comparison, not as a portable absolute memory value. The profile records no
@@ -395,6 +515,10 @@ const mergeResourceSample = (
 
 class RuntimeResourceProfiler {
   private application: ElectronApplication | undefined
+  private readonly consoleListeners = new Map<
+    ElectronApplication,
+    (message: ConsoleMessage) => void
+  >()
   private electronVersion: string | undefined
   private readonly cpuTracker = new ProcessCpuTracker()
   private readonly now: () => number
@@ -403,10 +527,12 @@ class RuntimeResourceProfiler {
   private readonly runId: string
   private readonly sampleIntervalMs: number
   private readonly samples: RuntimeResourceSample[] = []
+  private readonly sessionHydrationTrace: SessionHydrationTraceEvent[] = []
   private phase = 'startup'
   private sampleInFlight: Promise<void> | undefined
   private startedAt: number
   private timer: NodeJS.Timeout | undefined
+  private traceCaptureInFlight: Promise<void> = Promise.resolve()
 
   constructor(options: RuntimeResourceProfilerOptions = {}) {
     this.now = options.now ?? Date.now
@@ -425,6 +551,11 @@ class RuntimeResourceProfiler {
 
   async attach(application: ElectronApplication): Promise<void> {
     this.application = application
+    if (!this.consoleListeners.has(application)) {
+      const listener = (message: ConsoleMessage): void => this.queueSessionTraceCapture(message)
+      this.consoleListeners.set(application, listener)
+      application.on('console', listener)
+    }
     this.electronVersion ??= await application
       .evaluate(() => process.versions.electron)
       .catch(() => undefined)
@@ -436,6 +567,12 @@ class RuntimeResourceProfiler {
   }
 
   detach(application?: ElectronApplication): void {
+    const target = application ?? this.application
+    if (target) {
+      const listener = this.consoleListeners.get(target)
+      if (listener) target.off('console', listener)
+      this.consoleListeners.delete(target)
+    }
     if (!application || this.application === application) this.application = undefined
   }
 
@@ -451,14 +588,19 @@ class RuntimeResourceProfiler {
     if (this.timer) clearInterval(this.timer)
     this.timer = undefined
     await this.sampleInFlight
+    await this.traceCaptureInFlight
     const endedAt = this.now()
-    const summary = summarizeSamples(this.samples, {
-      startedAt: this.startedAt,
-      endedAt,
-      sampleIntervalMs: this.sampleIntervalMs,
-      nodeVersion: process.versions.node,
-      electronVersion: this.electronVersion
-    })
+    const summary = summarizeSamples(
+      this.samples,
+      {
+        startedAt: this.startedAt,
+        endedAt,
+        sampleIntervalMs: this.sampleIntervalMs,
+        nodeVersion: process.versions.node,
+        electronVersion: this.electronVersion
+      },
+      this.sessionHydrationTrace
+    )
     const outputDirectory = join(this.outputRoot, this.runId)
     await mkdir(outputDirectory, { recursive: true })
     const samplePath = join(outputDirectory, 'samples.jsonl')
@@ -480,6 +622,31 @@ class RuntimeResourceProfiler {
     if (this.timer) clearInterval(this.timer)
     this.timer = undefined
     this.application = undefined
+    for (const [application, listener] of this.consoleListeners) {
+      application.off('console', listener)
+    }
+    this.consoleListeners.clear()
+  }
+
+  private queueSessionTraceCapture(message: ConsoleMessage): void {
+    const capturedAt = this.now()
+    const capture = (async (): Promise<void> => {
+      const consoleText = message.text()
+      if (!consoleText.startsWith(SESSION_TRACE_MESSAGE_PREFIX)) return
+      const data = await message
+        .args()[1]
+        ?.jsonValue()
+        .catch(() => undefined)
+      const trace = parseSessionHydrationDiagnostic({
+        capturedAt,
+        message: consoleText,
+        data
+      })
+      if (trace) this.sessionHydrationTrace.push(trace)
+    })().catch(() => undefined)
+    this.traceCaptureInFlight = Promise.all([this.traceCaptureInFlight, capture]).then(
+      () => undefined
+    )
   }
 
   private queueSample(): Promise<void> {
@@ -539,6 +706,7 @@ export {
   ProcessCpuTracker,
   RuntimeResourceProfiler,
   mergeResourceSample,
+  parseSessionHydrationDiagnostic,
   renderSummaryMarkdown,
   summarizeSamples,
   validatePhase,
@@ -553,5 +721,6 @@ export type {
   RuntimeProfileSummary,
   RuntimeResourceProfilerOptions,
   RuntimeResourceSample,
-  RuntimeResourceTotals
+  RuntimeResourceTotals,
+  SessionHydrationTraceEvent
 }
