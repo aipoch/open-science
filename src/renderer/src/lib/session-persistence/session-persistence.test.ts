@@ -1738,12 +1738,14 @@ describe('renderer session persistence bridge', () => {
         }
       }
     })
+    const latestLoad = createDeferred<PersistedChatSession | undefined>()
     const saveSession = vi
       .fn<SessionPersistenceApi['saveSession']>()
       .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
       .mockImplementationOnce(async (session) => ({ ...session, revision: 10 }))
+      .mockImplementationOnce(async (session) => ({ ...session, revision: 11 }))
     const api = createApi({
-      loadOne: vi.fn().mockResolvedValue(latest),
+      loadOne: vi.fn(() => latestLoad.promise),
       saveSession
     })
     const persistence = createOrderedSessionPersistence(api)
@@ -1751,20 +1753,36 @@ describe('renderer session persistence bridge', () => {
     useSessionStore.getState().hydrateSessions([base])
     createStoreSaver(api, useSessionStore.getState(), {}, persistence)
 
-    await expect(saveSessionInOrder(submitted, persistence, api)).resolves.toMatchObject({
-      revision: 10,
-      messages: submitted.messages,
-      runtimeContext: latest.runtimeContext
-    })
+    const explicitSave = saveSessionInOrder(submitted, persistence, api)
+    await flushMicrotasks()
     expect(api.loadOne).toHaveBeenCalledWith({
       projectId: base.projectId,
       sessionId: base.id
     })
-    expect(saveSession).toHaveBeenCalledTimes(2)
+
+    const laterSave = persistence.saveSession({ ...submitted, title: 'Later queued save' })
+    await flushMicrotasks()
+    expect(saveSession).toHaveBeenCalledOnce()
+
+    latestLoad.resolve(latest)
+    await expect(explicitSave).resolves.toMatchObject({
+      revision: 10,
+      messages: submitted.messages,
+      runtimeContext: latest.runtimeContext
+    })
+    await expect(laterSave).resolves.toMatchObject({
+      revision: 11,
+      title: 'Later queued save'
+    })
+    expect(saveSession).toHaveBeenCalledTimes(3)
     expect(saveSession.mock.calls[1][0]).toMatchObject({
       revision: 9,
       messages: submitted.messages,
       runtimeContext: latest.runtimeContext
+    })
+    expect(saveSession.mock.calls[2][0]).toMatchObject({
+      revision: 10,
+      title: 'Later queued save'
     })
   })
 })

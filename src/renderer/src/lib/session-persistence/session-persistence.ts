@@ -47,12 +47,22 @@ const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionRe
   window.api.sessions.deleteSession(request)
 
 type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
+type OrderedSessionSaveRecovery = (
+  error: unknown,
+  submitted: PersistedChatSession,
+  retry: SessionPersistenceApi['saveSession']
+) => Promise<PersistedChatSession>
 
 type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'> & {
   saveLatestSession: (
     target: string,
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions
+  ) => Promise<PersistedChatSession>
+  saveSessionWithRecovery: (
+    session: PersistedChatSession,
+    options: SaveSessionOptions | undefined,
+    recover: OrderedSessionSaveRecovery
   ) => Promise<PersistedChatSession>
   seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
   getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
@@ -496,6 +506,22 @@ const createOrderedSessionPersistence = (
     return run
   }
 
+  const saveSubmittedSession = async (
+    session: PersistedChatSession,
+    options?: SaveSessionOptions
+  ): Promise<PersistedChatSession> => {
+    const submitted = structuredClone(session)
+    submitted.revision = Math.max(
+      sessionRevision(submitted),
+      acknowledgedRevisions.get(submitted.id) ?? 0
+    )
+    const durable = options
+      ? await api.saveSession(submitted, options)
+      : await api.saveSession(submitted)
+    acknowledgeSession(durable)
+    return durable
+  }
+
   const saveLatestSession = (
     target: string,
     task: LatestSessionSaveTask,
@@ -540,18 +566,19 @@ const createOrderedSessionPersistence = (
       const session = acknowledgedSessions.get(sessionId)
       return session ? structuredClone(session) : undefined
     },
-    saveSession: (session, options) =>
+    saveSession: (session, options) => enqueue(() => saveSubmittedSession(session, options)),
+    saveSessionWithRecovery: (session, options, recover) =>
       enqueue(async () => {
         const submitted = structuredClone(session)
         submitted.revision = Math.max(
           sessionRevision(submitted),
           acknowledgedRevisions.get(submitted.id) ?? 0
         )
-        const durable = options
-          ? await api.saveSession(submitted, options)
-          : await api.saveSession(submitted)
-        acknowledgeSession(durable)
-        return durable
+        try {
+          return await saveSubmittedSession(submitted, options)
+        } catch (error) {
+          return recover(error, submitted, saveSubmittedSession)
+        }
       }),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
     flush: () => queue.then(() => undefined)
@@ -579,40 +606,34 @@ const saveSessionInOrder = async (
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
-    const durable = await persistence.saveSession(session)
+    const durable = await persistence.saveSessionWithRecovery(
+      session,
+      undefined,
+      async (error, submitted, retry) => {
+        if (!isSessionRevisionConflictError(error)) throw error
+        const base = persistence.getAcknowledgedSession(submitted.id)
+        if (!base) throw error
+
+        let latest: PersistedChatSession | undefined
+        try {
+          latest = await api.loadOne({
+            projectId: submitted.projectId,
+            sessionId: submitted.id
+          })
+        } catch {
+          throw error
+        }
+        const rebased = latest
+          ? rebaseSessionAfterRevisionConflict(base, submitted, latest)
+          : undefined
+        if (!rebased) throw error
+        return retry(rebased)
+      }
+    )
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
   } catch (error) {
-    if (!isSessionRevisionConflictError(error)) throw error
-
-    const base = persistence.getAcknowledgedSession(session.id)
-    if (base) {
-      let latest: PersistedChatSession | undefined
-      try {
-        latest = await api.loadOne({
-          projectId: session.projectId,
-          sessionId: session.id
-        })
-      } catch {
-        unresolvedSessionRevisionConflictTargets.add(target)
-        throw error
-      }
-      const rebased = latest ? rebaseSessionAfterRevisionConflict(base, session, latest) : undefined
-      if (rebased) {
-        try {
-          const durable = await persistence.saveSession(rebased)
-          unresolvedSessionRevisionConflictTargets.delete(target)
-          return durable
-        } catch (retryError) {
-          if (isSessionRevisionConflictError(retryError)) {
-            unresolvedSessionRevisionConflictTargets.add(target)
-          }
-          throw retryError
-        }
-      }
-    }
-
-    unresolvedSessionRevisionConflictTargets.add(target)
+    if (isSessionRevisionConflictError(error)) unresolvedSessionRevisionConflictTargets.add(target)
     throw error
   }
 }
@@ -1023,22 +1044,23 @@ const createStoreSaver = (
                 let durableSession: PersistedChatSession
                 let recoveredRevisionConflict = false
                 try {
-                  durableSession = saveOptions
-                    ? await persistence.saveSession(persisted, saveOptions)
-                    : await persistence.saveSession(persisted)
-                } catch (error) {
-                  try {
-                    durableSession = await recoverRevisionConflict(
-                      error,
-                      persisted,
-                      saveOptions,
-                      api.saveSession
-                    )
-                    recoveredRevisionConflict = true
-                  } catch (finalError) {
-                    reportPersistenceError(finalError, 'session-save')
-                    throw finalError
-                  }
+                  durableSession = await persistence.saveSessionWithRecovery(
+                    persisted,
+                    saveOptions,
+                    async (error, submitted, retry) => {
+                      const recovered = await recoverRevisionConflict(
+                        error,
+                        submitted,
+                        saveOptions,
+                        retry
+                      )
+                      recoveredRevisionConflict = true
+                      return recovered
+                    }
+                  )
+                } catch (finalError) {
+                  reportPersistenceError(finalError, 'session-save')
+                  throw finalError
                 }
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 acknowledgedSessions.set(session.id, durableSession)
