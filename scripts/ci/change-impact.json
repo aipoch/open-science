@@ -169,7 +169,6 @@
         "src/main/tray.ts",
         "src/main/update/create-strategy.ts",
         "src/main/update/electron-updater-strategy.ts",
-        "src/main/web-service/auth.ts",
         "src/main/session-persistence/**",
         "src/main/file-save.ts",
         "src/main/specialist/repository.ts",

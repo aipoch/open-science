@@ -7,7 +7,7 @@ const TOKEN_FILE = 'web-token'
 const COOKIE_NAME = 'open_science_web_token'
 
 const restrictTokenPermissions = async (tokenPath: string): Promise<void> => {
-  if (process.platform !== 'win32') await chmod(tokenPath, 0o600)
+  await chmod(tokenPath, 0o600)
 }
 
 const loadOrCreateWebToken = async (configRoot: string): Promise<string> => {
