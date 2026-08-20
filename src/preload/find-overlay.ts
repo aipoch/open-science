@@ -1,16 +1,20 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
-import {
-  WINDOW_FIND_APPEARANCE_CHANNEL,
-  WINDOW_FIND_CLEAR_CHANNEL,
-  WINDOW_FIND_CLOSE_CHANNEL,
-  WINDOW_FIND_REQUEST_CHANNEL,
-  WINDOW_FIND_RESULT_CHANNEL,
-  WINDOW_FIND_SHOW_CHANNEL,
-  type WindowFindAppearance,
-  type WindowFindRequest,
-  type WindowFindResult
+import type {
+  WindowFindAppearance,
+  WindowFindRequest,
+  WindowFindResult
 } from '../shared/window-controls'
+
+// Sandboxed preloads cannot require local chunks emitted by Rollup. Keep this second preload entry's
+// runtime constants local so it stays self-contained instead of sharing a chunk with the main preload.
+// The dedicated preload tests pin every channel string against the main-process contract.
+const WINDOW_FIND_REQUEST_CHANNEL = 'window:find-in-page'
+const WINDOW_FIND_CLEAR_CHANNEL = 'window:clear-find-in-page'
+const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
+const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
+const WINDOW_FIND_APPEARANCE_CHANNEL = 'window:find-appearance'
+const WINDOW_FIND_CLOSE_CHANNEL = 'window:find-close'
 
 type RemoveListener = () => void
 type Listener<Payload> = (payload: Payload) => void
