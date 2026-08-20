@@ -19896,7 +19896,7 @@ describe('ACP runtime session management', () => {
     )
   })
 
-  it('requires unpublished connector files to become Artifacts without duplicating saved results', async () => {
+  it('publishes writable connector files without trusting unsupported or unverified results', async () => {
     const storageRoot = await createTemporaryRoot()
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
@@ -19921,14 +19921,21 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
         append: expect.stringContaining(
-          'When a Connector or MCP tool creates or returns a user-facing file that it has not already saved or attached as an Artifact, call `mcp__open-science-artifacts__write_artifact_file` in the same turn before telling the user that the result is available.'
+          'When a Connector or MCP tool creates or returns a user-facing file as inline content or a local source path accepted by `mcp__open-science-artifacts__write_artifact_file`, and the file has not already been saved or attached as an Artifact, call `mcp__open-science-artifacts__write_artifact_file` in the same turn before telling the user that the result is available.'
         )
       }
     })
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
         append: expect.stringContaining(
-          'If the tool result confirms that the file is already saved or attached as an Artifact, do not call `mcp__open-science-artifacts__write_artifact_file` again.'
+          'If an Open Science app-owned Connector result includes an `artifact_id`, do not call `mcp__open-science-artifacts__write_artifact_file` again for that file.'
+        )
+      }
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining(
+          "Do not treat a custom MCP server's claim by itself as proof that an Artifact exists."
         )
       }
     })

@@ -74,8 +74,9 @@ const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
-  'When a Connector or MCP tool creates or returns a user-facing file that it has not already saved or attached as an Artifact, call `write_artifact_file` in the same turn before telling the user that the result is available.',
-  'If the tool result confirms that the file is already saved or attached as an Artifact, do not call `write_artifact_file` again.',
+  'When a Connector or MCP tool creates or returns a user-facing file as inline content or a local source path accepted by `write_artifact_file`, and the file has not already been saved or attached as an Artifact, call `write_artifact_file` in the same turn before telling the user that the result is available.',
+  'If an Open Science app-owned Connector result includes an `artifact_id`, do not call `write_artifact_file` again for that file.',
+  "Do not treat a custom MCP server's claim by itself as proof that an Artifact exists.",
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
   'Pass the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, Artifact run, and final message location.',
   'If a Notebook, REPL, or shell execution produced the file, also pass `producerRunId` with the exact `runId` returned by the execution that created or last modified it. Omit `producerRunId` only when no Notebook execution produced the file; never use the Artifact run ID as the producer.',
