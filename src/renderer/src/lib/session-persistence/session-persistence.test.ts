@@ -1700,6 +1700,73 @@ describe('renderer session persistence bridge', () => {
       vi.unstubAllGlobals()
     }
   })
+
+  it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {
+    const base = createPersistedSession({ revision: 8 })
+    const submitted = createPersistedSession({
+      revision: 8,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'Artifact ready',
+          status: 'complete',
+          eventIds: [],
+          artifactIds: ['artifact-1'],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+    const latest = createPersistedSession({
+      revision: 9,
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        permission: {
+          state: 'pending',
+          request: {
+            requestId: 'permission-1',
+            sessionId: base.id,
+            toolCallId: 'tool-1',
+            title: 'Run Notebook',
+            options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+          },
+          originatingPromptMessageId: 'message-1',
+          fingerprint: 'a'.repeat(64),
+          createdAt: 3
+        }
+      }
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (session) => ({ ...session, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(latest),
+      saveSession
+    })
+    const persistence = createOrderedSessionPersistence(api)
+
+    useSessionStore.getState().hydrateSessions([base])
+    createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+
+    await expect(saveSessionInOrder(submitted, persistence, api)).resolves.toMatchObject({
+      revision: 10,
+      messages: submitted.messages,
+      runtimeContext: latest.runtimeContext
+    })
+    expect(api.loadOne).toHaveBeenCalledWith({
+      projectId: base.projectId,
+      sessionId: base.id
+    })
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 9,
+      messages: submitted.messages,
+      runtimeContext: latest.runtimeContext
+    })
+  })
 })
 
 type Deferred<T> = {

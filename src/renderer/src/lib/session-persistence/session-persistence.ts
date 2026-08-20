@@ -54,6 +54,8 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions
   ) => Promise<PersistedChatSession>
+  seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
+  getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
   flush: () => Promise<void>
 }
 
@@ -456,6 +458,7 @@ const createOrderedSessionPersistence = (
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
   const acknowledgedRevisions = new Map<string, number>()
+  const acknowledgedSessions = new Map<string, PersistedChatSession>()
   let pendingLatest:
     | {
         target: string
@@ -464,6 +467,23 @@ const createOrderedSessionPersistence = (
       }
     | undefined
   let pendingLatestPromise: Promise<PersistedChatSession> | undefined
+
+  const acknowledgeSession = (session: PersistedChatSession): void => {
+    const revision = sessionRevision(session)
+    const acknowledged = acknowledgedSessions.get(session.id)
+    if (
+      acknowledged &&
+      (sessionRevision(acknowledged) > revision ||
+        (sessionRevision(acknowledged) === revision && acknowledged.updatedAt > session.updatedAt))
+    ) {
+      return
+    }
+    acknowledgedRevisions.set(
+      session.id,
+      Math.max(acknowledgedRevisions.get(session.id) ?? 0, revision)
+    )
+    acknowledgedSessions.set(session.id, structuredClone(session))
+  }
 
   const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
     pendingLatest = undefined
@@ -494,10 +514,7 @@ const createOrderedSessionPersistence = (
         pendingLatestPromise = undefined
       }
       return entry.task(entry.options).then((durable) => {
-        acknowledgedRevisions.set(
-          durable.id,
-          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
-        )
+        acknowledgeSession(durable)
         return durable
       })
     }
@@ -513,6 +530,16 @@ const createOrderedSessionPersistence = (
 
   return {
     saveLatestSession,
+    seedAcknowledgedSessions: (sessions) => {
+      for (const session of sessions) {
+        acknowledgedRevisions.set(session.id, sessionRevision(session))
+        acknowledgedSessions.set(session.id, structuredClone(session))
+      }
+    },
+    getAcknowledgedSession: (sessionId) => {
+      const session = acknowledgedSessions.get(sessionId)
+      return session ? structuredClone(session) : undefined
+    },
     saveSession: (session, options) =>
       enqueue(async () => {
         const submitted = structuredClone(session)
@@ -523,10 +550,7 @@ const createOrderedSessionPersistence = (
         const durable = options
           ? await api.saveSession(submitted, options)
           : await api.saveSession(submitted)
-        acknowledgedRevisions.set(
-          durable.id,
-          Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
-        )
+        acknowledgeSession(durable)
         return durable
       }),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
@@ -546,16 +570,49 @@ const liveSessionPersistence = createOrderedSessionPersistence({
 
 const unresolvedSessionRevisionConflictTargets = new Set<string>()
 
-const saveSessionInOrder = async (session: PersistedChatSession): Promise<PersistedChatSession> => {
+const saveSessionInOrder = async (
+  session: PersistedChatSession,
+  persistence: OrderedSessionPersistence = liveSessionPersistence,
+  api: Pick<SessionPersistenceApi, 'loadOne'> = {
+    loadOne: (request) => window.api.sessions.loadOne(request)
+  }
+): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
-    const durable = await liveSessionPersistence.saveSession(session)
+    const durable = await persistence.saveSession(session)
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
   } catch (error) {
-    if (isSessionRevisionConflictError(error)) {
-      unresolvedSessionRevisionConflictTargets.add(target)
+    if (!isSessionRevisionConflictError(error)) throw error
+
+    const base = persistence.getAcknowledgedSession(session.id)
+    if (base) {
+      let latest: PersistedChatSession | undefined
+      try {
+        latest = await api.loadOne({
+          projectId: session.projectId,
+          sessionId: session.id
+        })
+      } catch {
+        unresolvedSessionRevisionConflictTargets.add(target)
+        throw error
+      }
+      const rebased = latest ? rebaseSessionAfterRevisionConflict(base, session, latest) : undefined
+      if (rebased) {
+        try {
+          const durable = await persistence.saveSession(rebased)
+          unresolvedSessionRevisionConflictTargets.delete(target)
+          return durable
+        } catch (retryError) {
+          if (isSessionRevisionConflictError(retryError)) {
+            unresolvedSessionRevisionConflictTargets.add(target)
+          }
+          throw retryError
+        }
+      }
     }
+
+    unresolvedSessionRevisionConflictTargets.add(target)
     throw error
   }
 }
@@ -855,6 +912,7 @@ const createStoreSaver = (
   const acknowledgedSessions = new Map(
     initial.sessions.map((session) => [session.id, toPersistedSession(session)])
   )
+  persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
 
   const recoverRevisionConflict = async (
     error: unknown,
