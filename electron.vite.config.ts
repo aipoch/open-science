@@ -10,7 +10,8 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/preload/index.ts')
+          index: resolve('src/preload/index.ts'),
+          'find-overlay': resolve('src/preload/find-overlay.ts')
         }
       }
     }
