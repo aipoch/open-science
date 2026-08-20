@@ -108,6 +108,9 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const loadStorageStatus = useStorageInfoStore((state) => state.loadStatus)
   const loadStorageInfo = useStorageInfoStore((state) => state.load)
   const refreshStorageInfo = useStorageInfoStore((state) => state.refresh)
+  const retryStorageInfo = (): void => {
+    void refreshStorageInfo().catch(() => undefined)
+  }
   const initialStorageFailure = environmentCheck?.checks.some(
     (check) => check.id === 'storage' && check.status === 'failed'
   )
@@ -380,7 +383,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
               <p className="text-sm text-destructive" role="alert">
                 {t('Could not scan storage usage. Try again.')}
               </p>
-              <Button type="button" variant="outline" onClick={() => void refreshStorageInfo()}>
+              <Button type="button" variant="outline" onClick={retryStorageInfo}>
                 <RefreshCw className="size-4" aria-hidden="true" />
                 {t('Retry')}
               </Button>
@@ -562,13 +565,13 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 type="button"
                 variant="outline"
                 disabled={isRefreshingUsage}
-                onClick={() => void refreshStorageInfo()}
+                onClick={retryStorageInfo}
               >
                 <RefreshCw
                   className={cn('size-4', isRefreshingUsage && 'animate-spin')}
                   aria-hidden="true"
                 />
-                {t('Refresh')}
+                {storageLoadError ? t('Retry') : t('Refresh')}
               </Button>
             ) : undefined
           }
@@ -579,7 +582,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 <p className="text-sm text-destructive" role="alert">
                   {t('Could not scan storage usage. Try again.')}
                 </p>
-                <Button type="button" variant="outline" onClick={() => void refreshStorageInfo()}>
+                <Button type="button" variant="outline" onClick={retryStorageInfo}>
                   <RefreshCw className="size-4" aria-hidden="true" />
                   {t('Retry')}
                 </Button>
@@ -589,6 +592,11 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
             )
           ) : (
             <>
+              {storageLoadError ? (
+                <p className="mb-3 text-sm text-destructive" role="alert">
+                  {t('Could not scan storage usage. Try again.')}
+                </p>
+              ) : null}
               {totalBytes > 0 ? (
                 <div className="flex h-2 gap-0.5 overflow-hidden rounded bg-muted">
                   {categories

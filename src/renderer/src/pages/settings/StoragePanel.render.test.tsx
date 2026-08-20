@@ -25,9 +25,13 @@ const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheck
 
 // Richer usage sample matching the brief: two zero-byte categories, and a runtime category with
 // expandable children (mirrors the mock's "Conda environments" breakdown).
-const richInfo = {
+const richInfo: StorageInfo = {
   dataRoot: '/home/u/.open-science',
   isDefault: true,
+  defaultDataRoot: '/home/u/.open-science',
+  defaultParent: '/home/u',
+  dataRootMissing: false,
+  legacyDataMovePrompt: false,
   usage: {
     categories: [
       { key: 'artifacts', bytes: 22_700_000 },
@@ -194,6 +198,48 @@ describe('StoragePanel', () => {
     })
 
     expect(document.body.textContent).toContain('/home/u/.open-science')
+    expect(document.body.textContent).not.toContain('Could not scan storage usage. Try again.')
+  })
+
+  it('keeps the previous usage visible and offers retry after a refresh fails', async () => {
+    const cachedInfo: StorageInfo = {
+      ...richInfo,
+      defaultDataRoot: '/home/u/.open-science',
+      defaultParent: '/home/u',
+      dataRootMissing: false,
+      legacyDataMovePrompt: false
+    }
+    useStorageInfoStore.setState({
+      status: cachedInfo,
+      info: cachedInfo,
+      scannedAt: Date.now(),
+      isLoading: false,
+      isRefreshing: false,
+      loadError: undefined
+    })
+    vi.mocked(window.api.storage.getInfo).mockRejectedValueOnce(new Error('scan failed'))
+
+    await act(async () => root.render(<StoragePanel />))
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Refresh')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toMatch(/3\.7 GB/)
+    expect(document.body.textContent).toContain('Could not scan storage usage. Try again.')
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (button) => button.textContent?.trim() === 'Retry'
+      )
+    ).toBe(true)
+
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Retry')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
     expect(document.body.textContent).not.toContain('Could not scan storage usage. Try again.')
   })
 
