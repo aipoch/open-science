@@ -221,7 +221,7 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
   const connectionSignal = eventConnectionController.signal
   const { response, body } = MODEL_OWNED_WEB_RPC_CHANNELS.has(channel)
     ? await request(connectionSignal)
-    : await withRequestTimeout(WEB_RPC_TIMEOUT_MS, request, connectionSignal)
+    : await withRequestTimeout(WEB_RPC_TIMEOUT_MS, request)
   let payload
   try {
     payload = webRpcResponseSchema.parse(JSON.parse(body, reviveBinary))

@@ -419,6 +419,57 @@ describe('Web bootstrap event connection', () => {
     await vi.waitFor(() => expect(outcome).toBeInstanceOf(DOMException))
   })
 
+  it('does not abort an ordinary mutation when its event connection disconnects', async () => {
+    let rpcSignal: AbortSignal | undefined
+    let resolveRpc!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/projects%3Acreate') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((resolve, reject) => {
+            resolveRpc = resolve
+            rpcSignal?.addEventListener(
+              'abort',
+              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = api.projects.create({ name: 'Committed once' })
+
+    socket.emit('close')
+
+    expect(rpcSignal?.aborted).toBe(false)
+    resolveRpc(
+      new Response(
+        JSON.stringify({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          ok: true,
+          result: { id: 'project-1', name: 'Committed once' }
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    )
+    await expect(request).resolves.toMatchObject({ id: 'project-1' })
+  })
+
   it('settles a stalled managed download and releases its acquired resource', async () => {
     let downloadSignal: AbortSignal | undefined
     let released = false
