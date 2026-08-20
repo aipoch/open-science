@@ -19,6 +19,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
@@ -56,9 +57,11 @@ type RuntimesPanelProps = {
 
 const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const envs = useRuntimeSettingsStore((state) => state.envs)
   const enablement = useRuntimeSettingsStore((state) => state.enablement)
   const loaded = useRuntimeSettingsStore((state) => state.loaded)
+  const checkedAt = useRuntimeSettingsStore((state) => state.checkedAt)
   const busy = useRuntimeSettingsStore((state) => state.busy)
   const error = useRuntimeSettingsStore((state) => state.error)
   const packageCounts = useRuntimeSettingsStore((state) => state.packageCounts)
@@ -425,16 +428,25 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
         contentClassName="space-y-5"
         actionClassName="ml-auto"
         action={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void recheck()}
-            disabled={busy || loading}
-          >
-            <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
-            {t('Recheck')}
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {checkedAt !== null ? (
+              <span className="text-xs text-muted-foreground" data-testid="runtimes-checked-at">
+                {t('Last checked {{time}}', {
+                  time: formatDate(checkedAt, 'dateTime')
+                })}
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void recheck()}
+              disabled={busy || loading}
+            >
+              <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
+              {t('Recheck')}
+            </Button>
+          </div>
         }
       >
         {error !== null && (

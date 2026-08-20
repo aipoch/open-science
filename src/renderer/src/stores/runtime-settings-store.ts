@@ -17,6 +17,7 @@ type RuntimeSettingsState = {
   envs: RuntimeEnvironmentLists | null
   enablement: RuntimeEnablements
   loaded: boolean
+  checkedAt: number | null
   busy: boolean
   error: string | null
   packageCounts: Record<string, number | null>
@@ -105,6 +106,7 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
             envs: snapshot.envs,
             enablement: snapshot.enablement,
             loaded: true,
+            checkedAt: Date.now(),
             busy: false,
             error: null,
             ...(force ? { packageCounts: {}, packageCountsLoaded: {} } : {})
@@ -136,6 +138,7 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
     envs: null,
     enablement: {},
     loaded: false,
+    checkedAt: null,
     busy: false,
     error: null,
     packageCounts: {},

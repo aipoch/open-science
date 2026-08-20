@@ -79,6 +79,7 @@ beforeEach(() => {
     envs: null,
     enablement: {},
     loaded: false,
+    checkedAt: null,
     busy: false,
     error: null,
     packageCounts: {},
@@ -182,7 +183,10 @@ describe('RuntimesPanel', () => {
     expect(section?.textContent).toContain('Custom runtime description')
     const recheck = section?.querySelector<HTMLButtonElement>('button')
     expect(recheck?.textContent).toContain('Recheck')
-    expect(recheck?.parentElement?.className).toContain('ml-auto')
+    expect(recheck?.parentElement?.parentElement?.className).toContain('ml-auto')
+    expect(section?.querySelector('[data-testid="runtimes-checked-at"]')?.textContent).toContain(
+      'Last checked'
+    )
   })
 
   it('disables Recheck until the initial registry load settles', async () => {

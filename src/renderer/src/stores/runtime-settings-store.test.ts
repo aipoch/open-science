@@ -24,6 +24,7 @@ beforeEach(() => {
     envs: null,
     enablement: {},
     loaded: false,
+    checkedAt: null,
     busy: false,
     error: null,
     packageCounts: {},
@@ -51,6 +52,7 @@ describe('runtime settings store', () => {
     expect(runtime.listEnvironments).toHaveBeenCalledOnce()
     expect(runtime.getEnablement).toHaveBeenCalledTimes(2)
     expect(runtime.listPackageCounts).toHaveBeenCalledOnce()
+    expect(useRuntimeSettingsStore.getState().checkedAt).not.toBeNull()
   })
 
   it('forces discovery and clears secondary counts on Recheck', async () => {
@@ -69,6 +71,7 @@ describe('runtime settings store', () => {
         [python.envId]: 1
       })
     )
+    useRuntimeSettingsStore.setState({ checkedAt: 1 })
 
     await useRuntimeSettingsStore.getState().recheck()
     await vi.waitFor(() =>
@@ -79,5 +82,6 @@ describe('runtime settings store', () => {
 
     expect(runtime.listEnvironments).toHaveBeenCalledTimes(2)
     expect(runtime.listPackageCounts).toHaveBeenCalledTimes(2)
+    expect(useRuntimeSettingsStore.getState().checkedAt).toBeGreaterThan(1)
   })
 })

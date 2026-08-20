@@ -910,6 +910,7 @@
   "LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record": "LLM 생성 재구성 · 원시 기록은 <logLink>Execution 로그</logLink>을 참조하세요.",
   "Language": "언어",
   "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "대용량 파일(아티팩트, Notebook, 환경)은 여기에 저장됩니다. 설정과 기록은 항상 기본 위치에 유지됩니다. 나중에 설정에서 변경할 수 있습니다.",
+  "Last checked {{time}}": "마지막 확인: {{time}}",
   "Last scanned {{time}}": "마지막 검사: {{time}}",
   "Last used {{time}}": "마지막 사용일 {{time}}",
   "Leave blank to keep the current values.": "현재 값을 유지하려면 비워 두세요.",

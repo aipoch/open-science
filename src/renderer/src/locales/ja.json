@@ -894,6 +894,7 @@
   "LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record": "LLM で生成された再構築 · 生のレコードについては、<logLink>実行ログ</logLink>を参照してください",
   "Language": "言語",
   "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "大きなファイル (アーティファクト、Notebook、環境) はここに移動します。設定と履歴は常にデフォルトの場所に残ります。これは後から「設定」で変更できます。",
+  "Last checked {{time}}": "最終チェック: {{time}}",
   "Last scanned {{time}}": "最終スキャン: {{time}}",
   "Last used {{time}}": "最後に使用したのは {{time}}",
   "Leave blank to keep the current values.": "現在の値を保持するには、空白のままにします。",

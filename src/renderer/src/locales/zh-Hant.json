@@ -963,6 +963,7 @@
   "LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record": "由 LLM 產生的重建結果 · 原始記錄見<logLink>執行日誌</logLink>",
   "Language": "語言",
   "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "大型檔案（產物、Notebook、環境）存放在這裡。你的設定和歷史記錄始終保留在預設位置。之後可以在「設定」中修改。",
+  "Last checked {{time}}": "上次檢測於 {{time}}",
   "Last scanned {{time}}": "上次掃描於 {{time}}",
   "Last used {{time}}": "上次使用 {{time}}",
   "Leave blank to keep the current values.": "留空則保留目前值。",

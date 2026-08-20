@@ -264,6 +264,7 @@ beforeEach(() => {
     envs: null,
     enablement: {},
     loaded: false,
+    checkedAt: null,
     busy: false,
     error: null,
     packageCounts: {},

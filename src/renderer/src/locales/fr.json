@@ -946,6 +946,7 @@
   "LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record": "Reconstruction générée par LLM · voir <logLink>Execution Log</logLink> pour l'enregistrement brut",
   "Language": "Langue",
   "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "Les fichiers volumineux (artefacts, Notebooks, environnements) vont ici. Vos paramètres et votre historique restent toujours à l'emplacement par défaut. Vous pourrez modifier cela ultérieurement dans Paramètres.",
+  "Last checked {{time}}": "Dernière vérification : {{time}}",
   "Last scanned {{time}}": "Dernière analyse : {{time}}",
   "Last used {{time}}": "Dernière utilisation {{time}}",
   "Leave blank to keep the current values.": "Laissez vide pour conserver les valeurs actuelles.",
