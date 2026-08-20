@@ -4651,8 +4651,11 @@ describe('session store public contract', () => {
   it('keeps production consumers on the public store facade', () => {
     expect(directConsumerPaths()).toEqual([
       'src/renderer/src/App.tsx',
+      'src/renderer/src/components/NotificationBell.tsx',
+      'src/renderer/src/components/NotificationLiveToast.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/components/job-binding-utils.ts',
+      'src/renderer/src/components/notification-inbox-presentation.ts',
       'src/renderer/src/hooks/useLifecycleSync.ts',
       'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
       'src/renderer/src/lib/acp/history-preamble.ts',

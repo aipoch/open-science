@@ -235,6 +235,9 @@ vi.mock('@/components/LegacyDataMoveDialog', () => ({
 vi.mock('@/components/LifecycleToast', () => ({
   LifecycleToast: (): React.JSX.Element => <div data-testid="lifecycle-toast" />
 }))
+vi.mock('@/components/NotificationLiveToast', () => ({
+  NotificationLiveToast: (): React.JSX.Element => <div data-testid="notification-live-toast" />
+}))
 vi.mock('@/components/UpdateDialog', () => ({
   UpdateDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.update = props
