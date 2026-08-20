@@ -141,6 +141,23 @@ describe('TagRepository', () => {
     )
   })
 
+  it('rejects an out-of-range update timestamp with a domain error', async () => {
+    await repository.create({ name: 'Research', iconKey: 'tag', colorKey: 'blue' })
+    const tag = (await repository.snapshot(0)).tags.find(
+      (candidate) => 'name' in candidate && candidate.name === 'Research'
+    )!
+
+    await expect(
+      repository.update({
+        id: tag.id,
+        name: 'Updated research',
+        iconKey: 'book-open',
+        colorKey: 'green',
+        expectedUpdatedAt: 8_640_000_000_000_001
+      })
+    ).rejects.toThrow('Tag update timestamp is invalid.')
+  })
+
   it('stores many-to-many assignments and cascades custom Tag deletion', async () => {
     await repository.create({ name: 'Methods', iconKey: 'flask-conical', colorKey: 'green' })
     const tag = (await repository.snapshot(0)).tags.find(

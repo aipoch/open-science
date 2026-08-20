@@ -5,6 +5,7 @@ import {
   FAVORITE_TAG_SYSTEM_KEY,
   type ReorderTagsRequest,
   TAG_NAME_MAX_LENGTH,
+  TAG_TIMESTAMP_MAX,
   type CreateTagRequest,
   type SetTagAssignmentRequest,
   type TagColorKey,
@@ -122,6 +123,17 @@ class TagRepository {
     const current = await client.tag.findUnique({ where: { id: request.id } })
     if (!current) throw new Error('Tag not found.')
     if (current.systemKey) throw new Error('System Tags cannot be edited.')
+    if (
+      !Number.isSafeInteger(request.expectedUpdatedAt) ||
+      request.expectedUpdatedAt <= 0 ||
+      request.expectedUpdatedAt >= TAG_TIMESTAMP_MAX
+    ) {
+      throw new Error('Tag update timestamp is invalid.')
+    }
+    const updatedAt = Math.max(this.now(), request.expectedUpdatedAt + 1)
+    if (!Number.isSafeInteger(updatedAt) || updatedAt <= 0 || updatedAt > TAG_TIMESTAMP_MAX) {
+      throw new Error('Tag update timestamp is invalid.')
+    }
     try {
       const result = await client.tag.updateMany({
         where: { id: request.id, updatedAt: new Date(request.expectedUpdatedAt) },
@@ -130,7 +142,7 @@ class TagRepository {
           nameKey,
           iconKey: request.iconKey,
           colorKey: request.colorKey,
-          updatedAt: new Date(Math.max(this.now(), request.expectedUpdatedAt + 1))
+          updatedAt: new Date(updatedAt)
         }
       })
       if (result.count === 0) throw new Error('Tag changed since it was loaded.')

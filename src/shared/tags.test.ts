@@ -69,6 +69,11 @@ describe('tag application command contracts', () => {
         { id: 'custom', name: 'Analysis', iconKey: 'tag', colorKey: 'blue' }
       ])
     ).toThrow()
+    expect(() =>
+      tagApplicationCommandContracts.update.args.parse([
+        { ...request, expectedUpdatedAt: 8_640_000_000_000_001 }
+      ])
+    ).toThrow()
   })
 
   it('accepts only a strict ordered Tag id list', () => {
