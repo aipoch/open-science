@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import {
   createEmptySessionManifest,
   materializeSessionConversationGraph,
+  SessionRevisionConflictError,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
@@ -272,6 +273,39 @@ describe('session persistence IPC handlers', () => {
     })
   })
 
+  it('does not forward Main-owned specialist save authority from renderer IPC', async () => {
+    const session = createSession()
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const saveSession = vi.fn(async () => ({ created: false, session }))
+    const handlers: SessionPersistenceHandlers = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession,
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+    const invoke = ipcHandlers.get('sessions:save-session')
+    const forgedOptions = {
+      conflictRebaseFields: ['specialistId', 'specialistBindingPending']
+    }
+
+    await expect(invoke?.({ sender: { id: 7 } }, session, forgedOptions)).resolves.toEqual({
+      ok: true,
+      result: session
+    })
+
+    expect(saveSession).toHaveBeenCalledWith(session)
+  })
+
   it('accepts Reviewer Correction attribution only from main-owned runtime evidence', async () => {
     const correctionAttribution = {
       kind: 'application' as const,
@@ -461,9 +495,10 @@ describe('session persistence IPC handlers', () => {
     await expect(ipcHandlers.get('sessions:load-one')?.(event, deleteRequest)).resolves.toBe(
       durableSession
     )
-    await expect(ipcHandlers.get('sessions:save-session')?.(event, session)).resolves.toBe(
-      durableSession
-    )
+    await expect(ipcHandlers.get('sessions:save-session')?.(event, session)).resolves.toEqual({
+      ok: true,
+      result: durableSession
+    })
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
     await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
@@ -614,6 +649,38 @@ describe('session persistence IPC handlers', () => {
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
   })
 
+  it('returns a revision-conflict outcome without rejecting the Electron IPC handler', async () => {
+    const conflict = new SessionRevisionConflictError(3, 4)
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const handlers: SessionPersistenceHandlers = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn().mockRejectedValue(conflict),
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'session-revision-conflict',
+        message: conflict.message
+      }
+    })
+    expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
+  })
+
   it('captures the lifecycle origin before awaiting a durable save', async () => {
     const session = createSession()
     let completeSave!: () => void
@@ -637,7 +704,7 @@ describe('session persistence IPC handlers', () => {
     expect(getLifecycleClientId).toHaveBeenCalledOnce()
     expect(getLifecycleClientId).toHaveReturnedWith('electron:1')
     completeSave()
-    await expect(save).resolves.toBe(session)
+    await expect(save).resolves.toEqual({ ok: true, result: session })
   })
 
   it('publishes a lifecycle event only after the durable Session transition is readable', async () => {

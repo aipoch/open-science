@@ -506,6 +506,10 @@ const suppressAutoReviewsForQuit = (): void => {
   scheduledAutoReviewsBySession.clear()
 }
 
+const resumeAutoReviewsAfterQuitAbort = (): void => {
+  autoReviewsSuppressedForQuit = false
+}
+
 // Stop and artifact events normally arrive together, but some providers publish the Artifact just
 // after stop. A short debounced barrier lets that claim finalize before Reviewer freezes its scope.
 // A post-stop Artifact cancels this timer immediately and schedules a fresh review after finalization.
@@ -952,6 +956,7 @@ export {
   applyWorkspaceRuntimeEvent,
   applyWorkspaceRuntimeEventBatch,
   assembleReviewRunRequest,
+  resumeAutoReviewsAfterQuitAbort,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,

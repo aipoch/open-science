@@ -24,6 +24,12 @@ const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
 test('persists the selected theme after closing settings and relaunching', async ({ app }) => {
   let page = await app.completeOnboarding()
 
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: 'English', exact: true }).click()
+
   await page.getByRole('button', { name: 'Model settings' }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   await settings
@@ -47,43 +53,96 @@ test('persists the selected theme after closing settings and relaunching', async
   await expect(page.getByRole('button', { name: 'Theme: Dark' })).toBeVisible()
 })
 
-test('switches to Japanese without clipping localized controls', async ({ app }) => {
-  const page = await app.completeOnboarding()
-  await page.setViewportSize({ width: 640, height: 800 })
+const localizedSettingsCases = [
+  {
+    language: 'Japanese',
+    pickerLabel: '日本語',
+    locale: 'ja',
+    projects: 'プロジェクト',
+    modelSettings: 'モデル設定',
+    settings: '設定',
+    openNavigation: '設定ナビゲーションを開く',
+    general: '一般',
+    appearance: '外観',
+    interfaceLanguage: '表示言語',
+    closeSettings: '設定を閉じる'
+  },
+  {
+    language: 'Korean',
+    pickerLabel: '한국어',
+    locale: 'ko',
+    projects: '프로젝트',
+    modelSettings: '모델 설정',
+    settings: '설정',
+    openNavigation: '설정 탐색 열기',
+    general: '일반',
+    appearance: '외관',
+    interfaceLanguage: '인터페이스 언어',
+    closeSettings: '설정 닫기'
+  },
+  {
+    language: 'French',
+    pickerLabel: 'Français',
+    locale: 'fr',
+    projects: 'Projets',
+    modelSettings: 'Paramètres du modèle',
+    settings: 'Paramètres',
+    openNavigation: 'Ouvrir la navigation des paramètres',
+    general: 'Général',
+    appearance: 'Apparence',
+    interfaceLanguage: "Langue de l'interface",
+    closeSettings: 'Fermer les paramètres'
+  }
+] as const
 
-  await page
-    .locator('button')
-    .filter({ has: page.locator('svg.lucide-languages') })
-    .click()
-  await page.getByRole('menuitem', { name: '日本語', exact: true }).click()
+for (const localized of localizedSettingsCases) {
+  test(`switches to ${localized.language} without clipping and persists it`, async ({ app }) => {
+    let page = await app.completeOnboarding()
+    const viewportWidth = 640
+    await page.setViewportSize({ width: viewportWidth, height: 800 })
 
-  await expect(page.locator('html')).toHaveAttribute('lang', 'ja')
-  await expect(page.getByRole('region', { name: 'プロジェクト' })).toBeVisible()
-  await expectVisibleTextButtonsToFit(page)
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+    await page
+      .locator('button')
+      .filter({ has: page.locator('svg.lucide-languages') })
+      .click()
+    await page.getByRole('menuitem', { name: localized.pickerLabel, exact: true }).click()
+
+    await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
+    await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
+    await expectVisibleTextButtonsToFit(page)
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+        )
       )
-    )
-    .toBe(true)
+      .toBe(true)
 
-  await page.getByRole('button', { name: 'モデル設定' }).click()
-  const settings = page.getByRole('dialog', { name: '設定' })
-  await settings.getByRole('button', { name: '設定ナビゲーションを開く' }).click()
-  await settings.getByRole('button', { name: '一般', exact: true }).click()
+    await page.getByRole('button', { name: localized.modelSettings }).click()
+    const settings = page.getByRole('dialog', { name: localized.settings })
+    await settings.getByRole('button', { name: localized.openNavigation }).click()
+    await settings.getByRole('button', { name: localized.general, exact: true }).click()
 
-  await expect(settings.getByRole('heading', { name: '外観' })).toBeVisible()
-  await expect(settings.getByRole('combobox', { name: '表示言語' })).toContainText('日本語')
-  await expectVisibleTextButtonsToFit(page)
+    await expect(settings.getByRole('heading', { name: localized.appearance })).toBeVisible()
+    await expect(
+      settings.getByRole('combobox', { name: localized.interfaceLanguage })
+    ).toContainText(localized.pickerLabel)
+    await expectVisibleTextButtonsToFit(page)
 
-  const closeButton = settings.getByRole('button', { name: '設定を閉じる' })
-  await closeButton.hover()
-  const tooltip = page.locator('[data-slot="tooltip-content"]:visible')
-  await expect(tooltip).toContainText('設定を閉じる')
-  await expect(tooltip).toHaveCSS('white-space', 'normal')
-  const tooltipBox = await tooltip.boundingBox()
-  expect(tooltipBox).not.toBeNull()
-  expect(tooltipBox?.x).toBeGreaterThanOrEqual(0)
-  expect((tooltipBox?.x ?? 0) + (tooltipBox?.width ?? 0)).toBeLessThanOrEqual(640)
-})
+    const closeButton = settings.getByRole('button', { name: localized.closeSettings })
+    await closeButton.hover()
+    const tooltip = page.locator('[data-slot="tooltip-content"]:visible')
+    await expect(tooltip).toContainText(localized.closeSettings)
+    await expect(tooltip).toHaveCSS('white-space', 'normal')
+    const tooltipBox = await tooltip.boundingBox()
+    expect(tooltipBox).not.toBeNull()
+    expect(tooltipBox?.x).toBeGreaterThanOrEqual(0)
+    // Windows reports fractional bounding boxes; 1px matches the button-clipping helper.
+    expect((tooltipBox?.x ?? 0) + (tooltipBox?.width ?? 0)).toBeLessThanOrEqual(viewportWidth + 1)
+
+    await closeButton.click()
+    page = await app.restart()
+    await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
+    await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
+  })
+}

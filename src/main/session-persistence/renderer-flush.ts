@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ipcMain, type BrowserWindow } from 'electron'
 
 import {
+  SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL,
   SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
   SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL,
   type SessionPersistenceFlushRequest,
@@ -98,4 +99,13 @@ export const createElectronSessionPersistenceFlush = (
       timeoutMs: timeoutOverrideMs ?? timeoutMs
     })
   }
+}
+
+export const notifyRendererSessionPersistenceFlushAborted = (
+  getWindow: () => BrowserWindow | undefined
+): void => {
+  const window = getWindow()
+  const webContents = window?.webContents
+  if (!window || window.isDestroyed() || !webContents || webContents.isDestroyed()) return
+  webContents.send(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL)
 }

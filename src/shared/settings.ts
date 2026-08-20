@@ -552,6 +552,9 @@ export type ProviderDraft = {
 // Create/update request: an existing `id` edits in place, otherwise a new provider is created.
 export type UpsertProviderRequest = ProviderDraft & {
   id?: string
+  // Edit flows set this so a stale draft cannot recreate a provider that was removed after the
+  // renderer loaded it. It affects command semantics only and is never persisted.
+  requireExisting?: boolean
   // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
   // Ordinary edits remain app-owned and never cross that external profile boundary.
   reimportCodexAuthentication?: boolean

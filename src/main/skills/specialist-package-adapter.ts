@@ -190,6 +190,13 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     release?.()
   }
 
+  runInMutationContext<T>(transactionId: string, operation: () => Promise<T>): Promise<T> {
+    if (!SAFE_DIRECTORY_NAME.test(transactionId) || !this.mutationReleases.has(transactionId)) {
+      throw new Error('Skill mutation lock is not held for this transaction.')
+    }
+    return this.mutationOwner.runWithHeldLockContext(operation)
+  }
+
   async snapshot(): Promise<PackageSkillMetadata[]> {
     const result: PackageSkillMetadata[] = []
     for (const source of ['imported', 'personal'] as const) {
@@ -399,26 +406,22 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     if (!SAFE_DIRECTORY_NAME.test(transactionId) || !SAFE_DIRECTORY_NAME.test(specialistId)) {
       throw new Error('Invalid package transaction identity.')
     }
-    const affected = [...new Set(ownedSkillIds)].sort()
+    const affected = [...new Set([...ownedSkillIds, ...deleteSkillIds])].sort()
     const deleting = new Set(deleteSkillIds)
-    if ([...deleting].some((id) => !affected.includes(id))) {
-      throw new Error('A selected Skill is not owned by the Specialist.')
-    }
     const root = this.transactionDir(transactionId)
     await rm(root, { recursive: true, force: true })
     try {
       await mkdir(root, { recursive: true })
       const transactionSkills = await Promise.all(
         affected.map(async (id) => {
-          if (!SAFE_DIRECTORY_NAME.test(id)) throw new Error('Invalid owned Skill ID.')
+          if (!SAFE_DIRECTORY_NAME.test(id)) throw new Error('Invalid affected Skill ID.')
           const live = await this.findSkillDirectory(id)
           if (!live) {
             if (deleting.has(id)) throw new Error(`Selected Skill ${id} is no longer installed.`)
             return undefined
           }
           const metadata = await readMetadata(live)
-          if (!metadata || !metadata.ownerIds.includes(specialistId)) {
-            if (deleting.has(id)) throw new Error(`Selected Skill ${id} is no longer owned.`)
+          if (!deleting.has(id) && (!metadata || !metadata.ownerIds.includes(specialistId))) {
             return undefined
           }
           return {
@@ -431,14 +434,14 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           }
         })
       )
-      const ownedTransactionSkills = transactionSkills.filter(
+      const affectedTransactionSkills = transactionSkills.filter(
         (skill): skill is NonNullable<typeof skill> => skill !== undefined
       )
       await writeFile(
         join(root, 'transaction.json'),
         `${JSON.stringify({
           mode: 'delete',
-          skills: ownedTransactionSkills.map(({ localId, directoryName, source }) => ({
+          skills: affectedTransactionSkills.map(({ localId, directoryName, source }) => ({
             localId,
             directoryName,
             source
@@ -446,8 +449,9 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         })}\n`,
         { flag: 'wx' }
       )
-      for (const { localId: id, live, metadata } of ownedTransactionSkills) {
+      for (const { localId: id, live, metadata } of affectedTransactionSkills) {
         if (deleting.has(id)) continue
+        if (!metadata) throw new Error(`Owned Skill ${id} has no ownership metadata.`)
         const staging = join(root, 'staging', id)
         await mkdir(dirname(staging), { recursive: true })
         await cp(live, staging, { recursive: true, errorOnExist: true })

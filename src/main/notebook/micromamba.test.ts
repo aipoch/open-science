@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -277,6 +277,22 @@ describe('caBundleEnv', () => {
 })
 
 describe('micromambaSpawnEnv', () => {
+  it('keeps the Windows package cache ASCII-only for a non-ASCII user profile', () => {
+    const env = micromambaSpawnEnv('C:\\Users\\甲乙\\OpenScience\\runtime', undefined, {
+      platform: 'win32',
+      env: {
+        USERNAME: '甲乙',
+        USERPROFILE: 'C:\\Users\\甲乙',
+        PUBLIC: 'C:\\Users\\Public'
+      },
+      canonicalize: (path) => win32.normalize(path),
+      prepare: (path) => (path.startsWith('C:\\osp') ? undefined : win32.normalize(path)),
+      verifyOwnership: () => true
+    })
+
+    expect(env.CONDA_PKGS_DIRS).toMatch(/^C:\\Users\\Public\\osp[0-9a-f]{10}$/)
+  })
+
   it('cleans inherited conda/mamba values before injecting the Windows app cache and CA vars', () => {
     const env = micromambaSpawnEnv('D:\\OpenScience\\runtime', '/ca.pem', {
       platform: 'win32',

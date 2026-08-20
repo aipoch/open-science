@@ -46,6 +46,7 @@ import { RELOCATABLE_DATA_DIRS } from './data-directories'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
+import type { SetDataRootOptions } from '../settings/capabilities'
 
 type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
@@ -65,11 +66,7 @@ type StorageCommandOwnerDeps = {
   getActivePromptSessions: () => LegacySessionSource[]
   getActiveDelegatedSessions: () => LegacySessionSource[]
   settingsService: {
-    setDataRoot: (path: string) => Promise<void>
-    // Stamps onboardingCompletedAt. Injected (rather than importing the renderer store action)
-    // so the marker can be persisted in the same main-process step as setDataRoot, before the
-    // renderer's startup gate ever has a chance to flip.
-    markOnboardingComplete: () => Promise<unknown>
+    setDataRoot: (path: string, options?: SetDataRootOptions) => Promise<void>
     // Marks the one-time legacy-data-move prompt as answered so it is never shown again.
     dismissLegacyDataMovePrompt: () => Promise<unknown>
     // Read to detect an explicitly-configured-but-now-gone data root (see dataRootMissing below)
@@ -198,6 +195,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       await deps.settingsService.dismissLegacyDataMovePrompt()
     } catch (err) {
       logger.warn('legacy move prompt dismissal failed', diagnosticErrorFields(err))
+      throw err
     }
   }
 
@@ -576,11 +574,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // validateNewDataRoot is stricter (move-only) and is never called here.
   //
   // `markOnboarding` is stamped here (not by a separate renderer completeOnboarding() call) so it
-  // lands atomically with setDataRoot, in the same step as the relaunch: App.tsx's startup gate
-  // reads onboardingCompletedAt, and flipping it from the renderer before this IPC resolves would
-  // swap the wizard for Home (showing the OLD data root, and burying any failure below). Settings-
-  // adopt omits it (onboarding has already completed). Order is load-bearing: classify -> mkdir ->
-  // setDataRoot -> [markOnboardingComplete] -> relaunch. On an invalid parent, none of these run.
+  // lands atomically with setDataRoot, in the same settings mutation before relaunch: App.tsx's
+  // startup gate reads onboardingCompletedAt, and flipping it from the renderer before this IPC
+  // resolves would swap the wizard for Home (showing the OLD data root, and burying any failure
+  // below). Settings-adopt omits it (onboarding has already completed). Order is load-bearing:
+  // classify -> mkdir -> persist settings -> relaunch. On an invalid parent, none of these run.
   const setDataRootAndRelaunch = async (request: StorageRootRequest): Promise<ValidateResult> => {
     const operation = startDiagnosticOperation(logger, {
       operation: 'data-root-selection',
@@ -606,10 +604,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       operation.phase('prepare-target', { mode: classification.kind })
       await mkdir(target, { recursive: true })
       operation.phase('persist-pointer', { mode: classification.kind })
-      await deps.settingsService.setDataRoot(target)
-      if (request.markOnboarding) {
-        await deps.settingsService.markOnboardingComplete()
-      }
+      await deps.settingsService.setDataRoot(target, {
+        completeOnboarding: request.markOnboarding === true
+      })
       operation.phase('request-relaunch', { mode: classification.kind })
       await cleanRelaunch()
       operation.complete({ mode: classification.kind })

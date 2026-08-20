@@ -1,6 +1,6 @@
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -23,6 +23,11 @@ import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
 import { formatBytes } from '../../../shared/update'
 
+const UPDATE_BACKGROUND_PROCESS_ERROR =
+  'Could not stop background processes before updating. Please try again.'
+const UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR =
+  'Could not fully stop background processes before updating. Please try again.'
+
 // Update confirmation dialog: shows the target version and release notes so the user can decide
 // before a large download. Opened from the external capsule and the settings About section. When the
 // manifest carries no notes, it links to the matching GitHub release so the user can still read them.
@@ -40,6 +45,9 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
   const isApplying = dialogStatus?.state === 'applying'
+  const isBackgroundProcessError =
+    dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
+    dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
 
   return (
     <Dialog.Root
@@ -133,8 +141,26 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
               {dialogStatus.state === 'error' ? (
                 <div className="mt-3" role="alert">
                   <p className="text-xs text-destructive">
-                    {dialogStatus.error ?? t('Update failed')}
+                    {dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
+                      ? t('Could not stop background processes before updating. Please try again.')
+                      : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+                        ? t(
+                            'Could not fully stop background processes before updating. Please try again.'
+                          )
+                        : (dialogStatus.error ?? t('Update failed'))}
                   </p>
+                  {isBackgroundProcessError ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      <Trans
+                        i18nKey="Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>."
+                        components={{
+                          issueLink: (
+                            <ExternalTextLink href={APP.links.githubIssues}>{''}</ExternalTextLink>
+                          )
+                        }}
+                      />
+                    </p>
+                  ) : null}
                   {/* Fallback when the in-app update fails (e.g. a blocked/failed in-place install): let the
                     user grab the installer by hand, mirroring the macOS manual-reinstall path. */}
                   <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">

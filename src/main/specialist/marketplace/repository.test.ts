@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,6 +7,38 @@ import { describe, expect, it } from 'vitest'
 import { MarketplaceRepository } from './repository'
 
 describe('MarketplaceRepository', () => {
+  it('recovers a valid historical temp when the primary is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'marketplace-repository-temp-'))
+    await writeFile(
+      join(root, 'specialist-marketplace.json.1700000000000-1.tmp'),
+      JSON.stringify({
+        version: 1,
+        sources: [
+          {
+            id: 'recovered-source',
+            kind: 'github',
+            repositoryUrl: 'https://github.com/example/marketplace',
+            owner: 'example',
+            repository: 'marketplace',
+            ref: 'main',
+            marketplaceId: 'example',
+            name: 'Recovered Marketplace',
+            keyId: 'example-2026-01',
+            publicKey: Buffer.from('public-key').toString('base64'),
+            keyFingerprint: 'f'.repeat(64),
+            createdAt: '2026-08-17T00:00:00.000Z'
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    await expect(new MarketplaceRepository(root).getAll()).resolves.toMatchObject({
+      sources: [{ id: 'recovered-source' }]
+    })
+    await expect(readdir(root)).resolves.toEqual(['specialist-marketplace.json'])
+  })
+
   it('persists user trust separately from Specialist installation provenance', async () => {
     const root = await mkdtemp(join(tmpdir(), 'marketplace-repository-'))
     const repository = new MarketplaceRepository(root)

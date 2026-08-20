@@ -110,6 +110,9 @@ const invokeElectron = async (
   args: unknown[]
 ): Promise<CapturedInvocation> => {
   electronMocks.invoke.mockClear()
+  if (path === 'sessions.saveSession') {
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, result: null })
+  }
   await methodAt(api, path)(...args)
   const [channel, ...forwardedArgs] = electronMocks.invoke.mock.calls.at(-1) ?? []
   return { channel: String(channel), args: forwardedArgs }

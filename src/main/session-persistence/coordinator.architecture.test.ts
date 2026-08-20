@@ -59,6 +59,7 @@ const productionFiles = [
   'legacy-upload.ts',
   'message-delivery-owner.ts',
   'reconciliation-owner.ts',
+  'relay-projection.ts',
   'side-chat-owner.ts',
   'state-owner.ts'
 ] as const
@@ -859,12 +860,15 @@ describe('Session persistence coordinator architecture', () => {
         'removeSession',
         'replaceMetadata',
         'saveSession',
+        'saveSessionSpecialistBinding',
         'sessionProjectId',
         'setDelegationPolicy',
         'setEnabledComputeHosts'
       ].sort()
     )
-    expect(methods(stateOwner, 'private')).toEqual(['loadRuntimeContextSession'])
+    expect(methods(stateOwner, 'private')).toEqual(
+      ['loadRuntimeContextSession', 'saveSessionWithAuthority'].sort()
+    )
     expect(methods(deletionOwner, 'public')).toEqual(
       [
         'assertProjectArchivable',
@@ -935,7 +939,7 @@ describe('Session persistence coordinator architecture', () => {
       pruneSessionEnabledComputeHosts: ['stateOwner.pruneEnabledComputeHosts'],
       readSessionRuntimeContext: ['stateOwner.readRuntimeContext'],
       saveSession: ['stateOwner.saveSession'],
-      saveSessionSpecialistBinding: ['stateOwner.saveSession'],
+      saveSessionSpecialistBinding: ['stateOwner.saveSessionSpecialistBinding'],
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],
@@ -966,7 +970,7 @@ describe('Session persistence coordinator architecture', () => {
         'state-owner.ts'
       ].sort()
     )
-    expect(sessionDependencies('state-owner.ts')).toEqual([])
+    expect(sessionDependencies('state-owner.ts')).toEqual(['relay-projection.ts'])
     expect(sessionDependencies('deletion-owner.ts')).toEqual(
       ['legacy-upload.ts', 'state-owner.ts'].sort()
     )
@@ -988,6 +992,7 @@ describe('Session persistence coordinator architecture', () => {
       'deletion-owner.ts',
       'message-delivery-owner.ts',
       'reconciliation-owner.ts',
+      'relay-projection.ts',
       'side-chat-owner.ts'
     ] as const) {
       expect(sessionDependencies(file), file).not.toContain('coordinator.ts')

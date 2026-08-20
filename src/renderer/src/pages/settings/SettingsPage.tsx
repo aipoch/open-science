@@ -23,7 +23,7 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { FocusScope } from '@radix-ui/react-focus-scope'
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -236,6 +236,7 @@ type NavLocation = {
   compute?: ComputeView
   specialists?: SpecialistsView
   archived?: ArchivedView
+  tagId?: string
 }
 
 const INITIAL_LOCATION: NavLocation = {
@@ -316,6 +317,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadTags = useTagStore((state) => state.load)
   const listenForTagChanges = useTagStore((state) => state.listen)
+  const browserSelectedTagId = useTagStore((state) => state.browserSelectedId)
+  const setSelectedTagId = useTagStore((state) => state.setBrowserSelectedId)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -488,6 +491,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
+  useEffect(() => {
+    if (currentLocation.panel === 'tags' && currentLocation.tagId) {
+      setSelectedTagId(currentLocation.tagId)
+    }
+  }, [currentLocation.panel, currentLocation.tagId, setSelectedTagId])
+
   // Pushes a new location, dropping any forward entries.
   const navigate = (location: NavLocation): void => {
     const nextConnectors = location.connectors ?? { kind: 'list' }
@@ -513,7 +522,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       JSON.stringify(nextSpecialists) === JSON.stringify(specialistsView) &&
       nextArchived.kind === archivedView.kind &&
       ('projectId' in nextArchived ? nextArchived.projectId : undefined) ===
-        ('projectId' in archivedView ? archivedView.projectId : undefined)
+        ('projectId' in archivedView ? archivedView.projectId : undefined) &&
+      location.tagId === currentLocation.tagId
     ) {
       return
     }
@@ -523,7 +533,30 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   // Internal panel transitions must use this dialog's history instead of reseeding an external
   // entry point, so Back returns to the recovery panel the user just completed.
-  const navigatePanel = (panel: SettingsPanelId): void => navigate({ ...INITIAL_LOCATION, panel })
+  const navigatePanel = (panel: SettingsPanelId): void =>
+    navigate({
+      ...INITIAL_LOCATION,
+      panel,
+      tagId: panel === 'tags' ? browserSelectedTagId : undefined
+    })
+
+  const navigateTag = (tagId: string): void => {
+    setSelectedTagId(tagId)
+    navigate({ ...currentLocation, panel: 'tags', tagId })
+  }
+
+  const recordSelectedTag = useCallback(
+    (tagId: string): void => {
+      setHistory((entries) => {
+        const entry = entries[historyIndex]
+        if (entry?.panel !== 'tags' || entry.tagId === tagId) return entries
+        return entries.map((candidate, index) =>
+          index === historyIndex ? { ...candidate, tagId } : candidate
+        )
+      })
+    },
+    [historyIndex]
+  )
 
   // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
   const navigateSkills = (skills: SkillsView): void =>
@@ -783,9 +816,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     modelView.kind === 'edit'
       ? providers.find((provider) => provider.id === modelView.providerId)
       : undefined
+  const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const formErrors = getProviderFormErrors(formValue, { hasStoredKey: editingProvider?.hasKey })
-  const canSave = !isSaving && !hasProviderFormErrors(formErrors)
+  const canSave = !isSaving && !providerEditTargetMissing && !hasProviderFormErrors(formErrors)
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
@@ -820,6 +854,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
   const handleSave = async (): Promise<void> => {
+    if (providerEditTargetMissing) return
     setIsSaving(true)
     setStatusMessage(undefined)
 
@@ -827,7 +862,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       // Persist first and return to the provider list immediately — don't hold the form open waiting
       // for the connection test. The test then runs in the background and its result (green check or
       // warning) lands on the provider's card.
-      const providerId = await persistProvider(toUpsertRequest(formValue, editingProvider?.id))
+      const providerId = await persistProvider({
+        ...toUpsertRequest(formValue, editingProvider?.id),
+        ...(modelView.kind === 'edit' ? { requireExisting: true } : {})
+      })
 
       navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
@@ -1177,12 +1215,44 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   <SkillsPanel
                     view={skillsView}
                     onNavigate={navigateSkills}
+                    onOpenTag={navigateTag}
+                    onOpenSpecialist={(usage) =>
+                      navigate({
+                        ...currentLocation,
+                        panel: 'specialists',
+                        specialists:
+                          usage.kind === 'builtin'
+                            ? { kind: 'builtin', id: usage.id }
+                            : { kind: 'edit', id: usage.id }
+                      })
+                    }
                     canImportInstalledSkills={canImportInstalledSkills}
                   />
                 ) : activePanel === 'specialists' ? (
-                  <SpecialistsPanel view={specialistsView} onNavigate={navigateSpecialists} />
+                  <SpecialistsPanel
+                    view={specialistsView}
+                    onNavigate={navigateSpecialists}
+                    onOpenTag={navigateTag}
+                    onOpenSkillDetail={(skillId) =>
+                      navigate({
+                        ...currentLocation,
+                        panel: 'skills',
+                        skills: { kind: 'detail', id: skillId }
+                      })
+                    }
+                    onOpenConnectorDetail={(connectorId) =>
+                      navigate({
+                        ...currentLocation,
+                        panel: 'connectors',
+                        connectors: customServers.some((server) => server.id === connectorId)
+                          ? { kind: 'edit', id: connectorId }
+                          : { kind: 'detail', id: connectorId }
+                      })
+                    }
+                  />
                 ) : activePanel === 'tags' ? (
                   <TagsPanel
+                    onSelectedTagChange={recordSelectedTag}
                     onOpenResource={(reference) => {
                       if (reference.resourceType === 'catalog.skill') {
                         navigate({
@@ -1226,6 +1296,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           resourceId: connectorsView.id
                         }}
                         className="px-5 pt-5"
+                        onOpenTag={navigateTag}
                       />
                       <ConnectorDetailView
                         key={connectorsView.id}
@@ -1265,15 +1336,30 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           resourceId: connectorsView.id
                         }}
                         className="px-5 pt-5"
+                        onOpenTag={navigateTag}
                       />
                       <ConnectorAddForm
                         editServer={customServers.find((s) => s.id === connectorsView.id)}
+                        editServerId={connectorsView.id}
                         onDone={() => navigateConnectors({ kind: 'list' })}
                         onCancel={() => navigateConnectors({ kind: 'list' })}
                       />
                     </div>
                   ) : (
-                    <ConnectorsPanel onNavigate={navigateConnectors} />
+                    <ConnectorsPanel
+                      onNavigate={navigateConnectors}
+                      onOpenTag={navigateTag}
+                      onOpenSpecialist={(usage) =>
+                        navigate({
+                          ...currentLocation,
+                          panel: 'specialists',
+                          specialists:
+                            usage.kind === 'builtin'
+                              ? { kind: 'builtin', id: usage.id }
+                              : { kind: 'edit', id: usage.id }
+                        })
+                      }
+                    />
                   )
                 ) : activePanel === 'compute' ? (
                   computeView.kind === 'add' ? (
@@ -1349,6 +1435,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         )}
                       </p>
                     ) : null}
+                    {providerEditTargetMissing ? (
+                      <p
+                        className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                        role="alert"
+                      >
+                        {t('This Provider no longer exists. Your draft has not been saved.')}
+                      </p>
+                    ) : null}
                     <ProviderForm
                       value={formValue}
                       onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
@@ -1369,10 +1463,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       disabled={isSaving}
                       encryptionAvailable={encryptionAvailable}
                       showCodexSubscriptions={
-                        agentFrameworkId === 'codex' && editingProvider === undefined
+                        agentFrameworkId === 'codex' && modelView.kind === 'create'
                       }
                       showClaudeIsolated={
-                        agentFrameworkId === 'claude-code' && editingProvider === undefined
+                        agentFrameworkId === 'claude-code' && modelView.kind === 'create'
                       }
                       defaultCustomApiEndpoint={customApiEndpoint}
                     />

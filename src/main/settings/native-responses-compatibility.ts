@@ -20,6 +20,14 @@ import {
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
+import {
+  DeterministicProviderErrorReplay,
+  isDeterministicProviderErrorStatus,
+  providerErrorClientStatus,
+  providerRequestHeadersFingerprint,
+  providerRequestFingerprint,
+  readBoundedProviderErrorBody
+} from './provider-error-replay'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
 // permissive, then validate the fields this module rewrites before touching them.
@@ -53,6 +61,7 @@ type NativeFetch = typeof fetch
 const log = createLogger('native-responses-compatibility')
 const DEFAULT_RESPONSE_HEADER_TIMEOUT_MS = 2 * 60_000
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000
+const MAX_REPLAY_ERROR_BODY_BYTES = 256 * 1024
 const SAFE_NETWORK_ERROR_CODES = new Set([
   'EAI_AGAIN',
   'ECONNREFUSED',
@@ -62,6 +71,13 @@ const SAFE_NETWORK_ERROR_CODES = new Set([
   'ESOCKETTIMEDOUT',
   'ETIMEDOUT'
 ])
+
+type ProviderErrorSnapshot = Readonly<{
+  body: Buffer
+  headers: Record<string, string>
+  status: number
+  upstreamStatus: number
+}>
 
 class NativeResponsesTimeoutError extends Error {
   readonly code = 'ETIMEDOUT'
@@ -302,6 +318,17 @@ const streamResponse = async (
   response.end()
 }
 
+const readResponseText = async (upstream: Response, onActivity: () => void): Promise<string> => {
+  if (!upstream.body) throw new Error('native Responses upstream returned no body')
+  const decoder = new TextDecoder()
+  let body = ''
+  for await (const chunk of upstream.body) {
+    onActivity()
+    body += decoder.decode(chunk, { stream: true })
+  }
+  return body + decoder.decode()
+}
+
 const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): JsonObject[] => {
   const byNamespace = new Map<string, JsonObject[]>()
   for (const tool of tools) {
@@ -331,6 +358,8 @@ export class NativeResponsesCompatibilityProxy {
   private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
   private readonly scopedHostMessageSessionKeys = new Set<string>()
   private readonly strictHostMessageSessionKeys = new Set<string>()
+  private readonly deterministicErrors =
+    new DeterministicProviderErrorReplay<ProviderErrorSnapshot>()
 
   constructor(
     private target: NativeResponsesCompatibilityTarget,
@@ -365,7 +394,12 @@ export class NativeResponsesCompatibilityProxy {
   }
 
   setTarget(target: NativeResponsesCompatibilityTarget): void {
+    const changed =
+      this.target.baseUrl !== target.baseUrl ||
+      this.target.model !== target.model ||
+      this.target.key !== target.key
     this.target = target
+    if (changed) this.deterministicErrors.clear()
   }
 
   setModelTarget(target: ResponsesBridgeModelTarget): void {
@@ -510,6 +544,7 @@ export class NativeResponsesCompatibilityProxy {
   }
 
   async close(): Promise<void> {
+    this.deterministicErrors.clear()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
     this.toolLessSessionKeys.clear()
@@ -590,6 +625,12 @@ export class NativeResponsesCompatibilityProxy {
         : scopedBody
       const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(routedBody)
       const upstreamRequestBody = JSON.stringify(upstreamRequest)
+      const headersToForward = upstreamHeaders(request, this.target.key)
+      const replayKey = providerRequestFingerprint(
+        this.target.baseUrl,
+        providerRequestHeadersFingerprint(headersToForward),
+        upstreamRequestBody
+      )
       const requestBytes = Buffer.byteLength(upstreamRequestBody, 'utf8')
       // Derive the input size from the already-serialized body so a large multimodal input is not
       // serialized a second time just for diagnostics. The subtracted 8/9 bytes are the JSON key and
@@ -627,13 +668,26 @@ export class NativeResponsesCompatibilityProxy {
         toolLessScoped
       })
       phase = 'upstream-fetch'
+      const replay = this.deterministicErrors.get(replayKey)
+      if (replay) {
+        phase = 'forward-response'
+        response.writeHead(replay.status, replay.headers)
+        response.end(replay.body)
+        log.info('native Responses compatibility request completed', {
+          requestId,
+          status: replay.upstreamStatus,
+          replayed: true,
+          durationMs: Math.max(0, Date.now() - startedAt)
+        })
+        return
+      }
       armUpstreamTimeout(
         this.options.responseHeaderTimeoutMs ?? DEFAULT_RESPONSE_HEADER_TIMEOUT_MS,
         'Native Responses upstream did not return response headers in time.'
       )
       const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
-        headers: upstreamHeaders(request, this.target.key),
+        headers: headersToForward,
         body: upstreamRequestBody,
         signal: AbortSignal.any([request.signal, upstreamAbort.signal])
       })
@@ -647,11 +701,62 @@ export class NativeResponsesCompatibilityProxy {
         durationMs: Math.max(0, Date.now() - startedAt)
       })
       phase = 'forward-response'
-      if (responseType === 'event-stream') {
+      if (isDeterministicProviderErrorStatus(upstream.status)) {
+        const boundedBody = await readBoundedProviderErrorBody(upstream, {
+          signal: request.signal
+        })
+        let rawBody = boundedBody.body
+        let bodyIsReplayable = boundedBody.complete
+        if (boundedBody.complete && responseType === 'json') {
+          try {
+            rawBody = Buffer.from(
+              JSON.stringify(
+                restoreNativeResponsesPayload(
+                  JSON.parse(boundedBody.body.toString('utf8')),
+                  aliases
+                )
+              )
+            )
+          } catch {
+            bodyIsReplayable = false
+          }
+        }
+        bodyIsReplayable &&= rawBody.byteLength <= MAX_REPLAY_ERROR_BODY_BYTES
+        const bodyToReplay = bodyIsReplayable
+          ? rawBody
+          : Buffer.from(
+              JSON.stringify({
+                error: {
+                  type: 'invalid_request_error',
+                  message: `Provider request failed with status ${upstream.status}`,
+                  status: upstream.status
+                }
+              })
+            )
+        const headers = {
+          ...copyResponseHeaders(upstream),
+          ...(bodyIsReplayable ? {} : { 'content-type': 'application/json' }),
+          'content-length': String(bodyToReplay.byteLength),
+          'x-open-science-upstream-status': String(upstream.status)
+        }
+        const snapshot = {
+          body: bodyToReplay,
+          headers,
+          status: providerErrorClientStatus(upstream.status),
+          upstreamStatus: upstream.status
+        }
+        this.deterministicErrors.remember(replayKey, upstream.status, snapshot)
+        response.writeHead(snapshot.status, snapshot.headers)
+        response.end(snapshot.body)
+      } else if (responseType === 'event-stream') {
         armStreamIdleTimeout()
         await streamResponse(upstream, response, aliases, armStreamIdleTimeout)
       } else if (responseType === 'json') {
-        const payload = restoreNativeResponsesPayload(await upstream.json(), aliases)
+        armStreamIdleTimeout()
+        const payload = restoreNativeResponsesPayload(
+          JSON.parse(await readResponseText(upstream, armStreamIdleTimeout)),
+          aliases
+        )
         response.writeHead(upstream.status, copyResponseHeaders(upstream))
         response.end(JSON.stringify(payload))
       } else {

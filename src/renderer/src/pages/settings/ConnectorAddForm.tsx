@@ -95,6 +95,9 @@ type ConnectorAddFormProps = {
   initialTemplate?: ConnectorTemplateDefinition
   // When set, the form edits this custom server instead of adding a new one. Its name is immutable.
   editServer?: CustomServerView
+  // Stable edit intent from Settings navigation. Unlike editServer, this remains set if a live
+  // catalog refresh removes the target while the draft is open.
+  editServerId?: string
   // Called after the custom server has been added/updated successfully.
   onDone: () => void
   onCancel: () => void
@@ -110,6 +113,7 @@ export function ConnectorAddForm({
   initialTransport,
   initialTemplate,
   editServer,
+  editServerId,
   onDone,
   onCancel
 }: ConnectorAddFormProps): React.JSX.Element {
@@ -120,7 +124,9 @@ export function ConnectorAddForm({
   const connectors = useSettingsStore((s) => s.connectors)
   const customServers = useSettingsStore((s) => s.customServers)
   const reservedCustomServerIds = useSettingsStore((s) => s.reservedCustomServerIds ?? [])
-  const isEdit = editServer !== undefined
+  const stableEditServerId = editServerId ?? editServer?.id
+  const isEdit = stableEditServerId !== undefined
+  const editTargetMissing = isEdit && editServer === undefined
 
   const [mode, setMode] = useState<ConnectorMode>(
     editServer
@@ -134,11 +140,7 @@ export function ConnectorAddForm({
   )
   const [name, setName] = useState(editServer?.name ?? initialTemplate?.name ?? '')
   const [nameTouched, setNameTouched] = useState(initialTemplate !== undefined)
-  const currentName = isEdit
-    ? (editServer?.name ?? '')
-    : nameTouched
-      ? name
-      : toCustomConnectorName(displayName)
+  const currentName = isEdit ? name : nameTouched ? name : toCustomConnectorName(displayName)
   const [id, setId] = useState('')
   const [idTouched, setIdTouched] = useState(false)
   const [fallbackId] = useState(() => crypto.randomUUID())
@@ -153,7 +155,7 @@ export function ConnectorAddForm({
   )
   const inferredId = inferResourceId(currentName)
   const generatedId = inferredId && !usedIds.has(inferredId) ? inferredId : fallbackId
-  const currentId = isEdit ? (editServer?.id ?? '') : idTouched ? id : generatedId
+  const currentId = isEdit ? (stableEditServerId ?? '') : idTouched ? id : generatedId
   const submittedId = idTouched ? id.trim() : generatedId === fallbackId ? fallbackId : undefined
   const rawIdError = useMemo((): string | null => {
     if (isEdit || !idTouched || !id.trim()) return null
@@ -179,14 +181,14 @@ export function ConnectorAddForm({
     if (
       customServers.some(
         (server) =>
-          server.id !== editServer?.id &&
+          server.id !== stableEditServerId &&
           (server.name === currentName || (!isEdit && server.id === currentName))
       )
     ) {
       return t('A custom Connector with this name already exists.')
     }
     return null
-  }, [connectors, currentName, customServers, editServer?.id, isEdit, t])
+  }, [connectors, currentName, customServers, stableEditServerId, isEdit, t])
   const [description, setDescription] = useState(
     editServer?.description ?? initialTemplate?.description ?? ''
   )
@@ -281,7 +283,7 @@ export function ConnectorAddForm({
     !idError &&
     (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
     requiredSecretValuesFilled
-  const canSubmit = requiredFilled && trusted && !submitting
+  const canSubmit = requiredFilled && trusted && !submitting && !editTargetMissing
 
   const switchMode = (next: ConnectorMode): void => {
     setMode(next)
@@ -329,9 +331,10 @@ export function ConnectorAddForm({
             })
       }
 
-      if (isEdit && editServer) {
+      if (isEdit) {
+        if (editTargetMissing || !stableEditServerId) return
         const request: UpdateCustomServerRequest = {
-          id: editServer.id,
+          id: stableEditServerId,
           ...shared,
           ...(mode === 'local' && hasEnv ? { env } : {}),
           ...(mode === 'remote' && remoteAuth !== 'headers'
@@ -378,6 +381,14 @@ export function ConnectorAddForm({
               'Imported configuration is prefilled below. Enter required credentials locally, review every field, then confirm that you trust the Connector.'
             )}
           </div>
+        ) : null}
+        {editTargetMissing ? (
+          <p
+            className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+            role="alert"
+          >
+            {t('This Connector no longer exists. Your draft has not been saved.')}
+          </p>
         ) : null}
         <RadioGroup.Root
           aria-label={t('Connector type')}

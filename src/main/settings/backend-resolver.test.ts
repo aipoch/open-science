@@ -134,7 +134,8 @@ const makeAnthropicProviderBridgeDouble = (): AnthropicProviderBridgeDouble => (
     token: 'anthropic-bridge-token'
   })),
   close: vi.fn(async () => undefined),
-  setTarget: vi.fn(() => true)
+  setTarget: vi.fn(() => true),
+  clearErrorReplay: vi.fn()
 })
 
 const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDouble => ({
@@ -143,7 +144,8 @@ const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDoub
     token: `openai-bridge-token-${index}`
   })),
   close: vi.fn(async () => undefined),
-  setTarget: vi.fn(() => true)
+  setTarget: vi.fn(() => true),
+  clearErrorReplay: vi.fn()
 })
 
 type HarnessOptions = {
@@ -631,15 +633,26 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await backend.anthropicBridgeLease?.release()
   })
 
-  it('omits an Anthropic bridge target when the active generation has no bridge', async () => {
+  it('keeps a single Claude target behind loopback and projects its model target', async () => {
     const harness = makeHarness()
     const backend = await harness.resolver.resolveActiveBackend()
 
-    expect(backend.anthropicBridgeLease).toBeUndefined()
-    expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
-    await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.not.toHaveProperty(
-      'anthropicBridgeTargetId'
+    expect(backend.anthropicBridgeLease).toBeDefined()
+    expect(harness.createAnthropicProviderBridge).toHaveBeenCalledWith(
+      [
+        {
+          id: JSON.stringify(['provider-a', 'model-a']),
+          baseUrl: 'https://gateway.example',
+          key: 'plain:provider-a-key-ref',
+          model: 'model-a'
+        }
+      ],
+      JSON.stringify(['provider-a', 'model-a'])
     )
+    await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.toMatchObject({
+      anthropicBridgeTargetId: JSON.stringify(['provider-a', 'model-a'])
+    })
+    await backend.anthropicBridgeLease?.release()
   })
 
   it('routes configured Claude API providers through one retargetable loopback generation', async () => {
@@ -1048,7 +1061,11 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       reasoningEffort: 'high'
     })
 
-    expect(explicit).toEqual(configured)
+    const { anthropicBridgeLease: configuredLease, ...configuredStable } = configured
+    const { anthropicBridgeLease: explicitLease, ...explicitStable } = explicit
+    expect(explicitStable).toEqual(configuredStable)
+    expect(configuredLease).toBeDefined()
+    expect(explicitLease).toBeDefined()
     expect(harness.resolveRuntimeTarget).toHaveBeenNthCalledWith(
       1,
       settings.providers[0],
@@ -1061,6 +1078,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       { kind: 'provider-default' },
       expect.objectContaining({ id: 'claude-code' })
     )
+    await configuredLease?.release()
+    await explicitLease?.release()
   })
 
   it('late-binds a configured selection but keeps an explicit target fixed', async () => {

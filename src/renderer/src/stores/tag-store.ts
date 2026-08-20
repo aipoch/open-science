@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import type {
   CreateTagRequest,
+  ReorderTagsRequest,
   SetTagAssignmentRequest,
   TagSnapshot,
   TagResourceType,
@@ -23,6 +24,7 @@ type TagStore = TagSnapshot & {
   create(request: CreateTagRequest): Promise<string>
   update(request: UpdateTagRequest): Promise<void>
   delete(id: string): Promise<void>
+  reorder(request: ReorderTagsRequest): Promise<void>
   setAssignment(request: SetTagAssignmentRequest): Promise<void>
   listen(): () => void
 }
@@ -55,7 +57,12 @@ const stateFromSnapshot = (
 
 export const useTagStore = create<TagStore>((set, get) => ({
   ...createInitialTagState(),
-  setBrowserSelectedId: (browserSelectedId) => set({ browserSelectedId, browserScrollTop: 0 }),
+  setBrowserSelectedId: (browserSelectedId) =>
+    set((state) =>
+      state.browserSelectedId === browserSelectedId
+        ? { browserSelectedId }
+        : { browserSelectedId, browserScrollTop: 0 }
+    ),
   setBrowserTypeFilter: (browserTypeFilter) => set({ browserTypeFilter, browserScrollTop: 0 }),
   setBrowserQuery: (browserQuery) => set({ browserQuery, browserScrollTop: 0 }),
   setBrowserScrollTop: (browserScrollTop) => set({ browserScrollTop }),
@@ -105,6 +112,28 @@ export const useTagStore = create<TagStore>((set, get) => ({
     const snapshot = await window.api.tags.delete({ id })
     loadSequence += 1
     set({ ...stateFromSnapshot(snapshot), error: undefined })
+  },
+  reorder: async (request) => {
+    const before = get().tags
+    const byId = new Map(before.map((tag) => [tag.id, tag]))
+    set({
+      tags: [
+        ...before.filter((tag) => 'systemKey' in tag),
+        ...request.tagIds.flatMap((id) => {
+          const tag = byId.get(id)
+          return tag && !('systemKey' in tag) ? [tag] : []
+        })
+      ]
+    })
+    try {
+      const snapshot = await window.api.tags.reorder(request)
+      loadSequence += 1
+      set({ ...stateFromSnapshot(snapshot), error: undefined })
+    } catch (error) {
+      set({ tags: before })
+      await get().load()
+      throw error
+    }
   },
   setAssignment: async (request) => {
     const before = get().assignments

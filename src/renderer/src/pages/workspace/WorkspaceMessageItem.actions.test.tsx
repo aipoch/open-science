@@ -29,6 +29,9 @@ vi.mock('./artifact-preview', () => ({
 
 let container: HTMLDivElement
 let root: Root
+let notifyResize: (() => void) | undefined
+
+const originalResizeObserver = globalThis.ResizeObserver
 
 const writeText = vi.fn().mockResolvedValue(undefined)
 
@@ -132,6 +135,18 @@ const typeIntoEditor = async (editor: HTMLElement, text: string): Promise<void> 
 }
 
 beforeEach(() => {
+  globalThis.ResizeObserver = class {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(): void {
+      notifyResize = () => this.callback([], this as unknown as ResizeObserver)
+    }
+    disconnect(): void {
+      notifyResize = undefined
+    }
+    unobserve(): void {
+      notifyResize = undefined
+    }
+  }
   writeText.mockClear()
   Object.defineProperty(window.navigator, 'clipboard', {
     value: { writeText },
@@ -146,6 +161,9 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  notifyResize = undefined
+  if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver
+  else delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver
 })
 
 describe('WorkspaceMessageItem user message actions', () => {
@@ -273,6 +291,136 @@ describe('WorkspaceMessageItem user message actions', () => {
 
     const bubbleRow = container.querySelector<HTMLElement>('[data-slot="user-bubble-row"]')
     expect(bubbleRow?.classList.contains('w-full')).toBe(true)
+  })
+
+  it('collapses user message content beyond twelve lines and expands it downward on demand', async () => {
+    await renderItem(createMessage({ content: 'Long prompt line\n'.repeat(13) }))
+
+    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')
+    const measurement = container.querySelector<HTMLElement>(
+      '[data-slot="user-message-measurement"]'
+    )
+    if (!content || !measurement) throw new Error('user message content not found')
+    expect(measurement.textContent).toBe('')
+    expect(measurement.dataset.content).toBe('Long prompt line\n'.repeat(13))
+    measurement.style.lineHeight = '20px'
+    Object.defineProperty(measurement, 'scrollHeight', { configurable: true, value: 260 })
+    act(() => notifyResize?.())
+
+    const showMore = getButton('Show more')
+    const ellipsis = container.querySelector<HTMLElement>(
+      '[data-slot="user-message-collapse-ellipsis"]'
+    )
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
+    expect(content.classList.contains('overflow-hidden')).toBe(true)
+    expect(ellipsis?.textContent?.trim()).toBe('…')
+    expect(ellipsis?.getAttribute('aria-hidden')).toBe('true')
+    expect(showMore.classList.contains('mt-1')).toBe(true)
+    expect(showMore.getAttribute('aria-expanded')).toBe('false')
+    expect(showMore.getAttribute('aria-controls')).toBe(content.id)
+
+    await click(showMore)
+
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(false)
+    expect(content.classList.contains('overflow-hidden')).toBe(false)
+    expect(container.querySelector('[data-slot="user-message-collapse-ellipsis"]')).toBeNull()
+    const showLess = getButton('Show less')
+    expect(showLess.classList.contains('mt-2')).toBe(true)
+    expect(showLess.getAttribute('aria-expanded')).toBe('true')
+
+    await click(showLess)
+
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
+    expect(container.querySelector('[data-slot="user-message-collapse-ellipsis"]')).not.toBeNull()
+    expect(getButton('Show more').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('keeps short user message content fully visible without an expand control', async () => {
+    await renderItem(createMessage({ content: 'Short prompt' }))
+
+    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')
+    const measurement = container.querySelector<HTMLElement>(
+      '[data-slot="user-message-measurement"]'
+    )
+    if (!content || !measurement) throw new Error('user message content not found')
+    measurement.style.lineHeight = '20px'
+    Object.defineProperty(measurement, 'scrollHeight', { configurable: true, value: 240 })
+    act(() => notifyResize?.())
+
+    expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(false)
+  })
+
+  it('remeasures structured content and uses a non-interactive summary while collapsed', async () => {
+    const text = 'Structured prompt line\n'.repeat(13)
+    const contentText = `${text}/forecast @evidence.csv`
+    await renderItem(
+      createMessage({
+        content: contentText,
+        parts: [
+          { type: 'text', text },
+          { type: 'skill', id: 'skill-forecast', name: 'forecast' },
+          { type: 'text', text: ' ' },
+          {
+            type: 'artifact',
+            id: 'artifact-1',
+            name: 'evidence.csv',
+            path: '/project/evidence.csv',
+            source: 'artifact'
+          }
+        ],
+        uploads: [
+          {
+            id: 'upload-1',
+            sessionId: 'session-1',
+            name: 'evidence.pdf',
+            originalName: 'evidence.pdf',
+            mimeType: 'application/pdf',
+            size: 1024
+          }
+        ]
+      })
+    )
+
+    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')
+    const measurement = container.querySelector<HTMLElement>(
+      '[data-slot="user-message-measurement"]'
+    )
+    const attachment = getButton('Preview uploaded attachment evidence.pdf')
+    if (!content || !measurement) throw new Error('user message content not found')
+    const measuredSkill = measurement.querySelector<HTMLElement>('[data-part-type="skill"]')
+    const measuredArtifact = measurement.querySelector<HTMLElement>('[data-part-type="artifact"]')
+    expect(measurement.textContent).toBe('')
+    expect(measurement.dataset.content).toBeUndefined()
+    expect(measuredSkill?.dataset.content).toBe('/forecast')
+    expect(measuredSkill?.classList.contains('px-1.5')).toBe(true)
+    expect(measuredArtifact?.dataset.content).toBe('@evidence.csv')
+    expect(measuredArtifact?.classList.contains('inline-flex')).toBe(true)
+    measurement.style.lineHeight = '20px'
+    let scrollHeight = 250
+    Object.defineProperty(measurement, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight
+    })
+
+    act(() => notifyResize?.())
+    expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
+    expect(getButton('Open skill forecast')).not.toBeNull()
+
+    scrollHeight = 260
+    act(() => notifyResize?.())
+
+    expect(getButton('Show more')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Open skill forecast"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Preview evidence.csv"]')).toBeNull()
+    expect(content.textContent).toBe(contentText)
+    expect(content.contains(attachment)).toBe(false)
+
+    await click(getButton('Show more'))
+
+    expect(content.contains(getButton('Open skill forecast'))).toBe(true)
+    expect(content.contains(getButton('Preview evidence.csv'))).toBe(true)
+    expect(getButton('Show less').getAttribute('aria-expanded')).toBe('true')
   })
 
   it('labels an interrupted user turn without creating another message item', async () => {

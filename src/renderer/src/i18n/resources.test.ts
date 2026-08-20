@@ -17,19 +17,24 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import fr from '../locales/fr.json'
 import ja from '../locales/ja.json'
+import ko from '../locales/ko.json'
 import zhHans from '../locales/zh-Hans.json'
 import zhHant from '../locales/zh-Hant.json'
 import {
   englishSourceFallbackPostProcessor,
   hasValidTagStructure,
+  resources,
   sanitizeCatalog
 } from './resources'
 
 type Catalog = Record<string, string>
 
 const sourceCatalogs = {
+  fr,
   ja,
+  ko,
   'zh-Hans': zhHans,
   'zh-Hant': zhHant
 } as const
@@ -58,10 +63,23 @@ const markers = (text: string): string[] =>
 const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
+const REQUIRED_PLURAL_CATEGORIES = {
+  fr: ['one', 'many', 'other'],
+  ja: ['other'],
+  ko: ['other'],
+  'zh-Hans': ['other'],
+  'zh-Hant': ['other']
+} as const satisfies Record<TranslatedLocale, readonly string[]>
 // This key is selected by a lookup table whose caller always supplies count=0, even though the copy
 // itself has no interpolation marker. Keep the exceptional contract explicit; every other counted
 // key is discovered by its {{count}} marker below.
 const COUNTED_KEYS_WITHOUT_MARKER = ['probed just now'] as const
+
+describe('supported catalog registration', () => {
+  it('ships every translated catalog in the synchronous first-paint resources', () => {
+    expect(Object.keys(resources).sort()).toEqual([...TRANSLATED].sort())
+  })
+})
 
 describe('runtime catalog fallback', () => {
   it('keeps valid translations without copying the catalog', () => {
@@ -200,30 +218,53 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     expect(malformed).toEqual([])
   })
 
-  // Chinese and Japanese have a single plural category, so a `_one` entry is copy that can never
-  // render. English needs no catalog entry at all: the key carries the plural form and the call site
-  // passes the singular as `defaultValue_one`.
+  // Catalogs carry exactly the categories selected by the locale's CLDR rules. English needs no
+  // catalog entry at all: the key carries the plural form and the call site passes the singular as
+  // `defaultValue_one`.
   it('uses only the plural categories the translated grammar has', () => {
+    const allowed = new Set<string>(REQUIRED_PLURAL_CATEGORIES[locale])
     const wrong = Object.keys(catalog(locale))
       .map((key) => ({ key, suffix: key.split('_').at(-1) ?? '' }))
-      .filter(({ suffix }) => PLURAL_CATEGORIES.has(suffix) && suffix !== 'other')
+      .filter(({ suffix }) => PLURAL_CATEGORIES.has(suffix) && !allowed.has(suffix))
       .map(({ key }) => key)
 
     expect(wrong).toEqual([])
   })
 
-  it('stores every counted translation under the locale _other category', () => {
+  it('stores every counted translation under a locale plural category', () => {
     const bareCountedKeys = Object.keys(catalog(locale)).filter(
-      (key) => englishOf(key).includes('{{count}}') && !key.endsWith('_other')
+      (key) =>
+        englishOf(key).includes('{{count}}') &&
+        ![...PLURAL_CATEGORIES].some((category) => key.endsWith(`_${category}`))
     )
 
     expect(bareCountedKeys).toEqual([])
   })
 
+  it('provides every plural category selected by the locale at runtime', () => {
+    const entries = catalog(locale)
+    const pluralGroups = new Set(
+      Object.keys(entries)
+        .filter((key) => PLURAL_CATEGORIES.has(key.split('_').at(-1) ?? ''))
+        .map((key) => key.replace(/_(?:zero|one|two|few|many|other)$/, ''))
+    )
+    const missing = [...pluralGroups].flatMap((key) =>
+      REQUIRED_PLURAL_CATEGORIES[locale]
+        .filter((category) => entries[`${key}_${category}`] === undefined)
+        .map((category) => `${key}_${category}`)
+    )
+
+    expect(missing).toEqual([])
+  })
+
   it('suffixes dynamic counted keys that have no interpolation marker', () => {
     const entries = catalog(locale)
     const invalid = COUNTED_KEYS_WITHOUT_MARKER.filter(
-      (key) => entries[key] !== undefined || entries[`${key}_other`] === undefined
+      (key) =>
+        entries[key] !== undefined ||
+        REQUIRED_PLURAL_CATEGORIES[locale].some(
+          (category) => entries[`${key}_${category}`] === undefined
+        )
     )
 
     expect(invalid).toEqual([])
@@ -231,7 +272,25 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
 })
 
 describe('dynamic counted lookup translations', () => {
+  it('renders the French CLDR many category without falling back to English', async () => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'fr',
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { fr: { translation: catalog('fr') } }
+    })
+
+    expect(instance.t('{{count}} files', { count: 1_000_000 })).toBe('1000000 fichiers')
+  })
+
   it.each([
+    {
+      locale: 'fr' as const,
+      expected: ["vérifié à l'instant", 'vérifié il y a 3 h', 'il y a 3 j', 'il y a 3 jours']
+    },
     {
       locale: 'zh-Hans' as const,
       expected: ['刚刚探测', '3 小时前探测', '3 天前', '3 天前']
@@ -243,6 +302,10 @@ describe('dynamic counted lookup translations', () => {
     {
       locale: 'ja' as const,
       expected: ['たった今確認', '3時間前に確認', '3日前', '3日前']
+    },
+    {
+      locale: 'ko' as const,
+      expected: ['방금 확인함', '3시간 전에 확인함', '3일 전', '3일 전']
     }
   ])('resolves $locale lookup-table keys through _other', async ({ locale, expected }) => {
     const instance = i18next.createInstance()
@@ -278,27 +341,56 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
-  it('keeps Japanese product and technical terms in English', () => {
-    const japaneseOnlyGlossary = [
-      { term: 'Open Science', source: /\bOpen Science\b/ },
-      { term: 'Claude', source: /\bClaude\b/ },
-      { term: 'Codex', source: /\bCodex\b/ },
-      { term: 'opencode', source: /\bOpenCode\b/ },
-      { term: 'MCP', source: /\bMCP\b/ },
-      { term: 'ACP', source: /\bACP\b/ },
-      { term: 'API', source: /\bAPI\b/ },
-      { term: 'CLI', source: /\bCLI\b/ },
-      { term: 'SSH', source: /\bSSH\b/ },
-      { term: 'GitHub', source: /\bGitHub\b/ },
-      { term: 'Star', source: /\bstars?\b/i },
-      { term: 'Discord', source: /\bDiscord\b/ },
-      { term: 'Python', source: /\bPython\b/ },
-      { term: 'Jupyter', source: /\bJupyter\b/ }
+  it.each(['fr', 'ja', 'ko'] as const)(
+    '%s keeps product and technical terms in English',
+    (locale) => {
+      const retainedProductGlossary = [
+        { term: 'Open Science', source: /\bOpen Science\b/ },
+        { term: 'Anthropic', source: /\bAnthropic\b/ },
+        { term: 'Claude', source: /\bClaude\b/ },
+        { term: 'Codex', source: /\bCodex\b/ },
+        { term: 'opencode', source: /\bOpenCode\b/ },
+        { term: 'MCP', source: /\bMCP\b/ },
+        { term: 'ACP', source: /\bACP\b/ },
+        { term: 'API', source: /\bAPI\b/ },
+        { term: 'CLI', source: /\bCLI\b/ },
+        { term: 'SSH', source: /\bSSH\b/ },
+        { term: 'ZIP', source: /\bZIP\b/ },
+        { term: 'GitHub', source: /\bGitHub\b/ },
+        { term: 'Discord', source: /\bDiscord\b/ },
+        { term: 'Python', source: /\bPython\b/ },
+        { term: 'Jupyter', source: /\bJupyter\b/ },
+        { term: 'Office', source: /\bOffice\b/ },
+        { term: 'Chromium', source: /\bChromium\b/ }
+      ]
+      const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+        const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
+        return retainedProductGlossary
+          .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
+          .map(({ term }) => `${key}: ${term}`)
+      })
+
+      expect(offenders).toEqual([])
+    }
+  )
+
+  it('keeps reviewed French product and technical names in English', () => {
+    const retainedTerms = [
+      { term: 'Anthropic', source: /\bAnthropic\b/ },
+      { term: 'Claude Code', source: /\bClaude Code\b/ },
+      { term: 'Chromium', source: /\bChromium\b/ },
+      { term: 'Electron', source: /\bElectron\b/ },
+      { term: 'Markdown', source: /\bMarkdown\b/ },
+      { term: 'Remote.It', source: /\bRemote\.It\b/ }
     ]
-    const offenders = Object.entries(catalog('ja')).flatMap(([key, value]) => {
-      const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
-      return japaneseOnlyGlossary
-        .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
+    const offenders = Object.entries(catalog('fr')).flatMap(([key, value]) => {
+      const source = englishOf(key)
+      return retainedTerms
+        .filter(({ term, source: pattern }) => {
+          const sourceOccurrences = source.split(term).length - 1
+          const translationOccurrences = value.split(term).length - 1
+          return pattern.test(source) && translationOccurrences < sourceOccurrences
+        })
         .map(({ term }) => `${key}: ${term}`)
     })
 
@@ -306,14 +398,40 @@ describe('mandatory product glossary', () => {
   })
 
   const chosenGenericTerms = {
+    fr: {
+      Agent: 'Agent',
+      'Agent framework': "Framework d'agents",
+      'Command line tool': 'Outil en ligne de commande',
+      Diagnostics: 'Diagnostics',
+      failed: 'échec',
+      Skills: 'Compétences',
+      Specialist: 'Spécialiste',
+      Specialists: 'Spécialistes',
+      Marketplace: 'Place de marché',
+      Connector: 'Connecteur',
+      Main: 'Agent principal',
+      Light: 'Clair',
+      Resume: 'Reprendre',
+      Running: 'En cours',
+      running: 'en cours',
+      Terminal: 'Terminal',
+      Shell: 'Terminal',
+      'Token usage': 'Utilisation des jetons',
+      'Claude setup token': 'Jeton de configuration Claude',
+      'Token: {{masked}}': 'Jeton\u00a0: {{masked}}'
+    },
     'zh-Hans': {
       Agent: '智能体',
+      'Agent framework': '智能体框架',
+      Resume: '继续',
       Skills: '技能',
       Specialist: '专家',
       Specialists: '专家',
       Marketplace: '市场',
       Connector: '连接器',
       Main: '主智能体',
+      Light: '浅色',
+      Running: '运行中',
       Shell: '命令行',
       'Token usage': '词元用量',
       'Claude setup token': 'Claude 设置令牌',
@@ -321,12 +439,16 @@ describe('mandatory product glossary', () => {
     },
     'zh-Hant': {
       Agent: '智能體',
+      'Agent framework': '智能體框架',
+      Resume: '繼續',
       Skills: '技能',
       Specialist: '專家',
       Specialists: '專家',
       Marketplace: '市集',
       Connector: '連接器',
       Main: '主智能體',
+      Light: '淺色',
+      Running: '執行中',
       Shell: '命令列',
       'Token usage': '詞元用量',
       'Claude setup token': 'Claude 設定權杖',
@@ -334,16 +456,33 @@ describe('mandatory product glossary', () => {
     },
     ja: {
       Agent: 'エージェント',
+      'Agent framework': 'エージェントフレームワーク',
+      Resume: '再開',
       Skills: 'スキル',
       Specialist: 'スペシャリスト',
       Specialists: 'スペシャリスト',
       Marketplace: 'マーケットプレイス',
       Connector: 'コネクタ',
       Main: 'メインエージェント',
+      Light: 'ライト',
+      Running: '実行中',
       Shell: 'シェル',
       'Token usage': 'トークン使用量',
       'Claude setup token': 'Claude セットアップトークン',
       'Token: {{masked}}': 'トークン：{{masked}}'
+    },
+    ko: {
+      Agent: '에이전트',
+      Skills: '스킬',
+      Specialist: '스페셜리스트',
+      Specialists: '스페셜리스트',
+      Marketplace: '마켓플레이스',
+      Connector: '커넥터',
+      Main: '메인 에이전트',
+      Shell: '셸',
+      'Token usage': '토큰 사용량',
+      'Claude setup token': 'Claude 설정 토큰',
+      'Token: {{masked}}': '토큰: {{masked}}'
     }
   } satisfies Record<TranslatedLocale, Record<string, string>>
 
@@ -356,11 +495,229 @@ describe('mandatory product glossary', () => {
     expect(actual).toEqual(expected)
   })
 
+  it('uses the chosen French agent framework term in every sentence', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bagent frameworks?\b/i.test(englishOf(key)))
+      .filter(([key, value]) => {
+        const expected = /\bagent frameworks\b/i.test(englishOf(key))
+          ? /frameworks d'agents/i
+          : /framework d'agents/i
+        return !expected.test(value)
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses theme meanings for French light and dark copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key, value]) => {
+        const source = englishOf(key)
+        return (
+          (/\blight\b/i.test(source) && !/\bclair\b/i.test(value)) ||
+          (/\bdark\b/i.test(source) && !/\bsombre\b/i.test(value))
+        )
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses unambiguous French safety and operation copy', () => {
+    const expected = {
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.":
+        "Les conversations toujours liées à <name>{{name}}</name> deviendront <em>indisponibles</em> et <em>ne seront pas</em> automatiquement basculées vers l'agent principal. Pour chaque conversation concernée, vous devrez choisir explicitement un nouveau spécialiste ou l'agent principal avant de pouvoir envoyer à nouveau des messages.",
+      'The candidate authentication configuration is verified before commit. Session enablement and Permission Grants will be cleared.':
+        "La configuration d'authentification proposée est vérifiée avant validation. L'activation des sessions et les autorisations accordées seront supprimées.",
+      'Ask before file edits, commands, network, and MCP tools.':
+        "Demander une autorisation avant de modifier des fichiers, d'exécuter des commandes, d'accéder au réseau ou d'utiliser des outils MCP.",
+      'Allow for this conversation': 'Autoriser pour cette conversation',
+      'Allow for this project': 'Autoriser pour ce projet',
+      'Allowed this session': 'Autorisé pour cette session',
+      'Anthropic approx.': 'Estimation Anthropic',
+      'Clear all session grants': 'Révoquer toutes les autorisations de la session',
+      'Grant folder…': "Autoriser l'accès à un dossier…",
+      'Grant this folder': "Autoriser l'accès à ce dossier",
+      'Close Provenance': 'Fermer le panneau de provenance',
+      'Go to home': 'Accéder au dossier personnel',
+      'Go-to locations': 'Accès rapides',
+      Cartoon: 'Ruban',
+      'Cartoon requires a protein or nucleic-acid backbone':
+        'La représentation en rubans nécessite un squelette protéique ou nucléique',
+      'Reset runtime': "Réinitialiser l'environnement d'exécution",
+      'Install Specialist': 'Installer le spécialiste',
+      'Update Specialist': 'Mettre à jour le spécialiste',
+      '<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder.':
+        '<em>Vos données existantes (~{{size}}) seront déplacées</em> vers le nouvel emplacement — vos fichiers les accompagneront et rien ne restera dans le dossier actuel.',
+      "Opening your browser to sign in… Didn't open? Cancel and use a setup token.":
+        "Ouverture du navigateur pour vous connecter… Rien ne s'est ouvert\u00a0? Annulez et utilisez un jeton de configuration.",
+      "Opening your browser to sign in… finish there and this closes automatically. Didn't open, or prefer a token? Paste one below.":
+        "Ouverture du navigateur pour vous connecter… Terminez la connexion dans le navigateur\u00a0; cette fenêtre se fermera automatiquement. Rien ne s'est ouvert, ou vous préférez utiliser un jeton\u00a0? Collez-le ci-dessous.",
+      'Its contents fill the editor; switch back to Write to tweak.':
+        "Son contenu est chargé dans l'éditeur\u00a0; revenez à Écrire pour le modifier.",
+      Image: 'Image',
+      'Copy command': 'Copier la commande',
+      'Data location': 'Emplacement des données',
+      'Edit specialist': 'Modifier le spécialiste',
+      'Recent artifacts': 'Artefacts récents',
+      'Search sessions and artifacts…': 'Rechercher des sessions et des artefacts…',
+      'Search skills': 'Rechercher des compétences',
+      'Search skills to add': 'Rechercher des compétences à ajouter',
+      'Search skills…': 'Rechercher des compétences…',
+      'Search specialists': 'Rechercher des spécialistes',
+      'Search specialists…': 'Rechercher des spécialistes…',
+      'Specialist delete': 'Suppression du spécialiste',
+      'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.':
+        "Remote.It est un service tiers. Open Science utilise uniquement son interface en ligne de commande (CLI) de bureau installée par l'utilisateur ; il n'inclut pas ce logiciel, ne le redistribue pas, ne l'enregistre pas et ne crée aucun compte pour ce service.",
+      'No folders granted yet.': "Aucun accès à un dossier n'a encore été autorisé.",
+      "Your home folder itself can't be granted — pick a subfolder.":
+        "L'accès ne peut pas être accordé directement au dossier personnel ; choisissez un sous-dossier.",
+      'Refreshing…': 'Actualisation…',
+      Upload: 'Téléverser',
+      'Upload failed': 'Échec du téléversement',
+      Runtime: "Environnement d'exécution",
+      Runtime_duration: "Durée d'exécution"
+    }
+    const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
+
+    expect(actual).toEqual(expected)
+  })
+
+  it('uses the chosen French runtime term for environment surfaces', () => {
+    // These keys refer to an executable environment, not elapsed time or an individual run.
+    const runtimeEnvironmentKeys = [
+      'Agent runtime',
+      'Agent runtime repair issues',
+      "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first.",
+      'Could not change that runtime.',
+      'Could not check whether that runtime is in use, so it was not disabled.',
+      'Could not load runtimes.',
+      'Could not re-check runtimes.',
+      'Could not refresh runtime readiness.',
+      'Could not reset the runtime.',
+      'Detecting runtimes…',
+      'Downloading managed runtime…',
+      'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.',
+      'Manage your agent runtime and model providers.',
+      'Managed runtime is not set up yet',
+      'Notebook runtime',
+      'Notebook runtime (optional)',
+      'Notebook runtimes',
+      'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.',
+      'Set up the agent runtime',
+      'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.',
+      'Setting up {{language}} runtime',
+      'This removes the {{name}} runtime this app downloaded and manages. A separate {{name}} you installed yourself is not affected. You can reinstall it here at any time.',
+      '{{label}} runtime',
+      'View notebook runtimes?',
+      'Change notebook runtime?',
+      'Changes the runtime used by the current notebook session.'
+    ]
+    const offenders = runtimeEnvironmentKeys.filter(
+      (key) => !/environnements? d['’]exécution/i.test(catalog('fr')[key])
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the chosen French Marketplace term throughout the surface', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bMarketplace\b/.test(englishOf(key)))
+      .filter(([key]) => !key.includes('Specialist Marketplace protocol'))
+      .filter(([, value]) => !/place de marché/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the French specialist noun throughout role copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bSpecialists?\b/.test(englishOf(key)))
+      .filter(([key]) => !key.includes('Specialist Marketplace protocol'))
+      .filter(([, value]) => !/\bspécialistes?\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses natural French progress ratios without agreement ambiguity', () => {
+    const expected = {
+      '{{current}} of {{total}}': '{{current}} sur {{total}}',
+      '{{visible}} of {{total}}': '{{visible}} sur {{total}}',
+      '{{selected}} of {{total}} selected': 'Sélection : {{selected}}/{{total}}',
+      '{{selected}} of {{total}} included': 'Éléments inclus : {{selected}}/{{total}}'
+    }
+    const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
+
+    expect(actual).toEqual(expected)
+  })
+
+  it('uses an agreement-safe French token coverage ratio for every plural category', () => {
+    const expectedValue =
+      'Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.'
+    const keys = [
+      'Token totals are available for {{reported}} of {{count}} runs in this period._one',
+      'Token totals are available for {{reported}} of {{count}} runs in this period._other',
+      'Token totals are available for {{reported}} of {{count}} runs in this period._many'
+    ]
+
+    expect(keys.map((key) => catalog('fr')[key])).toEqual(keys.map(() => expectedValue))
+  })
+
+  it('does not use financial terms for French permission grants', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\b(?:grants?|granted)\b/i.test(englishOf(key)))
+      .filter(([, value]) => /\b(?:subventions?|octrois?)\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps French high punctuation attached to the preceding text', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([, value]) => / [;:?!]/.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not use exclamation points in French UI copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([, value]) => value.includes('!'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses téléverser consistently for French upload copy', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bupload(?:ed|ing|s)?\b/i.test(englishOf(key)))
+      .filter(([, value]) => !/télévers/i.test(value) || /télécharg/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each(['/path/to/new/location', '/scratch/username', '/path/to/corp-ca-bundle.pem'])(
+    'preserves the exact technical path %s in every translated catalog',
+    (path) => {
+      const offenders = TRANSLATED.filter((locale) => catalog(locale)[path] !== path)
+
+      expect(offenders).toEqual([])
+    }
+  )
+
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
-    const expected = { 'zh-Hans': '命令行', 'zh-Hant': '命令列', ja: 'シェル' }[locale]
+    const expected = {
+      fr: /\btermin(?:al|aux)\b/i,
+      'zh-Hans': /命令行/,
+      'zh-Hant': /命令列/,
+      ja: /シェル/,
+      ko: /셸/
+    }[locale]
     const offenders = Object.entries(catalog(locale))
       .filter(([key]) => /\bshell\b/i.test(englishOf(key)))
-      .filter(([, value]) => !value.includes(expected))
+      .filter(([, value]) => !expected.test(value))
       .map(([key]) => key)
 
     expect(offenders).toEqual([])
@@ -370,13 +727,15 @@ describe('mandatory product glossary', () => {
     '%s uses the chosen Main Agent spelling in every Main role label',
     (locale) => {
       const expected = {
+        fr: 'Agent principal',
         'zh-Hans': '主智能体',
         'zh-Hant': '主智能體',
-        ja: 'メインエージェント'
+        ja: 'メインエージェント',
+        ko: '메인 에이전트'
       }[locale]
       const offenders = Object.entries(catalog(locale))
         .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
-        .filter(([, value]) => !value.includes(expected))
+        .filter(([, value]) => !value.toLocaleLowerCase().includes(expected.toLocaleLowerCase()))
         .map(([key]) => key)
 
       expect(offenders).toEqual([])
@@ -386,13 +745,18 @@ describe('mandatory product glossary', () => {
   const exactTechnicalIdentifierPatterns = [
     /SKILL\.md/g,
     /\b[\w.-]+\.(?:md|txt|json|zip)\b/g,
-    /\.(?:md|zip)\b/g,
+    /\.(?:md|txt|json|zip|skill|yaml|yml|toml|csv|tsv|ipynb)\b/g,
     /\.skill\b/g,
     /skill:\/\//g,
     /host\.skill\b/g,
     /AGENTS\.md/g,
     /ssh-agent/g,
     /setup-token/g,
+    /\bopen-science\b/g,
+    /\bRemote\.It\b/g,
+    /\bZIP\b/g,
+    /(?<![:/\w])\/(?:[\w.-]+\/)+[\w.-]*[\w-]/g,
+    /\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
     /\bmax_tokens\b/g,
     /\bskills\//g,
     /(?:~\/|\.)[\w./-]*skills\b/g,
@@ -431,11 +795,63 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
+  it('ko preserves executable names, API identifiers, code spans, and data directory names', () => {
+    const patterns = [
+      /\bOpenScience\b/g,
+      /\b[\w.-]+\.(?:ps1|sh|mcp)\b/g,
+      /<code>[^<]+<\/code>/g,
+      /\bMessages(?= (?:or|또는) Chat Completions\b)/g,
+      /\bChat Completions\b/g
+    ]
+    const identifiers = (text: string): string[] =>
+      patterns
+        .flatMap((pattern) => text.match(pattern) ?? [])
+        .sort((left, right) => left.localeCompare(right))
+    const offenders = Object.entries(catalog('ko'))
+      .filter(
+        ([key, value]) =>
+          JSON.stringify(identifiers(englishOf(key))) !== JSON.stringify(identifiers(value))
+      )
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
   const localizedFeatureTerms = {
-    'zh-Hans': { agent: '智能体', skill: '技能' },
-    'zh-Hant': { agent: '智能體', skill: '技能' },
-    ja: { agent: 'エージェント', skill: 'スキル' }
-  } satisfies Record<TranslatedLocale, { agent: string; skill: string }>
+    fr: {
+      agent: 'agent',
+      skill: 'compétence',
+      untranslatedAgent: /\bsubagents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    'zh-Hans': {
+      agent: '智能体',
+      skill: '技能',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    'zh-Hant': {
+      agent: '智能體',
+      skill: '技能',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    ja: {
+      agent: 'エージェント',
+      skill: 'スキル',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
+    ko: {
+      agent: '에이전트',
+      skill: '스킬',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    }
+  } satisfies Record<
+    TranslatedLocale,
+    { agent: string; skill: string; untranslatedAgent: RegExp; untranslatedSkill: RegExp }
+  >
 
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
     const expected = localizedFeatureTerms[locale]
@@ -445,14 +861,20 @@ describe('mandatory product glossary', () => {
       return [
         {
           source: /\b(?:sub)?agents?\b/i,
-          untranslated: /\b(?:sub)?agents?\b/i,
+          untranslated: expected.untranslatedAgent,
           expected: expected.agent
         },
-        { source: /\bskills?\b/i, untranslated: /\bskills?\b/i, expected: expected.skill }
+        {
+          source: /\bskills?\b/i,
+          untranslated: expected.untranslatedSkill,
+          expected: expected.skill
+        }
       ]
         .filter(
           ({ source: pattern, untranslated, expected: term }) =>
-            pattern.test(source) && (!prose.includes(term) || untranslated.test(prose))
+            pattern.test(source) &&
+            (!prose.toLocaleLowerCase().includes(term.toLocaleLowerCase()) ||
+              untranslated.test(prose))
         )
         .map(({ expected: term }) => `${key}: ${term}`)
     })
@@ -467,9 +889,11 @@ describe('mandatory product glossary', () => {
     /^Token:/
   ]
   const localizedTokenTerms = {
+    fr: { credential: 'jeton', model: 'jeton' },
     'zh-Hans': { credential: '令牌', model: '词元' },
     'zh-Hant': { credential: '權杖', model: '詞元' },
-    ja: { credential: 'トークン', model: 'トークン' }
+    ja: { credential: 'トークン', model: 'トークン' },
+    ko: { credential: '토큰', model: '토큰' }
   } satisfies Record<TranslatedLocale, { credential: string; model: string }>
 
   it.each(TRANSLATED)('%s translates token according to credential or model context', (locale) => {
@@ -482,7 +906,10 @@ describe('mandatory product glossary', () => {
       const term = credentialTokenSource.some((pattern) => pattern.test(source))
         ? expected.credential
         : expected.model
-      return !prose.includes(term) || /\btokens?\b/i.test(prose) ? [`${key}: ${term}`] : []
+      return !prose.toLocaleLowerCase().includes(term.toLocaleLowerCase()) ||
+        /\btokens?\b/i.test(prose)
+        ? [`${key}: ${term}`]
+        : []
     })
 
     expect(offenders).toEqual([])
@@ -532,6 +959,574 @@ describe('Japanese safety copy', () => {
     ['{{count}} allowed this session_other', 'このセッションで {{count}} 件を許可済み']
   ])('preserves the scope of %s', (key, expected) => {
     expect(catalog('ja')[key]).toBe(expected)
+  })
+})
+
+describe('Korean safety copy', () => {
+  it.each([
+    ['Allow globally', '모든 프로젝트에서 허용'],
+    ['Allow for this project', '이 프로젝트에서 허용'],
+    ['Clear all session grants', '모든 세션 권한 지우기'],
+    ['Grant folder…', '폴더 권한 부여…'],
+    ['Grant this folder', '이 폴더에 권한 부여'],
+    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
+    ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
+    ['Approval applies to this call only.', '승인은 이 호출에만 적용됩니다.'],
+    ['This call only', '이 호출만'],
+    [
+      'Auto-approve edits to files in the workspace. Still ask before commands, network, and MCP.',
+      '워크스페이스의 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 작업 전에는 계속 확인합니다.'
+    ],
+    [
+      'Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.',
+      '워크스페이스 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 도구를 실행하기 전에는 계속 확인합니다.'
+    ],
+    [
+      '<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder.',
+      '<em>기존 데이터(~{{size}})가 새 위치로 이동됩니다</em> — 파일도 함께 이동되며 현재 폴더에는 아무것도 남지 않습니다.'
+    ],
+    [
+      'Choose how much the agent can do without asking when a conversation starts.',
+      '대화가 시작될 때 에이전트가 묻지 않고 수행할 수 있는 작업 범위를 선택하세요.'
+    ],
+    [
+      'New conversations can run commands, change files, execute notebook code, and access the network without asking first. Existing conversations are unchanged.',
+      '새로운 대화에서는 먼저 묻지 않고 명령을 실행하고, 파일을 변경하고, Notebook 코드를 실행하고, 네트워크에 액세스할 수 있습니다. 기존 대화에는 영향을 주지 않습니다.'
+    ],
+    [
+      "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears.",
+      '알림은 다른 앱을 사용하는 동안에만 표시됩니다. 사용자가 취소한 작업과 앱이 자동으로 다시 시도하는 실패는 알림을 표시하지 않습니다. 알림이 처음 표시될 때 운영 체제에서 알림 권한을 요청할 수 있습니다.'
+    ],
+    [
+      'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.',
+      'Remote.It은 제3자 서비스입니다. Open Science는 사용자가 설치한 데스크톱 CLI를 호출할 뿐이며, 이를 포함하거나 재배포하지 않고 등록하거나 계정을 생성하지도 않습니다.'
+    ],
+    [
+      'This report is posted publicly on GitHub. Edit the error text below to remove anything sensitive before sharing. Your runtime log stays on this device and is never attached automatically.',
+      '이 보고서는 GitHub에 공개로 게시됩니다. 공유하기 전에 아래 오류 텍스트를 편집하여 민감한 내용을 제거하세요. 런타임 로그는 이 기기에 남아 있으며 자동으로 첨부되지 않습니다.'
+    ],
+    [
+      '{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project._other',
+      '손상된 대화 {{count}}개를 별도 위치로 옮겼습니다. 상태를 확인할 수 없어 프로젝트 보관 기능은 계속 사용할 수 없습니다. 그래도 프로젝트를 영구 삭제할 수는 있습니다.'
+    ],
+    [
+      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+    ],
+    [
+      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone._other',
+      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+    ],
+    [
+      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+    ],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      '개별 권한은 계속 취소할 수 있습니다. 전체 집합이 확인될 때까지 모두 취소가 비활성화됩니다.'
+    ],
+    ['Declined by you: {{name}}', '사용자가 거부함: {{name}}'],
+    ['declined by you', '사용자가 거부함'],
+    ['{{count}} allowed this session_other', '이번 세션에서 {{count}}개 허용됨']
+  ])('preserves the scope of %s', (key, expected) => {
+    expect(catalog('ko')[key]).toBe(expected)
+  })
+})
+
+describe('Korean language endonyms', () => {
+  it('keeps Chinese language names in their own script', () => {
+    expect(catalog('ko')).toMatchObject({
+      简体中文: '简体中文',
+      繁體中文: '繁體中文'
+    })
+  })
+})
+
+const KOREAN_HIDDEN_FORMATTING = /[\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u
+
+describe('Korean native UI style', () => {
+  it('does not contain hidden formatting characters', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => KOREAN_HIDDEN_FORMATTING.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each(['\u061c', '\u2066', '\u2067', '\u2068', '\u2069'])(
+    'recognizes hidden bidirectional control U+%s',
+    (character) => {
+      expect(KOREAN_HIDDEN_FORMATTING.test(character)).toBe(true)
+    }
+  )
+
+  it('uses a consistent Korean product voice without translated second-person pronouns', () => {
+    const unnaturalVoice = /귀하|당신|우리는|그것을|하십시오|하시기 바랍니다|기다리고 있어요/u
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => unnaturalVoice.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not pad text inside Trans placeholder tags', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => /<\w+>\s|\s<\/\w+>/u.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not expose English plural notation', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => /\(s\)/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not use known invalid particles after product terms', () => {
+    const invalidParticles = [
+      '런타임로',
+      '저장소이',
+      '저장소을',
+      '환경로',
+      '토큰를',
+      '토큰는',
+      '작업로',
+      '마켓플레이스을',
+      '마켓플레이스은',
+      'Claude Code은',
+      'Claude Code을',
+      'opencode은',
+      'opencode을',
+      'Claude을',
+      'ACP이',
+      'SSH을',
+      'SKILL.md을',
+      '.ipynb을',
+      'PDF은',
+      'ZIP를',
+      'ssh-agent을',
+      '{{provider}}은'
+    ]
+    const offenders = Object.entries(catalog('ko')).flatMap(([key, value]) =>
+      invalidParticles
+        .filter((phrase) => value.includes(phrase))
+        .map((phrase) => `${key}: ${phrase}`)
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not use known literal machine-translation phrasing', () => {
+    const unnaturalPhrases = [
+      '미리보기에 대한',
+      '미리보기에 대해',
+      '디렉토리',
+      '보관처리',
+      '저장 대화',
+      '활성을 중지',
+      '다른 것을 선택',
+      '현재 데이터</em>과',
+      '설명해주세요',
+      '에이전트에 표시',
+      'Open Science 스페셜리스트를',
+      'Open Science 프로젝트를',
+      'Open Science 커넥터를',
+      'Open Science 스킬을',
+      'Open Science는 커넥터를 로드',
+      'Open Science는 스킬을 로드',
+      'https://gateway.example/v1.와',
+      '호출 커넥터 도구를 원합니다',
+      '세션에 대해 에이전트를 중지',
+      '스킬이 에이전트를 가르치는',
+      '데이터를 어디에 저장해야 합니까',
+      '이동에서 제거',
+      '해당 폴더 없음',
+      '자체 포함된',
+      '대화 사용하시면',
+      '지원되지 않음 파일',
+      'Open Science 이',
+      '모두 스페셜리스트',
+      '대형 파일 (',
+      '서브에이전트에서 사용됩니다',
+      'Open Science 전체 현재 보기',
+      '이 기존 검토에는 평가 세부정보',
+      '스페셜리스트는 “',
+      '새로고침할 수 없습니다 {{',
+      '스페셜리스트에 구성됩니다',
+      '미리보기 다시 시도해보세요',
+      '이에 대한 자유 형식 메모 모델 제공업체',
+      '에이전트 Open Science 드라이브',
+      '스캔하여 열기 Open Science',
+      '프록시 환경 Open Science',
+      'protocol 뒤에',
+      '<lnk>다운로드 Remote.It',
+      '미리보기할 수',
+      '대화에 대한 아티팩트',
+      '{{target}}을(를)',
+      '이것이 에이전트',
+      '에 의해 별도로',
+      '에 의해 예약',
+      '운영 체제에 의해 암호화',
+      '{{count}} 이 제한된',
+      '{{count}} 이 미리보기',
+      '{{count}} 단계를',
+      '{{count}} 실패',
+      '{{count}} 읽지 않음',
+      '프로젝트 회복',
+      '계속해서 회복',
+      '생산자 운영',
+      '페어링된 기본 Codex',
+      '관리 쌍',
+      '차단 유효성',
+      '설치됨 스킬',
+      '다음 조사 시',
+      'NCBI 비율 제한',
+      '선택 사항인 API 키'
+    ]
+    const offenders = Object.entries(catalog('ko')).flatMap(([key, value]) =>
+      unnaturalPhrases
+        .filter((phrase) => value.includes(phrase))
+        .map((phrase) => `${key}: ${phrase}`)
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses Korean counters instead of English count-plus-noun order', () => {
+    const bareCountedNoun =
+      /\{\{count\}\}\s+(?:추가 단계|최종 결과|권한|스킬|모델|Notebook|패키지|스페셜리스트|에이전트|아티팩트|원자|셀|확인|환경 항목|수치|파일|발견 항목|결과|원격 작업|실행|세션|셸|서브에이전트|리소스)/u
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => bareCountedNoun.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not attach a fixed Korean particle directly to interpolated values', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => /\{\{[^{}]+\}\}(?:이|가|은|는|을|를|와|과)(?=[\s.,?!]|$)/u.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the product role Reviewer consistently', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([key]) => /\breviewer\b/i.test(englishOf(key)))
+      .filter(([, value]) => !value.includes('리뷰어'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('formats short examples as Korean UI placeholders', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([key]) => /^e\.g\./i.test(englishOf(key)))
+      .filter(([, value]) => !value.startsWith('예: '))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses GitHub issue terminology instead of the generic problem noun', () => {
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([key]) => /GitHub issue/i.test(englishOf(key)))
+      .filter(([, value]) => !value.includes('이슈'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('preserves context-sensitive service and runtime terminology', () => {
+    expect(catalog('ko')).toMatchObject({
+      'Use {{service}}?': '{{service}} 서비스를 사용할까요?',
+      'Context window chart across {{count}} terminal outcomes_other':
+        '종료 결과 {{count}}개에 걸친 컨텍스트 창 차트'
+    })
+  })
+})
+
+describe('Korean binding terminology', () => {
+  const mandatoryTerms: Array<{ source: RegExp; expected: string; stripSource?: RegExp }> = [
+    { source: /\bprojects?\b/i, expected: '프로젝트' },
+    { source: /\bsessions?\b/i, expected: '세션' },
+    { source: /\bconversations?\b/i, expected: '대화' },
+    { source: /\bworkspaces?\b/i, expected: '워크스페이스' },
+    {
+      source: /\bmessages?\b/i,
+      expected: '메시지',
+      stripSource: /\bMessages or Chat Completions\b/
+    },
+    { source: /\btasks?\b/i, expected: '작업' },
+    { source: /\bmodels?\b/i, expected: '모델' },
+    { source: /\bproviders?\b/i, expected: '모델 제공업체' },
+    { source: /\bsubscriptions?\b/i, expected: '구독' },
+    { source: /\bkernels?\b/i, expected: '커널' },
+    { source: /\bartifacts?\b/i, expected: '아티팩트' },
+    { source: /\bactivity groups?\b/i, expected: '활동 그룹' },
+    { source: /\btools?\b/i, expected: '도구' },
+    { source: /\bcompute hosts?\b/i, expected: '컴퓨팅 호스트' },
+    { source: /\bruntimes?\b/i, expected: '런타임' },
+    { source: /\benvironments?\b/i, expected: '환경' },
+    { source: /\bpreviews?\b/i, expected: '미리보기' },
+    { source: /\binterpreters?\b/i, expected: '인터프리터' },
+    { source: /\breasoning effort\b/i, expected: '추론 강도' },
+    { source: /\bcontexts?\b/i, expected: '컨텍스트' },
+    { source: /\bfiles?\b/i, expected: '파일' },
+    { source: /\bdocuments?\b/i, expected: '문서' },
+    { source: /\bfolders?\b/i, expected: '폴더' },
+    { source: /\bdata\b/i, expected: '데이터' },
+    { source: /\binformation\b/i, expected: '정보' },
+    { source: /\bsoftware\b/i, expected: '소프트웨어' },
+    { source: /\bprograms?\b/i, expected: '프로그램' },
+    { source: /\bsettings?\b/i, expected: '설정' },
+    { source: /\bnetworks?\b/i, expected: '네트워크' },
+    { source: /\bcaches?\b/i, expected: '캐시' },
+    { source: /\bprocess(?:es)?\b/i, expected: '프로세스' },
+    { source: /\bthreads?\b/i, expected: '스레드' },
+    { source: /\bqueues?\b/i, expected: '대기열' },
+    { source: /\bcredentials?\b/i, expected: '자격 증명' },
+    { source: /\blogs?\b/i, expected: '로그' },
+    { source: /\bmirrors?\b/i, expected: '미러' },
+    { source: /\btrays?\b/i, expected: '트레이' },
+    { source: /\bbookmarks?\b/i, expected: '북마크' },
+    { source: /\brunning\b/i, expected: '실행 중', stripSource: /\bby running\b/i },
+    { source: /\bcalls?\b/i, expected: '호출' },
+    { source: /\breveal(?:s|ed|ing)?\b/i, expected: '표시' },
+    { source: /\blight\b/i, expected: '라이트' },
+    { source: /\bdark\b/i, expected: '다크' }
+  ]
+
+  it.each(mandatoryTerms)(
+    'uses $expected for matching source prose',
+    ({ source, expected, stripSource }) => {
+      const offenders = Object.entries(catalog('ko'))
+        .filter(([key]) => {
+          const sourceText = englishOf(key)
+            .replace(/<code>.*?<\/code>/g, '')
+            .replace(/\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g, '')
+          return source.test(stripSource ? sourceText.replace(stripSource, '') : sourceText)
+        })
+        .filter(([, value]) => !value.includes(expected))
+        .map(([key]) => key)
+
+      expect(offenders).toEqual([])
+    }
+  )
+
+  it('matches topic, object, and conjunction particles to the chosen term', () => {
+    const hasFinalConsonant = (term: string): boolean => {
+      const last = [...term].at(-1)
+      if (!last) return false
+      const codePoint = last.codePointAt(0) ?? 0
+      return codePoint >= 0xac00 && codePoint <= 0xd7a3 && (codePoint - 0xac00) % 28 !== 0
+    }
+    const offenders = [...new Set(mandatoryTerms.map(({ expected }) => expected))].flatMap(
+      (term) => {
+        const wrongParticles = hasFinalConsonant(term) ? ['는', '를', '와'] : ['은', '을', '과']
+        const pattern = new RegExp(`${term}(?:${wrongParticles.join('|')})(?=\\s|[,.!?…<]|$)`, 'u')
+        return Object.entries(catalog('ko'))
+          .filter(([, value]) => pattern.test(value))
+          .map(([key]) => `${key}: ${term}`)
+      }
+    )
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each([
+    ['Allow for this conversation', '이 대화에서 허용'],
+    ['Allowed this session', '이번 세션에서 허용됨'],
+    [
+      'Approval applies to matching calls in this project.',
+      '이 프로젝트에서 일치하는 호출에 승인이 적용됩니다.'
+    ],
+    [
+      'Approval covers later {{runtime}} calls in this conversation, including across restarts.',
+      '승인은 다시 시작 후에도 이 대화에서 이후 {{runtime}} 호출에 적용됩니다.'
+    ],
+    ['made a call', '호출 실행'],
+    ['Plan call record', '계획 호출 기록'],
+    ['Resume', '재개'],
+    ['Resume session', '세션 재개'],
+    ['Running', '실행 중'],
+    ['running', '실행 중'],
+    ['Reveal in folder', '폴더에 표시'],
+    ['Light', '라이트'],
+    ['Dark', '다크'],
+    ['Storage', '저장소'],
+    ['Archive', '보관'],
+    ['Approve', '허용'],
+    ['Retry', '다시 시도'],
+    ['Idle', '대기 중'],
+    ['Completed', '완료'],
+    ['Refreshing…', '새로고침 중…'],
+    ['Application storage', '애플리케이션 저장소'],
+    ['Anthropic approx.', 'Anthropic 근사치'],
+    ['Chromium v', 'Chromium v'],
+    ['Add interpreter…', '인터프리터 추가…'],
+    ['Could not add that interpreter.', '해당 인터프리터를 추가할 수 없습니다.'],
+    [
+      'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.',
+      '각 Notebook 언어가 실행될 수 있는 환경을 활성화합니다. 앱 관리 환경은 기본적으로 켜져 있습니다. 에이전트가 사용할 수 있도록 자체 인터프리터를 활성화하세요.'
+    ],
+    ['Token usage for this response', '이 응답의 토큰 사용량'],
+    ['Token usage unavailable for this response', '이 응답의 토큰 사용량을 확인할 수 없습니다.'],
+    ['Used tool: {{name}}', '사용한 도구: {{name}}'],
+    ['read a file', '파일 읽음'],
+    ['ran {{count}} tools_other', '도구 {{count}}개 실행'],
+    ['Keep it in the current folder', '현재 폴더에 유지'],
+    ['Pin current folder', '현재 폴더 고정'],
+    ['Load more sessions', '세션 더 불러오기'],
+    ['for this project', '이 프로젝트에서'],
+    ['globally', '모든 프로젝트에서'],
+    ['Allow {{subject}} {{scope}}?', '{{scope}} {{subject}} 사용을 허용하시겠습니까?'],
+    [
+      'Skills and connectors this specialist can use. Anything not chosen here stays invisible and unreachable in its sessions, even when enabled globally.',
+      '이 스페셜리스트가 사용할 수 있는 스킬과 커넥터입니다. 여기에서 선택하지 않은 항목은 전역으로 활성화되어 있어도 해당 세션에서 보이지 않으며 접근할 수 없습니다.'
+    ],
+    ['Move to OpenScience', 'OpenScience로 이동'],
+    ['Official install.ps1', '공식 install.ps1'],
+    [
+      'One <code>Name: Value</code> per line (not JSON).',
+      '줄마다 <code>Name: Value</code> 하나씩 입력하세요(JSON 형식 아님).'
+    ],
+    [
+      'Used by host.mcp("{{name}}", …), Specialists, and the generated MCP skill.',
+      'host.mcp("{{name}}", …), 스페셜리스트 및 생성된 MCP 스킬에서 사용됩니다.'
+    ],
+    [
+      'Two-step verification uses a six-digit code. Approve a new remote session only when its code matches the request shown here.',
+      '2단계 인증은 6자리 코드를 사용합니다. 코드가 여기에 표시된 요청과 일치할 때만 새 원격 세션을 승인하세요.'
+    ],
+    ['Library', '라이브러리'],
+    ['{{count}} jobs_other', '작업 {{count}}개'],
+    ['{{count}} repl_other', 'REPL {{count}}개'],
+    ['{{count}} steps_other', '{{count}}단계'],
+    ['{{count}} turns_other', '{{count}}턴'],
+    [
+      'Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other',
+      '이 편집된 프롬프트를 보내면 여기에서 새 브랜치가 시작됩니다. 현재 뒤따르는 {{count}}개 턴은 메시지 수정 컨트롤에서 계속 사용할 수 있습니다.'
+    ],
+    [
+      'Saved conversations loaded, but the project index could not be rebuilt. Repair the index before archiving projects.',
+      '저장된 대화는 로드되었지만 프로젝트 색인을 다시 빌드할 수 없습니다. 프로젝트를 보관하기 전에 색인을 복구하세요.'
+    ],
+    [
+      'Some saved conversations could not be indexed. Repair the index before archiving projects.',
+      '일부 저장된 대화의 색인을 생성할 수 없습니다. 프로젝트를 보관하기 전에 색인을 복구하세요.'
+    ],
+    [
+      'Project archive is unavailable because a damaged conversation cannot be verified.',
+      '손상된 대화를 확인할 수 없어 프로젝트 보관 기능을 사용할 수 없습니다.'
+    ],
+    ['Star', '별표'],
+    [
+      'Choose one .json file up to {{size}}. Credentials are never imported from the file.',
+      '최대 {{size}}인 .json 파일 하나를 선택하세요. 파일에서 자격 증명은 가져오지 않습니다.'
+    ],
+    ['Star on GitHub', 'GitHub에서 Star'],
+    ['Star {{app}} on GitHub', 'GitHub에서 {{app}}에 Star'],
+    [
+      'Star {{app}} on GitHub, {{count}} stars_other',
+      'GitHub에서 {{app}}에 Star, Star {{count}}개'
+    ],
+    [
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.",
+      '<name>{{name}}</name>에 계속 연결된 대화는 <em>사용할 수 없게</em> 되며 메인 에이전트로 자동 <em>전환되지 않습니다</em>. 영향을 받는 각 대화가 다시 메시지를 보내기 전에 새 스페셜리스트 또는 메인 에이전트를 명시적으로 선택해야 합니다.'
+    ]
+  ])('preserves the exact meaning of %s', (key, expected) => {
+    expect(catalog('ko')[key]).toBe(expected)
+  })
+
+  it('does not use known non-UI senses for ambiguous English words', () => {
+    const forbidden = [
+      '선택 과목',
+      '다른 가족',
+      '가까운 출처',
+      '수표',
+      '장애인',
+      '항구',
+      '요금제 세부정보',
+      '작곡가',
+      '회전 제한',
+      '단어 분석 문서',
+      '일하는 중'
+    ]
+    const offenders = Object.entries(catalog('ko'))
+      .filter(([, value]) => forbidden.some((term) => value.includes(term)))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('French safety copy', () => {
+  it.each([
+    ['Allow globally', 'Autoriser pour tous les projets'],
+    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
+    ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
+    ['Approval applies to this call only.', "L'autorisation s'applique uniquement à cet appel."],
+    ['This call only', 'Pour cet appel uniquement'],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      "Les autorisations individuelles restent révocables\u00a0; « Tout révoquer » est désactivé tant que l'ensemble complet n'est pas connu."
+    ],
+    ['{{count}} allowed this session_one', '{{count}} autorisation accordée pendant cette session'],
+    [
+      '{{count}} allowed this session_other',
+      '{{count}} autorisations accordées pendant cette session'
+    ]
+  ])('preserves the scope of %s', (key, expected) => {
+    expect(catalog('fr')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Session', 'Session'],
+    ['Sessions', 'Sessions'],
+    ['{{count}} sessions_one', '{{count}} session'],
+    ['{{count}} sessions_other', '{{count}} sessions'],
+    ['{{count}} runs_one', '{{count}} exécution'],
+    ['{{count}} runs_other', '{{count}} exécutions'],
+    ['{{count}} packages_one', '{{count}} paquet'],
+    ['{{count}} packages_other', '{{count}} paquets'],
+    ['{{count}} checks_one', '{{count}} vérification'],
+    ['{{count}} checks_other', '{{count}} vérifications'],
+    ['{{count}} files_one', '{{count}} fichier'],
+    ['{{count}} files_other', '{{count}} fichiers'],
+    ['Runs', 'Exécutions'],
+    ['Checks', 'Vérifications'],
+    ['Package', 'Paquet'],
+    ['Packages', 'Paquets'],
+    ['Download Plan', 'Télécharger le plan'],
+    ['Plan blocked', 'Plan bloqué'],
+    ['Revoked {{count}} permissions_one', '{{count}} autorisation révoquée'],
+    ['Revoked {{count}} permissions_other', '{{count}} autorisations révoquées']
+  ])('uses French domain terminology and plural agreement for %s', (key, expected) => {
+    expect(catalog('fr')[key]).toBe(expected)
+  })
+
+  it('never translates the product term Session as a meeting', () => {
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\bsessions?\b/i.test(englishOf(key)))
+      .filter(([, value]) => /\bséances?\b/i.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not leave generic package prose in English or translate Plan as a pricing tier', () => {
+    const proseOnly = (value: string): string =>
+      value.replace(/\b[\w.-]+\.(?:md|txt|json|zip)\b/g, '')
+    const offenders = Object.entries(catalog('fr'))
+      .filter(([key]) => /\b(?:packages?|Plan)\b/.test(proseOnly(englishOf(key))))
+      .filter(([, value]) => /\b(?:packages?|forfaits?)\b/i.test(proseOnly(value)))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
   })
 })
 
@@ -849,16 +1844,20 @@ const transCallSites = (source: string): CallSite[] =>
 
 // A context call must resolve through its exact suffix. Accepting a bare key here hides semantic
 // collisions such as noun/verb and duration/runtime, while i18next silently renders the wrong copy.
-const resolvesIn = (entries: Catalog, { key, plural, context }: CallSite): boolean => {
+const resolvesIn = (
+  entries: Catalog,
+  { key, plural, context }: CallSite,
+  pluralCategories: readonly string[] = ['other']
+): boolean => {
   if (context) {
     if (plural) {
-      return [...PLURAL_CATEGORIES].some(
+      return pluralCategories.every(
         (category) => entries[`${key}_${context}_${category}`] !== undefined
       )
     }
     return entries[`${key}_${context}`] !== undefined
   }
-  if (plural) return [...PLURAL_CATEGORIES].some((c) => entries[`${key}_${c}`] !== undefined)
+  if (plural) return pluralCategories.every((c) => entries[`${key}_${c}`] !== undefined)
   return entries[key] !== undefined
 }
 
@@ -883,7 +1882,7 @@ describe('missing translations', () => {
   it.each(TRANSLATED)('every English t() literal has a %s translation', (locale) => {
     const entries = catalog(locale)
     const untranslated = sites
-      .filter((site) => !resolvesIn(entries, site))
+      .filter((site) => !resolvesIn(entries, site, REQUIRED_PLURAL_CATEGORIES[locale]))
       .map((site) => `${site.file}: ${JSON.stringify(site.key)}`)
 
     expect(untranslated).toEqual([])

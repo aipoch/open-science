@@ -16,6 +16,33 @@ import type {
   SpecialistPackageInstallRequest
 } from '../../../shared/specialist-package'
 
+// Draft key for the create-specialist form; edit drafts are keyed by specialist id.
+export const CREATE_SPECIALIST_DRAFT_KEY = '__create__'
+
+// One snapshot of the specialist editor's form state, kept while the editor is unmounted so a
+// round trip through Settings (e.g. opening a capability's detail page) loses nothing.
+export type SpecialistEditorFormDraft = {
+  id: string
+  name: string
+  packageVersion: string
+  description: string
+  systemPrompt: string
+  iconKey: string
+  colorKey: string
+  capabilityMode: 'full' | 'selected'
+  excludedSkillIds: string[]
+  selectedSkillIds: string[]
+  excludedConnectorIds: string[]
+  connectorIds: string[]
+  baseRevision: number
+}
+
+export type SpecialistEditorDraft = {
+  form: SpecialistEditorFormDraft
+  idTouched: boolean
+  activeCapTab: 'skills' | 'connectors'
+}
+
 type SpecialistStoreData = {
   items: SpecialistListItem[]
   isLoaded: boolean
@@ -23,6 +50,7 @@ type SpecialistStoreData = {
   integrity: SpecialistDocumentIntegrity
   packagePreview?: SpecialistPackageCandidatePreview
   exportPreview?: SpecialistExportPreview
+  editorDrafts: Record<string, SpecialistEditorDraft>
 }
 
 type SpecialistStoreActions = {
@@ -48,6 +76,8 @@ type SpecialistStoreActions = {
     includedSkillIds: readonly string[]
   ) => Promise<SpecialistExportSaveResult>
   clearExport: () => void
+  saveEditorDraft: (key: string, draft: SpecialistEditorDraft) => void
+  clearEditorDraft: (key: string) => void
 }
 
 type SpecialistStore = SpecialistStoreData & SpecialistStoreActions
@@ -88,6 +118,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   integrity: { status: 'ok' },
   packagePreview: undefined,
   exportPreview: undefined,
+  editorDrafts: {},
 
   load: () => {
     // Guard: specialist.list is Electron-only and unavailable in the web gateway.
@@ -118,8 +149,17 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
     const view = await window.api.specialist.update(input)
-    // Reload the full list so Reviewer and ordering stay consistent.
-    await refreshCatalog(set)
+    // The mutation result is authoritative for this custom Specialist. Apply it immediately so a
+    // slow catalog enrichment cannot leave an already-saved appearance stuck in its loading state.
+    set((state) => ({
+      items: state.items.map((item) =>
+        item.kind === 'custom' && item.id === view.id ? { ...item, ...view, kind: 'custom' } : item
+      )
+    }))
+    // Keep derived catalog fields and ordering synchronized without making mutation completion depend
+    // on the broader catalog read. Catalog-change events may race this refresh; request IDs ensure
+    // only the newest response is applied.
+    void refreshCatalog(set).catch(() => undefined)
     return view
   },
 
@@ -201,6 +241,19 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   clearExport: () => {
     latestExportPreviewRequest += 1
     set({ exportPreview: undefined })
+  },
+
+  saveEditorDraft: (key, draft) => {
+    set((state) => ({ editorDrafts: { ...state.editorDrafts, [key]: draft } }))
+  },
+
+  clearEditorDraft: (key) => {
+    set((state) => {
+      if (!(key in state.editorDrafts)) return state
+      const editorDrafts = { ...state.editorDrafts }
+      delete editorDrafts[key]
+      return { editorDrafts }
+    })
   }
 }))
 

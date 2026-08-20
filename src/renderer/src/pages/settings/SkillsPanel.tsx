@@ -3,6 +3,7 @@ import {
   Download,
   FileUp,
   FolderInput,
+  Info,
   ListChecks,
   MessagesSquare,
   Pencil,
@@ -18,9 +19,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -33,20 +36,14 @@ import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
 import { SkillBulkManageView } from './SkillBulkManageView'
-import {
-  SettingsIconAction,
-  SettingsLoadNotice,
-  SettingsRow,
-  SettingsSection,
-  SettingsToggle
-} from './SettingsLayout'
+import { SettingsLoadNotice, SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import {
-  resourceScope,
   specialistsOwningSkill,
   specialistsUsingSkill,
-  type ResourceScope
+  type SpecialistUsage
 } from './specialist-resource-scope'
+import { SkillUsageAgents } from './SkillUsageAgents'
 import {
   ResourceTagBadges,
   ResourceTagMenu,
@@ -66,7 +63,7 @@ export type SkillsView =
   | { kind: 'upload' }
 
 type SourceFilter = 'all' | SkillSource
-type ScopeFilter = 'all' | 'main' | 'specialist-only' | 'shared'
+const MAIN_AGENT_FILTER = '__main-agent__'
 
 const skillOperationErrorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
@@ -82,20 +79,6 @@ const FILTER_LABEL_KEYS = {
   imported: 'Imported',
   personal: 'Personal'
 } as const satisfies Record<SourceFilter, string>
-
-const SCOPE_FILTER_LABEL_KEYS = {
-  all: 'All scopes',
-  main: 'Main',
-  'specialist-only': 'Specialist only',
-  shared: 'Shared with Main'
-} as const satisfies Record<ScopeFilter, string>
-
-const SCOPE_LABEL_KEYS = {
-  'main-only': 'Main only',
-  'specialist-only': 'Specialist only',
-  shared: 'Shared with Main',
-  'not-in-use': 'Not in use'
-} as const satisfies Record<ResourceScope, string>
 
 const SOURCE_GROUPS = [
   {
@@ -118,12 +101,16 @@ const SOURCE_GROUPS = [
 type SkillsPanelProps = {
   view: SkillsView
   onNavigate: (view: SkillsView) => void
+  onOpenTag?: (tagId: string) => void
+  onOpenSpecialist?: (usage: SpecialistUsage) => void
   canImportInstalledSkills?: boolean
 }
 
 const SkillsPanel = ({
   view,
   onNavigate,
+  onOpenTag,
+  onOpenSpecialist,
   canImportInstalledSkills = true
 }: SkillsPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -143,7 +130,6 @@ const SkillsPanel = ({
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const projects = useProjectStore((state) => state.projects)
   const [filter, setFilter] = useState<SourceFilter>('all')
-  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
   const [specialistFilter, setSpecialistFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
   const tagAssignments = useTagStore((state) => state.assignments)
@@ -156,6 +142,7 @@ const SkillsPanel = ({
   const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [toggleError, setToggleError] = useState<string | undefined>()
   const loadRequestRef = useRef(0)
+  const exportInFlightRef = useRef(false)
   const canExportSkills = typeof window.api?.settings?.exportSkill === 'function'
   const chatProjectId = useMemo(
     () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
@@ -169,7 +156,8 @@ const SkillsPanel = ({
   }
 
   const exportSkill = async (id: string, name: string): Promise<void> => {
-    if (!canExportSkills) return
+    if (!canExportSkills || exportInFlightRef.current) return
+    exportInFlightRef.current = true
     setExportError(undefined)
     setExportStatus(undefined)
     setExportingId(id)
@@ -180,6 +168,7 @@ const SkillsPanel = ({
       // Main-process failures arrive already worded; only the fallback is ours to translate.
       setExportError(skillOperationErrorMessage(error) || t('Could not export this Skill.'))
     } finally {
+      exportInFlightRef.current = false
       setExportingId(undefined)
     }
   }
@@ -236,11 +225,12 @@ const SkillsPanel = ({
       if (filter !== 'all' && skill.source !== filter) return []
       const usages = specialistsUsingSkill(specialistItems, skill.id)
       const owners = specialistsOwningSkill(specialistItems, skill.id)
-      const scope = resourceScope(skill.enabled, usages)
-      if (scopeFilter === 'main' && !skill.enabled) return []
-      if (scopeFilter === 'specialist-only' && scope !== 'specialist-only') return []
-      if (scopeFilter === 'shared' && scope !== 'shared') return []
-      if (specialistFilter !== 'all' && !usages.some((usage) => usage.id === specialistFilter)) {
+      if (specialistFilter === MAIN_AGENT_FILTER && !skill.enabled) return []
+      if (
+        specialistFilter !== 'all' &&
+        specialistFilter !== MAIN_AGENT_FILTER &&
+        !usages.some((usage) => usage.id === specialistFilter)
+      ) {
         return []
       }
       if (
@@ -263,26 +253,18 @@ const SkillsPanel = ({
         )
       )
         return []
-      return [{ skill, usages, owners, scope }]
+      return [{ skill, usages, owners }]
     })
-  }, [
-    filter,
-    query,
-    scopeFilter,
-    skills,
-    specialistFilter,
-    specialistItems,
-    tagAssignments,
-    tagFilter
-  ])
+  }, [filter, query, skills, specialistFilter, specialistItems, tagAssignments, tagFilter])
   if (view.kind === 'detail') {
     return (
       <div>
         <ResourceTagSummary
           reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
           className="px-5 pt-5"
+          onOpenTag={onOpenTag}
         />
-        <SkillDetailView key={view.id} skillId={view.id} />
+        <SkillDetailView key={view.id} skillId={view.id} onOpenSpecialist={onOpenSpecialist} />
       </div>
     )
   }
@@ -310,6 +292,7 @@ const SkillsPanel = ({
         <ResourceTagSummary
           reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
           className="px-5 pt-5"
+          onOpenTag={onOpenTag}
         />
         <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
       </div>
@@ -395,41 +378,32 @@ const SkillsPanel = ({
         </SettingsRow>
       </SettingsSection>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
-          <SelectTrigger aria-label={t('Filter skills by source')} className="w-36">
-            <span>{t(FILTER_LABEL_KEYS[filter])}</span>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('All')}</SelectItem>
-            <SelectItem value="featured">{t('Featured')}</SelectItem>
-            <SelectItem value="imported">{t('Imported')}</SelectItem>
-            <SelectItem value="personal">{t('Personal')}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={scopeFilter} onValueChange={(value) => setScopeFilter(value as ScopeFilter)}>
-          <SelectTrigger aria-label={t('Filter Skills by scope')} className="w-40">
-            <span>{t(SCOPE_FILTER_LABEL_KEYS[scopeFilter])}</span>
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.keys(SCOPE_FILTER_LABEL_KEYS) as ScopeFilter[]).map((value) => (
-              <SelectItem key={value} value={value}>
-                {t(SCOPE_FILTER_LABEL_KEYS[value])}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {specialistOptions.length > 0 ? (
+      <div className="mb-4 space-y-2">
+        <div data-slot="skills-filter-bar" className="flex flex-wrap items-center gap-2">
+          <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
+            <SelectTrigger aria-label={t('Filter skills by source')} className="w-36">
+              <span>{t(FILTER_LABEL_KEYS[filter])}</span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('All')}</SelectItem>
+              <SelectItem value="featured">{t('Featured')}</SelectItem>
+              <SelectItem value="imported">{t('Imported')}</SelectItem>
+              <SelectItem value="personal">{t('Personal')}</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={specialistFilter} onValueChange={setSpecialistFilter}>
-            <SelectTrigger aria-label={t('Filter Skills by Specialist')} className="w-48">
+            <SelectTrigger aria-label={t('Filter Skills by agent')} className="w-48">
               <span>
                 {specialistFilter === 'all'
-                  ? t('All Specialists')
-                  : specialistOptions.find((item) => item.id === specialistFilter)?.name}
+                  ? t('All Agents/Specialists')
+                  : specialistFilter === MAIN_AGENT_FILTER
+                    ? t('Main Agent')
+                    : specialistOptions.find((item) => item.id === specialistFilter)?.name}
               </span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">{t('All Specialists')}</SelectItem>
+              <SelectItem value="all">{t('All Agents/Specialists')}</SelectItem>
+              <SelectItem value={MAIN_AGENT_FILTER}>{t('Main Agent')}</SelectItem>
               {specialistOptions.map((item) => (
                 <SelectItem key={item.id} value={item.id}>
                   {item.name}
@@ -437,79 +411,83 @@ const SkillsPanel = ({
               ))}
             </SelectContent>
           </Select>
-        ) : null}
-        <TagFilter resourceType="catalog.skill" value={tagFilter} onChange={setTagFilter} />
-        <SettingsSearchInput
-          aria-label={t('Search skills')}
-          placeholder={t('Search skills…')}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
-          <ListChecks data-icon="inline-start" aria-hidden="true" />
-          {t('Manage')}
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="shrink-0">
-              <Plus data-icon="inline-start" aria-hidden="true" />
-              {t('Add skill')}
-              <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              className="gap-2.5"
-              disabled={!chatProjectId}
-              onSelect={startChatWithAgent}
-            >
-              <MessagesSquare className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Chat with agent')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Describe it in a new session')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
-              <Pencil className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Write from scratch')}</span>
-                <span className="text-xs text-muted-foreground">{t('Open the skill creator')}</span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'upload' })}>
-              <FileUp className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Upload skills')}</span>
-                <span className="text-xs text-muted-foreground">{t('Pick SKILL.md files')}</span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
-              <Download className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Import from GitHub')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Add a skill from a repo')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-            {canImportInstalledSkills ? (
+          <TagFilter resourceType="catalog.skill" value={tagFilter} onChange={setTagFilter} />
+          <SettingsSearchInput
+            aria-label={t('Search skills')}
+            placeholder={t('Search skills…')}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        <div data-slot="skills-action-bar" className="flex items-center justify-end gap-2">
+          <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
+            <ListChecks data-icon="inline-start" aria-hidden="true" />
+            {t('Manage')}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="shrink-0">
+                <Plus data-icon="inline-start" aria-hidden="true" />
+                {t('Add skill')}
+                <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
               <DropdownMenuItem
                 className="gap-2.5"
-                onSelect={() => onNavigate({ kind: 'import-agent-home' })}
+                disabled={!chatProjectId}
+                onSelect={startChatWithAgent}
               >
-                <FolderInput className="size-4 shrink-0" aria-hidden="true" />
+                <MessagesSquare className="size-4 shrink-0" aria-hidden="true" />
                 <span className="flex flex-col">
-                  <span>{t('Import installed skills')}</span>
+                  <span>{t('Chat with agent')}</span>
                   <span className="text-xs text-muted-foreground">
-                    {t('Scan global skill folders')}
+                    {t('Describe it in a new session')}
                   </span>
                 </span>
               </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
+                <Pencil className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>{t('Write from scratch')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('Open the skill creator')}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'upload' })}>
+                <FileUp className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>{t('Upload skills')}</span>
+                  <span className="text-xs text-muted-foreground">{t('Pick SKILL.md files')}</span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
+                <Download className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>{t('Import from GitHub')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('Add a skill from a repo')}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+              {canImportInstalledSkills ? (
+                <DropdownMenuItem
+                  className="gap-2.5"
+                  onSelect={() => onNavigate({ kind: 'import-agent-home' })}
+                >
+                  <FolderInput className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="flex flex-col">
+                    <span>{t('Import installed skills')}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t('Scan global skill folders')}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {exportError ? (
@@ -570,15 +548,7 @@ const SkillsPanel = ({
               {expanded ? (
                 rows.length > 0 ? (
                   <ul className="mt-2 flex flex-col divide-y divide-border">
-                    {rows.map(({ skill, usages, owners, scope }) => {
-                      const usageLabel =
-                        usages.length === 1
-                          ? usages[0].name
-                          : usages.length === 2
-                            ? t('{{name}} + 1 Specialist', { name: usages[0].name })
-                            : usages.length > 2
-                              ? t('Used by {{count}} Specialists', { count: usages.length })
-                              : undefined
+                    {rows.map(({ skill, usages, owners }) => {
                       const deleteBlockedReason =
                         owners.length === 1
                           ? t(
@@ -607,87 +577,144 @@ const SkillsPanel = ({
                           data-slot="settings-list-row"
                           className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
                         >
-                          <button
-                            type="button"
-                            onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                            className="min-w-0 flex-1 text-left"
-                          >
-                            <span className="block truncate text-sm text-foreground">
-                              {skill.displayName}
-                            </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {skill.description}
-                            </span>
-                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              <span className="min-w-0 truncate text-xs text-muted-foreground">
-                                {usageLabel ? `${usageLabel} · ` : ''}
-                                {t(SCOPE_LABEL_KEYS[scope])}
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
+                              className="block w-full min-w-0 text-left"
+                            >
+                              <span className="block truncate text-sm text-foreground">
+                                {skill.displayName}
                               </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {skill.description}
+                              </span>
+                            </button>
+                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                              {skill.enabled || usages.length > 0 ? (
+                                <span className="inline-flex shrink-0 items-center gap-1">
+                                  <span
+                                    data-slot="skill-usage-agents-label"
+                                    className="text-xs text-muted-foreground"
+                                  >
+                                    {t('Used by')}
+                                  </span>
+                                  <SkillUsageAgents
+                                    mainEnabled={skill.enabled}
+                                    usages={usages}
+                                    onOpenSpecialist={onOpenSpecialist}
+                                  />
+                                </span>
+                              ) : null}
                               <ResourceTagBadges
                                 reference={{
                                   resourceType: 'catalog.skill',
                                   resourceId: skill.id
                                 }}
+                                onOpenTag={onOpenTag}
                               />
                             </div>
-                          </button>
+                          </div>
                           {exportStatus?.id === skill.id ? (
                             <span role="status" className="shrink-0 text-xs text-muted-foreground">
                               {exportStatus.message}
                             </span>
                           ) : null}
-                          {skill.source !== 'featured' && canExportSkills ? (
-                            <SettingsIconAction
-                              label={t('Export {{name}}', { name: skill.displayName })}
-                              icon={Download}
-                              disabled={exportingId !== undefined}
-                              onClick={() => void exportSkill(skill.id, skill.displayName)}
-                            />
-                          ) : null}
-                          {skill.source === 'personal' ? (
-                            <SettingsIconAction
-                              label={t('Edit {{name}}', { name: skill.displayName })}
-                              icon={Pencil}
-                              onClick={() => onNavigate({ kind: 'edit', id: skill.id })}
-                            />
-                          ) : null}
-                          {skill.source !== 'featured' ? (
-                            <SettingsIconAction
-                              label={t('Delete {{name}}', { name: skill.displayName })}
-                              icon={Trash2}
-                              tooltip={deleteBlockedReason}
-                              aria-disabled={deleteBlockedReason ? true : undefined}
-                              className={
-                                deleteBlockedReason
-                                  ? 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground'
-                                  : undefined
-                              }
-                              onClick={
-                                deleteBlockedReason
-                                  ? undefined
-                                  : () => {
-                                      setDeleteError(undefined)
-                                      void deleteSkill(skill.id).catch((error) =>
-                                        setDeleteError({
-                                          id: skill.id,
-                                          message:
-                                            skillOperationErrorMessage(error) ||
-                                            t('This Skill is protected and cannot be deleted.')
-                                        })
-                                      )
-                                    }
-                              }
-                              danger
-                            />
-                          ) : null}
                           <div className="flex shrink-0 items-center gap-2">
-                            <span className="text-xs text-muted-foreground">{t('Main Agent')}</span>
                             <ResourceTagMenu
                               reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
                             />
+                            {skill.source !== 'featured' ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    disabled={exportingId !== undefined}
+                                    aria-label={t('Actions for {{name}}', {
+                                      name: skill.displayName
+                                    })}
+                                  >
+                                    <ChevronDown aria-hidden="true" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {canExportSkills ? (
+                                    <DropdownMenuItem
+                                      className="gap-2 text-xs"
+                                      onSelect={() => void exportSkill(skill.id, skill.displayName)}
+                                    >
+                                      <Download className="size-3.5" aria-hidden="true" />
+                                      {t('Export')}
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  {skill.source === 'personal' ? (
+                                    <DropdownMenuItem
+                                      className="gap-2 text-xs"
+                                      onSelect={() => onNavigate({ kind: 'edit', id: skill.id })}
+                                    >
+                                      <Pencil className="size-3.5" aria-hidden="true" /> {t('Edit')}
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  <DropdownMenuSeparator />
+                                  {deleteBlockedReason ? (
+                                    <TooltipProvider delayDuration={800}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <DropdownMenuItem
+                                            aria-disabled="true"
+                                            data-slot="skill-delete-blocked"
+                                            className="gap-2 text-xs text-muted-foreground hover:text-muted-foreground data-[highlighted]:text-muted-foreground"
+                                            onSelect={(event) => event.preventDefault()}
+                                          >
+                                            <Trash2
+                                              className="size-3.5 shrink-0"
+                                              aria-hidden="true"
+                                            />
+                                            <span className="min-w-0 flex-1">{t('Delete')}</span>
+                                            <Info
+                                              data-slot="skill-delete-blocked-tip"
+                                              className="size-3.5 shrink-0"
+                                              aria-hidden="true"
+                                            />
+                                          </DropdownMenuItem>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left" className="max-w-64">
+                                          {deleteBlockedReason}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  ) : (
+                                    <DropdownMenuItem
+                                      className="gap-2 text-xs text-destructive"
+                                      onSelect={() => {
+                                        setDeleteError(undefined)
+                                        void deleteSkill(skill.id).catch((error) =>
+                                          setDeleteError({
+                                            id: skill.id,
+                                            message:
+                                              skillOperationErrorMessage(error) ||
+                                              t('This Skill is protected and cannot be deleted.')
+                                          })
+                                        )
+                                      }}
+                                    >
+                                      <Trash2 className="size-3.5 shrink-0" aria-hidden="true" />
+                                      <span>{t('Delete')}</span>
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : null}
                             <SettingsToggle
                               enabled={skill.enabled}
                               aria-label={t('Toggle {{name}}', { name: skill.displayName })}
+                              title={
+                                skill.enabled
+                                  ? t('Available to Main Agent')
+                                  : t('Unavailable to Main Agent')
+                              }
                               onToggle={() => void toggleSkill(skill.id, !skill.enabled)}
                             />
                           </div>

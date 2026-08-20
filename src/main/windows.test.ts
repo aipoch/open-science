@@ -33,7 +33,8 @@ vi.mock('./logger', () => ({
 
 // The overlay manager is a collaborator with its own deep test suite; here we only need to observe
 // that the chord/Escape wiring drives it, so the real module is replaced with a spy object.
-const { findOverlayMock } = vi.hoisted(() => ({
+const { createFindOverlayManagerMock, findOverlayMock } = vi.hoisted(() => ({
+  createFindOverlayManagerMock: vi.fn(),
   findOverlayMock: {
     open: vi.fn(),
     close: vi.fn(),
@@ -43,7 +44,10 @@ const { findOverlayMock } = vi.hoisted(() => ({
   }
 }))
 vi.mock('./find-overlay', () => ({
-  createFindOverlayManager: () => findOverlayMock
+  createFindOverlayManager: (...args: unknown[]) => {
+    createFindOverlayManagerMock(...args)
+    return findOverlayMock
+  }
 }))
 
 // Captured window-open handler so tests can drive it directly, mirroring how Electron invokes it on a
@@ -215,6 +219,16 @@ describe('window presentation', () => {
     for (const handler of window.handlers.get('ready-to-show') ?? []) handler({} as CloseEvent)
 
     expect(window.showMock).toHaveBeenCalledOnce()
+  })
+
+  it('gives the find overlay a dedicated least-privilege preload', () => {
+    createMainWindow()
+
+    expect(createFindOverlayManagerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preloadPath: expect.stringMatching(/[\\/]preload[\\/]find-overlay\.js$/u)
+      })
+    )
   })
 })
 

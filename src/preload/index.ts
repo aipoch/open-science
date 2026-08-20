@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
+import { unwrapApplicationCommandOutcome } from '../shared/application-command-contract'
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
 import type { OpenScienceAPI } from './renderer-api'
 
@@ -196,8 +197,10 @@ const api: OpenScienceAPI = {
     // Loads one durable Session without scanning unrelated Project/Session files.
     loadOne: (request) => electronRendererContracts.invoke('sessions.loadOne', request),
     // Persists a single sanitized session file.
-    saveSession: (session, options) =>
-      electronRendererContracts.invoke('sessions.saveSession', session, options),
+    saveSession: async (session, options) =>
+      unwrapApplicationCommandOutcome(
+        await electronRendererContracts.invoke('sessions.saveSession', session, options)
+      ),
     updateArchive: (request) => electronRendererContracts.invoke('sessions.updateArchive', request),
     // Removes one session file.
     deleteSession: (request) => electronRendererContracts.invoke('sessions.deleteSession', request),
@@ -206,6 +209,8 @@ const api: OpenScienceAPI = {
     // Exports the authoritative persisted active branch through a main-owned Save As flow.
     exportConversation: (request) =>
       electronRendererContracts.invoke('sessions.exportConversation', request),
+    onFlushAborted: (listener) =>
+      electronRendererContracts.subscribe('sessions.onFlushAborted', listener),
     onFlushRequest: (listener) =>
       electronRendererContracts.subscribe('sessions.onFlushRequest', listener),
     sendFlushResponse: (response) =>
@@ -530,6 +535,7 @@ const api: OpenScienceAPI = {
     create: (request) => electronRendererContracts.invoke('tags.create', request),
     update: (request) => electronRendererContracts.invoke('tags.update', request),
     delete: (request) => electronRendererContracts.invoke('tags.delete', request),
+    reorder: (request) => electronRendererContracts.invoke('tags.reorder', request),
     setAssignment: (request) => electronRendererContracts.invoke('tags.setAssignment', request),
     onChanged: (listener) => electronRendererContracts.subscribe('tags.onChanged', listener)
   },

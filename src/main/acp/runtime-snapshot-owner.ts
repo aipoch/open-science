@@ -1,8 +1,12 @@
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
-import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
+import {
+  getAcpRuntimeEventImage,
+  MAX_ACP_RUNTIME_EVENTS,
+  MAX_ACP_SESSION_IMAGE_BYTES
+} from '../../shared/acp'
 import { capToolDetailText, sanitizeToolContent } from '../../shared/tool-detail-sanitizer'
 
-const ACP_RUNTIME_EVENT_RETENTION_LIMIT = 500
+const ACP_RUNTIME_EVENT_RETENTION_LIMIT = MAX_ACP_RUNTIME_EVENTS
 // Amortized eviction: trim only after a full cap of slack accumulates, so steady-state appends are
 // a plain push instead of an O(n) array rebuild per event. Reads always go through the last
 // ACP_RUNTIME_EVENT_RETENTION_LIMIT window, keeping the observable retention bound exact.

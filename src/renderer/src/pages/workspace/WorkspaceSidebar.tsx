@@ -268,7 +268,7 @@ const WorkspaceSidebarView = ({
         mobileMode && (isMobileOpen ? 'translate-x-0' : '-translate-x-full')
       )}
     >
-      <div className="m-2 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
+      <div className="m-[0.7px] flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
         <div className="px-3 pt-3">
           <div className="flex items-center">
             <button

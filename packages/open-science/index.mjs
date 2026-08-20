@@ -5,6 +5,10 @@ import { findServiceState, readWebToken } from './config-root.mjs'
 const defaultSleep = (milliseconds) =>
   new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds))
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 30_000
+const MAX_BUFFERED_EVENTS = 1_024
+
 export class OpenScienceApiError extends Error {
   constructor(message, { code = 'request_failed', status } = {}) {
     super(message)
@@ -14,71 +18,221 @@ export class OpenScienceApiError extends Error {
   }
 }
 
+const resolveRequestTimeout = (defaultTimeoutMs, timeoutMs) => {
+  const resolved = timeoutMs ?? defaultTimeoutMs
+  if (!Number.isFinite(resolved) || resolved <= 0) {
+    throw new TypeError('timeoutMs must be a positive number.')
+  }
+  return resolved
+}
+
+const createRequestLifecycle = ({ defaultTimeoutMs, signal, timeoutMs }) => {
+  signal?.throwIfAborted()
+  const resolvedTimeoutMs = resolveRequestTimeout(defaultTimeoutMs, timeoutMs)
+  const timeoutController = new AbortController()
+  const timeoutError = new OpenScienceApiError(
+    `Open Science request timed out after ${resolvedTimeoutMs} milliseconds.`,
+    { code: 'timeout' }
+  )
+  const timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
+  const requestSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal
+  let finalized = false
+
+  return {
+    signal: requestSignal,
+    finalize() {
+      if (finalized) return
+      finalized = true
+      clearTimeout(timeout)
+    },
+    normalizeError(error) {
+      if (signal?.aborted) return signal.reason
+      if (timeoutController.signal.aborted) return timeoutError
+      return error
+    }
+  }
+}
+
+const withRequestTimeout = async (options, operation) => {
+  const lifecycle = createRequestLifecycle(options)
+  try {
+    return await operation(lifecycle.signal)
+  } catch (error) {
+    throw lifecycle.normalizeError(error)
+  } finally {
+    lifecycle.finalize()
+  }
+}
+
+const wrapResponseBodyLifecycle = (response, lifecycle) => {
+  if (!response.body) {
+    lifecycle.finalize()
+    return response
+  }
+  const reader = response.body.getReader()
+  const body = new ReadableStream({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read()
+        if (chunk.done) {
+          lifecycle.finalize()
+          controller.close()
+        } else {
+          controller.enqueue(chunk.value)
+        }
+      } catch (error) {
+        lifecycle.finalize()
+        controller.error(lifecycle.normalizeError(error))
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason)
+      } finally {
+        lifecycle.finalize()
+      }
+    }
+  })
+  const wrapped = new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers
+  })
+  Object.defineProperties(wrapped, {
+    redirected: { value: response.redirected },
+    type: { value: response.type },
+    url: { value: response.url }
+  })
+  return wrapped
+}
+
+const sleepWithSignal = async (sleep, milliseconds, signal) => {
+  signal?.throwIfAborted()
+  if (!signal) {
+    await sleep(milliseconds)
+    return
+  }
+  await new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', abort)
+      callback(value)
+    }
+    const abort = () => finish(reject, signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    Promise.resolve()
+      .then(() => sleep(milliseconds))
+      .then(
+        () => finish(resolve),
+        (error) => finish(reject, error)
+      )
+  })
+}
+
 export class OpenScienceClient {
-  constructor({ baseUrl, token, fetch: fetchImpl = globalThis.fetch, sleep = defaultSleep }) {
+  constructor({
+    baseUrl,
+    token,
+    fetch: fetchImpl = globalThis.fetch,
+    sleep = defaultSleep,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS
+  }) {
     if (!baseUrl) throw new Error('Open Science baseUrl is required.')
     if (!token) throw new Error('Open Science token is required.')
     if (!fetchImpl) throw new Error('A Fetch implementation is required.')
+    resolveRequestTimeout(requestTimeoutMs)
     this.baseUrl = baseUrl.replace(/\/$/, '')
     this.token = token
     this.fetch = fetchImpl
     this.sleep = sleep
+    this.requestTimeoutMs = requestTimeoutMs
   }
 
-  async health() {
-    const response = await this.fetch(`${this.baseUrl}/api/bootstrap`, {
-      headers: { authorization: `Bearer ${this.token}`, accept: 'application/json' }
-    })
-    if (!response.ok) {
-      throw new OpenScienceApiError('Open Science is not running.', {
-        code: 'daemon_unavailable',
-        status: response.status
-      })
-    }
-    return response.json()
+  async health(options = {}) {
+    return withRequestTimeout(
+      {
+        defaultTimeoutMs: this.requestTimeoutMs,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs
+      },
+      async (signal) => {
+        const response = await this.fetch(`${this.baseUrl}/api/bootstrap`, {
+          headers: { authorization: `Bearer ${this.token}`, accept: 'application/json' },
+          signal
+        })
+        if (!response.ok) {
+          throw new OpenScienceApiError('Open Science is not running.', {
+            code: 'daemon_unavailable',
+            status: response.status
+          })
+        }
+        return await response.json()
+      }
+    )
   }
 
-  listProjects() {
-    return this.request('/api/v1/projects')
+  listProjects(options) {
+    return this.request('/api/v1/projects', options)
   }
 
-  createProject({ name, description }) {
+  createProject({ name, description, agentContext }, options) {
     return this.request('/api/v1/projects', {
+      ...options,
       method: 'POST',
-      body: { name, ...(description === undefined ? {} : { description }) }
+      body: {
+        name,
+        ...(description === undefined ? {} : { description }),
+        ...(agentContext === undefined ? {} : { agentContext })
+      }
     })
   }
 
-  listSessions(projectId) {
+  updateProject(projectId, request, options) {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
+  listSessions(projectId, options) {
     const query = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
-    return this.request(`/api/v1/sessions${query}`)
+    return this.request(`/api/v1/sessions${query}`, options)
   }
 
-  getSession(sessionId) {
-    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`)
+  getSession(sessionId, options) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, options)
   }
 
-  getSessionPlan(sessionId) {
-    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`)
+  getSessionPlan(sessionId, options) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan`, options)
   }
 
-  respondSessionPlan(sessionId, response) {
+  respondSessionPlan(sessionId, response, options) {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/plan/respond`, {
+      ...options,
       method: 'POST',
       body: response
     })
   }
 
-  startRun(request) {
-    return this.request('/api/v1/runs', { method: 'POST', body: request })
+  startRun(request, options) {
+    return this.request('/api/v1/runs', { ...options, method: 'POST', body: request })
   }
 
-  getRun(runId) {
-    return this.request(`/api/v1/runs/${encodeURIComponent(runId)}`)
+  getRun(runId, options) {
+    return this.request(`/api/v1/runs/${encodeURIComponent(runId)}`, options)
   }
 
-  cancelRun(runId) {
-    return this.request(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+  cancelRun(runId, options) {
+    return this.request(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, {
+      ...options,
+      method: 'POST'
+    })
   }
 
   async waitForRun(
@@ -94,45 +248,89 @@ export class OpenScienceClient {
       if (deadline !== undefined && Date.now() >= deadline) {
         throw new OpenScienceApiError(`Timed out waiting for run ${runId}.`, { code: 'timeout' })
       }
-      const run = await this.getRun(runId)
+      const remainingMs = deadline === undefined ? undefined : Math.max(1, deadline - Date.now())
+      let run
+      try {
+        run = await this.getRun(runId, { signal, timeoutMs: remainingMs })
+      } catch (error) {
+        signal?.throwIfAborted()
+        if (
+          deadline !== undefined &&
+          (Date.now() >= deadline ||
+            (error instanceof OpenScienceApiError && error.code === 'timeout'))
+        ) {
+          throw new OpenScienceApiError(`Timed out waiting for run ${runId}.`, { code: 'timeout' })
+        }
+        throw error
+      }
       if (run.status !== 'running') return run
       if (returnOnAttention && run.attention) return run
-      await this.sleep(pollIntervalMs)
+      const sleepMs =
+        deadline === undefined
+          ? pollIntervalMs
+          : Math.min(pollIntervalMs, Math.max(0, deadline - Date.now()))
+      await sleepWithSignal(this.sleep, sleepMs, signal)
     }
   }
 
-  listArtifacts(sessionId) {
-    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`)
+  listArtifacts(sessionId, options) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`, options)
   }
 
-  async downloadArtifact(artifactId, { signal } = {}) {
-    const response = await this.fetch(
-      `${this.baseUrl}/api/v1/artifacts/${encodeURIComponent(artifactId)}/content`,
-      {
-        headers: { authorization: `Bearer ${this.token}` },
-        signal
+  async downloadArtifact(artifactId, { signal, timeoutMs } = {}) {
+    const lifecycle = createRequestLifecycle({
+      defaultTimeoutMs: this.requestTimeoutMs,
+      signal,
+      timeoutMs
+    })
+    try {
+      const response = await this.fetch(
+        `${this.baseUrl}/api/v1/artifacts/${encodeURIComponent(artifactId)}/content`,
+        {
+          headers: { authorization: `Bearer ${this.token}` },
+          signal: lifecycle.signal
+        }
+      )
+      if (!response.ok) {
+        await this.throwResponseError(response)
       }
-    )
-    if (!response.ok) await this.throwResponseError(response)
-    return response
+      return wrapResponseBodyLifecycle(response, lifecycle)
+    } catch (error) {
+      lifecycle.finalize()
+      throw lifecycle.normalizeError(error)
+    }
   }
 
-  events({ signal, WebSocket: WebSocketImpl = globalThis.WebSocket } = {}) {
+  events({
+    idleTimeoutMs = DEFAULT_EVENT_IDLE_TIMEOUT_MS,
+    signal,
+    WebSocket: WebSocketImpl = globalThis.WebSocket
+  } = {}) {
     if (!WebSocketImpl) throw new Error('A WebSocket implementation is required.')
     signal?.throwIfAborted()
+    resolveRequestTimeout(DEFAULT_EVENT_IDLE_TIMEOUT_MS, idleTimeoutMs)
     const endpoint = new URL('/api/v1/events', this.baseUrl)
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
     endpoint.searchParams.set('token', this.token)
     endpoint.searchParams.set('client', `sdk-${globalThis.crypto.randomUUID()}`)
+    endpoint.searchParams.set('liveness', '1')
     const socket = new WebSocketImpl(endpoint)
     const queue = []
     const waiters = []
     let finished = false
     let failure
     let resolveReady
-    const ready = new Promise((resolve) => {
+    let rejectReady
+    let readySettled = false
+    let opened = false
+    let idleTimer
+    const ready = new Promise((resolve, reject) => {
       resolveReady = resolve
+      rejectReady = reject
     })
+    // Iteration without awaiting `ready` still receives the same terminal error through `next()`;
+    // keep the parallel readiness promise from becoming an unhandled rejection in that usage.
+    void ready.catch(() => undefined)
 
     const flush = () => {
       while (waiters.length && queue.length) waiters.shift().resolve(queue.shift())
@@ -142,24 +340,101 @@ export class OpenScienceClient {
         else waiter.resolve(undefined)
       }
     }
+    const settleReady = (error) => {
+      if (readySettled) return
+      readySettled = true
+      if (error) rejectReady(error)
+      else resolveReady()
+    }
+    const finish = ({ error, closeSocket = false, discardQueue = false } = {}) => {
+      if (finished) return
+      finished = true
+      failure = error
+      clearTimeout(idleTimer)
+      if (discardQueue) queue.splice(0)
+      if (!opened) {
+        settleReady(
+          error ??
+            new OpenScienceApiError('Open Science event stream closed before it was ready.', {
+              code: 'event_stream_failed'
+            })
+        )
+      }
+      signal?.removeEventListener('abort', abort)
+      if (closeSocket) socket.close()
+      flush()
+    }
+    const fail = (message, code) => {
+      finish({
+        error: new OpenScienceApiError(message, { code }),
+        closeSocket: true,
+        discardQueue: true
+      })
+    }
+    const armIdleTimeout = () => {
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(
+        () =>
+          fail(
+            `Open Science event stream timed out after ${idleTimeoutMs} milliseconds.`,
+            'timeout'
+          ),
+        idleTimeoutMs
+      )
+    }
+    armIdleTimeout()
     socket.addEventListener('message', (event) => {
-      queue.push(JSON.parse(String(event.data)))
+      if (finished) return
+      armIdleTimeout()
+      let parsed
+      try {
+        parsed = JSON.parse(String(event.data))
+      } catch {
+        fail(
+          'Open Science event stream returned an invalid message.',
+          'event_stream_invalid_message'
+        )
+        return
+      }
+      if (parsed?.type === 'connection.heartbeat') return
+      if (queue.length >= MAX_BUFFERED_EVENTS) {
+        fail(
+          'Open Science event stream exceeded its buffered event limit.',
+          'event_stream_overflow'
+        )
+        return
+      }
+      queue.push(parsed)
       flush()
     })
-    socket.addEventListener('open', () => resolveReady())
+    socket.addEventListener('open', () => {
+      if (finished) return
+      opened = true
+      armIdleTimeout()
+      settleReady()
+    })
     socket.addEventListener('error', () => {
-      failure = new OpenScienceApiError('Open Science event stream failed.', {
-        code: 'event_stream_failed'
-      })
-      resolveReady()
-      finished = true
-      flush()
+      fail('Open Science event stream failed.', 'event_stream_failed')
     })
     socket.addEventListener('close', () => {
-      finished = true
-      flush()
+      if (!opened) {
+        finish({
+          error: new OpenScienceApiError('Open Science event stream closed before it was ready.', {
+            code: 'event_stream_failed'
+          }),
+          discardQueue: true
+        })
+        return
+      }
+      finish()
     })
-    const abort = () => socket.close()
+    const abort = () => {
+      if (!opened) {
+        finish({ error: signal.reason, closeSocket: true, discardQueue: true })
+      } else {
+        finish({ closeSocket: true })
+      }
+    }
     signal?.addEventListener('abort', abort, { once: true })
 
     return {
@@ -177,28 +452,32 @@ export class OpenScienceClient {
         return value === undefined ? { value: undefined, done: true } : { value, done: false }
       },
       async return() {
-        signal?.removeEventListener('abort', abort)
-        socket.close()
+        finish({ closeSocket: true })
         return { value: undefined, done: true }
       }
     }
   }
 
-  async request(path, { method = 'GET', body, signal } = {}) {
+  async request(path, { method = 'GET', body, signal, timeoutMs } = {}) {
     const headers = {
       authorization: `Bearer ${this.token}`,
       accept: 'application/json'
     }
     if (body !== undefined) headers['content-type'] = 'application/json'
-    const response = await this.fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal
-    })
-    if (!response.ok) await this.throwResponseError(response)
-    const payload = await response.json()
-    return payload.data
+    return withRequestTimeout(
+      { defaultTimeoutMs: this.requestTimeoutMs, signal, timeoutMs },
+      async (requestSignal) => {
+        const response = await this.fetch(`${this.baseUrl}${path}`, {
+          method,
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: requestSignal
+        })
+        if (!response.ok) await this.throwResponseError(response)
+        const payload = await response.json()
+        return payload.data
+      }
+    )
   }
 
   async throwResponseError(response) {
@@ -218,7 +497,13 @@ export class OpenScienceClient {
   }
 }
 
-export const connectToOpenScience = async ({ configRoot, env, fetch } = {}) => {
+export const connectToOpenScience = async ({
+  configRoot,
+  env,
+  fetch,
+  requestTimeoutMs,
+  signal
+} = {}) => {
   const state = await findServiceState({ override: configRoot, env })
   if (!state) {
     throw new OpenScienceApiError(
@@ -232,8 +517,9 @@ export const connectToOpenScience = async ({ configRoot, env, fetch } = {}) => {
   const client = new OpenScienceClient({
     baseUrl: `http://127.0.0.1:${state.port}`,
     token,
-    fetch
+    fetch,
+    requestTimeoutMs
   })
-  await client.health()
+  await client.health({ signal })
   return client
 }

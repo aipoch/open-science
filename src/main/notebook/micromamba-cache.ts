@@ -333,6 +333,9 @@ const defaultPrepare = (
 const fitsBudget = (cacheRoot: string, maxCacheRelativePath: number): boolean =>
   cacheRoot.length + maxCacheRelativePath <= WINDOWS_MAX_USABLE_PATH
 
+const isAsciiPath = (path: string): boolean =>
+  Array.from(path).every((character) => character.charCodeAt(0) <= 0x7f)
+
 const BASE32_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz'
 
 const compactCacheHash = (digest: Buffer): string => {
@@ -421,6 +424,12 @@ export const selectMicromambaCache = (
   const rejections: string[] = []
 
   for (const candidate of candidates) {
+    if (!isAsciiPath(candidate.path)) {
+      rejections.push(
+        `${candidate.path}: contains non-ASCII characters unsupported by micromamba package extraction on Windows`
+      )
+      continue
+    }
     if (!fitsBudget(candidate.path, maxCacheRelativePath)) {
       const excess = candidate.path.length + maxCacheRelativePath - WINDOWS_MAX_USABLE_PATH
       rejections.push(`${candidate.path}: exceeds the Windows path budget by ${excess} characters`)
@@ -437,6 +446,12 @@ export const selectMicromambaCache = (
     if (!physical) {
       rejections.push(
         `${candidate.path}: ${preparation?.rejection ?? 'cache preparation returned no usable path'}`
+      )
+      continue
+    }
+    if (!isAsciiPath(physical)) {
+      rejections.push(
+        `${physical}: physical path contains non-ASCII characters unsupported by micromamba package extraction on Windows`
       )
       continue
     }

@@ -171,13 +171,13 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   const exportFormats = page.locator(
     '[data-slot="dropdown-menu-sub-content"][aria-label="Export conversation formats"]'
   )
-  const markdownExport = page.getByRole('menuitem', { name: 'Markdown' })
+  const markdownExport = exportFormats.getByRole('menuitem', { name: 'Markdown' })
   await expect(exportFormats).toBeVisible()
   expect(await exportFormats.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBe(
     80
   )
   await expect(markdownExport).toBeVisible()
-  await markdownExport.click({ trial: true })
+  await markdownExport.hover()
   const archive = page.getByRole('menuitem', { name: 'Archive' })
   await expect(archive).toBeEnabled()
   await archive.click()

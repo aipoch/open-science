@@ -767,7 +767,9 @@ describe('Settings backend ownership architecture', () => {
     expect(mainIndex).toContain(
       'const startupSettingsRepository = new SettingsRepository(settingsStore)'
     )
-    expect(mainIndex).toContain('settingsStore,\n          translate,')
+    expect(mainIndex).toMatch(
+      /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
+    )
     expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
     expect(mainIpc).toContain(
       'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      applyNetworkProxy:'
@@ -808,6 +810,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/native-responses-compatibility.ts',
       'src/main/settings/anthropic-provider-bridge.ts',
       'src/main/settings/openai-provider-bridge.ts',
+      'src/main/settings/provider-error-replay.ts',
       'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/responses-bridge.ts',

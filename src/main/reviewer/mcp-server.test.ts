@@ -20,6 +20,7 @@ import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from './bridge-tools'
 import { createReviewerMcpStdioProxy } from './mcp-stdio-proxy'
 import type { TurnScope } from '../../shared/reviewer'
 import type { ArtifactContent, ExecRecord, OrderedBlock, ReviewerHostServer } from './host-sdk'
+import { fetchOverSocket } from '../local-rpc-transport'
 
 const scope: TurnScope = {
   turnMessageId: 'msg-2',
@@ -662,6 +663,82 @@ describe('ReviewerMcpServer HTTP transport', () => {
       const toolJson = parseSse(await toolResponse.text())
       expect(toolJson.error).toBeUndefined()
     } finally {
+      await server.stop()
+    }
+  })
+
+  it('does not emit an unhandled rejection when two initialize requests race', async () => {
+    const server = new ReviewerMcpServer(
+      scope,
+      async () => undefined,
+      createReviewerEvidence(),
+      [],
+      { command: 'unused', entryPath: 'unused', transport: 'pipe' }
+    )
+    const { endpoint, token } = await server.start()
+    const proxyConfig = server.toAcpMcpServerConfig()
+    if (!('env' in proxyConfig)) throw new Error('Expected Reviewer MCP stdio proxy config')
+    const socketPath = proxyConfig.env?.find(
+      (entry) => entry.name === 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH'
+    )?.value
+    if (!socketPath) throw new Error('Expected Reviewer MCP named-pipe path')
+    const socketFetch = fetchOverSocket(socketPath)
+    const unhandledRejections: unknown[] = []
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandledRejection)
+
+    const headers = {
+      authorization: `Bearer ${token}`,
+      accept: MCP_ACCEPT,
+      'content-type': 'application/json'
+    }
+    const initializeBody = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'racing-client', version: '1.0' }
+      }
+    })
+
+    try {
+      const responses = await Promise.allSettled([
+        socketFetch(endpoint, {
+          method: 'POST',
+          headers,
+          body: initializeBody,
+          signal: AbortSignal.timeout(2_000)
+        }),
+        socketFetch(endpoint, {
+          method: 'POST',
+          headers,
+          body: initializeBody,
+          signal: AbortSignal.timeout(2_000)
+        })
+      ])
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(responses.every((result) => result.status === 'fulfilled')).toBe(true)
+      const fulfilledResponses = responses
+        .filter(
+          (result): result is PromiseFulfilledResult<Response> => result.status === 'fulfilled'
+        )
+        .map((result) => result.value)
+      expect(fulfilledResponses.map((response) => response.status)).toEqual([200, 200])
+      expect(
+        new Set(fulfilledResponses.map((response) => response.headers.get('mcp-session-id'))).size
+      ).toBe(2)
+      expect(unhandledRejections).toEqual([])
+
+      await Promise.all(
+        fulfilledResponses.map((response) => response.body?.cancel().catch(() => undefined))
+      )
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection)
       await server.stop()
     }
   })

@@ -19,12 +19,17 @@ import {
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
+import {
+  DurableJsonRecoveryBarrierError,
+  readDurableJsonFile,
+  recoverDurableJsonDirectory,
+  writeDurableJsonFile
+} from '../storage/durable-json-file'
 
 const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
 const PROJECT_DELETION_COMMIT_MARKER = '.project-deletion-committed'
 const MANIFEST_FILE = 'manifest.json'
-const FILE_REPLACEMENT_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 const PRE_S2_BACKUP_SUFFIX = '.pre-s2-backup'
 const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
 
@@ -124,6 +129,8 @@ type ProjectSessionLoadDiagnostics = {
 
 type ProjectSessionDeletionState = 'live' | 'legacy-committed' | 'prepared' | 'absent'
 
+class UnsupportedSessionFileError extends DurableJsonRecoveryBarrierError {}
+
 type SessionDirectoryEntry = {
   name: string
   isDirectory(): boolean
@@ -149,12 +156,6 @@ const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   renameFile: (source, destination) => rename(source, destination),
   wait: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
 }
-
-const isRetryableFileReplacementError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  ['EPERM', 'EACCES', 'EBUSY'].includes(String((error as { code?: unknown }).code))
 
 // Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
 export const PROD_SESSION_DIR_NAME = '.open-science'
@@ -190,7 +191,6 @@ const assertSafeSegment = (segment: string): string => {
 class SessionRepository {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly sessionRevisions = new Map<string, number>()
-  private writeSequence = 0
   private backupSequence = 0
   private readonly dependencies: SessionRepositoryDependencies
 
@@ -753,38 +753,45 @@ class SessionRepository {
 
   // Shared temp-file + rename write used by session files and the manifest.
   private async atomicWrite(filePath: string, payload: unknown): Promise<void> {
-    this.writeSequence += 1
-    const temporaryPath = `${filePath}.${Date.now()}-${this.writeSequence}.tmp`
-
-    await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
-    try {
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          await this.dependencies.renameFile(temporaryPath, filePath)
-          return
-        } catch (error) {
-          const delayMs = FILE_REPLACEMENT_RETRY_DELAYS_MS[attempt]
-          if (delayMs === undefined || !isRetryableFileReplacementError(error)) throw error
-          await this.dependencies.wait(delayMs)
-        }
-      }
-    } catch (error) {
-      await this.dependencies
-        .remove(temporaryPath, { recursive: false, force: true })
-        .catch(() => undefined)
-      throw error
-    }
+    await writeDurableJsonFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, {
+      remove: this.dependencies.remove,
+      rename: this.dependencies.renameFile,
+      wait: this.dependencies.wait
+    })
   }
 
   private async readManifest(options: { quarantineInvalidFiles: boolean }): Promise<{
     manifest: PersistedSessionManifest
     warning?: SessionLoadWarning
   }> {
-    let raw: string
     try {
-      raw = await this.dependencies.readManifestFile(this.manifestPath)
+      const read = await readDurableJsonFile(
+        this.manifestPath,
+        (contents) => {
+          const parsed = JSON.parse(contents) as unknown
+          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            throw new Error('Invalid Session manifest')
+          }
+          return normalizeSessionManifest(parsed)
+        },
+        {
+          readDirectoryEntries: this.dependencies.readDirectoryEntries,
+          readFile: this.dependencies.readManifestFile,
+          remove: this.dependencies.remove,
+          rename: this.dependencies.renameFile,
+          wait: this.dependencies.wait
+        }
+      )
+      return {
+        manifest: read.status === 'found' ? read.value : createEmptySessionManifest()
+      }
     } catch (error) {
-      if (!isMissingFileError(error)) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        !isMissingFileError(error)
+      ) {
         return {
           manifest: createEmptySessionManifest(),
           warning: {
@@ -794,20 +801,6 @@ class SessionRepository {
           }
         }
       }
-      return {
-        manifest: createEmptySessionManifest()
-      }
-    }
-
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        throw new Error('Invalid Session manifest')
-      }
-      return {
-        manifest: normalizeSessionManifest(parsed)
-      }
-    } catch {
       const wasQuarantined =
         options.quarantineInvalidFiles && (await this.tryBackupInvalidFile(this.manifestPath))
       return {
@@ -881,6 +874,22 @@ class SessionRepository {
       scanMetrics?: SessionScanMetrics
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
+    let recoveryComplete = true
+    try {
+      await recoverDurableJsonDirectory(
+        projectDir,
+        (filePath, contents) => this.decodeSessionContents(filePath, projectId, contents),
+        {
+          readDirectoryEntries: this.dependencies.readDirectoryEntries,
+          readFile: this.dependencies.readSessionFile,
+          remove: this.dependencies.remove,
+          rename: this.dependencies.renameFile,
+          wait: this.dependencies.wait
+        }
+      )
+    } catch {
+      recoveryComplete = false
+    }
     const sessionFiles = await this.listSessionFileNames(projectDir, {
       missingIsIncomplete: options.missingDirectoryIsIncomplete
     })
@@ -888,7 +897,7 @@ class SessionRepository {
     const activeQuarantines = new Set(sessionFiles.quarantinedPrimaryFileNames)
     if (options.scanMetrics) options.scanMetrics.sessionFileCount += sessionFiles.names.length
     const warnedFiles = new Set<string>()
-    let isComplete = sessionFiles.isComplete
+    let isComplete = sessionFiles.isComplete && recoveryComplete
 
     for (const fileName of sessionFiles.names) {
       // The directory is the authoritative owning project, regardless of the file's stored projectId.
@@ -939,10 +948,56 @@ class SessionRepository {
     wasQuarantined?: boolean
     warning?: SessionLoadWarning
   }> {
-    let raw: string
+    let read:
+      | { status: 'found'; value: { session: PersistedChatSession; bytes: number } }
+      | { status: 'missing' }
     try {
-      raw = await this.dependencies.readSessionFile(filePath)
+      read = await readDurableJsonFile(
+        filePath,
+        (contents) => this.decodeSessionContents(filePath, projectId, contents),
+        {
+          readDirectoryEntries: this.dependencies.readDirectoryEntries,
+          readFile: this.dependencies.readSessionFile,
+          remove: this.dependencies.remove,
+          rename: this.dependencies.renameFile,
+          wait: this.dependencies.wait
+        }
+      )
     } catch (error) {
+      if (error instanceof UnsupportedSessionFileError) {
+        return {
+          isComplete: false,
+          warning: {
+            kind: 'unsupported-version',
+            projectId,
+            fileName: basename(filePath),
+            recovered: false
+          }
+        }
+      }
+      if (
+        typeof error !== 'object' ||
+        error === null ||
+        !('code' in error) ||
+        isMissingFileError(error)
+      ) {
+        const wasQuarantined =
+          !isMissingFileError(error) &&
+          options.quarantineInvalidFiles !== false &&
+          (await this.tryBackupInvalidFile(filePath))
+        if (!isMissingFileError(error)) {
+          return {
+            isComplete: wasQuarantined,
+            wasQuarantined,
+            warning: {
+              kind: 'corrupt',
+              projectId,
+              fileName: basename(filePath),
+              recovered: wasQuarantined
+            }
+          }
+        }
+      }
       if (isMissingFileError(error) && !options.missingIsIncomplete) return { isComplete: true }
       return {
         isComplete: false,
@@ -954,67 +1009,48 @@ class SessionRepository {
         }
       }
     }
-    if (options.scanMetrics) options.scanMetrics.sessionBytes += Buffer.byteLength(raw, 'utf8')
-
-    try {
-      const decoded = decodeSessionFile(JSON.parse(raw) as unknown, {
-        preserveLegacyUploadPaths: true,
-        preserveRuntimeState: (sessionId) =>
-          this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
-      })
-      if (decoded.status === 'unsupported-version') {
-        // A newer app still owns this authority. Leaving the primary file untouched and reporting an
-        // incomplete scan blocks reconciliation and all ordinary saving until a compatible app loads it.
-        return {
-          isComplete: false,
-          warning: {
-            kind: 'unsupported-version',
-            projectId,
-            fileName: basename(filePath),
-            recovered: false
-          }
-        }
-      }
-      if (decoded.status === 'invalid') {
-        const wasQuarantined =
-          options.quarantineInvalidFiles !== false && (await this.tryBackupInvalidFile(filePath))
-        return {
-          isComplete: wasQuarantined,
-          wasQuarantined,
-          warning: {
-            kind: 'corrupt',
-            projectId,
-            fileName: basename(filePath),
-            recovered: wasQuarantined
-          }
-        }
-      }
-      const session = decoded.session
-
-      // The file name is authoritative for global Session identity. Unlike the owning Project,
-      // an id mismatch is corruption rather than a legacy field that may be repaired from the path.
-      const fileName = basename(filePath)
-      const fileSessionId = fileName.endsWith('.json')
-        ? fileName.slice(0, -'.json'.length)
-        : undefined
-      if (session.id !== fileSessionId) {
-        throw new Error('Session id does not match its file name')
-      }
-
-      return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
-    } catch {
-      const wasQuarantined =
-        options.quarantineInvalidFiles !== false && (await this.tryBackupInvalidFile(filePath))
+    if (read.status === 'missing') {
+      if (!options.missingIsIncomplete) return { isComplete: true }
       return {
-        isComplete: wasQuarantined,
-        wasQuarantined,
+        isComplete: false,
         warning: {
-          kind: 'corrupt',
+          kind: 'unreadable',
           projectId,
           fileName: basename(filePath),
-          recovered: wasQuarantined
+          recovered: false
         }
       }
+    }
+    if (options.scanMetrics) options.scanMetrics.sessionBytes += read.value.bytes
+    return { session: read.value.session, isComplete: true }
+  }
+
+  private decodeSessionContents(
+    filePath: string,
+    projectId: string,
+    contents: string
+  ): { session: PersistedChatSession; bytes: number } {
+    const decoded = decodeSessionFile(JSON.parse(contents) as unknown, {
+      preserveLegacyUploadPaths: true,
+      preserveRuntimeState: (sessionId) =>
+        this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
+    })
+    if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
+    if (decoded.status === 'invalid') throw new Error('Invalid Session file')
+
+    // The file name is authoritative for global Session identity. Unlike the owning Project,
+    // an id mismatch is corruption rather than a legacy field that may be repaired from the path.
+    const fileName = basename(filePath)
+    const fileSessionId = fileName.endsWith('.json')
+      ? fileName.slice(0, -'.json'.length)
+      : undefined
+    if (decoded.session.id !== fileSessionId) {
+      throw new Error('Session id does not match its file name')
+    }
+
+    return {
+      session: decodeSessionDataPaths({ ...decoded.session, projectId }),
+      bytes: Buffer.byteLength(contents, 'utf8')
     }
   }
 

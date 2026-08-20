@@ -88,6 +88,44 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('serves static resources with browser security policies', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
+    await writeFile(join(staticRoot, 'app.js'), 'window.__staticTest = true')
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    for (const path of ['/', '/app.js']) {
+      const response = await fetch(`http://127.0.0.1:${server.port}${path}`, {
+        headers: { authorization: 'Bearer test-token' }
+      })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
+      expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
+      expect(response.headers.get('x-frame-options')).toBe('DENY')
+      expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+    }
+  })
+
   it('dispatches local Web RPC through the narrow application command view', async () => {
     const unusedFallbackInvoke = vi.fn()
     const directInvoke = vi.fn(
@@ -231,6 +269,7 @@ describe('startWebHttpServer', () => {
         subscribeProgress,
         listProjects: vi.fn(),
         createProject: vi.fn(),
+        updateProject: vi.fn(),
         listSessions: vi.fn(),
         getSession: vi.fn(),
         startRun: vi.fn(),
@@ -549,6 +588,13 @@ describe('startWebHttpServer', () => {
       return url.toString()
     }
 
+    const staleSocketUrl = new URL(eventSocketUrl(0))
+    staleSocketUrl.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION - 1))
+    const staleSocket = new WebSocket(staleSocketUrl)
+    await expect(
+      new Promise<number>((resolve) => staleSocket.once('close', (code) => resolve(code)))
+    ).resolves.toBe(1002)
+
     const firstSocket = new WebSocket(eventSocketUrl(0))
     const firstMessage = new Promise<unknown>((resolve) =>
       firstSocket.once('message', (data) => resolve(JSON.parse(data.toString())))
@@ -610,6 +656,76 @@ describe('startWebHttpServer', () => {
         data: expect.objectContaining({ requestId: 'permission-live' })
       })
     ])
+    publicSocket.close()
+  })
+
+  it('sends opt-in liveness frames on internal and public event sockets', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      eventHeartbeatIntervalMs: 10,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrap = (await (
+      await fetch(`${base}/api/bootstrap`, {
+        headers: { authorization: 'Bearer test-token' }
+      })
+    ).json()) as {
+      eventStream: { streamId: string; latestSequence: number }
+    }
+    const internalUrl = new URL(`${base.replace('http:', 'ws:')}/events`)
+    internalUrl.searchParams.set('token', 'test-token')
+    internalUrl.searchParams.set('client', 'heartbeat-web')
+    internalUrl.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+    internalUrl.searchParams.set('stream', bootstrap.eventStream.streamId)
+    internalUrl.searchParams.set('after', String(bootstrap.eventStream.latestSequence))
+    internalUrl.searchParams.set('liveness', '1')
+    const publicUrl = new URL(`${base.replace('http:', 'ws:')}/api/v1/events`)
+    publicUrl.searchParams.set('token', 'test-token')
+    publicUrl.searchParams.set('client', 'heartbeat-sdk')
+    publicUrl.searchParams.set('liveness', '1')
+    const internalSocket = new WebSocket(internalUrl)
+    const publicSocket = new WebSocket(publicUrl)
+    const messages = (socket: WebSocket): Promise<unknown> =>
+      new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for heartbeat.')), 250)
+        socket.on('message', (data) => {
+          const parsed = JSON.parse(data.toString())
+          if (parsed.kind === 'ready') return
+          clearTimeout(timeout)
+          resolve(parsed)
+        })
+      })
+
+    await expect(Promise.all([messages(internalSocket), messages(publicSocket)])).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'heartbeat',
+        protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+        streamId: bootstrap.eventStream.streamId,
+        latestSequence: bootstrap.eventStream.latestSequence
+      }),
+      expect.objectContaining({
+        type: 'connection.heartbeat',
+        data: { timestamp: expect.any(Number) }
+      })
+    ])
+    internalSocket.close()
     publicSocket.close()
   })
 
@@ -913,6 +1029,7 @@ describe('startWebHttpServer', () => {
       subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
+      updateProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(async () => ({
@@ -1541,8 +1658,15 @@ describe('startWebHttpServer', () => {
           publishProgress = undefined
         }
       }),
-      listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
-      createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
+      listProjects: vi
+        .fn()
+        .mockResolvedValue([{ id: 'project-1', name: 'Research', hasAgentContext: false }]),
+      createProject: vi
+        .fn()
+        .mockResolvedValue({ id: 'project-2', name: 'Created', hasAgentContext: true }),
+      updateProject: vi
+        .fn()
+        .mockResolvedValue({ id: 'project-1', name: 'Research', hasAgentContext: true }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
       getSession: vi.fn().mockResolvedValue({ id: 'session/1', title: 'Review' }),
       getSessionPlan: vi.fn().mockResolvedValue({
@@ -1646,7 +1770,9 @@ describe('startWebHttpServer', () => {
     expect(projects.status).toBe(200)
     expect(projects.headers.get('content-type')).toBe('application/json; charset=utf-8')
     expect(projects.headers.get('cache-control')).toBe('no-store')
-    expect(await projects.json()).toEqual({ data: [{ id: 'project-1', name: 'Research' }] })
+    expect(await projects.json()).toEqual({
+      data: [{ id: 'project-1', name: 'Research', hasAgentContext: false }]
+    })
     expect(taskContexts[0]).toMatchObject({
       surface: 'task',
       location: 'local',
@@ -1657,13 +1783,34 @@ describe('startWebHttpServer', () => {
     const created = await fetch(`${base}/api/v1/projects`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Created', description: 'A new project' })
+      body: JSON.stringify({
+        name: 'Created',
+        description: 'A new project',
+        agentContext: 'Always cite sources.'
+      })
     })
     expect(created.status).toBe(201)
-    expect(await created.json()).toEqual({ data: { id: 'project-2', name: 'Created' } })
+    expect(await created.json()).toEqual({
+      data: { id: 'project-2', name: 'Created', hasAgentContext: true }
+    })
     expect(tasks.createProject).toHaveBeenCalledWith({
       name: 'Created',
-      description: 'A new project'
+      description: 'A new project',
+      agentContext: 'Always cite sources.'
+    })
+
+    const updated = await fetch(`${base}/api/v1/projects/project%2F1`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedUpdatedAt: 7, agentContext: 'Prefer Python.' })
+    })
+    expect(updated.status).toBe(200)
+    expect(await updated.json()).toEqual({
+      data: { id: 'project-1', name: 'Research', hasAgentContext: true }
+    })
+    expect(tasks.updateProject).toHaveBeenCalledWith('project/1', {
+      expectedUpdatedAt: 7,
+      agentContext: 'Prefer Python.'
     })
 
     const sessions = await fetch(`${base}/api/v1/sessions?project=project-1`, {
@@ -1869,6 +2016,7 @@ describe('startWebHttpServer', () => {
       subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
+      updateProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),
@@ -1937,6 +2085,7 @@ describe('startWebHttpServer', () => {
       subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
+      updateProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),

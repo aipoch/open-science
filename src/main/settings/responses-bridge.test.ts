@@ -575,6 +575,47 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
+  it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const upstreamFetch = vi.fn(async () =>
+      Response.json(
+        { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
+        { status: 401 }
+      )
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'wrong-key', model: 'model-a' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello', stream: true })
+      })
+
+    try {
+      const first = await send()
+      const second = await send()
+
+      expect(first.status).toBe(400)
+      expect(second.status).toBe(400)
+      await expect(second.json()).resolves.toMatchObject({
+        error: {
+          type: 'upstream_error',
+          message: 'Incorrect API key provided',
+          status: 401
+        }
+      })
+      expect(upstreamFetch).toHaveBeenCalledOnce()
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('overrides Codex\u2019s effort with the model-resolved value at the upstream gateway', async () => {
     let upstreamRequest: Record<string, unknown> | undefined
     const upstreamFetch = vi.fn(

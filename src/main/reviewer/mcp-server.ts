@@ -275,7 +275,6 @@ export type SubmitFindingsHandler = (
 
 // The per-run reviewer MCP server: exposes submit_findings and starts/stops with the review.
 export class ReviewerMcpServer {
-  private readonly mcpServer: ModelContextProtocolServer
   private readonly httpServer: ReturnType<typeof createServer>
   private readonly token: string
   private _endpoint: string | undefined
@@ -300,9 +299,16 @@ export class ReviewerMcpServer {
   ) {
     this.trackedFindingIds = new Set(trackedFindingIds)
     this.token = randomUUID()
-    this.mcpServer = this.buildMcpServer()
     this.httpServer = createServer((req, res) => {
-      void this.handleHttpRequest(req, res)
+      void this.handleHttpRequest(req, res).catch((error) => {
+        log.error('reviewer MCP request failed', { error })
+        if (!res.headersSent) {
+          res.writeHead(500, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+        } else {
+          res.destroy(error instanceof Error ? error : undefined)
+        }
+      })
     })
   }
 
@@ -653,7 +659,7 @@ export class ReviewerMcpServer {
       transport.onclose = () => {
         if (transport.sessionId) this.transports.delete(transport.sessionId)
       }
-      await this.mcpServer.connect(transport)
+      await this.buildMcpServer().connect(transport)
     } else {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'Bad Request: missing or unknown mcp-session-id' }))

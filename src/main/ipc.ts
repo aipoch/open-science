@@ -65,15 +65,11 @@ import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
-import { ApprovalBroker } from './connectors/approval-broker'
-import { ParserEngine } from './connectors/engine'
-import { McpClientManager } from './connectors/mcp-client-manager'
-import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './connectors/custom-mcp-bootstrap'
+import { createConnectorApplicationModule } from './connectors/application'
+import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
-import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
 import { connectorSkillSourceDir } from './connectors/provision'
-import { ConnectorService } from './connectors/service'
 import { registerFileSaveHandlers } from './file-save'
 import { ImmutableInputAuthority } from './immutable-input-authority'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
@@ -145,7 +141,6 @@ import { HostFramesService } from './notebook/host-frames-service'
 import { HostSessionsService } from './notebook/host-sessions-service'
 import { HostModelService } from './notebook/host-model-service'
 import { HostViewImageService } from './notebook/host-view-image-service'
-import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../shared/uploads'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../shared/artifacts'
@@ -306,7 +301,6 @@ import {
   type ElectronRuntimeAdapterInterfaces,
   type NamedElectronSurfaceAdapter
 } from './runtime-electron-wiring'
-import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/conversation-import'
 import { HostSkillsService, type HostSkillsCatalog } from './skills/host-skills-service'
 import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
@@ -354,6 +348,7 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
+  abortQuitPreparation: () => void
 }
 
 type ApplicationModuleInterfaces = ApplicationRuntimeInterfaces & {
@@ -362,17 +357,6 @@ type ApplicationModuleInterfaces = ApplicationRuntimeInterfaces & {
 
 type IpcRegistration = ApplicationRuntimeInterfaces & {
   dispose: () => Promise<void>
-}
-
-// Builds a short, human-readable preview of a connector call's arguments for the approval card.
-const previewArgs = (args: Record<string, unknown>): string => {
-  let json: string
-  try {
-    json = JSON.stringify(args)
-  } catch {
-    json = '{…}'
-  }
-  return json.length > 300 ? `${json.slice(0, 300)}…` : json
 }
 
 // Constructs application-owned modules and their narrow Electron adapter interfaces. The factory does
@@ -1086,6 +1070,13 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    onSkillsDeleted: async (skillIds) => {
+      if (skillIds.length > 0) {
+        // User Skills are default-on. Remove disabled-ID tombstones so reinstalling the same
+        // package does not inherit the deleted Skill's old Main Agent state.
+        await settingsRepository.setSkillsEnabled([...skillIds], true)
+      }
+    },
     onResourcesDeleted: (specialistId, skillIds) =>
       removeResourceTags([
         { resourceType: 'catalog.specialist', resourceId: specialistId },
@@ -1263,126 +1254,69 @@ const createApplicationModules = async (
         : null
     )
   })
-  // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc
-  // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per
-  // server, so constructing it here does not spawn anything until a custom server is actually used.
-  const mcpClientManager = await modules.add(undefined, () => {
-    const manager = new McpClientManager({
-      openExternal: (url) => shell.openExternal(url),
-      saveOAuthState: (serverId, state) =>
-        settingsService.saveCustomServerOAuthState(serverId, state)
-    })
-    return {
-      name: 'mcp-client-manager',
-      capability: manager,
-      dispose: () => manager.closeAll()
-    }
-  })
-  const connectorRuntimeSettings = new ConnectorRuntimeSettingsProjection({
-    readConnectors: () => settingsService.getConnectors(),
-    skillsDir: connectorSkillSourceDir(resolveStorageRoot()),
-    mcpClientManager,
-    notifyStatusChanged: () => broadcastToRenderers('settings:connector-runtime-changed', undefined)
-  })
-  settingsService.setCustomServerRuntimeProjectionProvider({
-    materializedSkillNames: () => connectorRuntimeSettings.materializedCustomSkillNames(),
-    availability: (id) => connectorRuntimeSettings.customServerAvailability(id),
-    isRefreshing: (id) => connectorRuntimeSettings.isRefreshing(id)
-  })
-  settingsService.setCustomServerAuthenticator(
-    async (serverId) => {
-      const server = (await settingsService.getConnectors())?.customMcpServers?.find(
-        (candidate) => candidate.id === serverId
-      )
-      if (!server) throw new Error(`Unknown custom connector: ${serverId}`)
-      await mcpClientManager.authenticate(toCustomMcpConfig(server))
-    },
-    (serverId) => mcpClientManager.cancelAuthentication(serverId)
-  )
-  // Bridges un-trusted connector calls to the renderer approval card. A tool call that isn't
-  // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
-  const approvalBroker = new ApprovalBroker({
-    generateId: () => randomUUID(),
-    onSettled: (id, state) => {
-      try {
-        broadcastToRenderers('connectors:approval-settled', id)
-      } finally {
-        void taskNotifications.settleAuthorization('connector', id, state)
-      }
-    },
-    broadcast: buildConnectorApprovalBroadcast({
-      broadcastToRenderers,
-      taskNotifications,
-      onNotificationError: (error) =>
-        notificationsLog.warn('connector approval notification failed', errorLogFields(error))
-    }),
-    replay: (request) => broadcastToRenderers('connectors:approval-request', request)
-  })
-  // The late-bound app runtime also serves connector tools that attach a generated file to the current
-  // turn. It is created below because it depends on the connector service.
-  const skillImportApprovalBroker = new SkillImportApprovalBroker({
-    generateId: () => randomUUID(),
-    broadcast: buildSkillImportApprovalBroadcast({
-      broadcastToRenderers,
-      taskNotifications,
-      onNotificationError: (error) =>
-        notificationsLog.warn('skill import approval notification failed', errorLogFields(error))
-    }),
-    onSettled: (id) => broadcastToRenderers('skills:conversation-import-settled', id),
-    onLifecycleSettled: (id, state) =>
-      void taskNotifications.settleAuthorization('skill-import', id, state)
-  })
-  const conversationSkillImporter = new ConversationSkillImporter({
-    uploads: uploadRepository,
-    createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
-      skillImportApprovalBroker.createCancellationGuard(sessionId, turnToken, attachmentUri),
-    createSessionCancellationGuard: (sessionId) =>
-      skillImportApprovalBroker.createSessionCancellationGuard(sessionId),
-    previewBundle: (bundle) => settingsService.previewSkillArchive(bundle),
-    importBundle: (bundle, items) => settingsService.importSkillArchiveBatch(bundle, items),
-    scanGitHub: async (url) => (await settingsService.scanRepoSkills({ repo: url })).skills,
-    importGitHub: (url) => settingsService.importSkill({ url }),
-    requestApproval: (request, cancellation) =>
-      skillImportApprovalBroker.request(request, cancellation),
-    // If a prompt is active the coordinator defers the reconnect until its terminal event, making the
-    // new Skill available on the next user turn without interrupting the importing tool call.
-    onSkillsChanged: requestSkillCatalogRefresh
-  })
+  // The connector application owns MCP, connector/skill approval, runtime projection, and service
+  // construction. Late-bound local tools remain composition-root dependencies and are passed in.
   const moleculePreviewHandler = createMoleculePreviewHandler({
     writeArtifactForCurrentRun: (sessionId, input) => {
       if (!runtimeRef.current) throw new Error('Artifact runtime is not initialized.')
       return runtimeRef.current.writeArtifactForCurrentRun(sessionId, input)
     }
   })
-  const connectorService = new ConnectorService({
-    engine: new ParserEngine({ fetchImpl: netFetchStandard }),
-    getConnectors: () => connectorRuntimeSettings.current(),
-    getConnectorsFresh: () => settingsService.getConnectors(),
-    resolveApiKey: (ref) => tryDecryptKey(ref),
-    mcpClientManager,
-    permissionGrantRegistry,
-    requestApproval: ({ connector, method, args, sessionId, availableScopes }, signal) =>
-      approvalBroker.request(
-        {
-          connector,
-          method,
-          argsPreview: previewArgs(args),
-          ...(sessionId ? { sessionId } : {}),
-          availableScopes
-        },
-        signal
-      ),
-    resolveSpecialistProfile: async (specialistId) => {
-      try {
-        return await profileService.resolveRunnableById(specialistId)
-      } catch {
-        return undefined
-      }
+  const connectorApplication = await modules.add(
+    {
+      settings: settingsService,
+      skillsDir: connectorSkillSourceDir(resolveStorageRoot()),
+      openExternal: (url) => shell.openExternal(url),
+      notifyStatusChanged: () =>
+        broadcastToRenderers('settings:connector-runtime-changed', undefined),
+      broadcastConnectorApproval: buildConnectorApprovalBroadcast({
+        broadcastToRenderers,
+        taskNotifications,
+        onNotificationError: (error) =>
+          notificationsLog.warn('connector approval notification failed', errorLogFields(error))
+      }),
+      onConnectorApprovalSettled: (id, state) => {
+        try {
+          broadcastToRenderers('connectors:approval-settled', id)
+        } finally {
+          void taskNotifications.settleAuthorization('connector', id, state)
+        }
+      },
+      replayConnectorApproval: (request) =>
+        broadcastToRenderers('connectors:approval-request', request),
+      broadcastSkillImportApproval: buildSkillImportApprovalBroadcast({
+        broadcastToRenderers,
+        taskNotifications,
+        onNotificationError: (error) =>
+          notificationsLog.warn('skill import approval notification failed', errorLogFields(error))
+      }),
+      onSkillImportSettled: (id) => broadcastToRenderers('skills:conversation-import-settled', id),
+      onSkillImportLifecycleSettled: (id, state) =>
+        void taskNotifications.settleAuthorization('skill-import', id, state),
+      uploads: uploadRepository,
+      fetchImpl: netFetchStandard,
+      resolveApiKey: (ref) => tryDecryptKey(ref),
+      permissionGrantRegistry,
+      resolveSpecialistProfile: async (specialistId) => {
+        try {
+          return await profileService.resolveRunnableById(specialistId)
+        } catch {
+          return undefined
+        }
+      },
+      localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler },
+      onSkillsChanged: requestSkillCatalogRefresh
     },
-    onCustomServerAvailabilityChanged: (serverId, availability) =>
-      connectorRuntimeSettings.setCustomServerDispatchAvailability(serverId, availability),
-    localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler }
-  })
+    createConnectorApplicationModule
+  )
+  const {
+    connectorService,
+    runtimeSettings: connectorRuntimeSettings,
+    mcpClientManager,
+    skillImporter: conversationSkillImporter,
+    connectorApprovals: approvalBroker,
+    skillImportApprovals: skillImportApprovalBroker
+  } = connectorApplication
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
@@ -2700,9 +2634,9 @@ const createApplicationModules = async (
   )
 
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install
-  // lives) and start the env readiness gate. The conda channel comes from the effective package mirror
-  // (configured override, else the region default from locale). Runtime packs use the official CDN base
-  // with OPEN_SCIENCE_ENV_CDN_BASE available for private/self-hosted deployments.
+  // lives) and start the env readiness gate. Named environments resolve the effective conda channel
+  // lazily because they are the only path that solves online; default runtime packs use the official
+  // CDN and must not wait for mirror probing during application startup.
   // Build the provisioner separately from registering the IPC surface: if construction fails (e.g.
   // micromamba missing in dev), `provisioner` stays undefined but the notebook-env handlers are STILL
   // registered below (as unavailable stubs), so the renderer gets an actionable "runtime unavailable"
@@ -2711,12 +2645,18 @@ const createApplicationModules = async (
   let serialized: RuntimeProvisioner | undefined
   try {
     const configuredMirror = await settingsService.getPackageMirror()
-    const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
+    const effectiveMirror = (): ReturnType<typeof effectiveMirrorAsync> =>
+      effectiveMirrorAsync(configuredMirror, app.getLocale())
     provisioner = createProductionProvisioner(
       {
         root: provisioningRoot,
-        channel: mirror.condaChannel ?? process.env.OPEN_SCIENCE_CONDA_CHANNEL ?? 'conda-forge',
-        caBundle: mirror.caBundle,
+        channel: async () =>
+          (await effectiveMirror()).condaChannel ??
+          process.env.OPEN_SCIENCE_CONDA_CHANNEL ??
+          'conda-forge',
+        // Mirror probing never changes the configured enterprise CA bundle, so it is safe to pass
+        // through synchronously while channel selection warms in the background.
+        caBundle: configuredMirror?.caBundle,
         micromamba: { resourcesPath: process.resourcesPath },
         // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
         // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
@@ -2743,6 +2683,11 @@ const createApplicationModules = async (
         withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn)
       },
       { runner: micromambaRunner }
+    )
+    // Warm the process-local mirror cache after provisioner construction succeeds. This stays outside
+    // the startup critical path; a later named-env create awaits the same memoized probe if necessary.
+    void effectiveMirror().catch((error) =>
+      console.error('Notebook package mirror warmup failed:', error)
     )
     // One serialized wrapper shared by the startup gate and the notebook service's on-demand default
     // provisioning, so a concurrent build of the same default env (UI R-tab + an agent R run) can't
@@ -2793,7 +2738,7 @@ const createApplicationModules = async (
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
     // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/
     // removeEnvironment). Wired after construction like the mcp/mirror resolvers above.
-    notebookService.setEnvironmentManager(provisioner as unknown as NotebookEnvironmentManager)
+    notebookService.setEnvironmentManager(provisioner)
     // On first agent use of a not-yet-built default env, build it from the offline bundle (via the
     // shared serialized provisioner) instead of erroring — keeps R lazy but avoids the agent creating
     // a redundant named env.
@@ -3129,6 +3074,7 @@ const createApplicationModules = async (
         notebook: notebookService
       }),
     prepareForQuit: () => runtime.prepareForQuit(),
+    abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,
       compute: {

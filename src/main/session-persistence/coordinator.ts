@@ -76,7 +76,9 @@ import {
   createSafeSessionUpdatePublisher as safeSessionUpdates,
   type SessionUpdatePublisher
 } from './session-update-publication'
+import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 
+const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
     result: LoadAllSessionsResult
@@ -119,7 +121,6 @@ type SessionMutationRepository = {
   listLegacyProjectSessionTombstones(): Promise<string[]>
   saveManifest(request: SaveSessionManifestRequest): Promise<void>
 }
-
 type SessionFileIndex = {
   syncSession(
     session: PersistedChatSession,
@@ -318,6 +319,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       this.fileIndex.markReconciliationIncomplete()
       const operation = startDiagnosticOperation(this.log, {
         operation: 'session-hydration',
+        cpuUsage: SESSION_CPU_TRACE_ENABLED ? process.cpuUsage : undefined,
         fields: { mode: 'read-only', startupCleanupEligible: false }
       })
       operation.phase('load-authority')
@@ -365,6 +367,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       this.destructiveStartupWindowOpen = false
       const operation = startDiagnosticOperation(this.log, {
         operation: 'session-hydration',
+        cpuUsage: SESSION_CPU_TRACE_ENABLED ? process.cpuUsage : undefined,
         fields: {
           mode: 'reconcile',
           startupCleanupEligible: mayRunDestructiveStartupCleanup
@@ -733,7 +736,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(session, options)
+      return this.stateOwner.saveSession(session, sanitizeRendererSaveSessionOptions(options))
     })
   }
 
@@ -746,13 +749,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(
-        {
-          ...session,
-          specialistId,
-          specialistBindingPending: specialistBindingPending ? true : undefined
-        },
-        { conflictRebaseFields: ['specialistId', 'specialistBindingPending'] }
+      return this.stateOwner.saveSessionSpecialistBinding(
+        session,
+        specialistId,
+        specialistBindingPending
       )
     })
   }

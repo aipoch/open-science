@@ -92,6 +92,7 @@ export const deleteTagRequestSchema = z.object({ id: z.string().min(1) }).strict
 export const setTagAssignmentRequestSchema = tagResourceRefSchema
   .extend({ tagId: z.string().min(1), assigned: z.boolean() })
   .strict()
+export const reorderTagsRequestSchema = z.object({ tagIds: z.array(z.string().min(1)) }).strict()
 
 export type TagResourceType = z.infer<typeof tagResourceTypeSchema>
 export type TagIconKey = z.infer<typeof tagIconKeySchema>
@@ -104,6 +105,7 @@ export type CreateTagRequest = z.infer<typeof createTagRequestSchema>
 export type UpdateTagRequest = z.infer<typeof updateTagRequestSchema>
 export type DeleteTagRequest = z.infer<typeof deleteTagRequestSchema>
 export type SetTagAssignmentRequest = z.infer<typeof setTagAssignmentRequestSchema>
+export type ReorderTagsRequest = z.infer<typeof reorderTagsRequestSchema>
 export type TagsChangedEvent = Readonly<{ revision: number }>
 
 export const tagApplicationCommandContracts = Object.freeze({
@@ -121,6 +123,10 @@ export const tagApplicationCommandContracts = Object.freeze({
   ),
   delete: defineApplicationCommandContract(
     validationCodec(z.tuple([deleteTagRequestSchema])),
+    validationCodec(tagSnapshotSchema)
+  ),
+  reorder: defineApplicationCommandContract(
+    validationCodec(z.tuple([reorderTagsRequestSchema])),
     validationCodec(tagSnapshotSchema)
   ),
   setAssignment: defineApplicationCommandContract(

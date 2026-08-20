@@ -1296,6 +1296,110 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.conversationGraph?.messages.map((message) => message.id)).toContain(relay.id)
   })
 
+  it('preserves Renderer delivery evidence on a Main-owned Side chat relay', async () => {
+    const prompt: PersistedChatMessage = {
+      id: 'main-prompt-1',
+      role: 'user',
+      content: 'Draw a cosine curve.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const relay: PersistedChatMessage = {
+      id: 'side-chat-relay-1',
+      role: 'user',
+      content: 'Use a black line.',
+      status: 'complete',
+      eventIds: [],
+      responseToMessageId: prompt.id,
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+      createdAt: 4,
+      updatedAt: 4
+    }
+    let durable = materializeSessionConversationGraph(
+      createSession({ messages: [prompt, relay], updatedAt: 4 })
+    )
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const deliveredEventId = `side-chat-delivered:${relay.id}`
+    const deliveredRelay = { ...relay, eventIds: [deliveredEventId] }
+
+    await coordinator.saveSession(
+      materializeSessionConversationGraph(
+        createSession({ messages: [prompt, deliveredRelay], updatedAt: 5 })
+      )
+    )
+
+    expect(durable.messages).toContainEqual(deliveredRelay)
+    expect(
+      durable.conversationGraph?.messages.find((message) => message.id === relay.id)?.eventIds
+    ).toEqual([deliveredEventId])
+  })
+
+  it('keeps a concurrent Side chat relay on its inactive Branch after a message edit', async () => {
+    const prompt: PersistedChatMessage = {
+      id: 'main-prompt-1',
+      role: 'user',
+      content: 'Draw a cosine curve.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const relay: PersistedChatMessage = {
+      id: 'side-chat-relay-1',
+      role: 'user',
+      content: 'Use a black line.',
+      status: 'complete',
+      eventIds: [],
+      responseToMessageId: prompt.id,
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+      createdAt: 4,
+      updatedAt: 4
+    }
+    let durable = materializeSessionConversationGraph(
+      createSession({ messages: [prompt, relay], updatedAt: 4 })
+    )
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const editedGraph = forkEditedConversationMessage(
+      durable.conversationGraph!,
+      prompt.id,
+      'edited-branch',
+      5
+    )
+
+    await coordinator.saveSession({
+      ...durable,
+      messages: [],
+      conversationGraph: editedGraph,
+      updatedAt: 5
+    })
+
+    expect(durable.messages).toEqual([])
+    expect(durable.conversationGraph?.messages.map((message) => message.id)).toEqual([
+      prompt.id,
+      relay.id
+    ])
+  })
+
   it('preserves main-owned archive state on a stale whole-session save', async () => {
     let durable = createSession({ archivedAt: 10 })
     const repository = createSessionRepository({
@@ -2233,6 +2337,41 @@ describe('SessionPersistenceCoordinator', () => {
     )
     expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
     expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(result)
+  })
+
+  it('preserves Main-owned specialist binding fields when renderer save options are forged', async () => {
+    const authoritativeSession = createSession({
+      specialistId: 'specialist-old',
+      updatedAt: 7
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: authoritativeSession })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const forgedRendererOptions = {
+      conflictRebaseFields: ['specialistId', 'specialistBindingPending']
+    } as unknown as Parameters<SessionPersistenceCoordinator['saveSession']>[1]
+
+    const result = await coordinator.saveSession(
+      {
+        ...authoritativeSession,
+        specialistId: 'specialist-forged',
+        specialistBindingPending: true
+      },
+      forgedRendererOptions
+    )
+
+    expect(result.specialistId).toBe('specialist-old')
+    expect(result.specialistBindingPending).toBeUndefined()
+    expect(repository.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        specialistId: 'specialist-old',
+        specialistBindingPending: undefined
+      }),
+      0
+    )
   })
 
   it('advances the session revision when a specialist binding first becomes pending', async () => {

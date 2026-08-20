@@ -2,13 +2,13 @@
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
-import { closeSync, openSync } from 'node:fs'
-import { createWriteStream } from 'node:fs'
-import { mkdir, readFile, rm } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { closeSync, createWriteStream, openSync } from 'node:fs'
+import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { findServiceState, readWebToken, resolveConfigRoot, STATE_FILE } from './config-root.mjs'
@@ -19,6 +19,7 @@ import { locateApp } from './locate-app.mjs'
 const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 30_000
 const STOP_TIMEOUT_MS = 15_000
+const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
 
@@ -29,7 +30,8 @@ Commands:
   url         Print the authenticated web URL
   codex login [--force]
   project list
-  project create <name> [--description <text>]
+  project create <name> [--description <text>] [--agent-context <text> | --agent-context-file <path>]
+  project update <id-or-name> [--name <name>] [--description <text>] [--agent-context <text> | --agent-context-file <path> | --clear-agent-context]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--wait]
   run status <run-id>
   run cancel <run-id>
@@ -52,6 +54,9 @@ Options:
   --cwd <path>           Working directory for a new or matching existing session
   --prompt <text>        Prompt text (or read stdin when omitted)
   --prompt-file <path>   Read the prompt from a UTF-8 file
+  --agent-context <text> Persistent Project Agent Context
+  --agent-context-file <path>  Read Project Agent Context from a UTF-8 file
+  --clear-agent-context  Clear a Project's persistent Agent Context
   --approval-profile <profile>  ask, auto, or full (default: ask)
   --skill <id>           Force-load a skill for this run (repeatable)
   --plan-first           Require an approved Plan before execution
@@ -91,7 +96,10 @@ const VALUE_OPTIONS = {
   '--revision': 'revision',
   '--feedback': 'feedback',
   '--timeout-ms': 'timeoutMs',
+  '--name': 'name',
   '--description': 'description',
+  '--agent-context': 'agentContext',
+  '--agent-context-file': 'agentContextFile',
   '--output': 'output'
 }
 
@@ -144,6 +152,7 @@ export const parseCliArgs = (argv) => {
       }
       options.autoReviewEnabled = false
     } else if (arg === '--cancel-on-timeout') options.cancelOnTimeout = true
+    else if (arg === '--clear-agent-context') options.clearAgentContext = true
     else if (arg === '--skill') {
       const value = args.shift()
       if (!value) throw new CliUsageError('--skill requires a value.')
@@ -218,6 +227,39 @@ export const parseCliArgs = (argv) => {
   }
   if (options.force && (command !== 'codex' || subcommand !== 'login')) {
     throw new CliUsageError('--force requires codex login.')
+  }
+  const isProjectCreate = command === 'project' && subcommand === 'create'
+  const isProjectUpdate = command === 'project' && subcommand === 'update'
+  const agentContextSources = [
+    options.agentContext !== undefined,
+    options.agentContextFile !== undefined,
+    options.clearAgentContext === true
+  ].filter(Boolean)
+  if (agentContextSources.length > 1) {
+    throw new CliUsageError('Use only one Agent Context source.')
+  }
+  if (agentContextSources.length > 0 && !isProjectCreate && !isProjectUpdate) {
+    throw new CliUsageError('Agent Context options require project create or project update.')
+  }
+  if (options.clearAgentContext && !isProjectUpdate) {
+    throw new CliUsageError('--clear-agent-context requires project update.')
+  }
+  if (options.name !== undefined && !isProjectUpdate) {
+    throw new CliUsageError('--name requires project update.')
+  }
+  if (options.name !== undefined && !options.name.trim()) {
+    throw new CliUsageError('--name requires a non-empty value.')
+  }
+  if (options.description !== undefined && !isProjectCreate && !isProjectUpdate) {
+    throw new CliUsageError('--description requires project create or project update.')
+  }
+  if (options.agentContext !== undefined) {
+    const context = options.agentContext.trim()
+    if (!context) throw new CliUsageError('Agent Context must not be empty.')
+    if (context.length > 16_000) {
+      throw new CliUsageError('Agent Context must not exceed 16000 characters.')
+    }
+    options.agentContext = context
   }
   if (command === 'codex' && subcommand === 'login') {
     if (options.json || options.jsonl) {
@@ -356,26 +398,6 @@ const removeStateFiles = async (configRoot) => {
   await rm(join(configRoot, STATE_FILE), { force: true })
 }
 
-// Force-kills the daemon's entire process tree after graceful shutdown failed. The daemon is spawned
-// detached, so on POSIX it leads its own process group: negating the PID signals the whole group
-// (agent/Notebook children included), and SIGKILL is required because the graceful SIGTERM was ignored.
-const forceKillTree = (pid) => {
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    return
-  }
-  try {
-    process.kill(-pid, 'SIGKILL')
-  } catch {
-    // Group already gone or never formed: fall back to the lone leader.
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // Already dead.
-    }
-  }
-}
-
 // The real I/O the commands use, bundled so tests can substitute fakes. Declared after the helpers it
 // references so its initializer sees them; commands take `deps = DEFAULT_DEPS`, so production callers
 // pass nothing and get these.
@@ -383,7 +405,6 @@ const DEFAULT_DEPS = {
   findServiceState: (options) => findServiceState(options),
   readWebToken: (configRoot) => readWebToken(configRoot),
   isAlive: isProcessAlive,
-  forceKill: forceKillTree,
   removeState: (configRoot) => removeStateFiles(configRoot),
   fetch: (input, init) => fetch(input, init),
   sleep,
@@ -392,27 +413,13 @@ const DEFAULT_DEPS = {
   warn: (...args) => console.warn(...args)
 }
 
-// Waits for the daemon to exit gracefully, then force-kills its process tree and verifies the process
-// is actually gone. Returns true iff it stopped. The caller sends the graceful shutdown request first;
-// all timing/kill primitives are injected so the escalation path is testable without real processes.
+// Waits for the daemon to exit after an authenticated graceful shutdown request. A PID proves only
+// that some process is alive, not that it is still the daemon recorded in a potentially stale state
+// file, so this function deliberately never signals it. Returns true iff the PID is no longer alive.
 export const terminateDaemon = async (pid, opts) => {
-  const {
-    isAlive,
-    forceKill,
-    sleep: sleepFn,
-    now,
-    gracefulTimeoutMs,
-    killTimeoutMs,
-    onForceKill
-  } = opts
+  const { isAlive, sleep: sleepFn, now, gracefulTimeoutMs } = opts
   const deadline = now() + gracefulTimeoutMs
   while (now() < deadline && isAlive(pid)) await sleepFn(250)
-  if (!isAlive(pid)) return true
-
-  onForceKill?.()
-  forceKill(pid)
-  const killDeadline = now() + killTimeoutMs
-  while (now() < killDeadline && isAlive(pid)) await sleepFn(250)
   return !isAlive(pid)
 }
 
@@ -551,6 +558,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     return
   }
   const token = await deps.readWebToken(state.configRoot)
+  let shutdownAccepted = false
   try {
     const response = await deps.fetch(`http://127.0.0.1:${state.port}/api/shutdown`, {
       method: 'POST',
@@ -558,13 +566,20 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
       signal: AbortSignal.timeout(3_000)
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    shutdownAccepted = true
     await response.arrayBuffer()
   } catch (error) {
     deps.warn(`Graceful shutdown failed: ${error.message}`)
   }
 
+  if (!shutdownAccepted) {
+    throw new Error(
+      `Could not safely stop Open Science (PID ${state.pid}); the authenticated shutdown request was not accepted, so no process signal was sent.`
+    )
+  }
+
   // Attached: the web service rides on the running desktop app. A graceful request stops only the web
-  // service; the app stays up. Never fall through to force-killing — that pid is the user's app.
+  // service; the app stays up, so observe service health instead of waiting for its pid to exit.
   if (state.attached) {
     const stopped = await waitForWebServiceStopped(state, deps, STOP_TIMEOUT_MS)
     if (!stopped) {
@@ -579,17 +594,16 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
 
   const stopped = await terminateDaemon(state.pid, {
     isAlive: deps.isAlive,
-    forceKill: deps.forceKill,
     sleep: deps.sleep,
     now: deps.now,
-    gracefulTimeoutMs: STOP_TIMEOUT_MS,
-    killTimeoutMs: 2_000,
-    onForceKill: () => deps.warn('Graceful shutdown timed out; force-killing the process tree.')
+    gracefulTimeoutMs: STOP_TIMEOUT_MS
   })
   // Only claim success (and drop the state file) once the process is confirmed gone; otherwise leave
   // the state in place and fail loudly so the user isn't told it stopped when it didn't.
   if (!stopped) {
-    throw new Error(`Could not stop Open Science (PID ${state.pid}); it is still running.`)
+    throw new Error(
+      `Could not stop Open Science (PID ${state.pid}); it is still running, so no process signal was sent.`
+    )
   }
   await deps.removeState(state.configRoot)
   deps.log('Open Science stopped.')
@@ -614,14 +628,53 @@ export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
   deps.log(await authenticatedUrl(state, deps))
 }
 
+const resolveDownloadOutput = async (output) => {
+  let candidate = output
+  for (let hop = 0; ; hop += 1) {
+    const linkTarget = await lstat(candidate).then(
+      (metadata) => (metadata.isSymbolicLink() ? readlink(candidate) : undefined),
+      (error) => {
+        if (error?.code === 'ENOENT') return undefined
+        throw error
+      }
+    )
+    if (linkTarget === undefined) return candidate
+    if (hop === MAX_DOWNLOAD_SYMLINK_HOPS) break
+    candidate = resolve(dirname(candidate), linkTarget)
+  }
+  throw new Error(`Too many symbolic links in artifact output: ${output}`)
+}
+
 const writeDownload = async (response, output) => {
   if (!response.body) throw new Error('Artifact download returned no data.')
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(output))
+  const destination = await resolveDownloadOutput(output)
+  const existingMode = await stat(destination).then(
+    ({ mode }) => mode & 0o777,
+    (error) => {
+      if (error?.code === 'ENOENT') return undefined
+      throw error
+    }
+  )
+  const temporaryOutput = `${destination}.${process.pid}-${randomUUID()}.tmp`
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body),
+      createWriteStream(temporaryOutput, {
+        flags: 'wx',
+        ...(existingMode === undefined ? {} : { mode: existingMode })
+      })
+    )
+    if (existingMode !== undefined) await chmod(temporaryOutput, existingMode)
+    await rename(temporaryOutput, destination)
+  } finally {
+    await rm(temporaryOutput, { force: true }).catch(() => undefined)
+  }
 }
 
 const TASK_DEPS = {
   connect: (options) => connectToOpenScience(options),
   readFile: (path) => readFile(path, 'utf8'),
+  readBinaryFile: (path) => readFile(path),
   readStdin: () => readFile(0, 'utf8'),
   writeDownload,
   log: (...args) => console.log(...args),
@@ -691,17 +744,49 @@ const readPrompt = async (options, deps) => {
   return (await deps.readStdin()).trim()
 }
 
-const resolveCliProjectId = async (client, selector) => {
+const validateAgentContext = (value) => {
+  const context = value.trim()
+  if (!context) throw new CliUsageError('Agent Context must not be empty.')
+  if (context.length > 16_000) {
+    throw new CliUsageError('Agent Context must not exceed 16000 characters.')
+  }
+  return context
+}
+
+const readAgentContext = async (options, deps) => {
+  if (options.clearAgentContext) return ''
+  if (options.agentContext !== undefined) return validateAgentContext(options.agentContext)
+  if (options.agentContextFile === undefined) return undefined
+  let decoded
+  try {
+    const bytes = await deps.readBinaryFile(options.agentContextFile)
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new CliUsageError(`Agent Context file not found: ${options.agentContextFile}`)
+    }
+    if (error instanceof TypeError) {
+      throw new CliUsageError('Agent Context file must contain valid UTF-8 text.')
+    }
+    throw error
+  }
+  return validateAgentContext(decoded)
+}
+
+const resolveCliProject = async (client, selector) => {
   const projects = await client.listProjects()
   const byId = projects.find((project) => project.id === selector)
-  if (byId) return byId.id
+  if (byId) return byId
   const byName = projects.filter((project) => project.name === selector)
-  if (byName.length === 1) return byName[0].id
+  if (byName.length === 1) return byName[0]
   if (byName.length > 1) {
     throw new CliUsageError(`Project name is ambiguous: ${selector}. Use a project ID.`)
   }
   throw new OpenScienceApiError(`Project not found: ${selector}`, { code: 'project_not_found' })
 }
+
+const resolveCliProjectId = async (client, selector) =>
+  (await resolveCliProject(client, selector)).id
 
 const emitRunEvent = (event, options, deps) => {
   if (options.jsonl) {
@@ -768,8 +853,37 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   if (command === 'project' && subcommand === 'create') {
     const name = positionals.join(' ').trim()
     if (!name) throw new CliUsageError('Project name is required.')
+    const agentContext = await readAgentContext(options, deps)
     outputValue(
-      await client.createProject({ name, description: options.description }),
+      await client.createProject({
+        name,
+        description: options.description,
+        ...(agentContext === undefined ? {} : { agentContext })
+      }),
+      options,
+      deps
+    )
+    return
+  }
+  if (command === 'project' && subcommand === 'update') {
+    const selector = positionals.join(' ').trim()
+    if (!selector) throw new CliUsageError('Project id or name is required.')
+    const agentContext = await readAgentContext(options, deps)
+    if (
+      options.name === undefined &&
+      options.description === undefined &&
+      agentContext === undefined
+    ) {
+      throw new CliUsageError('Project update requires at least one field.')
+    }
+    const project = await resolveCliProject(client, selector)
+    outputValue(
+      await client.updateProject(project.id, {
+        expectedUpdatedAt: project.updatedAt,
+        ...(options.name === undefined ? {} : { name: options.name }),
+        ...(options.description === undefined ? {} : { description: options.description }),
+        ...(agentContext === undefined ? {} : { agentContext })
+      }),
       options,
       deps
     )

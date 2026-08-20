@@ -151,7 +151,7 @@ class ConnectorSettingsModule {
           env: undefined,
           headers: undefined
         }
-        await this.repository.updateCustomServer(stored.id, secured)
+        await this.repository.updateCustomServer(stored.id, secured, true)
       }
 
       resolvedServers.push({

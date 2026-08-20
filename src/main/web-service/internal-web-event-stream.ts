@@ -82,6 +82,13 @@ class InternalWebEventStream {
     return serialized
   }
 
+  heartbeat(): string {
+    return JSON.stringify({
+      kind: 'heartbeat',
+      ...this.cursor()
+    })
+  }
+
   resume(cursor: ResumeCursor): readonly string[] {
     if (cursor.streamId !== this.#streamId) return [this.#resyncRequired('stream-changed')]
 

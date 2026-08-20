@@ -1,4 +1,4 @@
-import { Check, Plus, Search, Tags } from 'lucide-react'
+import { Check, Plus, Search, Tags, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -184,13 +184,19 @@ const TagFilter = ({
 
 const ResourceTagBadges = ({
   reference,
-  limit = 2
+  limit = 2,
+  onOpenTag
 }: {
   reference: TagResourceRef
   limit?: number
+  onOpenTag?: (tagId: string) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const tags = useTagStore((state) => state.tags)
   const assignments = useTagStore((state) => state.assignments)
+  const setAssignment = useTagStore((state) => state.setAssignment)
+  const [removingId, setRemovingId] = useState<string>()
+  const [error, setError] = useState<string>()
   const ids = new Set(
     assignments
       .filter(
@@ -203,38 +209,104 @@ const ResourceTagBadges = ({
   const assigned = tags.filter((tag) => ids.has(tag.id))
   if (assigned.length === 0) return <></>
   const compact = Number.isFinite(limit)
+  const removeTag = async (tagId: string): Promise<void> => {
+    if (removingId) return
+    setRemovingId(tagId)
+    setError(undefined)
+    try {
+      await setAssignment({ ...reference, tagId, assigned: false })
+    } catch {
+      setError(t('Could not update Tags.'))
+    } finally {
+      setRemovingId(undefined)
+    }
+  }
   return (
-    <div
-      className={cn(
-        compact
-          ? 'flex min-w-0 max-w-52 flex-nowrap items-center justify-end gap-1 overflow-hidden'
-          : 'flex flex-wrap items-center gap-1'
-      )}
-    >
-      {assigned.slice(0, limit).map((tag) => (
-        <TagBadge key={tag.id} tag={tag} className={compact ? 'min-w-0 max-w-24' : undefined} />
-      ))}
-      {assigned.length > limit ? (
-        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-          +{assigned.length - limit}
+    <>
+      <div
+        className={cn(
+          compact
+            ? 'flex min-w-0 max-w-52 flex-nowrap items-center justify-end gap-1 overflow-hidden'
+            : 'flex flex-wrap items-center gap-1'
+        )}
+      >
+        {assigned.slice(0, limit).map((tag) => {
+          const presentation = tagPresentation(tag, t)
+          const removeLabel = t('Remove {{tag}} from this resource', {
+            tag: presentation.name
+          })
+          const badge = <TagBadge tag={tag} className={compact ? 'min-w-0 max-w-24' : undefined} />
+          return (
+            <span
+              key={tag.id}
+              className={cn('group/tag relative inline-flex min-w-0', compact && 'max-w-24')}
+            >
+              {onOpenTag ? (
+                <button
+                  type="button"
+                  className="min-w-0 rounded-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onOpenTag(tag.id)}
+                >
+                  {badge}
+                </button>
+              ) : (
+                badge
+              )}
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={removeLabel}
+                      disabled={removingId === tag.id}
+                      className="pointer-events-auto absolute top-1/2 right-1.5 inline-flex size-3.5 -translate-y-1/2 items-center justify-center rounded-full bg-background text-foreground opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none sm:pointer-events-none sm:opacity-0 sm:group-hover/tag:pointer-events-auto sm:group-hover/tag:opacity-100 sm:group-focus-within/tag:pointer-events-auto sm:group-focus-within/tag:opacity-100"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void removeTag(tag.id)
+                      }}
+                    >
+                      <X className="size-3" aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{removeLabel}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </span>
+          )
+        })}
+        {assigned.length > limit ? (
+          <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+            +{assigned.length - limit}
+          </span>
+        ) : null}
+      </div>
+      {error ? (
+        <span role="alert" className="shrink-0 text-xs text-destructive">
+          {error}
         </span>
       ) : null}
-    </div>
+    </>
   )
 }
 
 const ResourceTagSummary = ({
   reference,
-  className
+  className,
+  onOpenTag
 }: {
   reference: TagResourceRef
   className?: string
+  onOpenTag?: (tagId: string) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>
       <span className="text-xs font-medium text-muted-foreground">{t('Tags')}</span>
-      <ResourceTagBadges reference={reference} limit={Number.POSITIVE_INFINITY} />
+      <ResourceTagBadges
+        reference={reference}
+        limit={Number.POSITIVE_INFINITY}
+        onOpenTag={onOpenTag}
+      />
       <ResourceTagMenu reference={reference} />
     </div>
   )

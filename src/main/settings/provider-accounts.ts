@@ -78,9 +78,8 @@ type ProviderAccountsModuleOptions = {
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
 }
 
-// Owns durable provider records and every provider-specific validation/authentication lifecycle.
-// Executable installation, runtime spawn configuration, live ACP reconnect, and transports remain
-// outside this module.
+// Owns durable provider records and every provider-specific validation/authentication lifecycle;
+// executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
 class ProviderAccountsModule {
   private readonly repository: SettingsRepository
   private readonly runtimeProjection = new ProviderRuntimeProjectionOwner()
@@ -95,8 +94,7 @@ class ProviderAccountsModule {
     })
   }
 
-  // Invoked from SettingsService's existing whole-settings migration path so provider-before-
-  // Connector ordering and encryption-availability timing remain unchanged.
+  // Keeps provider-before-Connector ordering in SettingsService's whole-settings migration path.
   async migrateLegacyKeyRefs(providers: readonly StoredProvider[]): Promise<boolean> {
     let changed = false
     for (const provider of providers) {
@@ -110,7 +108,16 @@ class ProviderAccountsModule {
   }
 
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
+    return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
+  }
+  private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
     const settings = await this.repository.getSettings()
+    if (
+      request.requireExisting &&
+      (!request.id || !settings.providers.some((provider) => provider.id === request.id))
+    ) {
+      throw new Error('Provider no longer exists.')
+    }
     const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
       ? codexSubscriptionProviderIdentity()
       : request.type === 'claude-isolated'
@@ -223,34 +230,35 @@ class ProviderAccountsModule {
         provider.apiEndpoints.join(',') !== (existing?.apiEndpoints ?? []).join(',')
     }
 
-    if (existing?.lastValidatedAt !== undefined && !credentialsChanged) {
+    if (existing?.lastValidatedAt !== undefined && !credentialsChanged)
       provider.lastValidatedAt = existing.lastValidatedAt
-    }
     const preserveValidationFailure =
       !credentialsChanged ||
       (provider.type === 'claude-shared' && provider.disconnectedAt !== undefined)
-    if (existing?.lastValidationFailure !== undefined && preserveValidationFailure) {
+    if (existing?.lastValidationFailure !== undefined && preserveValidationFailure)
       provider.lastValidationFailure = existing.lastValidationFailure
-    }
 
+    const editId = request.requireExisting ? request.id : undefined
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
         provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
       const collapsedCardWasActive =
         settings.activeProviderId === provider.id || settings.activeProviderId === outgoingId
-      await this.repository.upsertProvider(provider)
+      await this.repository.upsertProvider(provider, editId)
       if (collapsedCardWasActive) {
         await this.repository.setActiveProvider(provider.id, this.resolveActiveModel(provider))
       }
       return
     }
 
-    await this.repository.upsertProvider(provider)
+    await this.repository.upsertProvider(provider, editId)
   }
 
-  async deleteProvider(id: string): Promise<void> {
-    await this.auth.cleanupProviderBeforeDelete(id)
-    await this.repository.deleteProvider(id)
+  deleteProvider(id: string): Promise<void> {
+    return this.auth.serializeAccountMutation(async () => {
+      await this.auth.cleanupProviderBeforeDelete(id)
+      await this.repository.deleteProvider(id)
+    })
   }
 
   cancelCodexLogin(): void {
@@ -445,9 +453,8 @@ class ProviderAccountsModule {
     return this.runtimeProjection.resolveActiveModel(provider, requested)
   }
 
-  // Produces the complete ephemeral provider input for one backend generation without mutating the
-  // active selection, refreshing catalogs, or entering an authentication lifecycle. A configured
-  // selection retains the historical fallback rules; an explicit required model must match exactly.
+  // Produces an ephemeral backend input without mutating selection or entering authentication;
+  // configured fallback rules remain, while an explicit required model must match exactly.
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,

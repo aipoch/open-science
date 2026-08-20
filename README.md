@@ -6,11 +6,20 @@
 [![Website](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
-Open Science is an open-source, local-first, model-agnostic AI research workbench with scientific AI agents for reproducible research and discovery. Built for researchers, it runs on your own computer (macOS, Windows, Linux). Create a project, describe a task in plain language, and let the AI agent read files, run Python and R code, search the web, call scientific data connectors, and return reproducible reports, tables, and figures linked to an inspectable activity history in one workspace.
+<p align="center">
+  <a href="./README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
+  <a href="./docs/zh-Hans/README.md"><img alt="简体中文 README" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
+  <a href="./docs/zh-Hant/README.md"><img alt="繁體中文 README" src="https://img.shields.io/badge/繁體中文-d9d9d9"></a>
+  <a href="./docs/ja/README.md"><img alt="日本語 README" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
+  <a href="./docs/ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
+  <a href="./docs/fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
+</p>
+
+Open Science is an open-source, local-first AI research workbench for scientists and researchers. It enables reproducible, inspectable research across models with scientific AI agents, Python and R execution, scientific data connectors, and cross-platform support for macOS, Windows, and Linux. Create a project, describe your research goal in plain language, and let the agents read files, search the web, run code, query scientific data sources, and produce reports, tables, and figures with traceable provenance—all in one workspace.
 
 Open Science supports computational and data-intensive research across disciplines, including machine learning, statistics, life sciences, chemistry, materials science, physics and environmental science. It supports the research process from literature review and hypothesis development to code execution, data analysis, simulation, visualization, and the production of traceable research outputs.
 
-> 💡 **[Open Science v0.17.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 18, 2026)_. Highlights include a scoped Specialist marketplace with signed packages and CDN fallback, a persistent Vision evidence relay for text-only models, context-window composition insights, plan artifacts rendered as the session plan preview, empty-conversation placeholder banners, generated Specialist and Connector IDs, durable browser revocation, and marketplace install integrity hardening — alongside pending approval lifecycle restoration, session resume timeout renewal, remaining SQLite domain constraints, terminal session deletion, and unsupported session file version rejection. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
+> 💡 **[Open Science v0.18.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 19, 2026)_. Highlights include cross-resource catalog tags with favorites and drag ordering, a redesigned skill management experience, a streamlined Specialist marketplace with instant cached browsing and capability icons, quick Specialist appearance editing, SSH password authentication for compute hosts, Korean localization, and multilingual README and contribution guides — alongside faster marketplace and connector loading, incremental runtime event streaming, protected skill deletion, onboarding data-root atomic persistence, and recovery hardening across startup, sessions, compute, and the updater. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science open-source AI research workbench desktop app workspace showing an agent session with generated artifacts" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
@@ -35,6 +44,8 @@ Open Science supports computational and data-intensive research across disciplin
 - [License](#license)
 
 ## 🚀 Quick Start
+
+Get Open Science running in three steps: download the installer for your platform, complete the guided first-run setup, and create a research project.
 
 ### 1. Download the app
 
@@ -105,7 +116,7 @@ Projects keep related sessions, uploads, generated files, and preview state toge
   </tr>
 </table>
 
-Generated reports, figures, and tables remain attached to the session and are also collected in the project file library. Preview tabs keep the active result visible as the panel changes size, and long names preserve their identifying suffix and extension. Open Science previews common scientific data, PDFs, Office documents (DOCX, XLSX, PPTX), images (with zoom and pan), source code with syntax highlighting, molecular structures and reactions, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools. Use `Cmd/Ctrl+F` to search transcripts, Notebook output, and rendered pages across the workspace, or `Cmd/Ctrl+K` to open the project-scoped command palette. A dark mode rounds out the workspace: toggle the theme in **Settings → General** and the whole shell, transcript, and renderer palette switch without a flash. The interface is also available in Chinese (Simplified and Traditional) with a runtime language switcher in Settings.
+Generated reports, figures, and tables remain attached to the session and are also collected in the project file library. Preview tabs keep the active result visible as the panel changes size, and long names preserve their identifying suffix and extension. Open Science previews common scientific data, PDFs, Office documents (DOCX, XLSX, PPTX), images (with zoom and pan), source code with syntax highlighting, molecular structures and reactions, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools. Use `Cmd/Ctrl+F` to search transcripts, Notebook output, and rendered pages across the workspace, or `Cmd/Ctrl+K` to open the project-scoped command palette. A dark mode rounds out the workspace: toggle the theme in **Settings → General** and the whole shell, transcript, and renderer palette switch without a flash. The interface is also available in Chinese (Simplified and Traditional), Japanese, Korean, and French with a runtime language switcher in Settings.
 
 ### Branch a conversation without losing the original
 

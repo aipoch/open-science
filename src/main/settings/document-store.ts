@@ -1,6 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 import { sanitizeSettings } from './document-codec'
 import { createEmptySettings, type StoredSettings } from './types'
 
@@ -10,7 +10,6 @@ const SETTINGS_FILE = 'settings.json'
 // queue recovery. Callers sharing this instance cannot overwrite one another with stale snapshots.
 class SettingsDocumentStore {
   private mutationTail: Promise<void> = Promise.resolve()
-  private writeSequence = 0
 
   constructor(private readonly storageDir: string) {}
 
@@ -19,23 +18,10 @@ class SettingsDocumentStore {
   }
 
   async read(): Promise<StoredSettings> {
-    let contents: string
-
-    try {
-      contents = await readFile(this.path, 'utf8')
-    } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
-        return createEmptySettings()
-      }
-      throw error
-    }
-
-    return sanitizeSettings(JSON.parse(contents) as unknown)
+    const result = await readDurableJsonFile(this.path, (contents) =>
+      sanitizeSettings(JSON.parse(contents) as unknown)
+    )
+    return result.status === 'found' ? result.value : createEmptySettings()
   }
 
   mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
@@ -52,10 +38,7 @@ class SettingsDocumentStore {
   }
 
   private async write(settings: StoredSettings): Promise<void> {
-    await mkdir(this.storageDir, { recursive: true })
-    const temporaryPath = `${this.path}.${Date.now()}-${++this.writeSequence}.tmp`
-    await writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
-    await rename(temporaryPath, this.path)
+    await writeDurableJsonFile(this.path, `${JSON.stringify(settings, null, 2)}\n`)
   }
 }
 

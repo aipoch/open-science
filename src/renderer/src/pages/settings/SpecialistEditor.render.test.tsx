@@ -7,9 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SpecialistEditor } from './SpecialistEditor'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import {
   SPECIALIST_DESCRIPTION_MAX_LENGTH,
-  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH
+  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH,
+  type SpecialistProfileView
 } from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -29,6 +31,7 @@ beforeEach(() => {
     loadSkills: vi.fn().mockResolvedValue(undefined),
     loadConnectors: vi.fn().mockResolvedValue(undefined)
   })
+  useSpecialistStore.setState({ editorDrafts: {} })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -875,6 +878,734 @@ describe('SpecialistEditor', () => {
     })
 
     expect(onReload).toHaveBeenCalledOnce()
+  })
+
+  it('opens the skill detail when a selected skill row is clicked', async () => {
+    const onOpenSkillDetail = vi.fn()
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          displayName: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'skills-bot',
+            name: 'Skills Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: ['literature-review'],
+              connectorIds: [],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+          onOpenSkillDetail={onOpenSkillDetail}
+        />
+      )
+    })
+
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Literature Review details"]')!
+      )
+    })
+
+    expect(onOpenSkillDetail).toHaveBeenCalledOnce()
+    expect(onOpenSkillDetail).toHaveBeenCalledWith('literature-review')
+  })
+
+  it('opens connector details on row click, mapping a legacy server name to its canonical id', async () => {
+    const onOpenConnectorDetail = vi.fn()
+    useSettingsStore.setState({
+      connectors: [
+        {
+          id: 'chemistry',
+          name: 'chemistry',
+          displayName: 'Chemistry',
+          description: '',
+          sources: [],
+          requiresNcbi: false,
+          enabled: true,
+          autoAllow: false,
+          group: 'featured'
+        }
+      ],
+      customServers: [
+        {
+          id: 'public-route-uuid',
+          name: 'public-route',
+          displayName: 'Public Route',
+          transport: 'stdio',
+          enabled: true
+        }
+      ],
+      loadConnectors: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'connector-bot',
+            name: 'Connector Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: [],
+              // 'public-route' is a legacy reference stored by server name.
+              connectorIds: ['chemistry', 'public-route'],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+          onOpenConnectorDetail={onOpenConnectorDetail}
+        />
+      )
+    })
+
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((tab) =>
+          tab.textContent?.includes('Connectors')
+        )!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Chemistry details"]')!
+      )
+    })
+    expect(onOpenConnectorDetail).toHaveBeenCalledWith('chemistry')
+
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Public Route details"]')!
+      )
+    })
+    expect(onOpenConnectorDetail).toHaveBeenLastCalledWith('public-route-uuid')
+  })
+
+  it('keeps missing skills and unavailable connectors non-clickable', async () => {
+    const onOpenSkillDetail = vi.fn()
+    const onOpenConnectorDetail = vi.fn()
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'broken-server-uuid',
+          name: 'broken-server',
+          displayName: 'Broken Server',
+          transport: 'stdio',
+          enabled: true,
+          availability: 'unavailable'
+        }
+      ],
+      loadConnectors: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'stale-bot',
+            name: 'Stale Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: ['legacy-pipeline'],
+              connectorIds: ['broken-server'],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+          onOpenSkillDetail={onOpenSkillDetail}
+          onOpenConnectorDetail={onOpenConnectorDetail}
+        />
+      )
+    })
+
+    // Neither row exposes a click target or navigation semantics.
+    expect(document.body.querySelector('[aria-label="View legacy-pipeline details"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="View Broken Server details"]')).toBeNull()
+
+    // Clicking the row container (around the remove action) still never navigates.
+    const missingRow = document.body
+      .querySelector('[aria-label="Remove legacy-pipeline"]')!
+      .closest('div.border-b')!
+    await act(async () => {
+      fireEvent.click(missingRow)
+    })
+    expect(onOpenSkillDetail).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((tab) =>
+          tab.textContent?.includes('Connectors')
+        )!
+      )
+    })
+    const unavailableRow = document.body
+      .querySelector('[aria-label="Remove Broken Server"]')!
+      .closest('div.border-b')!
+    await act(async () => {
+      fireEvent.click(unavailableRow)
+    })
+    expect(onOpenConnectorDetail).not.toHaveBeenCalled()
+  })
+
+  it('removes a skill from the remove action without triggering navigation', async () => {
+    const onOpenSkillDetail = vi.fn()
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          displayName: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'skills-bot',
+            name: 'Skills Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: ['literature-review'],
+              connectorIds: [],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+          onOpenSkillDetail={onOpenSkillDetail}
+        />
+      )
+    })
+
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Remove Literature Review"]')!
+      )
+    })
+
+    expect(onOpenSkillDetail).not.toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain('Literature Review')
+  })
+
+  it('renders plain non-clickable rows when no detail callbacks are provided', async () => {
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          displayName: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'skills-bot',
+            name: 'Skills Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: ['literature-review'],
+              connectorIds: [],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+        />
+      )
+    })
+
+    expect(document.body.textContent).toContain('Literature Review')
+    expect(document.body.querySelector('[aria-label="View Literature Review details"]')).toBeNull()
+  })
+
+  it('activates a clickable skill row from the keyboard', async () => {
+    const onOpenSkillDetail = vi.fn()
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          displayName: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'skills-bot',
+            name: 'Skills Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: ['literature-review'],
+              connectorIds: [],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+          onOpenSkillDetail={onOpenSkillDetail}
+        />
+      )
+    })
+
+    const row = document.body.querySelector<HTMLElement>(
+      '[aria-label="View Literature Review details"]'
+    )!
+    await act(async () => {
+      fireEvent.keyDown(row, { key: 'Enter' })
+    })
+    expect(onOpenSkillDetail).toHaveBeenCalledWith('literature-review')
+
+    await act(async () => {
+      fireEvent.keyDown(row, { key: ' ' })
+    })
+    expect(onOpenSkillDetail).toHaveBeenCalledTimes(2)
+  })
+
+  it('restores an unsaved edit after navigating to a detail page and back', async () => {
+    const profile: SpecialistProfileView = {
+      id: 'skills-bot',
+      name: 'Skills Bot',
+      description: 'Original description',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: ['literature-review'],
+        connectorIds: ['chemistry'],
+        connectorTools: []
+      },
+      revision: 1
+    }
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          displayName: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      connectors: [
+        {
+          id: 'chemistry',
+          name: 'chemistry',
+          displayName: 'Chemistry',
+          description: '',
+          sources: [],
+          requiresNcbi: false,
+          enabled: true,
+          autoAllow: false,
+          group: 'featured'
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined),
+      loadConnectors: vi.fn().mockResolvedValue(undefined)
+    })
+    const renderEditor = (onOpenConnectorDetail = vi.fn()): void => {
+      act(() => {
+        root.render(
+          <SpecialistEditor
+            editSpecialist={{ ...profile }}
+            onCancel={vi.fn()}
+            onSave={vi.fn()}
+            onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+            onOpenConnectorDetail={onOpenConnectorDetail}
+          />
+        )
+      })
+    }
+    renderEditor()
+
+    // Make an unsaved edit and switch to the Connectors capability tab.
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-description')!, {
+        target: { value: 'My unsaved edit' }
+      })
+    })
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((tab) =>
+          tab.textContent?.includes('Connectors')
+        )!
+      )
+    })
+
+    // Navigate away (row click) — the editor unmounts when Settings switches panels.
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>('[aria-label="View Chemistry details"]')!
+      )
+    })
+    await act(() => {
+      root.unmount()
+    })
+    container.remove()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    // Back returns to the editor: the unsaved edit and the active tab survive.
+    renderEditor()
+    expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
+      'My unsaved edit'
+    )
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+        .find((tab) => tab.textContent?.includes('Connectors'))
+        ?.getAttribute('aria-selected')
+    ).toBe('true')
+  })
+
+  it('drops the editor draft after a successful save or an explicit cancel', async () => {
+    const profile: SpecialistProfileView = {
+      id: 'draft-bot',
+      name: 'Draft Bot',
+      description: 'Original description',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'full',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    const remount = (): void => {
+      act(() => {
+        root.unmount()
+      })
+      container.remove()
+      container = document.createElement('div')
+      document.body.appendChild(container)
+      root = createRoot(container)
+      act(() => {
+        root.render(
+          <SpecialistEditor
+            editSpecialist={{ ...profile }}
+            onCancel={vi.fn()}
+            onSave={vi.fn()}
+            onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+          />
+        )
+      })
+    }
+    remount()
+
+    // Save succeeds: the draft must not resurrect the pre-save edit later.
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-description')!, {
+        target: { value: 'Saved soon' }
+      })
+    })
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Save changes')
+        ?.click()
+    })
+    remount()
+    expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
+      'Original description'
+    )
+
+    // Cancel discards explicitly: the draft is cleared too.
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-description')!, {
+        target: { value: 'Cancelled edit' }
+      })
+    })
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Cancel')
+        ?.click()
+    })
+    remount()
+    expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
+      'Original description'
+    )
+  })
+
+  it('ignores a stale draft when the specialist revision advanced meanwhile', async () => {
+    const profile: SpecialistProfileView = {
+      id: 'stale-bot',
+      name: 'Stale Bot',
+      description: 'Original description',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'full',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{ ...profile }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+        />
+      )
+    })
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-description')!, {
+        target: { value: 'Edit on revision 1' }
+      })
+    })
+    await act(() => {
+      root.unmount()
+    })
+    container.remove()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    // The profile was saved elsewhere (revision 2): the draft taken at revision 1 is stale.
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{ ...profile, description: 'Newer saved description', revision: 2 }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+        />
+      )
+    })
+    expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
+      'Newer saved description'
+    )
+  })
+
+  it('restores a create-form draft across mounts', async () => {
+    const renderCreate = (): void => {
+      act(() => {
+        root.render(<SpecialistEditor onCancel={vi.fn()} onSave={vi.fn()} />)
+      })
+    }
+    renderCreate()
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-name')!, {
+        target: { value: 'RNA Reviewer' }
+      })
+    })
+    await act(() => {
+      root.unmount()
+    })
+    container.remove()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    renderCreate()
+
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('RNA Reviewer')
+  })
+
+  it('does not navigate when the remove action is activated from the keyboard', async () => {
+    const onOpenSkillDetail = vi.fn()
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          displayName: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'skills-bot',
+            name: 'Skills Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: ['literature-review'],
+              connectorIds: [],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+          onOpenSkillDetail={onOpenSkillDetail}
+        />
+      )
+    })
+
+    // Focus lands on the remove button; pressing Enter must remove the row via the button's
+    // own activation, never the row's keyboard navigation.
+    await act(async () => {
+      fireEvent.keyDown(
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Remove Literature Review"]')!,
+        { key: 'Enter' }
+      )
+    })
+    expect(onOpenSkillDetail).not.toHaveBeenCalled()
+  })
+
+  it('clears the editor draft from the store after a successful save', async () => {
+    const profile: SpecialistProfileView = {
+      id: 'save-clears-draft',
+      name: 'Save Clears Draft',
+      description: 'Original',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'full',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={profile}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn().mockResolvedValue(undefined)}
+        />
+      )
+    })
+    await act(async () => {
+      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-description')!, {
+        target: { value: 'Edited then saved' }
+      })
+    })
+    expect(useSpecialistStore.getState().editorDrafts[profile.id]).toBeDefined()
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Save changes')
+        ?.click()
+    })
+
+    // The save advances the form revision; that re-render must not re-create the draft.
+    expect(useSpecialistStore.getState().editorDrafts[profile.id]).toBeUndefined()
+  })
+
+  it('prefers a provided initial input over a stale create draft', async () => {
+    useSpecialistStore.setState({
+      editorDrafts: {
+        __create__: {
+          form: {
+            id: '',
+            name: 'Abandoned Half Done',
+            packageVersion: '0.1.0',
+            description: '',
+            systemPrompt: '',
+            iconKey: 'brain',
+            colorKey: 'purple',
+            capabilityMode: 'full',
+            excludedSkillIds: [],
+            selectedSkillIds: [],
+            excludedConnectorIds: [],
+            connectorIds: [],
+            baseRevision: 0
+          },
+          idTouched: false,
+          activeCapTab: 'skills'
+        }
+      }
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          initialInput={{
+            name: 'Marketplace Imported',
+            description: 'Prefilled by an import',
+            capabilityMode: 'selected',
+            selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+          }}
+        />
+      )
+    })
+
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe(
+      'Marketplace Imported'
+    )
   })
 
   it('does not show a conflict banner for non-conflict errors', async () => {

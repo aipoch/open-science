@@ -495,9 +495,7 @@ const WorkspacePanelLayout = ({
           : null}
         <ResizablePanelGroup
           orientation="horizontal"
-          className={
-            isMobile ? 'min-w-0 flex-1' : '-my-[10px] -mr-[10px] h-[calc(100%+20px)] min-w-0 flex-1'
-          }
+          className={isMobile ? 'min-w-0 flex-1' : '-mr-[10px] min-w-0 flex-1'}
         >
           {!isMobile ? (
             <>

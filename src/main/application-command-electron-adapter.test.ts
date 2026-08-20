@@ -28,6 +28,7 @@ const validatedChannels = [
   'sessions:delete-session',
   'tags:create',
   'tags:delete',
+  'tags:reorder',
   'tags:set-assignment',
   'tags:snapshot',
   'tags:update'

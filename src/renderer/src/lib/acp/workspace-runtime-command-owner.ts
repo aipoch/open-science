@@ -89,7 +89,7 @@ type WorkspaceCommandRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
 > &
-  Partial<Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>>
+  Partial<Pick<ReturnType<typeof useAcpRuntime>, 'currentRuntimeEvents' | 'deleteSession'>>
 type HistoryReplayContext = {
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
@@ -195,7 +195,10 @@ type PromptDispatch = {
 }
 
 const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatch): void => {
-  const priorErrorEventId = latestFailureId(runtime.state.events, request.sessionId)
+  const priorErrorEventId = latestFailureId(
+    [...(runtime.currentRuntimeEvents?.() ?? runtime.state.events)],
+    request.sessionId
+  )
   const args = [
     request.sessionId,
     request.content,

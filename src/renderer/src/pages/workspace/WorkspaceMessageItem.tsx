@@ -12,8 +12,10 @@ import {
   Bot,
   Brain,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleGauge,
   Copy,
   FileText,
@@ -22,7 +24,16 @@ import {
   MessageCircleMore,
   Pencil
 } from 'lucide-react'
-import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react'
+import {
+  memo,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type ReactNode
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
@@ -432,6 +443,9 @@ const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,12
 
 const userMessageBubbleClassName =
   'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'
+const userMessageCollapseButtonClassName =
+  'inline-flex items-center gap-1 whitespace-nowrap rounded-md text-[13px] font-medium text-text-200 transition-colors duration-200 ease-out hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:pointer-events-none disabled:opacity-50 motion-reduce:active:translate-y-0 motion-reduce:transition-none'
+const USER_MESSAGE_PREVIEW_LINE_COUNT = 12.5
 // Hover actions sit left of the user bubble, revealed on row hover or keyboard focus.
 const userMessageActionsClassName =
   'flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
@@ -476,6 +490,182 @@ const mentionButtonClassName =
 
 const assistantMessageSurfaceClassName =
   'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'
+
+const measurementContentClassName = 'before:content-[attr(data-content)]'
+
+const MessagePartsMeasurement = ({
+  parts,
+  isStatic
+}: {
+  parts: Array<MessagePart | ProvenanceMessagePart>
+  isStatic: boolean
+}): React.JSX.Element => (
+  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+    {parts.map((part, index) => {
+      if (part.type === 'skill') {
+        return (
+          <span
+            key={index}
+            data-slot="user-message-measurement-part"
+            data-part-type="skill"
+            data-content={`/${part.name}`}
+            className={cn(mentionPillClassName, measurementContentClassName)}
+          />
+        )
+      }
+
+      if (part.type === 'artifact') {
+        const isLinkedFolder = !isStatic && 'source' in part && part.source === 'linked-folder'
+        return (
+          <span
+            key={index}
+            data-slot="user-message-measurement-part"
+            data-part-type="artifact"
+            data-content={`@${isLinkedFolder ? part.relativePath : part.name}`}
+            className={cn(
+              isStatic ? mentionPillClassName : artifactMentionPillClassName,
+              measurementContentClassName
+            )}
+          />
+        )
+      }
+
+      return (
+        <span
+          key={index}
+          data-slot="user-message-measurement-part"
+          data-part-type="text"
+          data-content={part.text}
+          className={cn('whitespace-pre-wrap', measurementContentClassName)}
+        />
+      )
+    })}
+  </p>
+)
+
+type CollapsibleUserMessageContentProps = {
+  children: ReactNode
+  hasInteractiveContent: boolean
+  message: ChatMessage
+  staticParts?: ProvenanceMessagePart[]
+}
+
+/* Hallmark · component: user-message-collapse · genre: modern-minimal · theme: project tokens
+ * states: default · hover · focus · active · disabled · expanded · collapsed
+ * async states: not applicable (local synchronous disclosure)
+ * contrast: project token contract · pre-emit critique: P5 H5 E5 S5 R5 V4
+ */
+const CollapsibleUserMessageContent = ({
+  children,
+  hasInteractiveContent,
+  message,
+  staticParts
+}: CollapsibleUserMessageContentProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const contentId = useId()
+  const measurementRef = useRef<HTMLDivElement>(null)
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [canExpand, setCanExpand] = useState(false)
+  const isCollapsed = canExpand && !isExpanded
+  const measurementParts =
+    staticParts && staticParts.length > 0
+      ? staticParts
+      : message.parts && message.parts.length > 0
+        ? message.parts
+        : undefined
+
+  useLayoutEffect(() => {
+    const measurement = measurementRef.current
+    if (!measurement) return
+
+    setIsExpanded(false)
+    const measureOverflow = (): void => {
+      const style = window.getComputedStyle(measurement)
+      const parsedLineHeight = Number.parseFloat(style.lineHeight)
+      const parsedFontSize = Number.parseFloat(style.fontSize)
+      const lineHeight =
+        Number.isFinite(parsedLineHeight) && parsedLineHeight > 0
+          ? parsedLineHeight < 4 && Number.isFinite(parsedFontSize)
+            ? parsedLineHeight * parsedFontSize
+            : parsedLineHeight
+          : Number.isFinite(parsedFontSize) && parsedFontSize > 0
+            ? parsedFontSize * 1.5
+            : undefined
+      const previewHeight = lineHeight ? lineHeight * USER_MESSAGE_PREVIEW_LINE_COUNT : undefined
+      const overflows = previewHeight !== undefined && measurement.scrollHeight > previewHeight + 1
+      setCanExpand(overflows)
+      if (!overflows) setIsExpanded(false)
+    }
+
+    measureOverflow()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measureOverflow)
+    observer.observe(measurement)
+    return () => observer.disconnect()
+  }, [message.content, message.id, message.parts, staticParts])
+
+  return (
+    <div className="relative">
+      <div
+        ref={measurementRef}
+        data-slot="user-message-measurement"
+        data-content={measurementParts ? undefined : message.content}
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none invisible absolute inset-x-0 top-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]',
+          !measurementParts && measurementContentClassName
+        )}
+      >
+        {measurementParts ? (
+          <MessagePartsMeasurement
+            parts={measurementParts}
+            isStatic={Boolean(staticParts && staticParts.length > 0)}
+          />
+        ) : null}
+      </div>
+      <div
+        id={contentId}
+        data-slot="user-message-content"
+        className={cn(isCollapsed && 'max-h-[12.5lh] overflow-hidden')}
+      >
+        {isCollapsed && hasInteractiveContent ? (
+          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {message.content}
+          </p>
+        ) : (
+          children
+        )}
+      </div>
+      {isCollapsed ? (
+        <div
+          data-slot="user-message-collapse-ellipsis"
+          aria-hidden="true"
+          className="mt-1 text-[13px] leading-5 text-text-200"
+        >
+          …
+        </div>
+      ) : null}
+      {canExpand ? (
+        <button
+          type="button"
+          data-slot="user-message-collapse-toggle"
+          className={cn(userMessageCollapseButtonClassName, isCollapsed ? 'mt-1' : 'mt-2')}
+          aria-label={isExpanded ? t('Show less') : t('Show more')}
+          aria-expanded={isExpanded}
+          aria-controls={contentId}
+          onClick={() => setIsExpanded((expanded) => !expanded)}
+        >
+          <span>{isExpanded ? t('Show less') : t('Show more')}</span>
+          {isExpanded ? (
+            <ChevronUp className="size-3.5" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="size-3.5" aria-hidden="true" />
+          )}
+        </button>
+      ) : null}
+    </div>
+  )
+}
 
 // ACP message images are already MIME- and size-checked at runtime and persistence boundaries.
 const MessageImageList = ({ images }: { images: MessageImage[] }): React.JSX.Element | null => {
@@ -932,6 +1122,27 @@ const WorkspaceMessageItemImpl = ({
     confirmEditedResend()
   }
 
+  const userMessageContent =
+    staticParts && staticParts.length > 0 ? (
+      <MessagePartsContent
+        parts={staticParts}
+        isStatic
+        onOpenSkillMention={onOpenSkillMention}
+        onPreviewMentionArtifact={onPreviewMentionArtifact}
+      />
+    ) : message.parts && message.parts.length > 0 ? (
+      <MessagePartsContent
+        parts={message.parts}
+        onOpenSkillMention={onOpenSkillMention}
+        onPreviewMentionArtifact={onPreviewMentionArtifact}
+      />
+    ) : message.content ? (
+      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
+    ) : null
+  const hasInteractiveUserMessageContent = Boolean(
+    !staticParts && message.parts?.some((part) => part.type === 'skill' || part.type === 'artifact')
+  )
+
   return (
     <MessageScrollerItem
       key={message.id}
@@ -1064,24 +1275,17 @@ const WorkspaceMessageItemImpl = ({
                     onPreviewUploadAttachment={onPreviewUploadAttachment}
                   />
                   {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
-                  {staticParts && staticParts.length > 0 ? (
-                    <MessagePartsContent
-                      parts={staticParts}
-                      isStatic
-                      onOpenSkillMention={onOpenSkillMention}
-                      onPreviewMentionArtifact={onPreviewMentionArtifact}
-                    />
-                  ) : message.parts && message.parts.length > 0 ? (
-                    <MessagePartsContent
-                      parts={message.parts}
-                      onOpenSkillMention={onOpenSkillMention}
-                      onPreviewMentionArtifact={onPreviewMentionArtifact}
-                    />
-                  ) : message.content ? (
-                    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                      {message.content}
-                    </p>
-                  ) : null}
+                  {isHumanUser && userMessageContent ? (
+                    <CollapsibleUserMessageContent
+                      hasInteractiveContent={hasInteractiveUserMessageContent}
+                      message={message}
+                      staticParts={staticParts}
+                    >
+                      {userMessageContent}
+                    </CollapsibleUserMessageContent>
+                  ) : (
+                    userMessageContent
+                  )}
                 </div>
               </div>
               {sentDate || message.interrupted || showRevisionNavigation ? (
@@ -1142,7 +1346,15 @@ const WorkspaceMessageItemImpl = ({
             </div>
           )
         ) : (
-          <div className={cn(assistantMessageSurfaceClassName, 'select-text overflow-visible')}>
+          <div
+            className={cn(
+              assistantMessageSurfaceClassName,
+              'select-text overflow-visible',
+              // Match the tallest loading row while initial content is buffered so replacing it
+              // cannot collapse the workspace scroll extent. Side chat keeps its natural geometry.
+              isAssistantPresenting && 'min-h-14'
+            )}
+          >
             {message.content ? (
               <PresentedAgentMarkdown
                 content={assistantPresentation.content}

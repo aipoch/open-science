@@ -188,6 +188,7 @@ import type {
 import type {
   CreateTagRequest,
   DeleteTagRequest,
+  ReorderTagsRequest,
   SetTagAssignmentRequest,
   TagSnapshot,
   TagsChangedEvent,
@@ -480,6 +481,7 @@ export interface OpenScienceAPI {
     deleteSession(request: DeleteSessionRequest): Promise<SessionDeletionResult>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
+    onFlushAborted?(listener: () => void): RemoveListener
     onFlushRequest?(listener: AcpListener<SessionPersistenceFlushRequest>): RemoveListener
     sendFlushResponse?(response: SessionPersistenceFlushResponse): void
     onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
@@ -723,6 +725,7 @@ export interface OpenScienceAPI {
     create(request: CreateTagRequest): Promise<TagSnapshot>
     update(request: UpdateTagRequest): Promise<TagSnapshot>
     delete(request: DeleteTagRequest): Promise<TagSnapshot>
+    reorder(request: ReorderTagsRequest): Promise<TagSnapshot>
     setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot>
     onChanged(listener: AcpListener<TagsChangedEvent>): RemoveListener
   }

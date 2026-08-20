@@ -159,6 +159,55 @@ const createHarness = (
   }
 }
 
+describe('ACP interrupted turn workflow', () => {
+  it('does not re-enter archive admission while continuing an interrupted turn', async () => {
+    let archiveQueue: Promise<void> = Promise.resolve()
+    const enqueueArchive = <Result>(operation: () => Promise<Result>): Promise<Result> => {
+      const result = archiveQueue.then(operation, operation)
+      archiveQueue = result.then(
+        () => undefined,
+        () => undefined
+      )
+      return result
+    }
+    const harness = createHarness(undefined, {
+      withSessionAvailable: (_projectId, _sessionId, operation) => enqueueArchive(operation),
+      withSessionAvailableById: (_sessionId, operation) => enqueueArchive(operation)
+    })
+    harness.session.status = 'error'
+    harness.session.activeRun = undefined
+    harness.session.resumeRecovery = {
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'prompt-1'
+    }
+    // The ordinary continuation path enters the dispatch admission guard, which is backed by the
+    // same archive queue in production. Calling it while withSessionAvailable is active waits on
+    // itself; the dispatch-admitted path intentionally bypasses only that nested guard.
+    harness.startContinuation.mockImplementationOnce(() => enqueueArchive(async () => undefined))
+    harness.startContinuationWhenDispatchAdmitted.mockImplementationOnce(
+      async (_request: unknown, validate: () => Promise<void>) => {
+        await validate()
+        return 'provider_prompt_accepted'
+      }
+    )
+
+    const outcome = await Promise.race([
+      harness.workflows
+        .continueInterruptedTurn({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          promptMessageId: 'prompt-1'
+        })
+        .then(() => 'completed' as const),
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 50))
+    ])
+
+    expect(outcome).toBe('completed')
+    expect(harness.startContinuationWhenDispatchAdmitted).toHaveBeenCalledOnce()
+  })
+})
+
 describe('ACP send prompt workflow', () => {
   it('returns the current snapshot after provider admission', async () => {
     const harness = createHarness()
