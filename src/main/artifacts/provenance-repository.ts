@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import type { PrismaClient } from '@prisma/client'
 
 import type {
+  AppGeneratedArtifactProducer,
   ArtifactLineageProvenance,
   ArtifactVersionDescriptor,
   ArtifactVersionFile,
@@ -88,6 +89,7 @@ export type WriteAppGeneratedArtifactVersionRequest = Omit<
   content: string
   contentType?: string
   kind?: 'plan'
+  producer?: AppGeneratedArtifactProducer
 }
 
 type ArtifactStorageReconciliationResult = {
@@ -209,8 +211,8 @@ class ArtifactProvenanceRepository {
       durability: this.durability,
       resourceBudgets: options.resourceBudgets,
       writeBudgetOwner: this.writeBudgetOwner,
-      captureProducer: (request, createdAt, checksum) =>
-        this.producerCapture.captureProducer(request, createdAt, checksum),
+      captureProducer: (request, createdAt, checksum, appGeneratedProducer) =>
+        this.producerCapture.captureProducer(request, createdAt, checksum, appGeneratedProducer),
       prepareVersionPersistence: (input) => this.producerCapture.prepareVersionPersistence(input),
       recoverStagingVersion: (version, projectId, appSessionId, filename, publish) =>
         this.stagingRecovery.recoverVersion(version, projectId, appSessionId, filename, publish),
@@ -225,7 +227,7 @@ class ArtifactProvenanceRepository {
   async writeAppGeneratedVersion(
     request: WriteAppGeneratedArtifactVersionRequest
   ): Promise<ArtifactVersionFile> {
-    const { content, kind, ...versionRequest } = request
+    const { content, kind, producer, ...versionRequest } = request
     const writeOperationId = `artifact-app-write-${this.createId()}`
     const reservationScope = {
       projectId: request.projectId,
@@ -290,7 +292,9 @@ class ArtifactProvenanceRepository {
                 mimeType: version.contentType ?? undefined
               },
               resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-            )
+            ),
+          undefined,
+          producer
         )
       }
     )

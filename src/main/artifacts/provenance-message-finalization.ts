@@ -13,6 +13,7 @@ import {
   parseArtifactExecutionSnapshot,
   validateArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
+import { connectorEvidenceIsValid } from './provenance-producer-capture'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -225,7 +226,16 @@ const validateArtifactFinalizationProof = (
           evidence.inputs.length === 0 &&
           evidence.execution_snapshot_checksum === undefined &&
           evidence.reproduction_code === undefined
-        if (hasProducerOrExecutionFields || !isProvenUnavailableWithoutExecution) {
+        const isProvenConnectorWithoutNotebookExecution =
+          evidence.execution_status?.state === 'partial' &&
+          Array.isArray(evidence.inputs) &&
+          evidence.execution_snapshot_checksum === undefined &&
+          evidence.reproduction_code === undefined &&
+          connectorEvidenceIsValid(evidence)
+        if (
+          hasProducerOrExecutionFields ||
+          (!isProvenUnavailableWithoutExecution && !isProvenConnectorWithoutNotebookExecution)
+        ) {
           throw new ArtifactFinalizationProofError(
             'execution-snapshot-missing',
             `Artifact Version execution snapshot is missing: ${version.id}`

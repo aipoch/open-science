@@ -118,7 +118,7 @@ export const MOLECULE_TOOLS: ToolDescriptor[] = [
       'Validate a 2D chemical structure and open it in the preview panel in one call. Pass a `smiles` or a `molfile`; the structure is saved as a canonical .mol artifact this turn and rendered read-only with OpenChemLib. Returns the saved artifact id. Call it during an assistant turn (the file is attached to the current turn).',
     input: STRUCTURE_INPUT_SCHEMA,
     returns:
-      '`{ "valid": bool, "artifact_id": str, "filename": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int }` on success. On an unparseable structure: `{ "valid": false, "error": str }`. The saved .mol artifact opens automatically in the preview panel.',
+      '`{ "valid": bool, "artifact_id": str, "version_id": str, "version_number": int, "filename": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int }` on success. `artifact_id` identifies the stable Artifact lineage; `version_id` identifies the immutable saved Version. On an unparseable structure: `{ "valid": false, "error": str }`. The saved .mol artifact opens automatically in the preview panel.',
     example:
       'const result = await host.mcp("molecule", "preview_molecule", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "filename": "aspirin"})',
     // The real write + preview is performed by the app runtime via ConnectorService.localToolHandlers;

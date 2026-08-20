@@ -31,6 +31,7 @@ import type {
   ProvenanceNotebookRun,
   ProvenanceMessage
 } from '../../../../shared/artifact-provenance'
+import { isArtifactNotebookProducer } from '../../../../shared/artifact-provenance'
 import type {
   ArtifactCodeReconstruction,
   ArtifactCodeReconstructionState
@@ -899,7 +900,10 @@ const ArtifactProvenancePanel = ({
   const downloadProducerCode = async (): Promise<void> => {
     if (!reproductionCode) return
     const evidenceProducer = provenance?.evidence.producer
-    const language = evidenceProducer?.state === 'available' ? evidenceProducer.kernel_kind : 'repl'
+    const language =
+      evidenceProducer && isArtifactNotebookProducer(evidenceProducer)
+        ? evidenceProducer.kernel_kind
+        : 'repl'
     await downloadScript(reproductionCode, language)
   }
 
@@ -1217,7 +1221,7 @@ const ArtifactProvenancePanel = ({
                   <NotebookCodeBlock
                     code={reproductionCode}
                     language={
-                      provenance.evidence.producer.state === 'available'
+                      isArtifactNotebookProducer(provenance.evidence.producer)
                         ? provenance.evidence.producer.kernel_kind
                         : undefined
                     }
