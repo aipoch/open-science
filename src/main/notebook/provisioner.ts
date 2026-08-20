@@ -328,6 +328,14 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     return this.deps.cache ?? selectMicromambaCache(this.deps.root)
   }
 
+  private get legacyCache(): MicromambaCache {
+    const path = pkgsCache(this.deps.root)
+    return {
+      path,
+      lockKey: micromambaCacheLockKey(path, { platform: this.deps.platform })
+    }
+  }
+
   private cacheRoots(cache: MicromambaCache): string[] {
     return [...new Set([pkgsCache(this.deps.root), cache.path])]
   }
@@ -1228,6 +1236,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     spec: EnvSpec,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
+    // Bundle adapters validate and seed archives into the legacy root/pkgs cache while fetching. Reclaim
+    // that cache first so a nearly-full data disk does not fail before post-fetch cache selection runs.
+    const fetchCache = this.legacyCache
+    await this.maintainCacheBeforeMutation(fetchCache)
     const bundle = await this.deps.fetchBundle(
       spec,
       DEFAULT_ENV_VERSION,
@@ -1250,7 +1262,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // must not delete an incomplete extraction mid-upgrade, and a Windows path-limit failure is retried
     // once after a short cache recovery.
     const selected = this.cacheForBundle(spec, bundle)
-    await this.maintainCacheBeforeMutation(selected.cache)
+    if (selected.cache.lockKey !== fetchCache.lockKey) {
+      await this.maintainCacheBeforeMutation(selected.cache)
+    }
     await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     await this.withJournaledPrefixWrite(
@@ -1327,6 +1341,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       message: `Preparing ${spec.name} packages…`,
       progress: 0.1
     })
+    // Fetch adapters write verified package archives into root/pkgs. Cleanup must precede that write or
+    // an already-full data disk can prevent the bundle from being staged at all.
+    const fetchCache = this.legacyCache
+    await this.maintainCacheBeforeMutation(fetchCache)
     const bundle = await this.deps.fetchBundle(
       spec,
       DEFAULT_ENV_VERSION,
@@ -1347,7 +1365,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
     // packages before the create, so a Windows path-limit blocker doesn't fail the first attempt.
     const selected = this.cacheForBundle(spec, bundle)
-    await this.maintainCacheBeforeMutation(selected.cache)
+    if (selected.cache.lockKey !== fetchCache.lockKey) {
+      await this.maintainCacheBeforeMutation(selected.cache)
+    }
     await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     // Journal the create (child PID + prefix) so a process death mid-materialize is reconciled at next
@@ -1588,6 +1608,8 @@ export type ProductionProvisionerDeps = {
   fetchBundle?: ProvisionerDeps['fetchBundle']
   runArgv?: ProvisionerDeps['runArgv']
   maintainCache?: ProvisionerDeps['maintainCache']
+  // Narrow subprocess seam for the default maintenance adapter's argv/environment contract test.
+  runCacheMaintenance?: typeof runMicromamba
   verify?: ProvisionerDeps['verify']
 }
 
@@ -1677,7 +1699,7 @@ export const createProductionProvisioner = (
       deps.maintainCache ??
       (async (runCache) => {
         const selected = await runner.resolve()
-        await runMicromamba(packageCacheCleanArgv(selected), {
+        await (deps.runCacheMaintenance ?? runMicromamba)(packageCacheCleanArgv(selected), {
           ...micromambaSpawnEnv(opts.root, opts.caBundle, {
             selectCache: () => runCache
           }),

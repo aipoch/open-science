@@ -42,7 +42,7 @@ const scriptedSpawn = (
     // Cache maintenance is orthogonal to the transaction result scripts below. The dedicated cache-
     // growth test observes it directly; existing command-contract tests keep recording only the
     // install/remove/pip/R subprocesses they own.
-    if (args.includes('clean')) return ok
+    if (isCacheClean(args)) return ok
     calls.push([command, args, env])
     return results[i++] ?? { code: 0, stdout: '', stderr: '' }
   }
@@ -50,6 +50,7 @@ const scriptedSpawn = (
 }
 
 const ok: SpawnResult = { code: 0, stdout: 'done', stderr: '' }
+const isCacheClean = (args: string[]): boolean => args[0] === '--no-rc' && args[1] === 'clean'
 const safeRPlan: SpawnResult = {
   code: 0,
   stdout: JSON.stringify({
@@ -540,7 +541,7 @@ describe('installPackages', () => {
     const order: string[] = []
     let call = 0
     const spawn: InstallSpawn = async (_command, args, _env, onChild, onBeforeSpawn) => {
-      if (args.includes('clean')) return ok
+      if (isCacheClean(args)) return ok
       onBeforeSpawn?.()
       order.push(`spawn#${call}`)
       onChild?.(4100 + call)
@@ -870,7 +871,7 @@ describe('installPackages', () => {
     ]
     let calls = 0
     const spawn: InstallSpawn = async (_command, args) => {
-      if (args.includes('clean')) return ok
+      if (isCacheClean(args)) return ok
       calls += 1
       return results[calls - 1]
     }
@@ -926,7 +927,7 @@ describe('installPackages', () => {
     // deps.onBeforeSpawn is threaded to baseSpawn as its 5th arg; a faithful stub invokes it (as the real
     // defaultSpawn does) BEFORE reporting the child, so we can assert both that it ran and that it ran first.
     const spawn: InstallSpawn = async (_command, args, _env, onChild, onBeforeSpawn) => {
-      if (args.includes('clean')) return ok
+      if (isCacheClean(args)) return ok
       onBeforeSpawn?.()
       order.push(`child#${i}`)
       onChild?.(1000 + i)
@@ -1541,7 +1542,7 @@ describe('installPackages shared pkgs cache lock', () => {
     let cleanEnv: NodeJS.ProcessEnv | undefined
     let cleanArgs: string[] | undefined
     const spawn: InstallSpawn = async (_command, args, env) => {
-      if (args.includes('clean')) {
+      if (isCacheClean(args)) {
         order.push('clean')
         cleanArgs = args
         cleanEnv = env
@@ -1580,7 +1581,7 @@ describe('installPackages shared pkgs cache lock', () => {
   it('continues the requested install when cache maintenance fails', async () => {
     const order: string[] = []
     const spawn: InstallSpawn = async (_command, args) => {
-      if (args.includes('clean')) {
+      if (isCacheClean(args)) {
         order.push('clean-failed')
         return { code: 1, stdout: '', stderr: 'cleanup failed' }
       }
@@ -1640,7 +1641,7 @@ describe('installPackages shared pkgs cache lock', () => {
       expect(spawn).not.toHaveBeenCalled()
       releaseCache()
       await Promise.all([reader, install])
-      expect(spawn.mock.calls.filter(([, args]) => !args.includes('clean'))).toHaveLength(1)
+      expect(spawn.mock.calls.filter(([, args]) => !isCacheClean(args))).toHaveLength(1)
     }
   )
 
@@ -1654,7 +1655,7 @@ describe('installPackages shared pkgs cache lock', () => {
     let markInstallStarted!: () => void
     const installStarted = new Promise<void>((resolve) => (markInstallStarted = resolve))
     const spawn: InstallSpawn = async (_command, args) => {
-      if (args.includes('clean')) return ok
+      if (isCacheClean(args)) return ok
       order.push('install-start')
       markInstallStarted()
       await new Promise((r) => setTimeout(r, 10))
@@ -1682,7 +1683,7 @@ describe('installPackages shared pkgs cache lock', () => {
     let markRemoveStarted!: () => void
     const removeStarted = new Promise<void>((resolve) => (markRemoveStarted = resolve))
     const spawn: InstallSpawn = async (_command, args) => {
-      if (args.includes('clean')) return ok
+      if (isCacheClean(args)) return ok
       order.push('remove-start')
       markRemoveStarted()
       await new Promise((r) => setTimeout(r, 10))

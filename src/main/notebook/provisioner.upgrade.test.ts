@@ -51,20 +51,27 @@ const baseDeps = (root: string, over: Partial<ProvisionerDeps> = {}): Provisione
 })
 
 describe('upgradeIfNeeded', () => {
-  it('maintains the selected cache before an offline upgrade mutation', async () => {
+  it('maintains the package cache before fetching and applying an offline upgrade', async () => {
     const root = makeRoot()
+    const cachePath = join(root, 'pkgs')
     touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
     writeReadyMarker(root, DEFAULT_ENV_VERSION - 1, 't1')
     const order: string[] = []
 
     await new DefaultRuntimeProvisioner(
       baseDeps(root, {
+        platform: 'linux',
+        cache: { path: cachePath, lockKey: cachePath },
+        fetchBundle: async () => {
+          order.push('fetch')
+          return { lockPath: join(root, 'python.lock') }
+        },
         maintainCache: async () => void order.push('clean'),
         runArgv: async () => void order.push('install')
       })
     ).upgradeIfNeeded(() => undefined)
 
-    expect(order).toEqual(['clean', 'install'])
+    expect(order).toEqual(['clean', 'fetch', 'install'])
   })
 
   it('is a no-op when already at the expected version', async () => {

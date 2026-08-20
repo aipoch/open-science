@@ -18,6 +18,7 @@ import {
   planStartupAction,
   type ProductionProvisionerDeps
 } from './provisioner'
+import { selectMicromambaCache } from './micromamba-cache'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-start-'))
 const touchBin = (path: string): void => {
@@ -162,6 +163,7 @@ describe('createProductionProvisioner', () => {
         }
       },
       {
+        maintainCache: async () => undefined,
         fetchBundle: async () => {
           events.push('fetch')
           throw new Error('stop after observing fetch')
@@ -262,5 +264,46 @@ describe('createProductionProvisioner', () => {
 
     expect(resolveChannel).toHaveBeenCalledOnce()
     expect(runArgv.mock.calls[0]?.[0]).toContain('https://fast-mirror.invalid/conda-forge')
+  })
+
+  it('binds the default cache-maintenance adapter to the selected app cache', async () => {
+    const root = makeRoot()
+    const primary = join(root, 'bin', micromambaBinName)
+    const compatibility = join(root, 'bin', `compat-${micromambaBinName}`)
+    touchBin(primary)
+    touchBin(compatibility)
+    const runCacheMaintenance = vi.fn<
+      NonNullable<ProductionProvisionerDeps['runCacheMaintenance']>
+    >(async () => undefined)
+    const runArgv = vi.fn<NonNullable<ProductionProvisionerDeps['runArgv']>>(async () => undefined)
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: 'conda-forge',
+        micromamba: { env: { OPEN_SCIENCE_MICROMAMBA_BIN: primary } }
+      },
+      {
+        runner: { initialPath: primary, resolve: async () => compatibility },
+        runCacheMaintenance,
+        runArgv,
+        verify: async () => undefined
+      }
+    )
+
+    await provisioner.createNamedEnvironment('analysis', 'python')
+
+    expect(runCacheMaintenance).toHaveBeenCalledOnce()
+    expect(runCacheMaintenance.mock.calls[0]?.[0]).toEqual([
+      compatibility,
+      '--no-rc',
+      'clean',
+      '--packages',
+      '--tarballs',
+      '--yes'
+    ])
+    expect(runCacheMaintenance.mock.calls[0]?.[1]).toMatchObject({
+      MAMBA_ROOT_PREFIX: root,
+      CONDA_PKGS_DIRS: selectMicromambaCache(root).path
+    })
   })
 })

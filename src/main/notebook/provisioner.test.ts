@@ -85,13 +85,20 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
 }
 
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
-  it('maintains the selected cache before materializing the runtime', async () => {
+  it('maintains the package cache before fetching and materializing the runtime', async () => {
     const root = makeRoot()
+    const cachePath = join(root, 'pkgs')
     const order: string[] = []
     const provisioner = new DefaultRuntimeProvisioner(
       makeDeps(root, {
+        platform: 'linux',
+        cache: { path: cachePath, lockKey: cachePath },
+        fetchBundle: async () => {
+          order.push('fetch')
+          return { lockPath: join(root, 'python.lock') }
+        },
         maintainCache: async (cache) => {
-          expect(cache.path).toBe(selectMicromambaCache(root).path)
+          expect(cache.path).toBe(cachePath)
           order.push('clean')
         },
         runArgv: async (argv) => {
@@ -106,7 +113,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 
     await provisioner.provisionPython(() => undefined)
 
-    expect(order).toEqual(['clean', 'create'])
+    expect(order).toEqual(['clean', 'fetch', 'create'])
   })
 
   it('materializes python, stamps the marker, and emits monotonic progress ending at 1', async () => {
