@@ -859,7 +859,61 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('>Thinking</span>')
   })
 
-  it('does not render loading after current-run agent text arrives', async () => {
+  it('keeps the loading row after multiple tool rounds while the run is still active', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-1',
+          startedAt: 1710000000100
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-after-first-tool',
+            role: 'agent',
+            content: 'The chart is ready. I will adjust it next.',
+            status: 'streaming',
+            streamId: 'assistant-message-1',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 4,
+            updatedAt: 1710000000400
+          }),
+          createMessage({
+            id: 'reply-after-second-tool',
+            role: 'agent',
+            content: 'The chart looks good. Next I will generate the report.',
+            status: 'streaming',
+            streamId: 'assistant-message-2',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 6,
+            updatedAt: 1710000000600
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'tool-read-1',
+            title: 'Used tool: ToolRead',
+            promptMessageId: 'prompt-1',
+            sortIndex: 3,
+            updatedAt: 1710000000300
+          }),
+          createActivity({
+            id: 'tool-read-2',
+            title: 'Used tool: ToolRead',
+            promptMessageId: 'prompt-1',
+            sortIndex: 5,
+            updatedAt: 1710000000500
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('The chart looks good. Next I will generate the report.')
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('>Thinking</span>')
+  })
+
+  it('continues rendering loading after current-run agent text while the run remains active', async () => {
     const html = await renderScroller(
       createSession({
         activeRun: {
@@ -880,7 +934,8 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).not.toContain('role="status"')
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('>Thinking</span>')
     expect(html).toContain('Answer text')
   })
 

@@ -173,7 +173,7 @@ describe('agent loading message state', () => {
     expect(getAgentLoadingPhase(session)).toBe('hidden')
   })
 
-  it('hides loading once the active prompt has an agent response', async () => {
+  it('keeps loading while an active run has a partial agent response', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
@@ -197,10 +197,10 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(getAgentLoadingPhase(session)).toBe('hidden')
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
   })
 
-  it('tracks the latest tool or token update when one stream spans a tool call', async () => {
+  it('keeps loading across a completed tool and later token while the run remains active', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
@@ -232,10 +232,10 @@ describe('agent loading message state', () => {
           message.id === 'reply-1' ? { ...message, updatedAt: 1710000000400 } : message
         )
       })
-    ).toBe('hidden')
+    ).toBe('thinking')
   })
 
-  it('hides loading once an image-only agent response arrives', async () => {
+  it('keeps loading while an active run has an image-only agent response', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
@@ -255,7 +255,7 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(getAgentLoadingPhase(session)).toBe('hidden')
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
   })
 
   it('ignores previous replies when a follow-up prompt starts a new run', async () => {
