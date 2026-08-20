@@ -6,7 +6,11 @@ import type {
 import type { HistoryReplayTarget } from '../../../../shared/history-preamble'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
-import type { UploadedAttachment } from '../../../../shared/uploads'
+import {
+  MAX_COMPOSER_ATTACHMENTS,
+  type FinalizeUploadSessionRequest,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -3291,7 +3295,9 @@ describe('workspace agent message sending', () => {
     expect(retryPromptCall[5]).toContain('The original analysis is complete.')
     expect(retryPromptCall[5]).not.toContain('Try a different interpretation')
     expect(retryPromptCall[7]).toBeUndefined()
-    expect(finalizeSession).toHaveBeenCalledTimes(2)
+    // The retry reuses the immutable Version returned by the first attempt instead of finalizing it
+    // again under the already-bound Session.
+    expect(finalizeSession).toHaveBeenCalledOnce()
     expect(child.messages.at(-1)?.uploads).toEqual([
       expect.objectContaining({ versionId: 'upload-version-1' })
     ])
@@ -6327,7 +6333,8 @@ describe('resendEditedWorkspaceMessage', () => {
     id: string,
     role: 'user' | 'agent',
     content: string,
-    createdAt: number
+    createdAt: number,
+    overrides: Partial<ChatMessage> = {}
   ): ChatMessage => ({
     id,
     role,
@@ -6335,7 +6342,8 @@ describe('resendEditedWorkspaceMessage', () => {
     status: 'complete' as const,
     eventIds: [],
     createdAt,
-    updatedAt: createdAt
+    updatedAt: createdAt,
+    ...overrides
   })
 
   const seedConversation = (): void => {
@@ -6577,6 +6585,372 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(preamble).not.toContain('second prompt')
     expect(preamble).not.toContain('third prompt')
     expect(runtime.sendPrompt.mock.calls[0]?.[3]).toEqual(['skill-forecast'])
+  })
+
+  it('routes a cross-session source Upload Version through history after branching', async () => {
+    const sourceUpload = {
+      id: 'upload-source',
+      versionId: 'upload-version-source',
+      versionNumber: 1,
+      sessionId: 'source-session',
+      name: 'measurements.csv',
+      originalName: 'measurements.csv',
+      mimeType: 'text/csv',
+      size: 24,
+      sha256: 'source-checksum'
+    }
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', 'first prompt', baseTime),
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
+              uploads: [sourceUpload]
+            }),
+            createMessage('agent-2', 'agent', 'second answer', baseTime + 300)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 300
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const finalizeSession = vi.fn(
+      async ({ attachments }: FinalizeUploadSessionRequest) => attachments
+    )
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited'
+    })
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    expect(finalizeSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([])
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
+      expect.objectContaining({
+        id: 'upload-source',
+        versionId: 'upload-version-source',
+        path: 'upload-version:default-project/source-session/upload-version-source'
+      })
+    ])
+
+    const editedSession = useSessionStore.getState().sessions[0]
+    expect(editedSession.messages.at(-1)).toMatchObject({
+      content: 'second prompt, edited',
+      uploads: [expect.objectContaining({ versionId: 'upload-version-source' })]
+    })
+    expect(
+      editedSession.conversationGraph?.messages.find((message) => message.id === 'user-2')?.uploads
+    ).toEqual([expect.objectContaining({ versionId: 'upload-version-source' })])
+    expect(editedSession.conversationGraph?.branches).toHaveLength(2)
+  })
+
+  it('keeps edited attachments newest within the Composer replay limit', async () => {
+    const versionedUpload = (id: string): NonNullable<ChatMessage['uploads']>[number] => ({
+      id,
+      versionId: `${id}-version`,
+      versionNumber: 1,
+      sessionId: 'source-session',
+      name: `${id}.txt`,
+      originalName: `${id}.txt`,
+      mimeType: 'text/plain',
+      size: 24
+    })
+    const historyUploads = Array.from({ length: MAX_COMPOSER_ATTACHMENTS }, (_, index) =>
+      versionedUpload(`history-${index}`)
+    )
+    const editedUploads = [versionedUpload('edited-0'), versionedUpload('edited-1')]
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', 'first prompt', baseTime, {
+              uploads: historyUploads
+            }),
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
+              uploads: editedUploads
+            }),
+            createMessage('agent-2', 'agent', 'second answer', baseTime + 300)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 300
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession: vi.fn() } } })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await expect(
+      resendEditedWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text: 'second prompt, edited'
+      })
+    ).resolves.toBe(true)
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]?.map((attachment) => attachment.id)).toEqual([
+      'history-2',
+      'history-3',
+      'history-4',
+      'history-5',
+      'history-6',
+      'history-7',
+      'history-8',
+      'history-9',
+      'edited-0',
+      'edited-1'
+    ])
+    const editedSession = useSessionStore.getState().sessions[0]
+    expect(editedSession.messages.at(-1)?.uploads).toHaveLength(editedUploads.length)
+    const activeFrame = editedSession.conversationGraph?.frames.find(
+      (frame) => frame.id === editedSession.conversationGraph?.activeFrameId
+    )
+    const activeBranch = editedSession.conversationGraph?.branches.find(
+      (branch) => branch.id === activeFrame?.activeBranchId
+    )
+    const activeHead = editedSession.conversationGraph?.messages.find(
+      (message) => message.id === activeBranch?.headMessageId
+    )
+    expect(activeHead).toMatchObject({
+      content: 'second prompt, edited',
+      uploads: editedUploads
+    })
+  })
+
+  it('filters edited image uploads for a text-only runtime without a Vision relay', async () => {
+    const versionedUpload = (
+      id: string,
+      name: string,
+      mimeType: string
+    ): NonNullable<ChatMessage['uploads']> => [
+      {
+        id,
+        versionId: `${id}-version`,
+        versionNumber: 1,
+        sessionId: 'source-session',
+        name,
+        originalName: name,
+        mimeType,
+        size: 24
+      }
+    ]
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', 'first prompt', baseTime),
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
+              uploads: [
+                ...versionedUpload('photo', 'photo.png', 'application/octet-stream'),
+                ...versionedUpload('notes', 'notes.txt', 'text/plain')
+              ]
+            })
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession: vi.fn() } } })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await expect(
+      resendEditedWorkspaceMessage(
+        runtime,
+        { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+        { supportsImageInput: false }
+      )
+    ).resolves.toBe(true)
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([])
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
+      expect.objectContaining({ id: 'notes', name: 'notes.txt' })
+    ])
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.uploads).toHaveLength(2)
+  })
+
+  it('upgrades a legacy source upload before cutting the edited Branch', async () => {
+    const legacyUpload = {
+      id: 'legacy-upload',
+      sessionId: 'source-session',
+      name: 'legacy.csv',
+      originalName: 'legacy.csv',
+      path: '/legacy/session-1/legacy.csv',
+      mimeType: 'text/csv',
+      size: 18,
+      checksum: 'legacy-checksum'
+    }
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', 'first prompt', baseTime),
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
+              uploads: [legacyUpload]
+            }),
+            createMessage('agent-2', 'agent', 'second answer', baseTime + 300)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 300
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const finalizeSession = vi.fn(async ({ attachments }: FinalizeUploadSessionRequest) => [
+      {
+        ...attachments[0],
+        versionId: 'legacy-upload-version-1',
+        versionNumber: 1,
+        path: '/durable/legacy-upload-version-1/content',
+        checksum: 'legacy-checksum'
+      }
+    ])
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await expect(
+      resendEditedWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text: 'second prompt, edited'
+      })
+    ).resolves.toBe(true)
+    await flushRuntimeTasks()
+
+    expect(finalizeSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'source-session' })
+    )
+
+    const editedSession = useSessionStore.getState().sessions[0]
+    const originalRevision = editedSession.conversationGraph?.messages.find(
+      (message) => message.id === 'user-2'
+    )
+    expect(originalRevision?.uploads).toEqual([
+      expect.objectContaining({ versionId: 'legacy-upload-version-1' })
+    ])
+    expect(originalRevision?.uploads?.[0]).not.toHaveProperty('path')
+    expect(editedSession.messages.at(-1)?.uploads).toEqual([
+      expect.objectContaining({ versionId: 'legacy-upload-version-1' })
+    ])
+  })
+
+  it('keeps the original Branch intact when source attachment finalization is incomplete', async () => {
+    seedConversation()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        messages: session.messages.map((message) =>
+          message.id === 'user-2'
+            ? {
+                ...message,
+                uploads: [
+                  {
+                    id: 'upload-source',
+                    sessionId: 'session-1',
+                    name: 'measurements.csv',
+                    originalName: 'measurements.csv',
+                    path: '/legacy/session-1/measurements.csv',
+                    mimeType: 'text/csv',
+                    size: 24,
+                    checksum: 'source-checksum'
+                  }
+                ]
+              }
+            : message
+        )
+      }))
+    }))
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([]) }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn()
+    }
+    const originalMessageIds = useSessionStore.getState().sessions[0].messages.map(({ id }) => id)
+
+    await expect(
+      resendEditedWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text: 'second prompt, edited'
+      })
+    ).resolves.toBe(false)
+
+    expect(useSessionStore.getState().sessions[0].messages.map(({ id }) => id)).toEqual(
+      originalMessageIds
+    )
+    expect(useSessionStore.getState().sessions[0].conversationGraph?.branches).toHaveLength(1)
+    expect(useSessionStore.getState().sessions[0].error).toContain(
+      'Upload finalization did not return the attachment: upload-source'
+    )
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('keeps the transcript intact when the context reset fails', async () => {

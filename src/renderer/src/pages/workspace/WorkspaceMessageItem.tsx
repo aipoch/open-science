@@ -1204,6 +1204,16 @@ const WorkspaceMessageItemImpl = ({
             <div className="flex justify-end">
               {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
               <div className={editCardClassName}>
+                <MessageUploadAttachmentList
+                  attachments={uploads}
+                  onPreviewUploadAttachment={onPreviewUploadAttachment}
+                />
+                {uploads.length > 0 ? (
+                  <hr
+                    role="separator"
+                    className="-mt-1.5 w-full border-0 border-t border-border-200"
+                  />
+                ) : null}
                 <ComposerEditor
                   doc={editDoc}
                   onDocChange={setEditDoc}

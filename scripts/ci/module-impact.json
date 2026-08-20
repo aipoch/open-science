@@ -34,6 +34,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",

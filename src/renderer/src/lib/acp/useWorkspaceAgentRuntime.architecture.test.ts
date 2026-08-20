@@ -73,12 +73,15 @@ const ownerNames = [
   'workspace-runtime-event-owner',
   'workspace-runtime-prompt-preparation-owner',
   'workspace-runtime-session-branch-owner',
+  'workspace-runtime-attachment-owner',
   'workspace-runtime-command-owner',
   'workspace-runtime-session-lifecycle-owner',
   'workspace-runtime-save-as-skill-owner'
 ] as const
 const facadeOwnerNames = ownerNames.filter(
-  (name) => name !== 'workspace-runtime-session-branch-owner'
+  (name) =>
+    name !== 'workspace-runtime-session-branch-owner' &&
+    name !== 'workspace-runtime-attachment-owner'
 )
 const ownerTargets = new Map(ownerNames.map((name) => [name, modulePath(resolve(__dirname, name))]))
 const ownerFilePath = (name: (typeof ownerNames)[number]): string => `${ownerTargets.get(name)}.ts`
@@ -610,9 +613,11 @@ describe('workspace runtime architecture', () => {
       'workspace-runtime-event-owner': [],
       'workspace-runtime-prompt-preparation-owner': [],
       'workspace-runtime-session-branch-owner': [],
+      'workspace-runtime-attachment-owner': [],
       'workspace-runtime-command-owner': [
         'workspace-runtime-prompt-preparation-owner',
-        'workspace-runtime-session-branch-owner'
+        'workspace-runtime-session-branch-owner',
+        'workspace-runtime-attachment-owner'
       ],
       'workspace-runtime-session-lifecycle-owner': [
         'workspace-runtime-prompt-preparation-owner',

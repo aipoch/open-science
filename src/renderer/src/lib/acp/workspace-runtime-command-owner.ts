@@ -14,7 +14,6 @@ import {
 } from '../../../../shared/uploads'
 import { getActiveConversationContext } from '../../../../shared/conversation-graph'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
-import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
 import {
   buildWorkspaceHistoryReplay,
@@ -29,6 +28,10 @@ import {
   branchWorkspaceSessionFromMessage,
   reconcileBranchedAttachments
 } from './workspace-runtime-session-branch-owner'
+import {
+  finalizeWorkspaceAttachments,
+  mergeWorkspaceHistoryAttachments
+} from './workspace-runtime-attachment-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
 
 type SendWorkspaceMessageIntent = {
@@ -51,7 +54,6 @@ type SendWorkspaceMessageIntent = {
   enabledComputeHosts?: string[]
   selectedComputeHosts?: string[]
 }
-
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
@@ -64,7 +66,6 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   allowCompactionRecovery?: boolean
   requireExistingSession?: boolean
 }
-
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type RuntimeEventDrain = (sessionId?: string) => Promise<void>
@@ -137,17 +138,6 @@ const failPrompt = async (
     // The persisted run error remains useful when the live runtime snapshot is unavailable.
   }
   useSessionStore.getState().failRun(sessionId, message, { reportable })
-}
-
-const finalizeAttachments = async (
-  sessionId: string,
-  attachments: UploadedAttachment[],
-  projectId?: string
-): Promise<UploadedAttachment[]> => {
-  if (attachments.length === 0) return attachments
-  const finalized = await window.api.uploads.finalizeSession({ projectId, sessionId, attachments })
-  usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalized)
-  return finalized
 }
 
 const replayHistory = (
@@ -283,7 +273,11 @@ const startPendingPrompt = (
 
     let attachments = request.attachments
     try {
-      attachments = await finalizeAttachments(created.sessionId, attachments, request.projectId)
+      attachments = await finalizeWorkspaceAttachments({
+        sessionId: created.sessionId,
+        attachments,
+        projectId: request.projectId
+      })
       useSessionStore.getState().replaceMessageUploads({
         sessionId: created.sessionId,
         messageId: boundMessageId,
@@ -509,12 +503,24 @@ const sendWorkspaceMessage = async (
     if (!prepared) return undefined
     let promptAttachments = effectiveAttachments
     try {
-      promptAttachments = await finalizeAttachments(sessionId, effectiveAttachments, projectId)
+      promptAttachments = await finalizeWorkspaceAttachments({
+        sessionId,
+        attachments: effectiveAttachments,
+        projectId,
+        preserveSourceOwnership: Boolean(input.truncateFromMessageId)
+      })
     } catch (error) {
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
       return undefined
     }
     if (input.truncateFromMessageId) {
+      if (promptAttachments.length > 0) {
+        useSessionStore.getState().replaceMessageUploads({
+          sessionId,
+          messageId: input.truncateFromMessageId,
+          uploads: promptAttachments.map(toPersistedUploadedAttachment)
+        })
+      }
       useSessionStore.getState().truncateSessionFromMessage(sessionId, input.truncateFromMessageId)
     }
     const appended = useSessionStore.getState().appendUserMessage({
@@ -545,10 +551,22 @@ const sendWorkspaceMessage = async (
       sessionId,
       messageId: appended.messageId,
       content,
-      attachments: promptAttachments,
+      attachments: input.truncateFromMessageId ? [] : promptAttachments,
       forcedSkillIds: input.forcedSkillIds,
       referencedArtifacts: input.referencedArtifacts,
-      replay,
+      // Edits reuse Message-owned Versions, which resolve through the project-scoped history path.
+      replay:
+        input.truncateFromMessageId && promptAttachments.length > 0
+          ? {
+              ...replay,
+              historyAttachments: mergeWorkspaceHistoryAttachments({
+                historyAttachments: replay?.historyAttachments,
+                latestAttachments: promptAttachments,
+                supportsImageInput: input.supportsImageInput,
+                supportsImageRelay: input.supportsImageRelay
+              })
+            }
+          : replay,
       continuation,
       turnIntent: input.turnIntent,
       accepted: () => prepared.acceptPrompt(appended.messageId)
@@ -593,13 +611,23 @@ const resendEditedWorkspaceMessage = async (
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
   if (!session) return false
+  const sourceMessage = session.messages.find((message) => message.id === input.messageId)
   const cwd = session.cwd || runtime.state.cwd
   if (
     !cwd ||
     !input.text.trim() ||
-    !session.messages.some((message) => message.id === input.messageId) ||
+    !sourceMessage ||
     runtime.state.promptInFlightSessionIds.includes(input.sessionId)
   ) {
+    return false
+  }
+  let attachments: UploadedAttachment[]
+  try {
+    attachments = (sourceMessage.uploads ?? []).map((upload) =>
+      toRuntimeUploadedAttachment(upload, session.projectId)
+    )
+  } catch (error) {
+    useSessionStore.getState().failRun(input.sessionId, errorMessage(error))
     return false
   }
   return Boolean(
@@ -608,7 +636,7 @@ const resendEditedWorkspaceMessage = async (
       {
         sessionId: input.sessionId,
         text: input.text.trim(),
-        attachments: [],
+        attachments,
         parts: input.parts,
         cwd,
         projectId: session.projectId,
