@@ -259,7 +259,9 @@ const RichAgentMarkdown = memo(
       <div
         className={cn(
           'agent-markdown-root max-w-full min-w-0',
-          isAnimating && 'agent-markdown-streaming'
+          // Match the loading row while the first streamed content is still buffered so replacing
+          // it cannot collapse the scroll extent and visibly move completed tool activity.
+          isAnimating && 'agent-markdown-streaming min-h-9'
         )}
       >
         <Streamdown
