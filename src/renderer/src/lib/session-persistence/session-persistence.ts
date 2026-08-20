@@ -135,7 +135,8 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
   baseItems: readonly Item[],
   submittedItems: readonly Item[],
   latestItems: readonly Item[],
-  ignoreUpdatedAt = false
+  ignoreUpdatedAt = false,
+  resolveConcurrent?: (submittedItem: Item, latestItem: Item) => Item | undefined
 ): Item[] | undefined => {
   const baseById = new Map(baseItems.map((item) => [item.id, item]))
   const submittedById = new Map(submittedItems.map((item) => [item.id, item]))
@@ -161,13 +162,40 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
     } else if (graphItemsEqual(submittedItem, latestItem, ignoreUpdatedAt)) {
       selected = submittedItem
     } else {
-      return undefined
+      selected =
+        submittedItem && latestItem ? resolveConcurrent?.(submittedItem, latestItem) : undefined
+      if (!selected) return undefined
     }
     if (selected) rebased.push(structuredClone(selected))
   }
 
   return rebased
 }
+
+// Runtime delivery can attach an event identity to a Message that Main has already persisted (Side
+// chat relays are the canonical example). Event identities are append-only evidence, so union that
+// one field when every other property of the same Message identity agrees. Content, ownership,
+// status, provenance, and deletion conflicts remain fail-closed.
+const rebaseMessageCollection = <Item extends { id: string; eventIds: string[] }>(
+  baseItems: readonly Item[],
+  submittedItems: readonly Item[],
+  latestItems: readonly Item[]
+): Item[] | undefined =>
+  rebaseConversationGraphCollection(
+    baseItems,
+    submittedItems,
+    latestItems,
+    false,
+    (submittedItem, latestItem) => {
+      const { eventIds: submittedEventIds, ...submittedRest } = submittedItem
+      const { eventIds: latestEventIds, ...latestRest } = latestItem
+      if (!jsonValuesEqual(submittedRest, latestRest)) return undefined
+      return {
+        ...structuredClone(latestItem),
+        eventIds: [...new Set([...latestEventIds, ...submittedEventIds])]
+      }
+    }
+  )
 
 const rebaseConversationGraph = (
   base: PersistedChatSession['conversationGraph'],
@@ -214,11 +242,7 @@ const rebaseConversationGraph = (
     latest.branches,
     true
   )
-  const messages = rebaseConversationGraphCollection(
-    base.messages,
-    submitted.messages,
-    latest.messages
-  )
+  const messages = rebaseMessageCollection(base.messages, submitted.messages, latest.messages)
   const activities = rebaseConversationGraphCollection(
     base.activities,
     submitted.activities,
@@ -304,14 +328,25 @@ const rebaseSessionAfterRevisionConflict = (
     if (!localChanged) continue
     const remoteChanged = !sessionFieldValuesEqual(key, latestValue, baseValue)
     if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue)) {
-      if (key !== 'conversationGraph') return undefined
-      const graph = rebaseConversationGraph(
-        baseValue as PersistedChatSession['conversationGraph'],
-        submittedValue as PersistedChatSession['conversationGraph'],
-        latestValue as PersistedChatSession['conversationGraph']
-      )
-      if (!graph) return undefined
-      rebased.conversationGraph = graph
+      if (key === 'messages') {
+        const messages = rebaseMessageCollection(
+          baseValue as PersistedChatSession['messages'],
+          submittedValue as PersistedChatSession['messages'],
+          latestValue as PersistedChatSession['messages']
+        )
+        if (!messages) return undefined
+        rebased.messages = messages
+      } else if (key === 'conversationGraph') {
+        const graph = rebaseConversationGraph(
+          baseValue as PersistedChatSession['conversationGraph'],
+          submittedValue as PersistedChatSession['conversationGraph'],
+          latestValue as PersistedChatSession['conversationGraph']
+        )
+        if (!graph) return undefined
+        rebased.conversationGraph = graph
+      } else {
+        return undefined
+      }
       continue
     }
 

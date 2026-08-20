@@ -1003,6 +1003,153 @@ describe('renderer session persistence bridge', () => {
     ])
   })
 
+  it('reconciles a delivered Side chat relay with its already durable Main identity', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Continue the main turn',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const relay = {
+      id: 'side-chat-relay-1',
+      role: 'user' as const,
+      content: 'Use a black line.',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      responseToMessageId: 'prompt-1',
+      relayedFrom: { kind: 'side-chat' as const, direction: 'to-main' as const },
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      messages: [...base.messages, relay],
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().appendRoutedUserMessage({
+      sessionId: base.id,
+      messageId: relay.id,
+      eventId: `side-chat-delivered:${relay.id}`,
+      content: relay.content,
+      createdAt: relay.createdAt,
+      responseToMessageId: relay.responseToMessageId,
+      relayedFrom: relay.relayedFrom
+    })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    const rebased = saveSession.mock.calls[1][0]
+    expect(rebased).toMatchObject({ revision: 9 })
+    expect(rebased.messages).toContainEqual({
+      ...relay,
+      eventIds: [`side-chat-delivered:${relay.id}`]
+    })
+    const rebasedGraph = rebased.conversationGraph
+    if (!rebasedGraph) throw new Error('Expected a rebased conversation graph.')
+    expect(rebasedGraph.messages).toContainEqual(
+      expect.objectContaining({
+        ...relay,
+        agentFrameId: rebasedGraph.rootFrameId,
+        runtimeSegmentId: rebasedGraph.runtimeSegments[0].id,
+        eventIds: [`side-chat-delivered:${relay.id}`]
+      })
+    )
+  })
+
+  it('rebases a Reviewer correction insertion over concurrent Main runtime authority', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Make the claim.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const authoritative = {
+      ...base,
+      revision: 9,
+      runtimeContext: { version: 1 as const, revision: 1 },
+      updatedAt: base.updatedAt + 1
+    }
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().appendRoutedUserMessage({
+      sessionId: base.id,
+      messageId: 'reviewer-correction-1',
+      eventId: 'reviewer-correction-event-1',
+      content: '[Auditor] Correct the unsupported claim.',
+      createdAt: 2,
+      attribution: {
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1'
+      }
+    })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 9,
+      runtimeContext: authoritative.runtimeContext,
+      messages: [
+        expect.objectContaining({ id: 'prompt-1' }),
+        expect.objectContaining({
+          id: 'reviewer-correction-1',
+          attribution: {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review-1'
+          }
+        })
+      ]
+    })
+  })
+
   it('does not retry when the same graph identity changed concurrently', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({
