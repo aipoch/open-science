@@ -385,6 +385,38 @@ describe('AgentRuntimeManager', () => {
     expect(getVersion).toHaveBeenCalledTimes(1)
   })
 
+  it('reuses partial Codex probes through fallback detection and component diagnostics', async () => {
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: 'stale-adapter',
+      nativePath: managedCodexPath,
+      nativeVersion: 'stale-native'
+    })
+    const codexDeps = createCodexDeps(inventory, managedAdapterPath, managedCodexPath)
+    const getAdapterVersion = vi.fn(codexDeps.getAdapterVersion)
+    const getCodexVersion = vi.fn(codexDeps.getCodexVersion)
+    const smokeInitialize = vi.fn(codexDeps.smokeInitialize)
+    manager = createManager({
+      codexDetectDeps: { ...codexDeps, getAdapterVersion, getCodexVersion, smokeInitialize }
+    })
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(undefined),
+      resolveActiveModel: vi.fn().mockReturnValue(undefined),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    expect((await manager.getPreflight(providers)).codexReady).toBe(false)
+    await manager.checkEnvironment()
+    expect((await manager.getPreflight(providers)).codexReady).toBe(false)
+
+    expect(
+      getAdapterVersion.mock.calls.filter(([path]) => path === managedAdapterPath)
+    ).toHaveLength(1)
+    expect(getCodexVersion.mock.calls.filter(([path]) => path === managedCodexPath)).toHaveLength(1)
+    expect(smokeInitialize).toHaveBeenCalledTimes(1)
+  })
+
   it('uses the shared allocator and forwards the same event sink through managed installs', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(123)
     const allocateSettingsIdSequence = vi
