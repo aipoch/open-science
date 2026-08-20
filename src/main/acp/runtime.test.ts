@@ -19896,7 +19896,7 @@ describe('ACP runtime session management', () => {
     )
   })
 
-  it('requires connector-produced files to be published as Artifacts in the same turn', async () => {
+  it('requires unpublished connector files to become Artifacts without duplicating saved results', async () => {
     const storageRoot = await createTemporaryRoot()
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
@@ -19921,7 +19921,14 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
         append: expect.stringContaining(
-          'When a Connector or MCP tool creates or returns a user-facing file, call `mcp__open-science-artifacts__write_artifact_file` in the same turn before telling the user that the result is available.'
+          'When a Connector or MCP tool creates or returns a user-facing file that it has not already saved or attached as an Artifact, call `mcp__open-science-artifacts__write_artifact_file` in the same turn before telling the user that the result is available.'
+        )
+      }
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining(
+          'If the tool result confirms that the file is already saved or attached as an Artifact, do not call `mcp__open-science-artifacts__write_artifact_file` again.'
         )
       }
     })
