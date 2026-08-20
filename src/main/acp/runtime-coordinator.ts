@@ -734,8 +734,16 @@ class AcpRuntimeCoordinator {
       settled = true
       reject(error)
     }
+    const settleAfterRuntimeDispatch = (prompt: ReturnType<AcpRuntime['sendPrompt']>): void => {
+      // A runtime can return an immediately rejected Promise through several async wrappers when
+      // it cannot accept the prompt. Let that microtask chain drain before acknowledging local
+      // ownership. Once accepted, later model, tool, or human-input waits remain authoritative
+      // through state/events.
+      void prompt.then(settleAdmitted, settleRejected)
+      setImmediate(settleAdmitted)
+    }
 
-    void this.sendObservedPrompt(request, undefined, settleAdmitted).then(
+    void this.sendObservedPrompt(request, undefined, settleAfterRuntimeDispatch).then(
       settleAdmitted,
       settleRejected
     )
@@ -768,7 +776,7 @@ class AcpRuntimeCoordinator {
   private sendObservedPrompt(
     request: AcpPromptRequest,
     acceptance?: PromptAcceptance,
-    onApplicationPromptAdmitted?: () => void
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
@@ -917,7 +925,7 @@ class AcpRuntimeCoordinator {
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
     attribution?: MessageAttribution,
-    onApplicationPromptAdmitted?: () => void
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
       this.dispatchAdmittedPrompt(
@@ -941,7 +949,7 @@ class AcpRuntimeCoordinator {
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
     attribution?: MessageAttribution,
-    onApplicationPromptAdmitted?: () => void
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -981,7 +989,7 @@ class AcpRuntimeCoordinator {
       operation === 'sendApplicationPrompt'
         ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
         : runtime[operation](taskRequest, attempt.id)
-    onApplicationPromptAdmitted?.()
+    onApplicationPromptAdmitted?.(prompt)
     return prompt
       .catch((error: unknown) => {
         if (

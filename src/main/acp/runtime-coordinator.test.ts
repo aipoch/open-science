@@ -762,6 +762,25 @@ describe('AcpRuntimeCoordinator', () => {
     )
   })
 
+  it('rejects an immediately failed runtime dispatch before acknowledging application admission', async () => {
+    const failure = new Error('Active session disposed')
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          skipProviderPromptAccepted: true,
+          prompt: () => Promise.reject(failure)
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+
+    await expect(
+      coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+    ).rejects.toBe(failure)
+  })
+
   it('keeps application admission independent from a missing provider acceptance update', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>
