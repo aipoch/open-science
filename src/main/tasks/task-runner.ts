@@ -16,7 +16,12 @@ import type {
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE, artifactCreatedAtMs } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { Project } from '../../shared/projects'
+import {
+  PROJECT_DESCRIPTION_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH,
+  type Project,
+  type UpdateProjectRequest
+} from '../../shared/projects'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type {
   DelegationPolicy,
@@ -28,23 +33,22 @@ import type {
 } from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
+  CreateTaskProjectRequest,
   StartTaskRunRequest,
   TaskApiErrorCode,
+  TaskProject,
   TaskRun,
   TaskRunProgressEvent,
   TaskRunProgressPhase,
   TaskRunReview,
-  TaskSessionSummary
+  TaskSessionSummary,
+  UpdateTaskProjectRequest
 } from '../../shared/task-api'
-
-type CreateTaskProjectRequest = {
-  name: string
-  description?: string
-}
 
 type TaskProjectPort = {
   list(): Promise<Project[]>
   create(request: CreateTaskProjectRequest): Promise<Project>
+  update?(request: UpdateProjectRequest): Promise<Project>
 }
 
 type TaskSessionPort = {
@@ -312,6 +316,18 @@ const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => 
   artifactCount: session.artifacts?.length ?? 0
 })
 
+const projectTaskProjection = (project: Project): TaskProject => ({
+  id: project.id,
+  name: project.name,
+  description: project.description,
+  isExample: project.isExample,
+  ...(project.pinned ? { pinned: true } : {}),
+  ...(project.archivedAt ? { archivedAt: project.archivedAt } : {}),
+  createdAt: project.createdAt,
+  updatedAt: project.updatedAt,
+  hasAgentContext: Boolean(project.agentContext?.trim())
+})
+
 class TaskRunnerError extends Error {
   constructor(
     readonly code: TaskApiErrorCode,
@@ -411,18 +427,109 @@ class TaskRunner {
     return () => this.progressListeners.delete(listener)
   }
 
-  listProjects(): Promise<Project[]> {
-    return this.dependencies.projects.list()
+  async listProjects(): Promise<TaskProject[]> {
+    return (await this.dependencies.projects.list()).map(projectTaskProjection)
   }
 
-  async createProject(request: CreateTaskProjectRequest): Promise<Project> {
+  async createProject(request: CreateTaskProjectRequest): Promise<TaskProject> {
     if (!request || typeof request.name !== 'string' || !request.name.trim()) {
       throw new TaskRunnerError('invalid_request', 'Project name is required.')
+    }
+    if (request.name.length > PROJECT_NAME_MAX_LENGTH) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        `Project name must not exceed ${PROJECT_NAME_MAX_LENGTH} characters.`
+      )
     }
     if (request.description !== undefined && typeof request.description !== 'string') {
       throw new TaskRunnerError('invalid_request', 'Project description must be a string.')
     }
-    return this.dependencies.projects.create(request)
+    if ((request.description?.length ?? 0) > PROJECT_DESCRIPTION_MAX_LENGTH) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        `Project description must not exceed ${PROJECT_DESCRIPTION_MAX_LENGTH} characters.`
+      )
+    }
+    if (request.agentContext !== undefined && typeof request.agentContext !== 'string') {
+      throw new TaskRunnerError('invalid_request', 'Project Agent Context must be a string.')
+    }
+    if ((request.agentContext?.length ?? 0) > 16_000) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Project Agent Context must not exceed 16000 characters.'
+      )
+    }
+    return projectTaskProjection(await this.dependencies.projects.create(request))
+  }
+
+  async updateProject(projectId: string, request: UpdateTaskProjectRequest): Promise<TaskProject> {
+    const project = await this.resolveProject(projectId)
+    if (!request || typeof request !== 'object') {
+      throw new TaskRunnerError('invalid_request', 'Project update must be an object.')
+    }
+    if (
+      request.name === undefined &&
+      request.description === undefined &&
+      request.agentContext === undefined
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Project update requires at least one field.')
+    }
+    if (request.name !== undefined) {
+      if (typeof request.name !== 'string' || !request.name.trim()) {
+        throw new TaskRunnerError('invalid_request', 'Project name is required.')
+      }
+      if (request.name.length > PROJECT_NAME_MAX_LENGTH) {
+        throw new TaskRunnerError(
+          'invalid_request',
+          `Project name must not exceed ${PROJECT_NAME_MAX_LENGTH} characters.`
+        )
+      }
+    }
+    if (request.description !== undefined && typeof request.description !== 'string') {
+      throw new TaskRunnerError('invalid_request', 'Project description must be a string.')
+    }
+    if ((request.description?.length ?? 0) > PROJECT_DESCRIPTION_MAX_LENGTH) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        `Project description must not exceed ${PROJECT_DESCRIPTION_MAX_LENGTH} characters.`
+      )
+    }
+    if (request.agentContext !== undefined && typeof request.agentContext !== 'string') {
+      throw new TaskRunnerError('invalid_request', 'Project Agent Context must be a string.')
+    }
+    if ((request.agentContext?.length ?? 0) > 16_000) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Project Agent Context must not exceed 16000 characters.'
+      )
+    }
+    if (!Number.isSafeInteger(request.expectedUpdatedAt) || request.expectedUpdatedAt <= 0) {
+      throw new TaskRunnerError('invalid_request', 'Project update timestamp is invalid.')
+    }
+    if (!this.dependencies.projects.update) {
+      throw new Error('Task Project update is unavailable.')
+    }
+    try {
+      const updateRequest: UpdateProjectRequest = {
+        id: project.id,
+        expectedUpdatedAt: request.expectedUpdatedAt,
+        ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.description !== undefined ? { description: request.description } : {}),
+        ...(request.agentContext !== undefined ? { agentContext: request.agentContext } : {})
+      }
+      return projectTaskProjection(await this.dependencies.projects.update(updateRequest))
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === 'Project changed elsewhere.' || error.message === 'Project not found.')
+      ) {
+        throw new TaskRunnerError(
+          'project_conflict',
+          'Project changed elsewhere. Refresh it and try again.'
+        )
+      }
+      throw error
+    }
   }
 
   async listSessions(projectId?: string): Promise<TaskSessionSummary[]> {
@@ -1177,7 +1284,7 @@ class TaskRunner {
   private async resolveProject(projectId: string): Promise<Project> {
     const normalized = typeof projectId === 'string' ? projectId.trim() : ''
     if (!normalized) throw new TaskRunnerError('invalid_request', 'Project id is required.')
-    const projects = await this.listProjects()
+    const projects = await this.dependencies.projects.list()
     const project = projects.find((candidate) => candidate.id === normalized)
     if (project) return project
     throw new TaskRunnerError('project_not_found', `Project not found: ${normalized}`)
@@ -1194,7 +1301,6 @@ class TaskRunner {
 
 export { TaskRunner, TaskRunnerError, summarizeSession }
 export type {
-  CreateTaskProjectRequest,
   TaskAgentCreateSessionRequest,
   TaskAgentPort,
   TaskAgentPromptObserver,

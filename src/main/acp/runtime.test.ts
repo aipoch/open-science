@@ -1728,6 +1728,59 @@ describe('ACP runtime provider prompt acceptance', () => {
   )
 })
 
+describe('ACP runtime incremental publication routes', () => {
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+    ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+    ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
+    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+  ] as const)(
+    'keeps %s tool and message updates on the incremental channel',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      startFakeAgent(process, ['incremental-session'], {
+        toolForPrompt: () => ({
+          toolCallId: 'notebook-tool-1',
+          title: 'Notebook run'
+        }),
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const publicationOrder: string[] = []
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        callbacks: {
+          onEvent: (event) => publicationOrder.push(`event:${event.kind}`),
+          onStateChanged: () => publicationOrder.push('state')
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      publicationOrder.length = 0
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Run the notebook.' })
+
+      const toolEventIndex = publicationOrder.indexOf('event:tool')
+      expect(toolEventIndex).toBeGreaterThanOrEqual(0)
+      expect(publicationOrder.slice(toolEventIndex, toolEventIndex + 2)).toEqual([
+        'event:tool',
+        'event:message'
+      ])
+    }
+  )
+})
+
 const PERMISSION_PROJECTION_FRAMEWORKS = [
   ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
   ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
@@ -20755,31 +20808,45 @@ describe('ACP runtime session management', () => {
     expect(errorEvent?.recoverable).toBeUndefined()
   })
 
-  it('tags a provider-relayed prompt failure with providerError so the renderer hides Report', async () => {
-    const process = new FakeAgentProcess()
-    const events: Array<{ kind: string; providerError?: boolean }> = []
-    startFakeAgent(process, ['remote-session-1'], {
-      onPrompt: () => {
-        // An upstream provider rejection the agent relays as an APIError — the user's to fix, not a bug.
-        throw acp.RequestError.internalError({ errorName: 'APIError' }, 'Invalid API key')
-      }
-    })
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      callbacks: {
-        onEvent: (event) => events.push({ kind: event.kind, providerError: event.providerError })
-      }
-    })
+  it.each([
+    ['OpenCode APIError', { errorName: 'APIError' }, 'Invalid API key'],
+    [
+      'Claude Code explicit 4xx',
+      { errorKind: 'unknown' },
+      'API Error: 400 Authentication Fails, Your api key: ****e52d is invalid'
+    ],
+    [
+      'provider bridge error kind',
+      { errorKind: 'provider-error' },
+      '{"error":{"message":"Authentication failed","type":"authentication_error"}}'
+    ]
+  ] as const)(
+    'tags a provider-relayed %s prompt failure so the renderer hides Report',
+    async (_name, data, message) => {
+      const process = new FakeAgentProcess()
+      const events: Array<{ kind: string; providerError?: boolean }> = []
+      startFakeAgent(process, ['remote-session-1'], {
+        onPrompt: () => {
+          throw acp.RequestError.internalError(data, message)
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        callbacks: {
+          onEvent: (event) => events.push({ kind: event.kind, providerError: event.providerError })
+        }
+      })
 
-    await runtime.createSession({ cwd: '/workspace' })
-    await expect(
-      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
-    ).rejects.toThrow()
+      await runtime.createSession({ cwd: '/workspace' })
+      await expect(
+        runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+      ).rejects.toThrow()
 
-    expect(events).toContainEqual({ kind: 'error', providerError: true })
-  })
+      expect(events).toContainEqual({ kind: 'error', providerError: true })
+    }
+  )
 
   it('does not tag an ACP-layer prompt failure as providerError (stays reportable)', async () => {
     const process = new FakeAgentProcess()

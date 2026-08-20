@@ -10,7 +10,8 @@ import {
   errorLogFields,
   flushLogs,
   formatLine,
-  initLogger
+  initLogger,
+  writeFatalLogSync
 } from './logger'
 import {
   ApplicationModuleDisposalTimeoutError,
@@ -1269,6 +1270,35 @@ describe('logger: application shutdown diagnostics', () => {
     expect(json).not.toContain('1000ms')
     expect(json).not.toContain('compute poller stop failed')
     expect(json).not.toContain('/private/project')
+  })
+})
+
+describe('logger: fatal process diagnostics', () => {
+  it('persists the fatal record before returning without awaiting the write queue', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-fatal-'))
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      mirrorToConsole: false,
+      runId: 'fatal-test-run'
+    })
+
+    writeFatalLogSync('main', 'unhandledRejection', { errorCategory: 'type' })
+
+    const record = JSON.parse(await readFile(join(logDir, 'main.log'), 'utf8')) as {
+      level: string
+      scope: string
+      msg: string
+      runId: string
+      data: { errorCategory: string }
+    }
+    expect(record).toMatchObject({
+      level: 'error',
+      scope: 'main',
+      msg: 'unhandledRejection',
+      runId: 'fatal-test-run',
+      data: { errorCategory: 'type' }
+    })
   })
 })
 

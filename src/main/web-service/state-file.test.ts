@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,6 +18,29 @@ afterEach(async () => {
 })
 
 describe('web service state file', () => {
+  it('recovers a valid historical temp when the primary is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-state-temp-'))
+    roots.push(root)
+    await writeFile(
+      `${statePathFor(root)}.123.tmp`,
+      JSON.stringify({
+        pid: process.pid,
+        port: 44100,
+        startedAt: '2026-07-19T00:00:00.000Z',
+        appVersion: '0.4.0',
+        configRoot: root,
+        attached: false
+      }),
+      'utf8'
+    )
+
+    await expect(readWebServiceState(root)).resolves.toMatchObject({
+      pid: process.pid,
+      port: 44100
+    })
+    await expect(readdir(root)).resolves.toEqual(['web-service.json'])
+  })
+
   it('writes, reads, and removes a live state atomically', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-state-'))
     roots.push(root)

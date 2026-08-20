@@ -320,6 +320,78 @@ describe('AcpRuntimeCoordinator', () => {
     expect(coordinator.getSnapshot().revision).toBe(2)
   })
 
+  it('keeps snapshot publication available when no incremental event adapter is configured', () => {
+    let incrementalPublicationConfigured = true
+    new AcpRuntimeCoordinator(
+      (callbacks) => {
+        incrementalPublicationConfigured = callbacks.onEvent !== undefined
+        return createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+      },
+      { onStateChanged: vi.fn() }
+    )
+
+    expect(incrementalPublicationConfigured).toBe(false)
+  })
+
+  it('retains snapshot-only events after a new runtime generation adopts the session', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const snapshots: AcpStateSnapshot[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onStateChanged: (snapshot) => snapshots.push(snapshot) }
+    )
+
+    const session = await coordinator.createSession()
+    created[0].emitEvent({
+      id: 'old-owner-message',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      sessionId: session.sessionId,
+      role: 'assistant',
+      text: 'published before adoption'
+    })
+    expect(snapshots.at(-1)?.events.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'old-owner-message'))
+    ])
+
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const switchRequest = coordinator.requestAgentFrameworkSwitch()
+    await coordinator.connect()
+    const resumeRequest = coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'codex'
+    })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    await resumeRequest
+
+    expect(coordinator.getSnapshot().events.map((event) => event.id)).toContainEqual(
+      expect.stringMatching(runtimeEventId(1, 'old-owner-message'))
+    )
+
+    retirement.resolve()
+    await switchRequest
+  })
+
   it('does not capture the process Active backend for a Session without an owning runtime', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -653,7 +725,63 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
-  it('rejects prompt admission when the turn ends without provider acceptance', async () => {
+  it('acknowledges a blocking provider prompt after local dispatch without waiting for output', async () => {
+    const completion = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        skipProviderPromptAccepted: true,
+        prompt: () => completion.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const admission = coordinator.startPrompt({
+      sessionId: session.sessionId,
+      text: 'Wait for the blocking model response.'
+    })
+    const outcome = Promise.race([
+      admission.then(
+        () => 'acknowledged' as const,
+        () => 'rejected' as const
+      ),
+      new Promise<'still-pending'>((resolve) => setImmediate(() => resolve('still-pending')))
+    ])
+
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+    await expect(outcome).resolves.toBe('acknowledged')
+    expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+
+    completion.resolve({ stopReason: 'end_turn' })
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
+  })
+
+  it('rejects an immediately failed runtime dispatch before acknowledging application admission', async () => {
+    const failure = new Error('Active session disposed')
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          skipProviderPromptAccepted: true,
+          prompt: () => Promise.reject(failure)
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+
+    await expect(
+      coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+    ).rejects.toBe(failure)
+  })
+
+  it('keeps application admission independent from a missing provider acceptance update', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>
         createFakeRuntime({
@@ -667,7 +795,7 @@ describe('AcpRuntimeCoordinator', () => {
 
     await expect(
       coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
-    ).rejects.toThrow('ACP prompt ended before provider acceptance.')
+    ).resolves.toBeUndefined()
   })
 
   it('does not report provider acceptance when dispatch fails before acceptance', async () => {

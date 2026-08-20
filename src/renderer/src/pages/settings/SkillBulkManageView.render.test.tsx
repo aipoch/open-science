@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { SkillBulkManageView } from './SkillBulkManageView'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
@@ -58,7 +59,17 @@ beforeEach(() => {
           ids.includes(skill.id) ? { ...skill, enabled } : skill
         )
       }))
+    }),
+    deleteSkill: vi.fn(async (id: string) => {
+      useSettingsStore.setState((state) => ({
+        skills: state.skills.filter((skill) => skill.id !== id)
+      }))
     })
+  })
+  useSpecialistStore.setState({
+    items: [],
+    isLoaded: true,
+    load: vi.fn().mockResolvedValue(undefined)
   })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -197,5 +208,132 @@ describe('SkillBulkManageView', () => {
     expect(
       document.body.querySelector<HTMLInputElement>('[aria-label="Select Team"]')?.checked
     ).toBe(true)
+  })
+
+  it('deletes every selected manageable Skill after confirmation', async () => {
+    act(() => root.render(<SkillBulkManageView />))
+    act(() =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select all results"]')?.click()
+    )
+
+    act(() => button('Delete selected (2)')?.click())
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      '2 selected Skills can be deleted.'
+    )
+
+    await act(async () => {
+      button('Delete 2 Skills')?.click()
+      await Promise.resolve()
+    })
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenNthCalledWith(1, 'imported-team')
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenNthCalledWith(2, 'personal-mine')
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
+      'Deleted 2 Skills.'
+    )
+  })
+
+  it('keeps Specialist-owned or referenced Skills protected and selected', async () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'researcher',
+          name: 'RESEARCHER',
+          displayName: 'Research Specialist',
+          description: '',
+          systemPrompt: '',
+          enabled: true,
+          capabilityMode: 'selected',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: {
+            skillIds: ['personal-mine'],
+            connectorIds: [],
+            connectorTools: []
+          },
+          revision: 1
+        }
+      ]
+    })
+    act(() => root.render(<SkillBulkManageView />))
+    act(() =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select all results"]')?.click()
+    )
+
+    act(() => button('Delete selected (2)')?.click())
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('1 selected Skill can be deleted.')
+    expect(dialog?.textContent).toContain('1 protected Skill will be kept.')
+    expect(dialog?.textContent).toContain('Research Specialist')
+
+    await act(async () => {
+      button('Delete 1 Skill')?.click()
+      await Promise.resolve()
+    })
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('imported-team')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Mine"]')?.checked
+    ).toBe(true)
+  })
+
+  it('uses the project dialog hierarchy for a protected-only deletion impact', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'researcher',
+          name: 'RESEARCHER',
+          displayName: 'Research Specialist',
+          description: '',
+          systemPrompt: '',
+          enabled: true,
+          capabilityMode: 'selected',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: {
+            skillIds: ['personal-mine'],
+            connectorIds: [],
+            connectorTools: []
+          },
+          revision: 1
+        }
+      ]
+    })
+    act(() => root.render(<SkillBulkManageView />))
+    act(() => document.body.querySelector<HTMLInputElement>('[aria-label="Select Mine"]')?.click())
+    act(() => button('Delete selected (1)')?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const header = dialog?.querySelector<HTMLElement>('[data-slot="skill-bulk-delete-header"]')
+    const description = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-description"]'
+    )
+    const primarySummary = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-primary-summary"]'
+    )
+    const protectedSummary = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-protected-summary"]'
+    )
+    const protectedSection = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-protected-section"]'
+    )
+    const protectedList = dialog?.querySelector<HTMLElement>(
+      '[data-slot="skill-bulk-delete-protected-list"]'
+    )
+
+    expect(header?.textContent).toBe('Delete selected Skills?')
+    expect(header?.contains(description ?? null)).toBe(false)
+    expect(description?.textContent).toBe(
+      'Deleted Skills are removed from this device and cannot be recovered.'
+    )
+    expect(primarySummary?.textContent).toBe('0 selected Skills can be deleted.')
+    expect(primarySummary?.className).toContain('text-base')
+    expect(dialog?.textContent).not.toContain('No selected Skills can be deleted.')
+    expect(protectedSummary?.className).toContain('text-base')
+    expect(protectedSummary?.className).toBe(primarySummary?.className)
+    expect(protectedSection?.className).toContain('border-t')
+    expect(protectedSection?.className).toContain('pt-5')
+    expect(protectedList?.className).toContain('text-xs')
+    expect(protectedList?.textContent).toContain('Mine')
+    expect(protectedList?.textContent).toContain('Research Specialist')
   })
 })

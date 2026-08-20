@@ -4,6 +4,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 
 const fsMock = vi.hoisted(() => ({
   mkdir: vi.fn(),
+  open: vi.fn(),
   readFile: vi.fn(),
   readdir: vi.fn(),
   rename: vi.fn(),
@@ -55,6 +56,11 @@ const createSession = (id: string, projectId = 'project-a'): PersistedChatSessio
 describe('session persistence repository save ordering', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    fsMock.open.mockResolvedValue({
+      close: vi.fn().mockResolvedValue(undefined),
+      sync: vi.fn().mockResolvedValue(undefined)
+    })
+    fsMock.rm.mockResolvedValue(undefined)
   })
 
   it('does not start a later session write while an earlier one is still writing', async () => {
@@ -71,7 +77,7 @@ describe('session persistence repository save ordering', () => {
     })
 
     const firstSave = repository.saveSession(createSession('first-session'))
-    await flushMicrotasks()
+    await vi.waitFor(() => expect(fsMock.writeFile).toHaveBeenCalledTimes(1))
 
     const secondSave = repository.saveSession(createSession('second-session'))
     await flushMicrotasks()

@@ -46,6 +46,7 @@
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
+          "src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts",
           "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
           "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
@@ -421,6 +422,7 @@
         "src/main/settings/native-responses-compatibility.ts",
         "src/main/settings/anthropic-provider-bridge.ts",
         "src/main/settings/openai-provider-bridge.ts",
+        "src/main/settings/provider-error-replay.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
         "src/main/settings/responses-bridge.ts",
@@ -458,6 +460,7 @@
           "src/main/settings/native-responses-compatibility.test.ts",
           "src/main/settings/anthropic-provider-bridge.test.ts",
           "src/main/settings/openai-provider-bridge.test.ts",
+          "src/main/settings/provider-error-replay.test.ts",
           "src/main/settings/system-proxy.test.ts",
           "src/main/settings/network-proxy-runtime.test.ts",
           "src/main/settings/environment-check-proxy.test.ts"

@@ -31,6 +31,7 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = []
 
   readonly listeners = new Map<SocketEventName, Set<SocketListener>>()
+  closed = false
 
   constructor(readonly url: string) {
     FakeWebSocket.instances.push(this)
@@ -43,6 +44,8 @@ class FakeWebSocket {
   }
 
   close(): void {
+    if (this.closed) return
+    this.closed = true
     this.emit('close')
   }
   emit(name: SocketEventName, event: SocketEvent = {}): void {
@@ -51,10 +54,18 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  notebook: {
+    execute: (request: unknown) => Promise<unknown>
+  }
   projects: {
     create: (request: unknown) => Promise<unknown>
     onCreated: (listener: (payload: unknown) => void) => () => void
   }
+  saveManagedFile: (request: {
+    source: 'artifact' | 'upload'
+    path: string
+    suggestedName: string
+  }) => Promise<{ saved: boolean }>
 }
 
 const bootstrapPayload = {
@@ -82,6 +93,14 @@ const eventFrame = (sequence: number, channel: string, payload: unknown): string
 const readyFrame = (latestSequence: number): string =>
   JSON.stringify({
     kind: 'ready',
+    protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+    streamId: 'stream-1',
+    latestSequence
+  })
+
+const heartbeatFrame = (latestSequence: number): string =>
+  JSON.stringify({
+    kind: 'heartbeat',
     protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
     streamId: 'stream-1',
     latestSequence
@@ -227,6 +246,314 @@ describe('Web bootstrap event connection', () => {
     })
   })
 
+  it('settles a Web RPC when the remote response stops making progress', async () => {
+    let rpcSignal: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/projects%3Acreate') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((_resolve, reject) => {
+            rpcSignal?.addEventListener(
+              'abort',
+              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const request = api.projects.create({ name: 'Never finishes' })
+    const outcome = Promise.race([
+      request.then(
+        () => 'resolved' as const,
+        () => 'rejected' as const
+      ),
+      new Promise<'still-pending'>((resolve) =>
+        window.setTimeout(() => resolve('still-pending'), 30_001)
+      )
+    ])
+
+    await vi.advanceTimersByTimeAsync(30_001)
+
+    await expect(outcome).resolves.toBe('rejected')
+    expect(rpcSignal?.aborted).toBe(true)
+  })
+
+  it('lets a long Notebook execution finish under its own deadline', async () => {
+    let rpcSignal: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/notebook%3Aexecute') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((resolve, reject) => {
+            const timeout = window.setTimeout(
+              () =>
+                resolve(
+                  new Response(
+                    JSON.stringify({
+                      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                      ok: true,
+                      result: { runId: 'run-1', status: 'completed' }
+                    }),
+                    { status: 200, headers: { 'content-type': 'application/json' } }
+                  )
+                ),
+              60_000
+            )
+            rpcSignal?.addEventListener(
+              'abort',
+              () => {
+                window.clearTimeout(timeout)
+                reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError'))
+              },
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = api.notebook.execute({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'long_running_analysis()'
+    })
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(10_001)
+
+    expect(settled).toBe(false)
+    expect(rpcSignal?.aborted ?? false).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(9_999)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    await expect(request).resolves.toEqual({ runId: 'run-1', status: 'completed' })
+  })
+
+  it('aborts a long Notebook request when its event connection disconnects', async () => {
+    let rpcSignal: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/notebook%3Aexecute') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((_resolve, reject) => {
+            rpcSignal?.addEventListener(
+              'abort',
+              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = api.notebook.execute({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'long_running_analysis()'
+    })
+    let outcome: unknown = 'still-pending'
+    void request.then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: unknown) => {
+        outcome = error
+      }
+    )
+
+    socket.emit('close')
+    expect(rpcSignal?.aborted).toBe(true)
+    await vi.waitFor(() => expect(outcome).toBeInstanceOf(DOMException))
+  })
+
+  it('does not abort an ordinary mutation when its event connection disconnects', async () => {
+    let rpcSignal: AbortSignal | undefined
+    let resolveRpc!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (String(input) === '/rpc/projects%3Acreate') {
+          rpcSignal = init?.signal ?? undefined
+          return new Promise<Response>((resolve, reject) => {
+            resolveRpc = resolve
+            rpcSignal?.addEventListener(
+              'abort',
+              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+              { once: true }
+            )
+          })
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = api.projects.create({ name: 'Committed once' })
+
+    socket.emit('close')
+
+    expect(rpcSignal?.aborted).toBe(false)
+    resolveRpc(
+      new Response(
+        JSON.stringify({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          ok: true,
+          result: { id: 'project-1', name: 'Committed once' }
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    )
+    await expect(request).resolves.toMatchObject({ id: 'project-1' })
+  })
+
+  it('settles a stalled managed download and releases its acquired resource', async () => {
+    let downloadSignal: AbortSignal | undefined
+    let released = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/bootstrap') {
+          return Promise.resolve(
+            new Response(JSON.stringify(bootstrapPayload), {
+              status: 200,
+              headers: { 'content-type': 'application/json' }
+            })
+          )
+        }
+        if (url === '/rpc/preview-resources%3Aacquire') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                ok: true,
+                result: { id: 'resource-1', url: '/preview/resource-1' }
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        if (url === '/preview/resource-1') {
+          downloadSignal = init?.signal ?? undefined
+          return Promise.resolve({
+            ok: true,
+            blob: () =>
+              new Promise<Blob>((_resolve, reject) => {
+                downloadSignal?.addEventListener(
+                  'abort',
+                  () =>
+                    reject(
+                      downloadSignal?.reason ?? new DOMException('Download aborted', 'AbortError')
+                    ),
+                  { once: true }
+                )
+              })
+          } as Response)
+        }
+        if (url === '/rpc/preview-resources%3Arelease') {
+          released = true
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                ok: true,
+                result: null
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          )
+        }
+        throw new Error(`Unexpected fetch: ${url}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    const request = api.saveManagedFile({
+      source: 'artifact',
+      path: 'artifact-1/report.pdf',
+      suggestedName: 'report.pdf'
+    })
+    const outcome = Promise.race([
+      request.then(
+        () => 'resolved' as const,
+        () => 'rejected' as const
+      ),
+      new Promise<'still-pending'>((resolve) =>
+        window.setTimeout(() => resolve('still-pending'), 300_001)
+      )
+    ])
+
+    await vi.advanceTimersByTimeAsync(300_001)
+
+    await expect(outcome).resolves.toBe('rejected')
+    expect(downloadSignal?.aborted).toBe(true)
+    expect(released).toBe(true)
+  })
+
   it('waits for renderer consumers before opening the event stream', async () => {
     const bootstrapImport = import('./bootstrap')
     await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined())
@@ -246,7 +573,8 @@ describe('Web bootstrap event connection', () => {
       client: 'web-client-1',
       eventProtocol: String(WEB_EVENT_STREAM_PROTOCOL_VERSION),
       stream: 'stream-1',
-      after: '0'
+      after: '0',
+      liveness: '1'
     })
   })
 
@@ -264,6 +592,33 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(FakeWebSocket.instances).toHaveLength(3)
+  })
+
+  it('closes a ready event socket that stops receiving liveness frames', async () => {
+    await loadBootstrap()
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+
+    await vi.advanceTimersByTimeAsync(30_001)
+
+    expect(socket.closed).toBe(true)
+  })
+
+  it('keeps a ready event socket alive while heartbeat frames continue', async () => {
+    await loadBootstrap()
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    await vi.advanceTimersByTimeAsync(20_000)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(socket.closed).toBe(false)
+    await vi.advanceTimersByTimeAsync(10_001)
+    expect(socket.closed).toBe(true)
   })
 
   it('resets reconnect backoff after a socket becomes ready', async () => {

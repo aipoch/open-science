@@ -94,6 +94,7 @@ import type { StoredCodexInfo, StoredSettings } from './types'
 const execFileAsync = promisify(execFile)
 const log = createLogger('agent-runtime-manager')
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
+const RUNTIME_PROBE_REUSE_WINDOW_MS = 2_000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
@@ -209,6 +210,54 @@ export type RuntimeUninstallResult = {
   activeBackendAffected: boolean
 }
 
+type ConfiguredRuntimeProbe = {
+  fingerprint: string
+  claudeVersion: string | null
+  opencodeVersion: string | null
+  codex: ConfiguredCodexRuntimeProbe
+}
+
+type ConfiguredCommandProbe = { output: string | null; path: string }
+
+type ConfiguredCodexRuntimeProbe = {
+  adapter?: ConfiguredCommandProbe
+  native?: ConfiguredCommandProbe
+}
+
+type ReusableRuntimeProbe = {
+  capturedAt: number
+  probe: ConfiguredRuntimeProbe
+}
+
+const runtimeProbeFingerprint = (input: {
+  claudePath?: string
+  opencodePath?: string
+  codexAdapterPath?: string
+  codexNativePath?: string
+}): string =>
+  JSON.stringify([
+    input.claudePath ?? null,
+    input.opencodePath ?? null,
+    input.codexAdapterPath ?? null,
+    input.codexNativePath ?? null
+  ])
+
+const storedRuntimeProbeFingerprint = (settings: StoredSettings): string =>
+  runtimeProbeFingerprint({
+    claudePath: settings.claude?.resolvedPath,
+    opencodePath: settings.opencodePath,
+    codexAdapterPath: settings.codex?.resolvedPath,
+    codexNativePath: settings.codex?.nativePath
+  })
+
+const codexVersionsFromProbe = (
+  probe: ConfiguredCodexRuntimeProbe
+): Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined => {
+  const version = probe.adapter?.output ? parseCodexVersion(probe.adapter.output) : undefined
+  const nativeVersion = probe.native?.output ? parseCodexVersion(probe.native.output) : undefined
+  return version && nativeVersion ? { version, nativeVersion } : undefined
+}
+
 export type AgentRuntimeManagerOptions = {
   repository: SettingsRepository
   storageRoot: string
@@ -252,6 +301,8 @@ export class AgentRuntimeManager {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
+  private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
+  private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -323,13 +374,11 @@ export class AgentRuntimeManager {
 
   async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
     const settings = await this.repository.getSettings()
-    const claudePathExists = settings.claude?.resolvedPath
-      ? (await this.detectDeps.getVersion(settings.claude.resolvedPath)) !== undefined
-      : false
-    const opencodePathExists = settings.opencodePath
-      ? (await this.opencodeDetectDeps.getVersion(settings.opencodePath)) !== undefined
-      : false
-    const codexPathExists = (await this.probeCodexRuntime(settings.codex)) !== undefined
+    const reusableProbe = this.takeReusableRuntimeProbe('preflightRuntimeProbe', settings)
+    const runtimeProbe = reusableProbe ?? (await this.probeConfiguredRuntimes(settings))
+    // A fresh Preflight probe is the hand-off to the immediately following full environment check.
+    // A consumed environment result is intentionally not re-published after the trailing refresh.
+    if (!reusableProbe) this.storeReusableRuntimeProbe('environmentCheckRuntimeProbe', runtimeProbe)
 
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const framework = getAgentFramework(agentFrameworkId)
@@ -357,9 +406,9 @@ export class AgentRuntimeManager {
 
     return computePreflight({
       settings,
-      claudePathExists,
-      opencodePathExists,
-      codexPathExists,
+      claudePathExists: runtimeProbe.claudeVersion !== null,
+      opencodePathExists: runtimeProbe.opencodeVersion !== null,
+      codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
       agentFrameworkId,
       isProviderKeyUsable: (provider) =>
         provider.id === activeProvider?.id && activeProviderKeyUsable,
@@ -370,11 +419,14 @@ export class AgentRuntimeManager {
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     const settings = await this.repository.getSettings()
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
     const [claudeRuntime, opencodeRuntime, codexRuntime] = await Promise.all([
-      this.resolveClaudeRuntime(settings),
-      this.resolveOpencodeRuntime(settings),
-      this.resolveCodexRuntime(settings)
+      this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion),
+      this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion),
+      this.resolveCodexRuntime(settings, runtimeProbe?.codex)
     ])
+
+    this.storeResolvedRuntimeProbe(settings, claudeRuntime, opencodeRuntime, codexRuntime)
 
     return runEnvironmentCheck({
       storageRoot: this.storageRoot,
@@ -800,10 +852,16 @@ export class AgentRuntimeManager {
     }
   }
 
-  private async resolveClaudeRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
+  private async resolveClaudeRuntime(
+    settings: StoredSettings,
+    probedVersion?: string | null
+  ): Promise<ClaudeDetectResult> {
     const cached = settings.claude
     if (cached?.resolvedPath) {
-      const version = await this.detectDeps.getVersion(cached.resolvedPath)
+      const version =
+        probedVersion === undefined
+          ? await this.detectDeps.getVersion(cached.resolvedPath)
+          : (probedVersion ?? undefined)
       if (version) {
         if (version !== cached.version) {
           await this.repository.setClaudeInfo({ resolvedPath: cached.resolvedPath, version })
@@ -814,10 +872,16 @@ export class AgentRuntimeManager {
     return this.detectClaude()
   }
 
-  private async resolveOpencodeRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
+  private async resolveOpencodeRuntime(
+    settings: StoredSettings,
+    probedVersion?: string | null
+  ): Promise<ClaudeDetectResult> {
     const cachedPath = settings.opencodePath
     if (cachedPath) {
-      const version = await this.opencodeDetectDeps.getVersion(cachedPath)
+      const version =
+        probedVersion === undefined
+          ? await this.opencodeDetectDeps.getVersion(cachedPath)
+          : (probedVersion ?? undefined)
       if (version) {
         if (version !== settings.opencodeVersion) {
           await this.repository.setOpencodeInfo(cachedPath, version)
@@ -836,9 +900,14 @@ export class AgentRuntimeManager {
     return { found: false }
   }
 
-  private async resolveCodexRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
+  private async resolveCodexRuntime(
+    settings: StoredSettings,
+    probedRuntime?: ConfiguredCodexRuntimeProbe
+  ): Promise<ClaudeDetectResult> {
     const cached = settings.codex
-    const cachedVersions = await this.probeCodexRuntime(cached)
+    const configuredProbe = probedRuntime ?? (await this.probeConfiguredCodexRuntime(cached))
+    const cachedVersions = codexVersionsFromProbe(configuredProbe)
+    const detectDeps = this.memoizedCodexDetectDeps(configuredProbe)
     if (cached?.resolvedPath && cachedVersions) {
       await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
       let nativeCliFound = !!cached.nativePath
@@ -848,7 +917,7 @@ export class AgentRuntimeManager {
       if (!cached.nativePath) {
         nativeCliFound = true
         const { detectNativeCodex } = await import('./codex-detect')
-        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
+        const nativeCodex = await detectNativeCodex(detectDeps)
         if (nativeCodex) {
           nativeCliPath = nativeCodex.path
           nativeCliVersion = nativeCodex.version
@@ -870,7 +939,7 @@ export class AgentRuntimeManager {
       }
     }
 
-    const detected = await detectCodex(this.codexDetectDeps)
+    const detected = await detectCodex(detectDeps)
     if (detected) {
       await this.repository.setCodexInfo({
         resolvedPath: detected.adapterPath,
@@ -885,7 +954,7 @@ export class AgentRuntimeManager {
       if (!detected.nativeCodexPath) {
         nativeCliFound = true
         const { detectNativeCodex } = await import('./codex-detect')
-        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
+        const nativeCodex = await detectNativeCodex(detectDeps)
         if (nativeCodex) {
           nativeCliPath = nativeCodex.path
           nativeCliVersion = nativeCodex.version
@@ -912,7 +981,7 @@ export class AgentRuntimeManager {
     }
 
     const { detectCodexComponents } = await import('./codex-detect')
-    const components = await detectCodexComponents(this.codexDetectDeps)
+    const components = await detectCodexComponents(detectDeps)
     let diagnostic: string | undefined
     if (components.nativeCliFound && !components.adapterFound) {
       diagnostic = `Native Codex ${components.nativeCliVersion} is installed at ${components.nativeCliPath}, but the Codex ACP adapter required by Open Science is missing.`
@@ -944,20 +1013,147 @@ export class AgentRuntimeManager {
     }
   }
 
-  private async probeCodexRuntime(
+  private async probeConfiguredCodexRuntime(
     codex: StoredCodexInfo | undefined
-  ): Promise<Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined> {
-    if (!codex?.resolvedPath) return undefined
+  ): Promise<ConfiguredCodexRuntimeProbe> {
+    if (!codex?.resolvedPath) return {}
     const controlledAdapterPath =
       this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
-    if (codex.resolvedPath !== controlledAdapterPath) return undefined
+    if (codex.resolvedPath !== controlledAdapterPath) return {}
 
-    const adapterOutput = await this.codexDetectDeps.getAdapterVersion(codex.resolvedPath)
-    const version = adapterOutput ? parseCodexVersion(adapterOutput) : undefined
-    if (!version || !codex.nativePath) return undefined
-    const nativeOutput = await this.codexDetectDeps.getCodexVersion(codex.nativePath)
-    const nativeVersion = nativeOutput ? parseCodexVersion(nativeOutput) : undefined
-    return nativeVersion ? { version, nativeVersion } : undefined
+    const [adapterOutput, nativeOutput] = await Promise.all([
+      this.codexDetectDeps.getAdapterVersion(codex.resolvedPath),
+      codex.nativePath ? this.codexDetectDeps.getCodexVersion(codex.nativePath) : undefined
+    ])
+    return {
+      adapter: { path: codex.resolvedPath, output: adapterOutput ?? null },
+      ...(codex.nativePath
+        ? { native: { path: codex.nativePath, output: nativeOutput ?? null } }
+        : {})
+    }
+  }
+
+  private memoizedCodexDetectDeps(probe: ConfiguredCodexRuntimeProbe): CodexDetectDeps {
+    const deps = this.codexDetectDeps
+    const adapterVersions = new Map<string, Promise<string | undefined>>()
+    const nativeVersions = new Map<string, Promise<string | undefined>>()
+    const smokeResults = new Map<string, Promise<boolean>>()
+    if (probe.adapter) {
+      adapterVersions.set(probe.adapter.path, Promise.resolve(probe.adapter.output ?? undefined))
+    }
+    if (probe.native) {
+      nativeVersions.set(probe.native.path, Promise.resolve(probe.native.output ?? undefined))
+    }
+
+    const memoizedVersion = (
+      cache: Map<string, Promise<string | undefined>>,
+      path: string,
+      read: (path: string) => Promise<string | undefined>
+    ): Promise<string | undefined> => {
+      const existing = cache.get(path)
+      if (existing) return existing
+      const pending = read(path)
+      cache.set(path, pending)
+      return pending
+    }
+
+    return {
+      ...deps,
+      getAdapterVersion: (path) => memoizedVersion(adapterVersions, path, deps.getAdapterVersion),
+      getCodexVersion: (path) => memoizedVersion(nativeVersions, path, deps.getCodexVersion),
+      smokeInitialize: (path, options) => {
+        const key = runtimeProbeFingerprint({
+          codexAdapterPath: path,
+          codexNativePath: options?.codexPath
+        })
+        const existing = smokeResults.get(key)
+        if (existing) return existing
+        const pending = deps.smokeInitialize(path, options)
+        smokeResults.set(key, pending)
+        return pending
+      }
+    }
+  }
+
+  private async probeConfiguredRuntimes(settings: StoredSettings): Promise<ConfiguredRuntimeProbe> {
+    const [claudeVersion, opencodeVersion, codex] = await Promise.all([
+      settings.claude?.resolvedPath
+        ? this.detectDeps.getVersion(settings.claude.resolvedPath)
+        : undefined,
+      settings.opencodePath ? this.opencodeDetectDeps.getVersion(settings.opencodePath) : undefined,
+      this.probeConfiguredCodexRuntime(settings.codex)
+    ])
+    return {
+      fingerprint: storedRuntimeProbeFingerprint(settings),
+      claudeVersion: claudeVersion ?? null,
+      opencodeVersion: opencodeVersion ?? null,
+      codex
+    }
+  }
+
+  private takeReusableRuntimeProbe(
+    slot: 'environmentCheckRuntimeProbe' | 'preflightRuntimeProbe',
+    settings: StoredSettings
+  ): ConfiguredRuntimeProbe | undefined {
+    const reusable = this[slot]
+    this[slot] = undefined
+    if (!reusable) return undefined
+    if (Date.now() - reusable.capturedAt > RUNTIME_PROBE_REUSE_WINDOW_MS) return undefined
+    return reusable.probe.fingerprint === storedRuntimeProbeFingerprint(settings)
+      ? reusable.probe
+      : undefined
+  }
+
+  private storeReusableRuntimeProbe(
+    slot: 'environmentCheckRuntimeProbe' | 'preflightRuntimeProbe',
+    probe: ConfiguredRuntimeProbe
+  ): void {
+    this[slot] = { capturedAt: Date.now(), probe }
+  }
+
+  private storeResolvedRuntimeProbe(
+    settings: StoredSettings,
+    claudeRuntime: ClaudeDetectResult,
+    opencodeRuntime: ClaudeDetectResult,
+    codexRuntime: ClaudeDetectResult
+  ): void {
+    const claudePath = claudeRuntime.found ? claudeRuntime.path : settings.claude?.resolvedPath
+    const opencodePath = opencodeRuntime.found ? opencodeRuntime.path : settings.opencodePath
+    const codexAdapterPath =
+      codexRuntime.codexComponents?.adapterPath ??
+      (codexRuntime.found ? codexRuntime.path : settings.codex?.resolvedPath)
+    const codexNativePath =
+      codexRuntime.codexComponents?.nativeCliPath ?? settings.codex?.nativePath
+    const controlledAdapterPath =
+      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
+    this.storeReusableRuntimeProbe('preflightRuntimeProbe', {
+      fingerprint: runtimeProbeFingerprint({
+        claudePath,
+        opencodePath,
+        codexAdapterPath,
+        codexNativePath
+      }),
+      claudeVersion: claudeRuntime.found ? (claudeRuntime.version ?? null) : null,
+      opencodeVersion: opencodeRuntime.found ? (opencodeRuntime.version ?? null) : null,
+      codex: {
+        ...(codexAdapterPath === controlledAdapterPath
+          ? {
+              adapter: {
+                path: codexAdapterPath,
+                output: codexRuntime.version ?? codexRuntime.codexComponents?.adapterVersion ?? null
+              }
+            }
+          : {}),
+        ...(codexNativePath
+          ? {
+              native: {
+                path: codexNativePath,
+                output: codexRuntime.codexComponents?.nativeCliVersion ?? null
+              }
+            }
+          : {})
+      }
+    })
   }
 
   private async autoSwitchAwayFrom(uninstalled: AgentFrameworkId): Promise<void> {

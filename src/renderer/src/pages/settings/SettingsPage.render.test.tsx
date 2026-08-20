@@ -6,6 +6,7 @@ import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
+import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -24,6 +25,15 @@ if (!Element.prototype.hasPointerCapture) {
 
 let container: HTMLDivElement
 let root: Root
+const originalSettingsActions = (() => {
+  const state = useSettingsStore.getState()
+  return {
+    persistProvider: state.persistProvider,
+    validateProvider: state.validateProvider,
+    addCustomServer: state.addCustomServer,
+    updateCustomServer: state.updateCustomServer
+  }
+})()
 
 // Minimal window.api surface the settings store touches when the dialog opens. Attached onto the
 // real jsdom window so DOM globals radix relies on (getComputedStyle, etc.) stay intact.
@@ -211,6 +221,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  useSettingsStore.setState(originalSettingsActions)
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
@@ -232,10 +243,57 @@ const navButton = (label: string): HTMLButtonElement | undefined =>
     document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
   ).find((candidate) => candidate.textContent?.trim() === label)
 
+const openCustomServerEditor = async (displayName: string): Promise<void> => {
+  openRadixMenu(
+    document.body.querySelector<HTMLButtonElement>(`[aria-label="Actions for ${displayName}"]`)
+  )
+  const edit = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+    (item) => item.textContent?.trim() === 'Edit'
+  )
+  await act(async () => {
+    clickRadixMenuItem(edit)
+    await Promise.resolve()
+  })
+}
+
 const settingsSection = (title: string): HTMLElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')).find(
     (section) => section.querySelector('h3')?.textContent?.trim() === title
   )
+
+const installCustomProviderSnapshot = (): ProviderView => {
+  const provider: ProviderView = {
+    id: 'custom-messages',
+    type: 'custom',
+    name: 'Messages gateway',
+    baseUrl: 'https://gateway.example',
+    model: 'model-a',
+    models: ['model-a'],
+    apiEndpoints: ['anthropic'],
+    supportsImageInput: false,
+    hasKey: true,
+    maskedKey: 'sk-…test',
+    needsKey: false
+  }
+  window.api.settings.getSettings = vi.fn().mockResolvedValue({
+    claude: {},
+    opencode: { resolvedPath: '/x/opencode' },
+    codex: {},
+    providers: [provider],
+    activeProviderId: provider.id,
+    activeModel: provider.model,
+    agentFrameworkId: 'opencode',
+    agentFrameworks: [
+      {
+        id: 'opencode',
+        displayName: 'OpenCode',
+        supportedApiTypes: ['anthropic', 'openai'],
+        supportsSkills: true
+      }
+    ]
+  })
+  return provider
+}
 
 describe('SettingsPage layout', () => {
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
@@ -1346,6 +1404,62 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('blocks Provider save and preserves the draft when a live refresh removes the target', async () => {
+    const provider = installCustomProviderSnapshot()
+    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    useSettingsStore.setState({
+      persistProvider,
+      validateProvider: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    })
+
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'replacement-key' }
+    })
+    act(() => useSettingsStore.setState({ providers: [] }))
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    expect(document.body.textContent).toContain(
+      'This Provider no longer exists. Your draft has not been saved.'
+    )
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')?.value).toBe(
+      'replacement-key'
+    )
+    expect(save?.disabled).toBe(true)
+    expect(persistProvider).not.toHaveBeenCalled()
+  })
+
+  it('marks a Provider edit save as requiring the existing target', async () => {
+    const provider = installCustomProviderSnapshot()
+    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    useSettingsStore.setState({
+      persistProvider,
+      validateProvider: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+
+    expect(persistProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ id: provider.id, requireExisting: true })
+    )
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2193,6 +2307,99 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain('Contact email')
   })
 
+  it('blocks Connector save and preserves the draft when a live refresh removes the target', async () => {
+    const customServer = {
+      id: 'custom-server-uuid',
+      name: 'my-mcp',
+      displayName: 'My MCP',
+      description: 'A custom MCP server.',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx',
+      args: ['-y', '@example/my-mcp']
+    }
+    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+      connectors: [],
+      customServers: [customServer],
+      ncbi: { hasApiKey: false }
+    })
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    const addCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer, addCustomServer })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Connectors')?.click())
+    await openCustomServerEditor('My MCP')
+
+    act(() => useSettingsStore.setState({ customServers: [] }))
+
+    const submit = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => ['Save changes', 'Add connector'].includes(button.textContent?.trim() ?? '')
+    )
+    expect(submit?.textContent?.trim()).toBe('Save changes')
+    expect(document.body.textContent).toContain(
+      'This Connector no longer exists. Your draft has not been saved.'
+    )
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
+    ).toBe('My MCP')
+    expect(submit?.disabled).toBe(true)
+    expect(updateCustomServer).not.toHaveBeenCalled()
+    expect(addCustomServer).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Connector editor and draft open when an update loses a deletion race', async () => {
+    const customServer = {
+      id: 'custom-server-uuid',
+      name: 'my-mcp',
+      displayName: 'My MCP',
+      description: 'A custom MCP server.',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx',
+      args: ['-y', '@example/my-mcp']
+    }
+    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+      connectors: [],
+      customServers: [customServer],
+      ncbi: { hasApiKey: false }
+    })
+    const updateCustomServer = vi
+      .fn()
+      .mockRejectedValue(new Error('Unknown custom connector: custom-server-uuid'))
+    useSettingsStore.setState({ updateCustomServer })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Connectors')?.click())
+    await openCustomServerEditor('My MCP')
+
+    const displayName = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Display name"]'
+    )!
+    fireEvent.change(displayName, { target: { value: 'Unsaved draft' } })
+    const submit = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => submit?.click())
+
+    expect(updateCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: customServer.id, displayName: 'Unsaved draft' })
+    )
+    expect(document.body.textContent).toContain('Unknown custom connector: custom-server-uuid')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
+    ).toBe('Unsaved draft')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).some(
+        (button) => button.textContent?.trim() === 'Save changes'
+      )
+    ).toBe(true)
+  })
+
   it('switches to the Network panel, configures a mirror, and saves it', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2450,6 +2657,110 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
   })
 
+  it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-usage',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSkillId: 'alpha' })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      fireEvent.focus(
+        document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>(
+          '[aria-label="Open Researcher in Specialist Settings"]'
+        )!
+      )
+    })
+
+    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.textContent).toContain('Test Author')
+  })
+
+  it('navigates from a Connector usage popover to Specialist Settings and back', async () => {
+    const researcher: SpecialistProfileView = {
+      id: 'spc-connector-usage',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSettingsPanel: 'connectors' })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      fireEvent.focus(document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!)
+    })
+    await act(async () => {
+      fireEvent.click(
+        document.body.querySelector<HTMLElement>(
+          '[aria-label="Open Researcher in Specialist Settings"]'
+        )!
+      )
+    })
+
+    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    })
+    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.textContent).toContain('Chemistry')
+  })
+
   it('routes connector capability rows to detail or edit by server kind', async () => {
     const researcher: SpecialistProfileView = {
       id: 'spc-2',
@@ -2543,6 +2854,12 @@ describe('SettingsPage layout', () => {
     })
     expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
     expect(crumb()).toContain('Connectors›Chemistry')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Specialists')
+    expect(document.body.textContent).toContain('Researcher')
+    expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
 
     // Back to the editor (capability tabs reset to Skills on remount), then a
     // custom server lands on its edit page.

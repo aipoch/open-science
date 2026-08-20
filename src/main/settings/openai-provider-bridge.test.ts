@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
 import { OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
@@ -186,6 +186,149 @@ describe('OpenAiProviderBridge', () => {
     expect(response.status).toBe(200)
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+  })
+
+  it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json(
+        { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
+        { status: 401 }
+      )
+    )
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'wrong-key',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    const first = await send()
+    const second = await send()
+
+    expect(first.status).toBe(400)
+    expect(second.status).toBe(400)
+    expect(second.headers.get('x-open-science-upstream-status')).toBe('401')
+    await expect(second.json()).resolves.toMatchObject({
+      error: { type: 'authentication_error', message: 'Incorrect API key provided' }
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('labels a bounded fallback error as JSON on the first response and replay', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response('oversized', {
+          status: 401,
+          headers: {
+            'content-encoding': 'gzip',
+            'content-length': String(256 * 1024 + 1),
+            'content-type': 'text/event-stream'
+          }
+        })
+    )
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'wrong-key',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    for (const response of [await send(), await send()]) {
+      expect(response.headers.get('content-type')).toBe('application/json')
+      expect(response.headers.get('content-encoding')).toBeNull()
+      await expect(response.json()).resolves.toMatchObject({
+        error: { message: 'Provider request failed with status 401' }
+      })
+    }
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('does not replay an error after an upstream-visible request header changes', async () => {
+    const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      return headers.get('x-provider-feature') === 'invalid'
+        ? Response.json({ error: { message: 'Invalid feature' } }, { status: 400 })
+        : Response.json({ output: [], model: 'model-a' })
+    })
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (feature?: string): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          ...(feature ? { 'x-provider-feature': feature } : {})
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    expect((await send('invalid')).status).toBe(400)
+    expect((await send()).status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps retryable 429 responses out of the deterministic replay cache', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json({ error: { message: 'Rate limited' } }, { status: 429 })
+    )
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+
+    expect((await send()).status).toBe(429)
+    expect((await send()).status).toBe(429)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it('preserves the captured OpenCode MCP image fixture at the final Chat boundary', async () => {

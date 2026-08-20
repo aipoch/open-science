@@ -115,6 +115,153 @@ const conversationGraphsEqualIgnoringBranchTimestamps = (
   return jsonValuesEqual(withoutBranchTimestamps(left), withoutBranchTimestamps(right))
 }
 
+type SessionConversationGraph = NonNullable<PersistedChatSession['conversationGraph']>
+
+const graphItemsEqual = <Item extends { id: string }>(
+  left: Item | undefined,
+  right: Item | undefined,
+  ignoreUpdatedAt: boolean
+): boolean => {
+  if (!left || !right) return left === right
+  return ignoreUpdatedAt
+    ? jsonValuesEqual({ ...left, updatedAt: 0 }, { ...right, updatedAt: 0 })
+    : jsonValuesEqual(left, right)
+}
+
+// Replays identity-disjoint graph edits onto the latest durable graph. An edit or deletion of the
+// same identity on both sides remains a real conflict; Branch updatedAt alone is derived metadata and
+// does not turn otherwise-disjoint Message/Activity additions into a conflict.
+const rebaseConversationGraphCollection = <Item extends { id: string }>(
+  baseItems: readonly Item[],
+  submittedItems: readonly Item[],
+  latestItems: readonly Item[],
+  ignoreUpdatedAt = false
+): Item[] | undefined => {
+  const baseById = new Map(baseItems.map((item) => [item.id, item]))
+  const submittedById = new Map(submittedItems.map((item) => [item.id, item]))
+  const latestById = new Map(latestItems.map((item) => [item.id, item]))
+  const orderedIds = [
+    ...new Set([
+      ...latestItems.map(({ id }) => id),
+      ...submittedItems.map(({ id }) => id),
+      ...baseItems.map(({ id }) => id)
+    ])
+  ]
+  const rebased: Item[] = []
+
+  for (const id of orderedIds) {
+    const baseItem = baseById.get(id)
+    const submittedItem = submittedById.get(id)
+    const latestItem = latestById.get(id)
+    let selected: Item | undefined
+    if (graphItemsEqual(submittedItem, baseItem, ignoreUpdatedAt)) {
+      selected = latestItem
+    } else if (graphItemsEqual(latestItem, baseItem, ignoreUpdatedAt)) {
+      selected = submittedItem
+    } else if (graphItemsEqual(submittedItem, latestItem, ignoreUpdatedAt)) {
+      selected = submittedItem
+    } else {
+      return undefined
+    }
+    if (selected) rebased.push(structuredClone(selected))
+  }
+
+  return rebased
+}
+
+const rebaseConversationGraph = (
+  base: PersistedChatSession['conversationGraph'],
+  submitted: PersistedChatSession['conversationGraph'],
+  latest: PersistedChatSession['conversationGraph']
+): PersistedChatSession['conversationGraph'] | undefined => {
+  if (conversationGraphsEqualIgnoringBranchTimestamps(submitted, base)) {
+    return latest ? structuredClone(latest) : undefined
+  }
+  if (conversationGraphsEqualIgnoringBranchTimestamps(latest, base)) {
+    return submitted ? structuredClone(submitted) : undefined
+  }
+  if (conversationGraphsEqualIgnoringBranchTimestamps(submitted, latest)) {
+    return submitted ? structuredClone(submitted) : undefined
+  }
+  if (!base || !submitted || !latest) return undefined
+
+  const resolveScalar = <Value>(
+    baseValue: Value,
+    submittedValue: Value,
+    latestValue: Value
+  ): Value | undefined => {
+    if (jsonValuesEqual(submittedValue, baseValue)) return structuredClone(latestValue)
+    if (jsonValuesEqual(latestValue, baseValue) || jsonValuesEqual(submittedValue, latestValue)) {
+      return structuredClone(submittedValue)
+    }
+    return undefined
+  }
+  const schemaVersion = resolveScalar(
+    base.schemaVersion,
+    submitted.schemaVersion,
+    latest.schemaVersion
+  )
+  const rootFrameId = resolveScalar(base.rootFrameId, submitted.rootFrameId, latest.rootFrameId)
+  const activeFrameId = resolveScalar(
+    base.activeFrameId,
+    submitted.activeFrameId,
+    latest.activeFrameId
+  )
+  const frames = rebaseConversationGraphCollection(base.frames, submitted.frames, latest.frames)
+  const branches = rebaseConversationGraphCollection(
+    base.branches,
+    submitted.branches,
+    latest.branches,
+    true
+  )
+  const messages = rebaseConversationGraphCollection(
+    base.messages,
+    submitted.messages,
+    latest.messages
+  )
+  const activities = rebaseConversationGraphCollection(
+    base.activities,
+    submitted.activities,
+    latest.activities
+  )
+  const activityGroups = rebaseConversationGraphCollection(
+    base.activityGroups,
+    submitted.activityGroups,
+    latest.activityGroups
+  )
+  const runtimeSegments = rebaseConversationGraphCollection(
+    base.runtimeSegments,
+    submitted.runtimeSegments,
+    latest.runtimeSegments
+  )
+
+  if (
+    schemaVersion === undefined ||
+    rootFrameId === undefined ||
+    activeFrameId === undefined ||
+    !frames ||
+    !branches ||
+    !messages ||
+    !activities ||
+    !activityGroups ||
+    !runtimeSegments
+  ) {
+    return undefined
+  }
+
+  return {
+    schemaVersion,
+    rootFrameId,
+    activeFrameId,
+    frames,
+    branches,
+    messages,
+    activities,
+    activityGroups,
+    runtimeSegments
+  } satisfies SessionConversationGraph
+}
+
 const sessionFieldValuesEqual = (
   key: keyof PersistedChatSession,
   left: unknown,
@@ -156,8 +303,17 @@ const rebaseSessionAfterRevisionConflict = (
     const localChanged = !sessionFieldValuesEqual(key, submittedValue, baseValue)
     if (!localChanged) continue
     const remoteChanged = !sessionFieldValuesEqual(key, latestValue, baseValue)
-    if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue))
-      return undefined
+    if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue)) {
+      if (key !== 'conversationGraph') return undefined
+      const graph = rebaseConversationGraph(
+        baseValue as PersistedChatSession['conversationGraph'],
+        submittedValue as PersistedChatSession['conversationGraph'],
+        latestValue as PersistedChatSession['conversationGraph']
+      )
+      if (!graph) return undefined
+      rebased.conversationGraph = graph
+      continue
+    }
 
     if (Object.hasOwn(submitted, key)) {
       Object.assign(rebased, { [key]: structuredClone(submittedValue) })

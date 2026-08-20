@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -13,6 +13,22 @@ afterEach(async () => {
 })
 
 describe('RemoteAccessRepository', () => {
+  it('recovers a valid historical temp when the primary is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-repository-temp-'))
+    roots.push(root)
+    await writeFile(
+      join(root, 'remote-access.json.123.tmp'),
+      JSON.stringify({ version: 4, mode: 'remoteit', trustedBrowsers: [] }),
+      'utf8'
+    )
+
+    await expect(new RemoteAccessRepository(root).load()).resolves.toMatchObject({
+      version: 4,
+      mode: 'remoteit'
+    })
+    await expect(readdir(root)).resolves.toEqual(['remote-access.json'])
+  })
+
   it('starts disabled and persists only hashed trusted-browser records', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-repository-'))
     roots.push(root)

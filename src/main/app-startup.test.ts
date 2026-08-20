@@ -1,11 +1,29 @@
+import { EventEmitter } from 'node:events'
+
+import type { BrowserWindow } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
   createSecondInstanceRelay,
   createStartupWindowCloseOptions,
   createStartupWindowSecondInstanceHandler,
-  orchestrateAppStartup
+  orchestrateAppStartup,
+  prepareVisibleStartupRuntime,
+  waitForStartupShell
 } from './app-startup'
+
+const deferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} => {
+  let resolve!: (value: T) => void
+  return {
+    promise: new Promise<T>((next) => {
+      resolve = next
+    }),
+    resolve
+  }
+}
 
 describe('createSecondInstanceRelay', () => {
   it('records a signal that arrives before bind and drains it on bind, with its argv', () => {
@@ -182,5 +200,148 @@ describe('orchestrateAppStartup', () => {
     expect(diagnostics.phase).toHaveBeenCalledWith('prepare-runtime')
     expect(diagnostics.fail).toHaveBeenCalledWith(failure)
     expect(diagnostics.complete).not.toHaveBeenCalled()
+  })
+})
+
+describe('prepareVisibleStartupRuntime', () => {
+  it('loads the backend while database verification runs, then composes only after both finish', async () => {
+    const shellReady = deferred<{ tag: 'shell' }>()
+    const databaseReady = deferred<void>()
+    const modulesReady = deferred<{ tag: 'modules' }>()
+    const events: string[] = []
+
+    const preparation = prepareVisibleStartupRuntime({
+      prepareShell: vi.fn(async () => {
+        events.push('shell:start')
+        const shell = await shellReady.promise
+        events.push('shell:ready')
+        return shell
+      }),
+      verifyDatabase: vi.fn(async () => {
+        events.push('database:start')
+        await databaseReady.promise
+        events.push('database:ready')
+      }),
+      loadApplicationModules: vi.fn(async () => {
+        events.push('modules:start')
+        const modules = await modulesReady.promise
+        events.push('modules:ready')
+        return modules
+      }),
+      composeRuntime: vi.fn(async (_shell, modules) => {
+        events.push('runtime:ready')
+        return modules.tag
+      })
+    })
+
+    expect(events).toEqual(['shell:start'])
+    shellReady.resolve({ tag: 'shell' })
+    await vi.waitFor(() => {
+      expect(events).toEqual(['shell:start', 'shell:ready', 'database:start', 'modules:start'])
+    })
+
+    modulesReady.resolve({ tag: 'modules' })
+    await vi.waitFor(() => expect(events).toContain('modules:ready'))
+    expect(events).not.toContain('runtime:ready')
+
+    databaseReady.resolve()
+    await expect(preparation).resolves.toBe('modules')
+    expect(events).toEqual([
+      'shell:start',
+      'shell:ready',
+      'database:start',
+      'modules:start',
+      'modules:ready',
+      'database:ready',
+      'runtime:ready'
+    ])
+  })
+
+  it('rolls back the visible shell when a concurrent prerequisite fails', async () => {
+    const failure = new Error('backend import failed')
+    const rollbackShell = vi.fn()
+
+    await expect(
+      prepareVisibleStartupRuntime({
+        prepareShell: async () => ({ tag: 'shell' }),
+        verifyDatabase: async () => undefined,
+        loadApplicationModules: async () => {
+          throw failure
+        },
+        composeRuntime: vi.fn(),
+        rollbackShell
+      })
+    ).rejects.toBe(failure)
+
+    expect(rollbackShell).toHaveBeenCalledOnce()
+    expect(rollbackShell).toHaveBeenCalledWith({ tag: 'shell' }, failure)
+  })
+})
+
+describe('waitForStartupShell', () => {
+  const makeWindow = (): {
+    destroy: ReturnType<typeof vi.fn>
+    emitWindow: (event: string) => void
+    emitWebContents: (event: string, ...args: unknown[]) => void
+    window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
+  } => {
+    const windowEvents = new EventEmitter()
+    const webContentsEvents = new EventEmitter()
+    const destroy = vi.fn()
+    return {
+      destroy,
+      emitWindow: (event) => windowEvents.emit(event),
+      emitWebContents: (event, ...args) => webContentsEvents.emit(event, ...args),
+      window: Object.assign(windowEvents, {
+        destroy,
+        webContents: webContentsEvents
+      }) as unknown as Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
+    }
+  }
+
+  it('waits through subframe failures and resolves after the first paint', async () => {
+    const source = makeWindow()
+    const settled = vi.fn()
+    void waitForStartupShell(source.window).then(settled)
+
+    source.emitWebContents('did-fail-load', {}, -3, 'ABORTED', 'preview://frame', false)
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+
+    source.emitWindow('ready-to-show')
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
+    expect(source.destroy).not.toHaveBeenCalled()
+  })
+
+  it('discards an unusable startup window after a main-frame load failure', async () => {
+    const source = makeWindow()
+    const settled = vi.fn()
+    void waitForStartupShell(source.window).then(settled)
+
+    source.emitWebContents('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'file://index', true)
+
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
+    expect(source.destroy).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    [
+      'a renderer exit',
+      (source: ReturnType<typeof makeWindow>) =>
+        source.emitWebContents('render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+    ],
+    [
+      'the startup window closing',
+      (source: ReturnType<typeof makeWindow>) => source.emitWindow('closed')
+    ]
+  ])('continues startup after %s', async (_label, signal) => {
+    const source = makeWindow()
+    const settled = vi.fn()
+    void waitForStartupShell(source.window).then(settled)
+
+    signal(source)
+
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
+    expect(source.destroy).not.toHaveBeenCalled()
   })
 })

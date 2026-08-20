@@ -4,6 +4,11 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import {
+  RuntimeResourceProfiler,
+  type RuntimeProfileResult,
+  type RuntimeResourceProfilerOptions
+} from '../../scripts/performance/runtime-resource-profiler'
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { RendererFailureGate } from './renderer-failure-gate'
 
@@ -90,6 +95,7 @@ const closeElectronApplicationForCleanup = async (
 type ElectronApp = {
   readonly page: Page
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
+  beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   completeOnboarding: () => Promise<Page>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
@@ -97,14 +103,17 @@ type ElectronApp = {
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
+  markResourceProfilePhase: (phase: string) => Promise<void>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   readFakeAgentPrompts: () => Promise<
     readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
   >
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
-  restart: () => Promise<Page>
+  restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
+  sampleResourceProfileNow: () => Promise<void>
+  finishResourceProfile: () => Promise<RuntimeProfileResult>
   writeCorruptSessionFile: (projectId: string) => Promise<void>
 }
 
@@ -113,7 +122,8 @@ const launchEnvironment = (
   fakeAgentBinRoot?: string,
   inheritedEnvironment: NodeJS.ProcessEnv = process.env,
   fakeRemoteItRoot?: string,
-  windowMode: E2eWindowMode = 'hidden'
+  windowMode: E2eWindowMode = 'hidden',
+  sessionPerformanceTrace = false
 ): Record<string, string> => {
   const environment: Record<string, string> = {}
 
@@ -124,6 +134,7 @@ const launchEnvironment = (
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
+  if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (environment.OPEN_SCIENCE_E2E_EXECUTABLE) {
     environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   }
@@ -149,7 +160,8 @@ const launchOpenScience = async (
   fakeAgentEnabled: boolean,
   fakeRemoteItEnabled: boolean,
   fakeRemoteItRoot: string,
-  windowMode: E2eWindowMode
+  windowMode: E2eWindowMode,
+  sessionPerformanceTrace: boolean
 ): Promise<ElectronApplication> => {
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
@@ -159,7 +171,8 @@ const launchOpenScience = async (
       fakeAgentEnabled ? fakeAgentBinRoot : undefined,
       process.env,
       fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
-      windowMode
+      windowMode,
+      sessionPerformanceTrace
     )
   })
 
@@ -229,14 +242,18 @@ const openMainWindow = async (
   if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
   await rendererFailures.observe(page)
   await page.waitForLoadState('domcontentloaded')
+  // A fresh Windows profile can spend longer than the general assertion budget applying the real
+  // schema manifest under runner I/O contention. Keep the startup gate aligned with settings load.
   await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        const bridge = globalThis as unknown as {
-          api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
-        }
-        return (await bridge.api.databaseStartup.getState()).phase
-      })
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const bridge = globalThis as unknown as {
+            api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
+          }
+          return (await bridge.api.databaseStartup.getState()).phase
+        }),
+      { timeout: 60_000 }
     )
     .toBe('ready')
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
@@ -249,6 +266,7 @@ class ElectronAppHarness implements ElectronApp {
   private fakeAgentEnabled = false
   private fakeRemoteItEnabled = false
   private readonly rendererFailures = new RendererFailureGate()
+  private resourceProfiler: RuntimeResourceProfiler | undefined
   private readonly sabotagedDelegatedHandoffs = new Map<string, string>()
 
   private constructor(
@@ -286,6 +304,32 @@ class ElectronAppHarness implements ElectronApp {
   get page(): Page {
     if (!this.currentPage) throw new Error('Electron application is not running.')
     return this.currentPage
+  }
+
+  async beginResourceProfile(options: RuntimeResourceProfilerOptions = {}): Promise<void> {
+    if (this.resourceProfiler) throw new Error('Runtime resource profiling is already active.')
+    const profiler = new RuntimeResourceProfiler(options)
+    this.resourceProfiler = profiler
+    await profiler.attach(this.runningApplication)
+  }
+
+  async markResourceProfilePhase(phase: string): Promise<void> {
+    if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
+    this.resourceProfiler.markPhase(phase)
+    await this.resourceProfiler.sampleNow()
+  }
+
+  async sampleResourceProfileNow(): Promise<void> {
+    if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
+    await this.resourceProfiler.sampleNow()
+  }
+
+  async finishResourceProfile(): Promise<RuntimeProfileResult> {
+    const profiler = this.resourceProfiler
+    if (!profiler) throw new Error('Runtime resource profiling is not active.')
+    this.resourceProfiler = undefined
+    profiler.detach()
+    return profiler.finish()
   }
 
   async completeOnboarding(): Promise<Page> {
@@ -500,8 +544,12 @@ class ElectronAppHarness implements ElectronApp {
     this.sabotagedDelegatedHandoffs.delete(childName)
   }
 
-  async restart(): Promise<Page> {
+  async restart(options: { resourceProfilePhase?: string } = {}): Promise<Page> {
     await this.close()
+    if (options.resourceProfilePhase) {
+      if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
+      this.resourceProfiler.markPhase(options.resourceProfilePhase)
+    }
     await this.launch()
     return this.page
   }
@@ -516,6 +564,8 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async dispose(): Promise<void> {
+    this.resourceProfiler?.abort()
+    this.resourceProfiler = undefined
     await this.closeForCleanup().catch(() => undefined)
     await makeTreeWritable(this.testRoot)
     await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
@@ -528,8 +578,10 @@ class ElectronAppHarness implements ElectronApp {
       this.fakeAgentEnabled,
       this.fakeRemoteItEnabled,
       this.roots.fakeRemoteItRoot,
-      this.windowMode
+      this.windowMode,
+      this.resourceProfiler !== undefined
     )
+    await this.resourceProfiler?.attach(this.application)
     this.currentPage = await openMainWindow(
       this.application,
       this.rendererFailures,
@@ -596,6 +648,7 @@ class ElectronAppHarness implements ElectronApp {
     if (!this.application) return
 
     const application = this.application
+    this.resourceProfiler?.detach(application)
     this.application = undefined
     this.currentPage = undefined
     await application.close()
@@ -605,6 +658,7 @@ class ElectronAppHarness implements ElectronApp {
     if (!this.application) return
 
     const application = this.application
+    this.resourceProfiler?.detach(application)
     this.application = undefined
     this.currentPage = undefined
     await closeElectronApplicationForCleanup(

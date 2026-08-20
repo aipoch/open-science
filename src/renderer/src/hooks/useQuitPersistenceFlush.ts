@@ -10,12 +10,14 @@ import {
   suppressAutoReviewsForQuit
 } from '../lib/acp/workspace-events'
 import { drainWorkspaceRuntimeEventsForPersistence } from '../lib/acp/useWorkspaceAgentRuntime'
+import { flushPreviewPersistence } from '../lib/preview-persistence/preview-persistence'
 import { flushSessionPersistence } from '../lib/session-persistence/session-persistence'
 
 type QuitPersistenceFlushDeps = {
   suppressAutoReviews: () => void
   drainRuntimeEvents: () => Promise<void>
   flushPersistence: () => Promise<void>
+  flushPreviewPersistence: () => Promise<void>
   acknowledge: (response: SessionPersistenceFlushResponse) => void
 }
 
@@ -29,6 +31,7 @@ export const completeQuitPersistenceFlush = async (
     deps.suppressAutoReviews()
     await deps.drainRuntimeEvents()
     await deps.flushPersistence()
+    await deps.flushPreviewPersistence()
   } catch (error) {
     failure = error
     status = isSessionRevisionConflictError(error) ? 'conflict' : 'failed'
@@ -52,6 +55,7 @@ export const useQuitPersistenceFlush = (): void => {
         suppressAutoReviews: suppressAutoReviewsForQuit,
         drainRuntimeEvents: drainWorkspaceRuntimeEventsForPersistence,
         flushPersistence: flushSessionPersistence,
+        flushPreviewPersistence,
         acknowledge: sendFlushResponse
       }).catch(() => undefined)
     })

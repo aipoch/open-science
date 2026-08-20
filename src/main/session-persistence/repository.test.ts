@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -393,6 +393,36 @@ describe('session persistence repository (per-session files)', () => {
     )
   })
 
+  it('recovers a valid historical Session temp when the primary is missing', async () => {
+    const root = await createStorageRoot()
+    const filePath = join(root, 'sessions', 'project-a', 'session-1.json')
+    await new SessionRepository(root).saveSession(createSession({ title: 'Before crash' }))
+    await rename(filePath, `${filePath}.1700000000000-1.tmp`)
+
+    await expect(new SessionRepository(root).loadAll()).resolves.toMatchObject({
+      sessions: [{ id: 'session-1', title: 'Before crash' }]
+    })
+    await expect(readdir(join(root, 'sessions', 'project-a'))).resolves.toEqual(['session-1.json'])
+  })
+
+  it('recovers a valid historical manifest temp when the primary is missing', async () => {
+    const root = await createStorageRoot()
+    const manifestPath = join(root, 'sessions', 'manifest.json')
+    await new SessionRepository(root).saveManifest({
+      lastProjectId: 'project-a',
+      lastSessionId: 'session-1'
+    })
+    await rename(manifestPath, `${manifestPath}.1700000000000-1.tmp`)
+
+    await expect(new SessionRepository(root).loadAll()).resolves.toMatchObject({
+      manifest: {
+        lastProjectId: 'project-a',
+        lastSessionId: 'session-1'
+      }
+    })
+    await expect(readdir(join(root, 'sessions'))).resolves.toEqual(['manifest.json'])
+  })
+
   it('loads one session directly so callers can refresh durable state between turns', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     await repository.saveSession(createSession({ title: 'Before correction' }))
@@ -764,6 +794,46 @@ describe('session persistence repository (per-session files)', () => {
     })
     await expect(readFile(futurePath, 'utf8')).resolves.toBe(futureJson)
     await expect(readdir(projectDir)).resolves.toEqual(['future.json'])
+    expect(renameFile).not.toHaveBeenCalled()
+  })
+
+  it('does not replace a newer unsupported Session temp with an older compatible temp', async () => {
+    const root = await createStorageRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    const primaryPath = join(projectDir, 'session-1.json')
+    const compatibleTempPath = `${primaryPath}.1700000000000-1.tmp`
+    const unsupportedTempPath = `${primaryPath}.1700000001000-2.tmp`
+    const renameFile = vi.fn(rename)
+    const repository = new SessionRepository(root, { renameFile })
+    await repository.saveSession(createSession({ title: 'Older compatible authority' }))
+    await rename(primaryPath, compatibleTempPath)
+    const unsupportedJson = JSON.stringify({
+      version: 3,
+      payload: { id: 'session-1', futureAuthority: { revision: 2 } }
+    })
+    await writeFile(unsupportedTempPath, unsupportedJson, 'utf8')
+    const now = new Date()
+    await utimes(
+      compatibleTempPath,
+      new Date(now.getTime() - 2_000),
+      new Date(now.getTime() - 2_000)
+    )
+    await utimes(
+      unsupportedTempPath,
+      new Date(now.getTime() - 1_000),
+      new Date(now.getTime() - 1_000)
+    )
+    renameFile.mockClear()
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    await expect(readFile(unsupportedTempPath, 'utf8')).resolves.toBe(unsupportedJson)
+    await expect(readdir(projectDir)).resolves.toEqual([
+      'session-1.json.1700000000000-1.tmp',
+      'session-1.json.1700000001000-2.tmp'
+    ])
     expect(renameFile).not.toHaveBeenCalled()
   })
 

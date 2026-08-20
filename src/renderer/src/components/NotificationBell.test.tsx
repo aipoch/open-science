@@ -262,6 +262,77 @@ describe('NotificationBell', () => {
     expect(markAllRead).toHaveBeenCalledTimes(1)
   })
 
+  it('continues the notification action when marking the message as read fails', async () => {
+    const connectorRequest = {
+      id: 'request-1',
+      connector: 'pubchem',
+      method: 'search',
+      argsPreview: '{}',
+      availableScopes: ['once']
+    } satisfies ConnectorApprovalRequest
+    const replayConnectorApproval = vi.fn(async () => connectorRequest)
+    const enqueueApproval = vi.fn()
+    const openSessionById = vi.fn()
+    const markRead = vi.fn(async () => {
+      throw new Error('notification write failed')
+    })
+    window.api.settings.replayConnectorApproval = replayConnectorApproval
+    useSettingsStore.setState({ enqueueApproval })
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, sessionId: 'session-1' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
+    expect(replayConnectorApproval).toHaveBeenCalledWith('request-1')
+    expect(enqueueApproval).toHaveBeenCalledWith(connectorRequest)
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
+  })
+
+  it('does not wait for the read write before navigating to the notification target', async () => {
+    let completeMarkRead: (() => void) | undefined
+    const markRead = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          completeMarkRead = resolve
+        })
+    )
+    const openSessionById = vi.fn()
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, actionState: 'resolved', sessionId: 'session-1' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
+
+    completeMarkRead?.()
+  })
+
   it.each([
     ['connector', undefined],
     ['compute', undefined],

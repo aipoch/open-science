@@ -415,19 +415,15 @@ describe('PR Gate workflow', () => {
   })
 
   it('shares dependency installation and Electron builds inside platform bundles', () => {
-    for (const bundle of [
-      'static',
-      'unit',
-      'unit_shard',
-      'windows_core',
-      'macos_e2e',
-      'windows_e2e'
-    ]) {
+    for (const bundle of ['static', 'unit', 'unit_shard', 'windows_core', 'macos_e2e']) {
       expect(
         workflow.jobs[bundle].steps?.filter(({ run }) => run === 'npm ci'),
         `${bundle} must install dependencies exactly once`
       ).toHaveLength(1)
     }
+    expect(
+      workflow.jobs.windows_e2e.steps?.filter(({ name }) => name === 'Install dependencies')
+    ).toEqual([expect.objectContaining({ run: 'npm ci --prefer-offline --no-audit --fund=false' })])
 
     const macosRuns = workflow.jobs.macos_e2e.steps?.map(({ run }) => run).filter(Boolean)
     expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
@@ -444,8 +440,8 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey',
-        'npm run test:e2e:workspace',
+        'npm run test:e2e:journey -- --workers=2',
+        'npm run test:e2e:workspace -- --workers=2',
         'npm run test:e2e:accessibility'
       ])
     )

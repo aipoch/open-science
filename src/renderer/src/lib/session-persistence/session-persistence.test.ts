@@ -910,6 +910,149 @@ describe('renderer session persistence bridge', () => {
     ])
   })
 
+  it('retries a pending tool activity save over disjoint concurrent Main graph changes', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run the notebook',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      status: 'waiting-permission' as const,
+      messages: [
+        ...base.messages,
+        {
+          id: 'main-relay-1',
+          role: 'agent' as const,
+          content: 'Main-owned relay update',
+          status: 'complete' as const,
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      runtimeContext: {
+        version: 1 as const,
+        revision: 1,
+        permission: {
+          state: 'pending' as const,
+          request: {
+            requestId: 'permission-1',
+            sessionId: base.id,
+            toolCallId: 'tool-1',
+            title: 'notebook_execute',
+            options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' as const }]
+          },
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: 'a'.repeat(64),
+          createdAt: 2
+        }
+      },
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: base.id,
+      toolCallId: 'tool-1',
+      eventId: 'tool-event-1',
+      promptMessageId: 'prompt-1',
+      title: 'notebook_execute',
+      status: 'pending'
+    })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[0][0]).toMatchObject({ revision: 8 })
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 9,
+      status: 'waiting-permission',
+      runtimeContext: authoritative.runtimeContext,
+      activities: [expect.objectContaining({ id: 'tool-1', status: 'pending' })]
+    })
+    expect(saveSession.mock.calls[1][0].messages).toEqual(authoritative.messages)
+    expect(saveSession.mock.calls[1][0].conversationGraph?.messages.map(({ id }) => id)).toEqual([
+      'prompt-1',
+      'main-relay-1'
+    ])
+    expect(saveSession.mock.calls[1][0].conversationGraph?.activities.map(({ id }) => id)).toEqual([
+      'tool-1'
+    ])
+  })
+
+  it('does not retry when the same graph identity changed concurrently', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        agentModel: 'base-model'
+      })
+    )
+    const authoritative = {
+      ...base,
+      revision: 9,
+      conversationGraph: {
+        ...base.conversationGraph,
+        runtimeSegments: base.conversationGraph.runtimeSegments.map((segment) => ({
+          ...segment,
+          model: 'remote-model'
+        }))
+      },
+      updatedAt: base.updatedAt + 1
+    }
+    const conflict = new SessionRevisionConflictError(8, 9)
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>().mockRejectedValue(conflict)
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const local = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...local,
+          conversationGraph: {
+            ...local.conversationGraph!,
+            runtimeSegments: local.conversationGraph!.runtimeSegments.map((segment) => ({
+              ...segment,
+              model: 'local-model'
+            }))
+          },
+          updatedAt: local.updatedAt + 1
+        }
+      ]
+    })
+
+    await expect(save(useSessionStore.getState())).rejects.toBe(conflict)
+    expect(saveSession).toHaveBeenCalledOnce()
+  })
+
   it('does not retry when both the local and authoritative conversation graphs changed', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({ projectId: 'project-a', revision: 1 })

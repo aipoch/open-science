@@ -11,6 +11,7 @@ const VERSION = '1.0.0'
 const PERMISSION_PROMPT = 'Request fixture permission.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
+const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
 const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
 const DELEGATION_BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
@@ -330,7 +331,7 @@ const verifyProviderBridge = () => {
   return 'Provider bridge verified through the Agent process.'
 }
 
-const verifyNotebookLifecycle = async (sessionId) =>
+const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const initial = toolResult(
       'notebook_state',
@@ -340,7 +341,9 @@ const verifyNotebookLifecycle = async (sessionId) =>
       'bash_execute',
       await client.callTool({
         name: 'bash_execute',
-        arguments: { command: 'node -e "console.log(\'notebook-lifecycle-e2e\')"' }
+        arguments: {
+          command: `node -e "setTimeout(() => console.log('notebook-lifecycle-e2e'), ${delayMs})"`
+        }
       })
     )
     const after = toolResult(
@@ -637,6 +640,8 @@ if (process.argv.includes('--version')) {
           reply = verifyProviderBridge()
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
+        } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {
+          reply = await verifyNotebookLifecycle(context.params.sessionId, 1_500)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           reply = await createProvenanceArtifact(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {

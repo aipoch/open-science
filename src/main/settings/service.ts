@@ -87,7 +87,7 @@ import type { InstallManagedClaudeOptions, ManagedInstallOutcome } from './manag
 import { isEncryptionAvailable } from './crypto'
 import { getUserClaudeConfigDir } from './provider-env'
 import { SettingsRepository } from './repository'
-import { SettingsPreferencesModule } from './preferences'
+import { SettingsPreferencesModule, type SetDataRootOptions } from './preferences'
 import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule } from './skill-catalog'
@@ -691,7 +691,7 @@ class SettingsService {
   ): Promise<ImportAgentHomeSkillsResult> {
     return this.skills.importAgentHomeSkills(request)
   }
-  // Computes the two startup gates, re-checking the claude path each call as the design requires.
+  // Computes the startup gates from a fresh or immediate startup-chain runtime probe.
   async getPreflight(): Promise<Preflight> {
     return this.runtimeManager.getPreflight(this.providers)
   }
@@ -776,8 +776,8 @@ class SettingsService {
 
   // Persists the new data-root path after a successful migration (see storage/migration-service.ts).
   // The caller is responsible for only invoking this once the move itself has succeeded.
-  async setDataRoot(path: string): Promise<void> {
-    await this.preferences.setDataRoot(path)
+  async setDataRoot(path: string, options?: SetDataRootOptions): Promise<void> {
+    await this.preferences.setDataRoot(path, options)
   }
 
   // Records that the user has answered the one-time legacy-data-move prompt (moved, relocated, or

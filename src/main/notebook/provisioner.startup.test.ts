@@ -234,4 +234,31 @@ describe('createProductionProvisioner', () => {
     expect(runArgv).toHaveBeenCalledOnce()
     expect(runArgv.mock.calls[0]?.[0]?.[0]).toBe(compatibility)
   })
+
+  it('resolves the package channel only when a named environment needs online solving', async () => {
+    const root = makeRoot()
+    const mmPath = join(root, 'bin', micromambaBinName)
+    touchBin(mmPath)
+    const resolveChannel = vi.fn(async () => 'https://fast-mirror.invalid/conda-forge')
+    const runArgv = vi.fn<NonNullable<ProductionProvisionerDeps['runArgv']>>(async () => undefined)
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: resolveChannel,
+        micromamba: { env: { OPEN_SCIENCE_MICROMAMBA_BIN: mmPath } }
+      },
+      {
+        runner: { initialPath: mmPath, resolve: async () => mmPath },
+        runArgv,
+        verify: async () => undefined
+      }
+    )
+
+    expect(resolveChannel).not.toHaveBeenCalled()
+
+    await provisioner.createNamedEnvironment('analysis', 'python')
+
+    expect(resolveChannel).toHaveBeenCalledOnce()
+    expect(runArgv.mock.calls[0]?.[0]).toContain('https://fast-mirror.invalid/conda-forge')
+  })
 })

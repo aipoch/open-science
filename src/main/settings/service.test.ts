@@ -61,6 +61,7 @@ const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { netFetch } = await import('../skills/net-fetch')
 const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist-package-adapter')
+const { opencodeTransportProviderId } = await import('../agent-framework/opencode')
 const { net: mockedNet } = (await import('electron')) as unknown as {
   net: { fetch: ReturnType<typeof vi.fn> }
 }
@@ -1204,7 +1205,8 @@ describe('SettingsService: providers', () => {
     await service.setActiveProvider(view.id)
     const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    expect(content.provider.anthropic.models.m.limit.context).toBe(64_000)
+    const agentProviderId = opencodeTransportProviderId(view.id, 'm')
+    expect(content.provider[agentProviderId].models.m.limit.context).toBe(64_000)
   })
 
   it('uses a 200k runtime default when a custom context window is omitted', async () => {
@@ -1231,7 +1233,8 @@ describe('SettingsService: providers', () => {
     await service.setActiveProvider(view.id)
     const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    expect(content.provider.anthropic.models.m.limit.context).toBe(200_000)
+    const agentProviderId = opencodeTransportProviderId(view.id, 'm')
+    expect(content.provider[agentProviderId].models.m.limit.context).toBe(200_000)
   })
 
   it('keeps OpenCode connector details in on-demand skills instead of baseline context', async () => {
@@ -2251,7 +2254,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
     expect(backend.framework.id).toBe('codex')
     expect(backend.executablePath).toBe(adapterPath)
-    // Responses provider ⇒ no bridge ⇒ Codex runs the provider's own model, not the bridge catalog model.
+    // Native Responses keeps the provider model while the compatibility loopback owns retry policy.
     expect(backend.sessionModel).toBe('gpt-5-codex')
     expect(backend.env).toMatchObject({
       CODEX_HOME: join(storageRoot, 'codex'),
@@ -2269,8 +2272,9 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.persistentSystemPrompt).toBe(developerInstructions)
     expect(backend.authentication).toEqual({
       methodId: 'api-key',
-      _meta: { 'api-key': { apiKey: 'test-key' } }
+      _meta: { 'api-key': { apiKey: expect.stringMatching(/^[a-f0-9]+$/) } }
     })
+    expect(JSON.stringify(backend)).not.toContain('test-key')
     // Stable guidance only tells Codex to load the matching Skill; exact connector methods remain
     // progressive content and must not be copied into the baseline.
     expect(backend.systemPromptAppends).toBeUndefined()
@@ -2286,8 +2290,9 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(pinnedBackend.backendId).toBe(`codex:${provider.id}`)
     expect(pinnedBackend.authentication).toEqual({
       methodId: 'api-key',
-      _meta: { 'api-key': { apiKey: 'test-key' } }
+      _meta: { 'api-key': { apiKey: expect.stringMatching(/^[a-f0-9]+$/) } }
     })
+    expect(JSON.stringify(pinnedBackend)).not.toContain('test-key')
   })
 
   it('trusts bundled model metadata only after a live native version probe', async () => {
@@ -2686,7 +2691,8 @@ describe('SettingsService: preflight & spawn config', () => {
     // the model as image-capable instead of a bare entry whose image parts it would strip. Deleting the
     // wiring in resolveProvider or buildModelCapabilities makes this fail.
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    expect(content.provider['openai-compatible'].models['kimi-k3']).toEqual({
+    const agentProviderId = opencodeTransportProviderId(provider.id, 'kimi-k3')
+    expect(content.provider[agentProviderId].models['kimi-k3']).toEqual({
       attachment: true,
       modalities: { input: ['text', 'image'] },
       limit: { context: 1_000_000, output: 32_000 }
@@ -2712,13 +2718,15 @@ describe('SettingsService: preflight & spawn config', () => {
     const smallBackend = await resolveActiveBackend(service)
     const smallConfig = JSON.parse(smallBackend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(smallBackend.contextWindow).toBe(200_000)
-    expect(smallConfig.provider['openai-compatible'].models['glm-5.1'].limit.context).toBe(200_000)
+    const smallAgentProviderId = opencodeTransportProviderId(provider.id, 'glm-5.1')
+    expect(smallConfig.provider[smallAgentProviderId].models['glm-5.1'].limit.context).toBe(200_000)
 
     await service.setActiveProvider(provider.id, 'glm-5.2')
     const largeBackend = await resolveActiveBackend(service)
     const largeConfig = JSON.parse(largeBackend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(largeBackend.contextWindow).toBe(1_000_000)
-    expect(largeConfig.provider['openai-compatible'].models['glm-5.2'].limit.context).toBe(
+    const largeAgentProviderId = opencodeTransportProviderId(provider.id, 'glm-5.2')
+    expect(largeConfig.provider[largeAgentProviderId].models['glm-5.2'].limit.context).toBe(
       1_000_000
     )
   })
@@ -3152,12 +3160,12 @@ describe('SettingsService: preflight & spawn config', () => {
 
     expect(config.executablePath).toBe(execPath)
     expect(config.env).toMatchObject({
-      // A user-supplied trailing /v1 is normalized away; the client appends /v1/messages itself.
-      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
-      ANTHROPIC_AUTH_TOKEN: 'test-key',
+      ANTHROPIC_BASE_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/),
+      ANTHROPIC_AUTH_TOKEN: expect.stringMatching(/^[a-f0-9]+$/),
       ANTHROPIC_MODEL: 'm',
       CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot)
     })
+    expect(JSON.stringify(config)).not.toContain('test-key')
     expect(config.sessionOptions).toMatchObject({
       settings: {
         skipWebFetchPreflight: true,
@@ -3165,8 +3173,8 @@ describe('SettingsService: preflight & spawn config', () => {
       }
     })
     expect(claudeSkillProjectionRoot(config)).toContain(getClaudeSkillRuntimeRoot(storageRoot))
-    // Custom providers always use the bearer token variable, never x-api-key.
-    expect(config.env.ANTHROPIC_API_KEY).toBeUndefined()
+    // Both Claude credential variables carry only the app-owned loopback token.
+    expect(config.env.ANTHROPIC_API_KEY).toBe(config.env.ANTHROPIC_AUTH_TOKEN)
   })
 
   it('does not inject WebFetch preflight settings into isolated Claude sessions', async () => {
@@ -3280,10 +3288,11 @@ describe('SettingsService: official vendors', () => {
     const config = await resolveActiveBackend(service)
 
     expect(config.env).toMatchObject({
-      ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
-      ANTHROPIC_AUTH_TOKEN: 'sk-ds',
+      ANTHROPIC_BASE_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/),
+      ANTHROPIC_AUTH_TOKEN: expect.stringMatching(/^[a-f0-9]+$/),
       ANTHROPIC_MODEL: 'deepseek-v4-flash'
     })
+    expect(JSON.stringify(config)).not.toContain('sk-ds')
     expect(config.sessionOptions).toMatchObject({
       settings: {
         skipWebFetchPreflight: true,
@@ -3648,17 +3657,18 @@ describe('SettingsService: onboarding', () => {
     expect(settings.pathsNormalizedAt).toBeTypeOf('number')
   })
 
-  it('persists a new dataRoot across a fresh read', async () => {
+  it('persists a new dataRoot with onboarding completion across a fresh read', async () => {
     const service = createService()
 
     // The repository canonicalizes dataRoot to the host separator on read (for samePath comparisons),
     // so build the fixture the same way — a bare POSIX literal comes back with backslashes on Windows
     // and would fail the round-trip.
     const dataRoot = normalize('/mnt/new-data')
-    await service.setDataRoot(dataRoot)
+    await service.setDataRoot(dataRoot, { completeOnboarding: true })
 
     const settings = await service.getStoredSettings()
     expect(settings.dataRoot).toBe(dataRoot)
+    expect(settings.onboardingCompletedAt).toBeTypeOf('number')
   })
 })
 
@@ -5003,7 +5013,8 @@ describe('SettingsService: reasoning effort', () => {
     // The official vendor identity survives provider resolution, so OpenCode receives DeepSeek's
     // native thinking switch instead of an invalid reasoningEffort: none literal.
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    expect(content.provider['openai-compatible'].models['deepseek-v4-pro']).toEqual(
+    const agentProviderId = opencodeTransportProviderId(provider.id, 'deepseek-v4-pro')
+    expect(content.provider[agentProviderId].models['deepseek-v4-pro']).toEqual(
       expect.objectContaining({ options: { thinking: { type: 'disabled' } } })
     )
   })
@@ -5030,10 +5041,11 @@ describe('SettingsService: reasoning effort', () => {
 
     const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const agentProviderId = opencodeTransportProviderId(provider.id, 'claude-opus-5')
 
-    expect(backend.sessionModel).toBe('claude-opus-5')
+    expect(backend.sessionModel).toBe(`${agentProviderId}/claude-opus-5`)
     expect(backend.sessionEffort).toBe('max')
-    expect(content.model).toBe('anthropic/claude-opus-5')
+    expect(content.model).toBe(`${agentProviderId}/claude-opus-5`)
   })
 
   it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {
@@ -5263,8 +5275,12 @@ describe('SettingsService: Subagent model', () => {
     })
     expect(claim.backend).toMatchObject({
       framework: { id: 'claude-code' },
-      env: { ANTHROPIC_AUTH_TOKEN: 'secret' }
+      env: {
+        ANTHROPIC_BASE_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/),
+        ANTHROPIC_AUTH_TOKEN: expect.stringMatching(/^[a-f0-9]+$/)
+      }
     })
+    expect(JSON.stringify(claim.backend)).not.toContain('secret')
     await expect(service.resolveAdmittedSubagentBackend(admission.snapshot)).rejects.toThrow()
     await admission.backendLease!.release()
     await claim.release()

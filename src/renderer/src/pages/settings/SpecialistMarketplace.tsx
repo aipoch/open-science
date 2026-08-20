@@ -8,6 +8,7 @@ import {
   GitBranch,
   Loader2,
   RefreshCw,
+  ScrollText,
   Settings2,
   ShieldCheck,
   Trash2
@@ -28,6 +29,7 @@ import type {
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SettingsIconAction } from './SettingsLayout'
 import { SettingsSegmentedControl } from './SettingsSegmentedControl'
+import { ConnectorsNavIcon } from './connector-icons'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
   skillConflictResolutionList,
@@ -767,6 +769,10 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   onClick={() => setSkillsExpanded((expanded) => !expanded)}
                   className="flex w-full items-center gap-3 p-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
+                  <ScrollText
+                    className="size-5 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
                   <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-foreground">{t('Skills')}</h3>
                     <p className="mt-0.5 text-xs text-muted-foreground">
@@ -820,6 +826,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   onClick={() => setConnectorsExpanded((expanded) => !expanded)}
                   className="flex w-full items-center gap-3 p-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
+                  <ConnectorsNavIcon className="size-5 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-foreground">{t('Connectors')}</h3>
                     <p className="mt-0.5 text-xs text-muted-foreground">

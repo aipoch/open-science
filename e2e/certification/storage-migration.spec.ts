@@ -14,7 +14,9 @@ test('stages a verified data-root move and recovers on discard', async ({ app })
       api: {
         storage: {
           discardMigratedCopy: (path: string) => Promise<void>
-          inspectDataRoot: (path: string) => Promise<{ kind: string }>
+          inspectDataRoot: (
+            path: string
+          ) => Promise<{ kind: string; recoveryStatus?: 'copying' | 'verified' }>
           migrate: (path: string) => Promise<{ ok: boolean; error?: string }>
         }
       }
@@ -27,7 +29,7 @@ test('stages a verified data-root move and recovers on discard', async ({ app })
   }, parent)
 
   expect(result.migration).toEqual({ ok: true })
-  expect(result.staged.kind).toBe('invalid')
+  expect(result.staged).toMatchObject({ kind: 'recover', recoveryStatus: 'verified' })
   expect(result.discarded.kind).toBe('move')
 
   page = await app.restart()

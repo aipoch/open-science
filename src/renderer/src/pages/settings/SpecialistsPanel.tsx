@@ -1234,7 +1234,7 @@ const InstalledSpecialistsPanel = ({
         />
       </div>
       {/* Toolbar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div data-slot="specialists-toolbar" className="mb-4 flex flex-wrap items-center gap-2">
         <SettingsSegmentedControl
           value={filter}
           options={(['all', 'custom', 'builtin'] as const).map((key) => {
@@ -1268,7 +1268,7 @@ const InstalledSpecialistsPanel = ({
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="shrink-0">
+            <Button variant="outline" className="ml-auto shrink-0">
               <Plus data-icon="inline-start" aria-hidden="true" />
               {t('Add specialist')}
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
@@ -1540,30 +1540,6 @@ const InstalledSpecialistsPanel = ({
                           </span>
                         </div>
 
-                        {item.setupPending ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="shrink-0"
-                            disabled={catalogReadOnly}
-                            aria-label={t('Continue setup for {{name}}', {
-                              name: item.displayName ?? item.name
-                            })}
-                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
-                          >
-                            {t('Continue setup')}
-                          </Button>
-                        ) : (
-                          <SettingsToggle
-                            enabled={item.enabled}
-                            disabled={catalogReadOnly}
-                            aria-label={t('Toggle {{name}}', {
-                              name: item.displayName ?? item.name
-                            })}
-                            onToggle={() => void setEnabled(item.id, !item.enabled)}
-                          />
-                        )}
                         <ResourceTagMenu
                           reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                         />
@@ -1642,6 +1618,30 @@ const InstalledSpecialistsPanel = ({
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        {item.setupPending ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={catalogReadOnly}
+                            aria-label={t('Continue setup for {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                          >
+                            {t('Continue setup')}
+                          </Button>
+                        ) : (
+                          <SettingsToggle
+                            enabled={item.enabled}
+                            disabled={catalogReadOnly}
+                            aria-label={t('Toggle {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            onToggle={() => void setEnabled(item.id, !item.enabled)}
+                          />
+                        )}
                       </li>
                     )
                   })}

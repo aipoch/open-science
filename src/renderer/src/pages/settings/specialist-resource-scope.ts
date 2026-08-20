@@ -2,7 +2,13 @@ import type { SpecialistListItem } from '../../../../shared/specialist'
 
 export type ResourceScope = 'main-only' | 'specialist-only' | 'shared' | 'not-in-use'
 
-export type SpecialistUsage = { id: string; name: string }
+export type SpecialistUsage = {
+  id: string
+  name: string
+  kind: 'custom' | 'builtin'
+  iconKey?: string
+  colorKey?: string
+}
 
 const profiles = (
   items: readonly SpecialistListItem[]
@@ -17,7 +23,13 @@ const usage = (
 ): SpecialistUsage[] =>
   profiles(items)
     .filter(uses)
-    .map((item) => ({ id: item.id, name: item.displayName?.trim() || item.name }))
+    .map((item) => ({
+      id: item.id,
+      name: item.displayName?.trim() || item.name,
+      kind: item.kind,
+      ...(item.iconKey ? { iconKey: item.iconKey } : {}),
+      ...(item.colorKey ? { colorKey: item.colorKey } : {})
+    }))
     .sort((left, right) => left.name.localeCompare(right.name))
 
 export const specialistsUsingSkill = (

@@ -34,6 +34,7 @@ import {
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
+const findOverlayPreloadEntry = join(__dirname, '../preload/find-overlay.js')
 const icon = process.platform === 'win32' ? iconWindows : iconPng
 // The find overlay is a static page (no bundler entry) shipped under resources/, so it resolves the
 // same way in dev (project root) and packaged (asar root) via app.getAppPath().
@@ -310,7 +311,7 @@ const createMainWindow = (
     // contentView.addChildView is typed against the base View (no webContents), so bridge the gap here.
     mainWindow: window as unknown as FindOverlayDeps['mainWindow'],
     createView: (opts) => new WebContentsView(opts),
-    preloadPath: preloadEntry,
+    preloadPath: findOverlayPreloadEntry,
     overlayHtmlPath: findOverlayEntry,
     registerOwner: registerFindOverlayOwner
   })

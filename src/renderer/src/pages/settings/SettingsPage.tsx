@@ -816,9 +816,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     modelView.kind === 'edit'
       ? providers.find((provider) => provider.id === modelView.providerId)
       : undefined
+  const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const formErrors = getProviderFormErrors(formValue, { hasStoredKey: editingProvider?.hasKey })
-  const canSave = !isSaving && !hasProviderFormErrors(formErrors)
+  const canSave = !isSaving && !providerEditTargetMissing && !hasProviderFormErrors(formErrors)
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
@@ -853,6 +854,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
   const handleSave = async (): Promise<void> => {
+    if (providerEditTargetMissing) return
     setIsSaving(true)
     setStatusMessage(undefined)
 
@@ -860,7 +862,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       // Persist first and return to the provider list immediately — don't hold the form open waiting
       // for the connection test. The test then runs in the background and its result (green check or
       // warning) lands on the provider's card.
-      const providerId = await persistProvider(toUpsertRequest(formValue, editingProvider?.id))
+      const providerId = await persistProvider({
+        ...toUpsertRequest(formValue, editingProvider?.id),
+        ...(modelView.kind === 'edit' ? { requireExisting: true } : {})
+      })
 
       navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
@@ -1211,6 +1216,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     view={skillsView}
                     onNavigate={navigateSkills}
                     onOpenTag={navigateTag}
+                    onOpenSpecialist={(usage) =>
+                      navigate({
+                        ...currentLocation,
+                        panel: 'specialists',
+                        specialists:
+                          usage.kind === 'builtin'
+                            ? { kind: 'builtin', id: usage.id }
+                            : { kind: 'edit', id: usage.id }
+                      })
+                    }
                     canImportInstalledSkills={canImportInstalledSkills}
                   />
                 ) : activePanel === 'specialists' ? (
@@ -1325,12 +1340,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       />
                       <ConnectorAddForm
                         editServer={customServers.find((s) => s.id === connectorsView.id)}
+                        editServerId={connectorsView.id}
                         onDone={() => navigateConnectors({ kind: 'list' })}
                         onCancel={() => navigateConnectors({ kind: 'list' })}
                       />
                     </div>
                   ) : (
-                    <ConnectorsPanel onNavigate={navigateConnectors} onOpenTag={navigateTag} />
+                    <ConnectorsPanel
+                      onNavigate={navigateConnectors}
+                      onOpenTag={navigateTag}
+                      onOpenSpecialist={(usage) =>
+                        navigate({
+                          ...currentLocation,
+                          panel: 'specialists',
+                          specialists:
+                            usage.kind === 'builtin'
+                              ? { kind: 'builtin', id: usage.id }
+                              : { kind: 'edit', id: usage.id }
+                        })
+                      }
+                    />
                   )
                 ) : activePanel === 'compute' ? (
                   computeView.kind === 'add' ? (
@@ -1406,6 +1435,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         )}
                       </p>
                     ) : null}
+                    {providerEditTargetMissing ? (
+                      <p
+                        className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                        role="alert"
+                      >
+                        {t('This Provider no longer exists. Your draft has not been saved.')}
+                      </p>
+                    ) : null}
                     <ProviderForm
                       value={formValue}
                       onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
@@ -1426,10 +1463,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       disabled={isSaving}
                       encryptionAvailable={encryptionAvailable}
                       showCodexSubscriptions={
-                        agentFrameworkId === 'codex' && editingProvider === undefined
+                        agentFrameworkId === 'codex' && modelView.kind === 'create'
                       }
                       showClaudeIsolated={
-                        agentFrameworkId === 'claude-code' && editingProvider === undefined
+                        agentFrameworkId === 'claude-code' && modelView.kind === 'create'
                       }
                       defaultCustomApiEndpoint={customApiEndpoint}
                     />

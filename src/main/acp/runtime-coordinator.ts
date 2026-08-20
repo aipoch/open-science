@@ -1,6 +1,7 @@
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
+import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type {
   AcpCancelPromptRequest,
   AcpCompactSessionRequest,
@@ -35,7 +36,6 @@ import {
 } from '../delegation/execution-port'
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
 
-const MAX_EVENTS = 500
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 
 const isOwnershipScopedControlEvent = (event: AcpRuntimeEvent): boolean =>
@@ -213,7 +213,7 @@ class AcpRuntimeCoordinator {
       ...this.applicationEvents
     ]
       .sort((left, right) => left.timestamp - right.timestamp)
-      .slice(-MAX_EVENTS)
+      .slice(-MAX_ACP_RUNTIME_EVENTS)
     const sessionIds = Array.from(
       new Set(
         snapshots.flatMap(({ runtime, snapshot }) => this.visibleSessionIds(runtime, snapshot))
@@ -676,8 +676,8 @@ class AcpRuntimeCoordinator {
       }
     }
     this.applicationEvents.push(event)
-    if (this.applicationEvents.length > MAX_EVENTS) {
-      this.applicationEvents.splice(0, this.applicationEvents.length - MAX_EVENTS)
+    if (this.applicationEvents.length > MAX_ACP_RUNTIME_EVENTS) {
+      this.applicationEvents.splice(0, this.applicationEvents.length - MAX_ACP_RUNTIME_EVENTS)
     }
     this.callbacks.onEvent?.(event)
     this.callbacks.onStateChanged?.(this.getSnapshot())
@@ -713,9 +713,9 @@ class AcpRuntimeCoordinator {
   }
 
   // Interactive prompt dispatch is an admission RPC, while the authoritative turn lifecycle is
-  // streamed through runtime state/events. Settle the RPC as soon as the provider accepts the
-  // prompt so a long-running turn (or its terminal maintenance) does not retain an Electron reply
-  // channel until completion.
+  // streamed through runtime state/events. Settle once the application runtime owns the prompt;
+  // blocking providers and human approval waits may produce no provider update before their own
+  // domain lifecycle completes and must not retain a Web request until then.
   startPrompt(request: AcpPromptRequest): Promise<void> {
     let settled = false
     let resolve!: () => void
@@ -724,7 +724,7 @@ class AcpRuntimeCoordinator {
       resolve = promiseResolve
       reject = promiseReject
     })
-    const settleAccepted = (): void => {
+    const settleAdmitted = (): void => {
       if (settled) return
       settled = true
       resolve()
@@ -734,9 +734,17 @@ class AcpRuntimeCoordinator {
       settled = true
       reject(error)
     }
+    const settleAfterRuntimeDispatch = (prompt: ReturnType<AcpRuntime['sendPrompt']>): void => {
+      // A runtime can return an immediately rejected Promise through several async wrappers when
+      // it cannot accept the prompt. Let that microtask chain drain before acknowledging local
+      // ownership. Once accepted, later model, tool, or human-input waits remain authoritative
+      // through state/events.
+      void prompt.then(settleAdmitted, settleRejected)
+      setImmediate(settleAdmitted)
+    }
 
-    void this.sendPromptObserved(request, settleAccepted).then(
-      () => settleRejected(new Error('ACP prompt ended before provider acceptance.')),
+    void this.sendObservedPrompt(request, undefined, settleAfterRuntimeDispatch).then(
+      settleAdmitted,
       settleRejected
     )
     return accepted
@@ -767,14 +775,21 @@ class AcpRuntimeCoordinator {
 
   private sendObservedPrompt(
     request: AcpPromptRequest,
-    acceptance?: PromptAcceptance
+    acceptance?: PromptAcceptance,
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
       this.linearizeRootAdmission(request.sessionId, () =>
-        this.dispatchPrompt(request, acceptance, 'sendPrompt').finally(() =>
-          this.delegatedWork?.wakeMessages?.(request.sessionId)
-        )
+        this.dispatchPrompt(
+          request,
+          acceptance,
+          'sendPrompt',
+          undefined,
+          true,
+          undefined,
+          onApplicationPromptAdmitted
+        ).finally(() => this.delegatedWork?.wakeMessages?.(request.sessionId))
       )
     const admission = this.promptAdmissionGuard?.(request.sessionId)
     return admission ? admission.then(dispatch) : dispatch()
@@ -909,7 +924,8 @@ class AcpRuntimeCoordinator {
     operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
-    attribution?: MessageAttribution
+    attribution?: MessageAttribution,
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
       this.dispatchAdmittedPrompt(
@@ -918,7 +934,8 @@ class AcpRuntimeCoordinator {
         operation,
         pinnedRuntime,
         retainAsLatestUserPrompt,
-        attribution
+        attribution,
+        onApplicationPromptAdmitted
       )
     return this.promptDispatchAdmissionGuard
       ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
@@ -931,7 +948,8 @@ class AcpRuntimeCoordinator {
     operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
-    attribution?: MessageAttribution
+    attribution?: MessageAttribution,
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -971,6 +989,7 @@ class AcpRuntimeCoordinator {
       operation === 'sendApplicationPrompt'
         ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
         : runtime[operation](taskRequest, attempt.id)
+    onApplicationPromptAdmitted?.(prompt)
     return prompt
       .catch((error: unknown) => {
         if (
@@ -1433,10 +1452,14 @@ class AcpRuntimeCoordinator {
     const runtime = this.createRuntime(
       {
         onStateChanged: (snapshot) => this.handleRuntimeState(runtime, snapshot),
-        onEvent: (event) => {
-          if (!this.shouldPublishEvent(runtime, event)) return
-          this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) })
-        },
+        ...(this.callbacks.onEvent
+          ? {
+              onEvent: (event: AcpRuntimeEvent) => {
+                if (!this.shouldPublishEvent(runtime, event)) return
+                this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) })
+              }
+            }
+          : {}),
         onPermissionRequest: (request) => {
           this.permissionRuntimes.set(request.requestId, runtime)
           this.callbacks.onPermissionRequest?.(request)

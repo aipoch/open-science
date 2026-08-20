@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { AgentFrameworkId } from '../agent-framework'
+import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import type { ProviderRuntimeTarget } from './provider-accounts'
 import type { ResolvedProvider } from './provider-env'
 import type { StoredProvider, StoredSettings } from './types'
@@ -145,6 +146,44 @@ describe('BackendRoutePlanner route matrix', () => {
         forceNativeResponsesCompatibility: true
       })
     ).toThrow('unavailable with Codex subscription authentication')
+  })
+
+  it.each([
+    ['claude-code', 'claude-anthropic'],
+    ['opencode', 'opencode-openai'],
+    ['codex', 'codex-native-responses']
+  ] as const)('keeps a single custom %s provider behind the %s loopback', (frameworkId, kind) => {
+    const provider = makeStoredProvider()
+    const target = makeTarget(provider)
+
+    const plan = makePlanner().planBackend({
+      settings: makeSettings(provider),
+      frameworkId,
+      target,
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport.kind).toBe(kind)
+  })
+
+  it('keeps Codex subscription authentication on its direct transport', () => {
+    const provider = makeStoredProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexAuthMode: 'isolated',
+      keyRef: undefined
+    })
+
+    const plan = makePlanner().planBackend({
+      settings: makeSettings(provider),
+      frameworkId: 'codex',
+      target: makeTarget(provider),
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport).toEqual({ kind: 'direct' })
   })
 })
 
@@ -537,6 +576,69 @@ describe('BackendRoutePlanner provider candidates', () => {
 })
 
 describe('BackendRoutePlanner model-change projection', () => {
+  it('projects a target for a single-provider Claude bridge model change', () => {
+    const provider = makeStoredProvider({ model: 'model-a' })
+    const target = makeTarget(provider, {
+      effectiveModel: 'model-b',
+      provider: { model: 'model-b' }
+    })
+
+    const change = makePlanner().projectModelChange({
+      settings: makeSettings(provider),
+      frameworkId: 'claude-code',
+      target,
+      effortIntent: 'high'
+    })
+
+    expect(change).toMatchObject({
+      sessionModel: 'model-b',
+      anthropicBridgeTargetId: JSON.stringify(['provider-a', 'model-b'])
+    })
+  })
+
+  it('projects the generated provider and target for a single-provider OpenCode model change', () => {
+    const provider = makeStoredProvider({ model: 'model-a', apiEndpoints: ['openai'] })
+    const target = makeTarget(provider, {
+      effectiveModel: 'model-b',
+      apiEndpoints: ['openai'],
+      provider: { model: 'model-b', apiEndpoints: ['openai'] }
+    })
+    const agentProviderId = opencodeTransportProviderId(provider.id, 'model-b')
+
+    const change = makePlanner().projectModelChange({
+      settings: makeSettings(provider),
+      frameworkId: 'opencode',
+      target,
+      effortIntent: 'high'
+    })
+
+    expect(change).toMatchObject({
+      sessionModel: `${agentProviderId}/model-b`,
+      providerTransportTargetId: JSON.stringify(['opencode', 'provider-a', 'model-b'])
+    })
+  })
+
+  it('projects a target for a single-provider native Responses model change', () => {
+    const provider = makeStoredProvider({ model: 'model-a', apiEndpoints: ['responses'] })
+    const target = makeTarget(provider, {
+      effectiveModel: 'model-b',
+      apiEndpoints: ['responses'],
+      provider: { model: 'model-b', apiEndpoints: ['responses'] }
+    })
+
+    const change = makePlanner().projectModelChange({
+      settings: makeSettings(provider),
+      frameworkId: 'codex',
+      target,
+      effortIntent: 'high'
+    })
+
+    expect(change).toMatchObject({
+      sessionModel: 'model-b',
+      providerTransportTargetId: JSON.stringify(['codex', 'provider-a', 'model-b'])
+    })
+  })
+
   it('projects a secret-free retargetable Codex model identity', () => {
     const providerA = makeStoredProvider({ id: 'provider-a', model: 'model-a' })
     const providerB = makeStoredProvider({ id: 'provider-b', model: 'model-b' })

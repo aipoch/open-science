@@ -10,10 +10,16 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import { openRadixMenu } from './test-utils'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
 let container: HTMLDivElement
 let root: Root
+
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
 
 const seedSkills = [
   {
@@ -243,6 +249,32 @@ describe('SkillsPanel (list view)', () => {
     expect(alphaSwitch?.className).toContain('motion-reduce:transition-none')
   })
 
+  it('keeps filters and search above right-aligned list actions', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const filters = document.body.querySelector<HTMLElement>('[data-slot="skills-filter-bar"]')
+    const actions = document.body.querySelector<HTMLElement>('[data-slot="skills-action-bar"]')
+    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Manage'
+    )
+    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Add skill')
+    )
+
+    expect(filters?.querySelector('[aria-label="Filter skills by source"]')).not.toBeNull()
+    expect(filters?.querySelector('[aria-label="Filter Skills by agent"]')).not.toBeNull()
+    expect(filters?.querySelector('[aria-label="Filter by Tag"]')).not.toBeNull()
+    expect(filters?.querySelector('[aria-label="Search skills"]')).not.toBeNull()
+    expect(filters?.contains(manage ?? null)).toBe(false)
+    expect(filters?.contains(addSkill ?? null)).toBe(false)
+    expect(actions?.contains(manage ?? null)).toBe(true)
+    expect(actions?.contains(addSkill ?? null)).toBe(true)
+    expect(actions?.className).toContain('justify-end')
+    expect(filters?.compareDocumentPosition(actions!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
   it('shows the default-on conversation import preference and lets the user disable it', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
@@ -370,7 +402,39 @@ describe('SkillsPanel (list view)', () => {
     expect(document.body.textContent).not.toContain('Alpha')
   })
 
-  it('shows Specialist usage separately from the Main Agent toggle', () => {
+  it('combines Main Agent and Specialists in the All Agents/Specialists filter', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.querySelector('[aria-label="Filter Skills by scope"]')).toBeNull()
+    const agentFilter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter Skills by agent"]'
+    )
+    expect(agentFilter?.textContent).toContain('All Agents/Specialists')
+
+    openRadixMenu(agentFilter)
+    clickRadixMenuItem(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+        (option) => option.textContent === 'Main Agent'
+      )
+    )
+    expect(document.body.textContent).toContain('Alpha')
+    expect(document.body.textContent).toContain('Mine')
+    expect(document.body.textContent).not.toContain('Beta')
+
+    openRadixMenu(agentFilter)
+    clickRadixMenuItem(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+        (option) => option.textContent === 'Literature Reviewer'
+      )
+    )
+    expect(document.body.textContent).toContain('Alpha')
+    expect(document.body.textContent).toContain('Beta')
+    expect(document.body.textContent).not.toContain('Mine')
+  })
+
+  it('shows compact agent stacks without the verbose scope line', async () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
@@ -382,45 +446,59 @@ describe('SkillsPanel (list view)', () => {
       document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
     ).find((row) => row.textContent?.includes('Beta'))
 
-    expect(alphaRow?.textContent).toContain('Literature Reviewer')
-    expect(alphaRow?.textContent).toContain('Shared with Main')
-    expect(alphaRow?.textContent).toContain('Main Agent')
-    expect(betaRow?.textContent).toContain('Literature Reviewer')
-    expect(betaRow?.textContent).toContain('Specialist only')
-    expect(betaRow?.textContent).toContain('Main Agent')
+    const alphaAgents = alphaRow?.querySelector<HTMLButtonElement>(
+      '[data-slot="skill-usage-agents-trigger"]'
+    )
+    const betaAgents = betaRow?.querySelector<HTMLButtonElement>(
+      '[data-slot="skill-usage-agents-trigger"]'
+    )
+    expect(alphaAgents?.dataset.mainEnabled).toBe('true')
+    expect(betaAgents?.dataset.mainEnabled).toBe('false')
+    expect(alphaRow?.textContent).not.toContain('Shared with Main')
+    expect(betaRow?.textContent).not.toContain('Specialist only')
+    expect(alphaRow?.textContent).not.toContain('Main Agent')
+    expect(betaRow?.textContent).not.toContain('Main Agent')
+    expect(alphaRow?.textContent).toContain('Used by')
+    expect(betaRow?.textContent).toContain('Used by')
     expect(alphaRow?.querySelector('[aria-label="Toggle Alpha"]')?.getAttribute('data-state')).toBe(
       'checked'
     )
     expect(betaRow?.querySelector('[aria-label="Toggle Beta"]')?.getAttribute('data-state')).toBe(
       'unchecked'
     )
-    const mainAgentLabel = Array.from(alphaRow?.querySelectorAll('span') ?? []).find(
-      (element) => element.textContent === 'Main Agent'
-    )
     const tagMenu = alphaRow?.querySelector('[aria-label="Manage Tags"]')
     const toggle = alphaRow?.querySelector('[aria-label="Toggle Alpha"]')
-    expect(mainAgentLabel).toBeDefined()
     expect(tagMenu).not.toBeNull()
     expect(toggle).not.toBeNull()
-    expect(mainAgentLabel!.compareDocumentPosition(tagMenu!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(tagMenu!.compareDocumentPosition(toggle!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+
+    await act(async () => alphaAgents?.focus())
+    expect(
+      document.body.querySelector('[data-slot="skill-usage-agents-popover"]')?.textContent
+    ).toContain('Literature Reviewer')
+    expect(
+      document.body.querySelector('[data-slot="skill-usage-agents-popover"]')?.textContent
+    ).toContain('Main Agent')
   })
 
-  it('deletes a personal skill from its row control', () => {
+  it('edits and deletes a personal skill from its row action menu', () => {
+    const onNavigate = vi.fn()
     act(() => {
-      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
     })
 
-    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit Mine"]')
-    const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')
-    expect(edit?.getAttribute('data-slot')).toBe('button')
-    expect(remove?.getAttribute('data-slot')).toBe('button')
-    expect(edit?.getAttribute('data-size')).toBe('icon-sm')
-    expect(remove?.getAttribute('data-size')).toBe('icon-sm')
-    expect(edit?.getAttribute('data-state')).toBe('closed')
-    expect(remove?.getAttribute('data-state')).toBe('closed')
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+    const edit = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => item.textContent?.trim() === 'Edit'
+    )
+    clickRadixMenuItem(edit)
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'personal-mine' })
 
-    act(() => remove?.click())
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+    const remove = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.trim() === 'Delete')
+    clickRadixMenuItem(remove)
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
   })
 
@@ -446,10 +524,16 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    expect(document.body.querySelector('[aria-label="Export Alpha"]')).toBeNull()
-    expect(document.body.querySelector('[aria-label="Export Shared"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Actions for Alpha"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Actions for Shared"]')).not.toBeNull()
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')?.click()
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (item) => item.textContent?.trim() === 'Export'
+        )
+      )
+      await Promise.resolve()
     })
     expect(exportSkill).toHaveBeenCalledWith({ id: 'personal-mine' })
     const status = document.body.querySelector('[role="status"]')
@@ -464,13 +548,76 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    const exportButton = (): HTMLButtonElement | null =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')
-    await act(async () => exportButton()?.click())
+    const exportOnce = async (): Promise<void> => {
+      openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+      await act(async () => {
+        clickRadixMenuItem(
+          Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+            (item) => item.textContent?.trim() === 'Export'
+          )
+        )
+        await Promise.resolve()
+      })
+    }
+    await exportOnce()
 
-    expect(exportButton()?.disabled).toBe(false)
-    await act(async () => exportButton()?.click())
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Mine"]')?.disabled
+    ).toBe(false)
+    await exportOnce()
     expect(exportSkill).toHaveBeenCalledTimes(2)
+  })
+
+  it('serializes Skill exports across row action menus', async () => {
+    let finishExport: ((result: { saved: boolean }) => void) | undefined
+    const exportSkill = vi.fn(
+      (): Promise<{ saved: boolean }> =>
+        new Promise((resolve) => {
+          finishExport = resolve
+        })
+    )
+    ;(window as unknown as { api: unknown }).api = { settings: { exportSkill } }
+    useSettingsStore.setState({
+      skills: [
+        ...seedSkills,
+        {
+          id: 'imported-shared',
+          name: 'Shared',
+          displayName: 'Shared',
+          description: 'Imported',
+          source: 'imported',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true
+        }
+      ]
+    })
+    await act(async () => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+    await act(async () => {
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (item) => item.textContent?.trim() === 'Export'
+        )
+      )
+      await Promise.resolve()
+    })
+
+    expect(exportSkill).toHaveBeenCalledOnce()
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Mine"]')?.disabled
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Shared"]')?.disabled
+    ).toBe(true)
+
+    await act(async () => finishExport?.({ saved: false }))
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Mine"]')?.disabled
+    ).toBe(false)
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Shared"]')?.disabled
+    ).toBe(false)
   })
 
   it('hides Skill export when the desktop bridge is unavailable', () => {
@@ -478,7 +625,12 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    expect(document.body.querySelector('[aria-label="Export Mine"]')).toBeNull()
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).some(
+        (item) => item.textContent?.trim() === 'Export'
+      )
+    ).toBe(false)
   })
 
   it('shows a Settings error when Skill export fails', async () => {
@@ -497,8 +649,14 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')?.click()
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (item) => item.textContent?.trim() === 'Export'
+        )
+      )
+      await Promise.resolve()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
@@ -514,8 +672,14 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')?.click()
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (item) => item.textContent?.trim() === 'Delete'
+        )
+      )
+      await Promise.resolve()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
@@ -547,15 +711,20 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+    const remove = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Delete'))
     expect(remove?.getAttribute('aria-disabled')).toBe('true')
+    expect(remove?.textContent?.trim()).toBe('Delete')
+    expect(remove?.querySelector('[data-slot="skill-delete-blocked-tip"]')).not.toBeNull()
 
     await act(async () => remove?.focus())
-    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toContain(
+    expect(document.body.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain(
       'Owned by Literature Reviewer. Delete this Skill when deleting that Specialist.'
     )
 
-    act(() => remove?.click())
+    clickRadixMenuItem(remove)
     expect(deleteSkill).not.toHaveBeenCalled()
   })
 

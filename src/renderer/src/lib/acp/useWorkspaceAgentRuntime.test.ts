@@ -223,6 +223,27 @@ describe('workspace agent runtime event processing', () => {
     shouldAnimate: () => true
   })
 
+  it('does not replay a retained snapshot after incremental events were already applied', async () => {
+    const appliedEventIds: string[] = []
+    const processor = createWorkspaceRuntimeEventProcessor(async (event) => {
+      appliedEventIds.push(event.id)
+      return true
+    })
+    const events = Array.from({ length: 600 }, (_, index) =>
+      createEvent({
+        id: `tool-event-${index + 1}`,
+        kind: 'tool',
+        toolCallId: `tool-${index + 1}`,
+        status: 'completed'
+      })
+    )
+
+    for (const event of events) await processor.processIncremental([event])
+    await processor.process(events.slice(-500))
+
+    expect(appliedEventIds).toEqual(events.map((event) => event.id))
+  })
+
   it('releases fast assistant text in grapheme-budgeted 30 fps batches', async () => {
     vi.useFakeTimers()
     try {

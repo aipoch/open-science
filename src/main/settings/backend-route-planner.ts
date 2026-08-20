@@ -240,8 +240,16 @@ class BackendRoutePlanner {
     const route = modelRouteFor(input.frameworkId, input.target)
     const candidates = this.routeCandidates(input.settings, input.target, input.frameworkId, route)
     const retargetable = new Set(candidates.map(({ providerId }) => providerId)).size >= 2
+    const customTarget = input.target.provider.type === 'custom'
     const hasClaudeTransport =
-      input.frameworkId === 'claude-code' && retargetable && candidates.includes(input.target)
+      input.frameworkId === 'claude-code' && customTarget && candidates.includes(input.target)
+    const hasProviderTransport =
+      input.frameworkId === 'opencode' ||
+      (input.frameworkId === 'codex' &&
+        (retargetable || (route === 'codex-responses' && customTarget)))
+    const providerTransportTargetId = hasProviderTransport
+      ? transportTargetId(input.frameworkId, input.target.providerId, model)
+      : undefined
     const backendProviderId =
       input.frameworkId === 'codex' && isCodexSubscriptionProvider(input.target.provider.type)
         ? CODEX_ISOLATED_PROVIDER_ID
@@ -254,7 +262,7 @@ class BackendRoutePlanner {
       sessionModel:
         route === 'codex-bridge'
           ? CODEX_BRIDGE_MODEL
-          : input.frameworkId === 'opencode' && retargetable
+          : input.frameworkId === 'opencode'
             ? `${opencodeTransportProviderId(input.target.providerId, model)}/${model}`
             : model,
       sessionModelRequired:
@@ -264,15 +272,7 @@ class BackendRoutePlanner {
       ...(hasClaudeTransport
         ? { anthropicBridgeTargetId: claudeTargetId(input.target.providerId, model) }
         : {}),
-      ...((input.frameworkId === 'opencode' || input.frameworkId === 'codex') && retargetable
-        ? {
-            providerTransportTargetId: transportTargetId(
-              input.frameworkId,
-              input.target.providerId,
-              model
-            )
-          }
-        : {}),
+      ...(providerTransportTargetId ? { providerTransportTargetId } : {}),
       ...(input.target.provider.contextWindow
         ? { contextWindow: input.target.provider.contextWindow }
         : {}),
@@ -300,8 +300,7 @@ class BackendRoutePlanner {
     effortIntent: ReasoningEffort
   ): BackendTransportPlan {
     if (frameworkId === 'claude-code') {
-      if (!retargetable || active.provider.type !== 'custom')
-        return Object.freeze({ kind: 'direct' })
+      if (active.provider.type !== 'custom') return Object.freeze({ kind: 'direct' })
       const targets = candidates.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
         const model = candidate.effectiveModel ?? candidate.provider.model
         const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
@@ -328,12 +327,10 @@ class BackendRoutePlanner {
         : Object.freeze({ kind: 'direct' })
     }
     if (frameworkId === 'opencode') {
-      return retargetable
-        ? Object.freeze({
-            kind: route as 'opencode-anthropic' | 'opencode-openai',
-            targets: this.plannedTargets(candidates, frameworkId, effortIntent)
-          })
-        : Object.freeze({ kind: 'direct' })
+      return Object.freeze({
+        kind: route as 'opencode-anthropic' | 'opencode-openai',
+        targets: this.plannedTargets(candidates, frameworkId, effortIntent)
+      })
     }
     if (route === 'codex-bridge' || route === 'codex-responses-compatibility') {
       return Object.freeze({
@@ -344,7 +341,7 @@ class BackendRoutePlanner {
       })
     }
     const model = active.effectiveModel ?? active.provider.model
-    return retargetable && model
+    return active.provider.type === 'custom' && model
       ? Object.freeze({
           kind: 'codex-native-responses',
           targets: this.plannedTargets(candidates, frameworkId, effortIntent),

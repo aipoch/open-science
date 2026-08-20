@@ -93,7 +93,45 @@ describe('TaskRunner', () => {
     }
     const runner = createRunner({ projects })
 
-    await expect(runner.listProjects()).resolves.toEqual([project])
+    await expect(runner.listProjects()).resolves.toEqual([{ ...project, hasAgentContext: false }])
+  })
+
+  it('projects and updates Agent Context without exposing its contents', async () => {
+    const contextualProject = { ...project, agentContext: 'Always cite sources.' }
+    const update = vi.fn(async (request) => ({ ...contextualProject, ...request, updatedAt: 2 }))
+    const runner = createRunner({
+      projects: {
+        list: async () => [contextualProject],
+        create: async (request) => ({ ...contextualProject, ...request }),
+        update
+      }
+    })
+
+    await expect(runner.listProjects()).resolves.toEqual([{ ...project, hasAgentContext: true }])
+    await expect(
+      runner.updateProject(project.id, {
+        expectedUpdatedAt: project.updatedAt,
+        agentContext: 'Prefer Python.',
+        id: 'project-redirect',
+        pinned: true
+      } as never)
+    ).resolves.toEqual({ ...project, updatedAt: 2, hasAgentContext: true })
+    expect(update).toHaveBeenCalledWith({
+      id: project.id,
+      expectedUpdatedAt: project.updatedAt,
+      agentContext: 'Prefer Python.'
+    })
+
+    update.mockRejectedValueOnce(new Error('Project changed elsewhere.'))
+    await expect(
+      runner.updateProject(project.id, {
+        expectedUpdatedAt: project.updatedAt,
+        agentContext: ''
+      })
+    ).rejects.toMatchObject({
+      code: 'project_conflict',
+      message: 'Project changed elsewhere. Refresh it and try again.'
+    })
   })
 
   it('rejects an empty project name before creating a project', async () => {
