@@ -68,12 +68,12 @@ describe('useUpdateStore', () => {
     useUpdateStore.getState().init()
     const cleanup = useUpdateStore.getState().init() as unknown as (() => void) | undefined
 
-    expect(statusListeners).toHaveLength(1)
-    expect(progressListeners).toHaveLength(1)
+    expect(statusListeners.size).toBe(1)
+    expect(progressListeners.size).toBe(1)
 
     cleanup?.()
-    expect(statusListeners).toHaveLength(0)
-    expect(progressListeners).toHaveLength(0)
+    expect(statusListeners.size).toBe(0)
+    expect(progressListeners.size).toBe(0)
   })
 
   it('init hydrates from getStatus when the store is still idle', async () => {
