@@ -179,7 +179,9 @@ describe('UpdateDialog', () => {
 
     act(() => root.render(<UpdateDialog />))
 
-    expect(document.body.textContent).toContain('Settings → General → Diagnostics')
+    expect(document.body.textContent).toContain(
+      'use Reveal in Settings → General → Diagnostics to locate the log file'
+    )
     expect(document.body.textContent).toContain('Quit and reopen Open Science')
     const issueLink = document.body.querySelector(`a[href="${APP.links.githubIssues}"]`)
     expect(issueLink?.textContent).toContain('open a GitHub issue')

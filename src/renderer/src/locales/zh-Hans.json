@@ -315,7 +315,7 @@
   "Cache write": "缓存写入",
   "Can't start with {{prefixes}}.": "不能以 {{prefixes}} 开头。",
   "Cancel": "取消",
-  "Cancel this update, then save the log from Settings → General → Diagnostics. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "取消此次更新，然后从“设置 → 通用 → 诊断”保存日志。完全退出并重新打开 Open Science，再次尝试更新。如果问题再次出现，请先检查日志中是否有本地文件路径，再将日志提供给开发人员或<issueLink>在 GitHub 上提交 issue</issueLink>。",
+  "Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "取消此次更新，然后在“设置 → 通用 → 诊断”中使用“在文件夹中显示”找到日志文件。完全退出并重新打开 Open Science，再次尝试更新。如果问题再次出现，请先检查日志中是否有本地文件路径，再将日志提供给开发人员或<issueLink>在 GitHub 上提交 issue</issueLink>。",
   "Cancel Side chat response": "取消 Side chat 回复",
   "Cancel attachment {{name}}": "取消附件 {{name}}",
   "Cancel run": "取消运行",

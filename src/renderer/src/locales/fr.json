@@ -245,7 +245,7 @@
   "Cache write": "Écriture en cache",
   "Can't start with {{prefixes}}.": "Impossible de démarrer avec {{prefixes}}.",
   "Cancel": "Annuler",
-  "Cancel this update, then save the log from Settings → General → Diagnostics. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "Annulez cette mise à jour, puis enregistrez le journal depuis Paramètres → Général → Diagnostics. Quittez complètement Open Science, rouvrez l’application, puis réessayez la mise à jour. Si le problème réapparaît, vérifiez que le journal ne contient pas de chemins de fichiers locaux, puis transmettez-le à un développeur ou <issueLink>ouvrez un ticket GitHub</issueLink>.",
+  "Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "Annulez cette mise à jour, puis utilisez « Révéler » dans Paramètres → Général → Diagnostics pour localiser le fichier journal. Quittez complètement Open Science, rouvrez l’application, puis réessayez la mise à jour. Si le problème réapparaît, vérifiez que le journal ne contient pas de chemins de fichiers locaux, puis transmettez-le à un développeur ou <issueLink>ouvrez un ticket GitHub</issueLink>.",
   "Cancel Side chat response": "Annuler la réponse du chat secondaire",
   "Cancel attachment {{name}}": "Annuler la pièce jointe {{name}}",
   "Cancel run": "Annuler l'exécution",

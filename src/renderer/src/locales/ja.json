@@ -235,7 +235,7 @@
   "Cache write": "キャッシュ書き込み",
   "Can't start with {{prefixes}}.": "{{prefixes}} で始めることはできません。",
   "Cancel": "キャンセル",
-  "Cancel this update, then save the log from Settings → General → Diagnostics. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "このアップデートをキャンセルし、「設定 → 一般 → 診断」からログを保存してください。Open Science を完全に終了して再度開き、アップデートをもう一度お試しください。問題が再発した場合は、ログにローカルファイルのパスが含まれていないか確認してから、開発者に渡すか、<issueLink>GitHub で Issue を作成</issueLink>してください。",
+  "Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "このアップデートをキャンセルし、「設定 → 一般 → 診断」で「表示」を使用してログファイルの場所を確認してください。Open Science を完全に終了して再度開き、アップデートをもう一度お試しください。問題が再発した場合は、ログにローカルファイルのパスが含まれていないか確認してから、開発者に渡すか、<issueLink>GitHub で Issue を作成</issueLink>してください。",
   "Cancel Side chat response": "サイドチャットの応答をキャンセルする",
   "Cancel attachment {{name}}": "添付ファイルをキャンセル {{name}}",
   "Cancel run": "実行をキャンセル",

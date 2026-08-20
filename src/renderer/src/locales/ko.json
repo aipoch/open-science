@@ -235,7 +235,7 @@
   "Cache write": "캐시 쓰기",
   "Can't start with {{prefixes}}.": "{{prefixes}}로 시작할 수 없습니다.",
   "Cancel": "취소",
-  "Cancel this update, then save the log from Settings → General → Diagnostics. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "이 업데이트를 취소한 다음 '설정 → 일반 → 진단'에서 로그를 저장하세요. Open Science를 완전히 종료했다가 다시 열고 업데이트를 다시 시도하세요. 문제가 다시 발생하면 로그에 로컬 파일 경로가 있는지 확인한 후 개발자에게 전달하거나 <issueLink>GitHub에서 이슈를 여세요</issueLink>.",
+  "Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.": "이 업데이트를 취소한 다음 '설정 → 일반 → 진단'에서 '표시'를 사용해 로그 파일 위치를 확인하세요. Open Science를 완전히 종료했다가 다시 열고 업데이트를 다시 시도하세요. 문제가 다시 발생하면 로그에 로컬 파일 경로가 있는지 확인한 후 개발자에게 전달하거나 <issueLink>GitHub에서 이슈를 여세요</issueLink>.",
   "Cancel Side chat response": "사이드 채팅 응답 취소",
   "Cancel attachment {{name}}": "첨부 취소 {{name}}",
   "Cancel run": "실행 취소",
