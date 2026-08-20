@@ -610,6 +610,7 @@ model Tag {
   nameKey     String?         @unique
   iconKey     String?
   colorKey    String?
+  sortOrder   Int             @unique @default(0)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   assignments TagAssignment[]

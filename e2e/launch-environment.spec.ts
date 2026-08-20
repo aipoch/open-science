@@ -35,6 +35,14 @@ test('pins the Electron UI to English for stable accessibility selectors', () =>
   expect(electronLaunchTarget('profile-root', {}, 'darwin').args).toContain('--lang=en-US')
 })
 
+test('enables Session CPU tracing only for an active local performance profile', () => {
+  const ordinary = launchEnvironment('storage-root', undefined, {})
+  const profiled = launchEnvironment('storage-root', undefined, {}, undefined, 'hidden', true)
+
+  expect(ordinary.OPEN_SCIENCE_PERF_SESSION_TRACE).toBeUndefined()
+  expect(profiled.OPEN_SCIENCE_PERF_SESSION_TRACE).toBe('1')
+})
+
 test('enables the basic password store only for Linux E2E profiles', () => {
   expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
     args: [

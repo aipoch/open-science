@@ -55,6 +55,49 @@ human-readable, JSON, and JSONL output never includes the local token.
 Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
 Open Science executable. Development builds also support `--config-root <path>`.
 
+`open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
+the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
+command fails without signalling the PID recorded in `web-service.json`; a stale PID may have been
+reused by an unrelated process. The state file is retained for diagnosis and can be replaced by a
+later `open-science start`.
+
+## Application updates
+
+Check, download, and apply an Open Science application update without opening the browser or desktop
+window:
+
+```bash
+open-science update
+open-science update --json
+```
+
+The command updates the installed Open Science application, not the npm package. It reuses the
+application's release feed, artifact selection, checksum verification, and platform installer. If
+Open Science is not running, it starts the local headless service and leaves it available for later
+CLI commands. Use `open-science stop` when it is no longer needed.
+
+In-place installation never interrupts active root-agent, subagent, Notebook, or Reviewer work. Stop
+the reported work and run the command again. Platforms that require a visible installer download it
+without a save dialog to the application's writable data directory, then print the full path and
+required next step; the CLI does not open the installer.
+
+With `--json`, `outcome` is `up-to-date`, `install-started`, `manual-action-required`, or `blocked`.
+`install-started` means the platform updater accepted the handoff; because the running application
+exits during installation, the CLI cannot verify the final installed version in that invocation.
+Common fields are `current` and, when known, `latest`. Manual outcomes may add `installerPath` and
+`nextAction`; blocked outcomes add `blockedBy`.
+
+The CLI requires the running application to advertise the `update-cli-v1` RPC capability. If an older
+installation only advertises the legacy update commands, or does not advertise structured headless
+update behavior, it returns `manual-action-required` instead of guessing. Install the latest release from
+[the Open Science download page](https://www.aipoch.com/open-science), then run the command again.
+Because the CLI is bundled with the installed application, installations predating this command need
+that one-time manual update before `open-science update` is available.
+
+On a rootless Linux host where Chromium sandboxing is unavailable, use
+`open-science update --no-sandbox`. This reuses the same explicit, security-reducing startup fallback
+as `open-science start --no-sandbox`; prefer the Debian package or a sandbox-capable host.
+
 ## Codex subscription sign-in
 
 Sign the Open Science Codex profile in from a server terminal without starting the daemon or opening
@@ -86,15 +129,16 @@ daemon logs.
 
 ### Linux AppImage sandbox fallback
 
-`open-science start` keeps Chromium sandboxing enabled by default. On some Linux hosts, an AppImage
-mounted with `nosuid` cannot use Chromium's SUID sandbox helper; Ubuntu may also restrict
-unprivileged user namespaces. In that case the command fails promptly with guidance instead of
-waiting for the service timeout.
+`open-science start` and `open-science update` keep Chromium sandboxing enabled by default. On some
+Linux hosts, an AppImage mounted with `nosuid` cannot use Chromium's SUID sandbox helper; Ubuntu may
+also restrict unprivileged user namespaces. In that case the command fails promptly with guidance
+instead of waiting for the service timeout.
 
 If the host cannot support sandboxed startup, an explicit rootless fallback is available:
 
 ```bash
 open-science start --no-sandbox --no-open
+open-science update --no-sandbox
 ```
 
 `--no-sandbox` disables Chromium's process sandbox and reduces security. Use it only when necessary;
@@ -105,12 +149,36 @@ the Debian package or a host configuration that supports Chromium sandboxing is 
 Create a project and list the projects available to task runs:
 
 ```bash
-open-science project create "Systematic review" --description "Evidence review workspace" --json
+open-science project create "Systematic review" \
+  --description "Evidence review workspace" \
+  --agent-context-file ./agent-context.md \
+  --json
 open-science project list --json
 ```
 
 Commands that accept `--project` allow either a project ID or an exact project name. The CLI resolves
 a unique display name to its ID before calling the Task API; use the ID when names are duplicated.
+
+Project Agent Context contains persistent instructions that are added when Open Science sets up an
+agent Session. Supply it directly with `--agent-context <text>` or read multiline instructions from a
+strict UTF-8 file with `--agent-context-file <path>`; the two options are mutually exclusive. The
+existing 16,000-character limit applies to both forms.
+
+Update Project metadata or replace its Agent Context later using an ID or exact name:
+
+```bash
+open-science project update "Systematic review" \
+  --description "Updated evidence review workspace" \
+  --agent-context-file ./revised-agent-context.md \
+  --json
+
+open-science project update <project-id> --clear-agent-context --json
+```
+
+`--clear-agent-context` is explicit so an omitted option keeps the existing value. An update affects
+newly created Sessions and provider Sessions that are set up again after the update. It does not
+rebuild an already attached Session. Project list, create, and update output reports only the boolean
+`hasAgentContext`; Agent Context contents are not returned through the public Task API or CLI output.
 
 ## Run a task
 
@@ -264,6 +332,8 @@ Exit codes form part of the automation contract:
 | `2`       | CLI usage was invalid.                                                    |
 | `3`       | The local daemon was unavailable.                                         |
 | `4`       | A requested project, run, session, artifact, or Specialist was not found. |
+| `5`       | Active research safely blocked an application update.                     |
+| `6`       | The application update requires a manual installation step.               |
 
 Timeouts and `session_busy` conflicts use exit code `1` and retain their distinct `timeout` and
 `session_busy` error codes in structured output.

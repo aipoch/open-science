@@ -50,9 +50,9 @@ describe('stored preference', () => {
   })
 
   it('round-trips a persisted choice', () => {
-    persistPreference('zh-Hant')
-    expect(getStoredPreference()).toBe('zh-Hant')
-    expect(resolvePreference()).toBe('zh-Hant')
+    persistPreference('fr')
+    expect(getStoredPreference()).toBe('fr')
+    expect(resolvePreference()).toBe('fr')
   })
 
   it('ignores a stored value that is not a known preference', () => {
@@ -81,9 +81,19 @@ describe('resolveInitialLocale', () => {
     expect(resolveInitialLocale()).toBe('ja')
   })
 
+  it('detects Korean from the device when no choice is stored', () => {
+    stubLanguages(['ko-KR', 'ja', 'en'])
+    expect(resolveInitialLocale()).toBe('ko')
+  })
+
   it('falls back to English when the device language is unsupported', () => {
-    stubLanguages(['fr-FR', 'ko-KR'])
+    stubLanguages(['de-DE', 'vi-VN'])
     expect(resolveInitialLocale()).toBe('en')
+  })
+
+  it('detects French regional tags from the device', () => {
+    stubLanguages(['fr-CA', 'en'])
+    expect(resolveInitialLocale()).toBe('fr')
   })
 
   it('honors an explicit stored choice over the device language', () => {
@@ -105,5 +115,7 @@ describe('applyHtmlLang', () => {
     expect(document.documentElement.lang).toBe('zh-Hant')
     applyHtmlLang('en')
     expect(document.documentElement.lang).toBe('en')
+    applyHtmlLang('fr')
+    expect(document.documentElement.lang).toBe('fr')
   })
 })

@@ -1,6 +1,9 @@
+import type { BrowserWindow, Event as ElectronEvent } from 'electron'
+
 import type { DiagnosticOperation } from './diagnostics/operation'
 
-// Startup orchestration for the UI process, kept as a dependency-injected unit (no Electron imports) so
+// Startup orchestration for the UI process, kept as a dependency-injected unit (no runtime Electron
+// imports) so
 // the single-instance gate, the second-instance-during-startup handoff, and the ordering of the
 // migration quit-guard relative to the lifecycle can be exercised together in a unit test — the real
 // combination, not just each helper in isolation.
@@ -90,6 +93,75 @@ export type AppStartupDeps<Context> = {
   markReady?: (context: Context) => void
   diagnostics?: DiagnosticOperation
 }
+
+export type VisibleStartupRuntimeDeps<Shell, Modules, Runtime> = {
+  // Builds only what is required to show the renderer's database-startup shell. Keeping this seam
+  // deliberately small lets the user see useful UI before the full backend module graph is loaded.
+  prepareShell: () => Promise<Shell>
+  // Database verification and backend loading are independent after the shell exists, so both start
+  // immediately. Runtime composition remains ordered behind both prerequisites.
+  verifyDatabase: (shell: Shell) => Promise<void>
+  loadApplicationModules: (shell: Shell) => Promise<Modules>
+  composeRuntime: (shell: Shell, modules: Modules) => Promise<Runtime>
+  rollbackShell?: (shell: Shell, error: unknown) => Promise<void> | void
+}
+
+export const prepareVisibleStartupRuntime = async <Shell, Modules, Runtime>(
+  deps: VisibleStartupRuntimeDeps<Shell, Modules, Runtime>
+): Promise<Runtime> => {
+  const shell = await deps.prepareShell()
+
+  try {
+    const databaseVerification = deps.verifyDatabase(shell)
+    const applicationModules = deps.loadApplicationModules(shell)
+    const [modules] = await Promise.all([applicationModules, databaseVerification])
+    return await deps.composeRuntime(shell, modules)
+  } catch (error) {
+    await deps.rollbackShell?.(shell, error)
+    throw error
+  }
+}
+
+// Resolve the first-paint barrier on terminal renderer/window events as well as success. The backend
+// and lifecycle must keep initializing even when Chromium cannot produce the first frame. Main-frame
+// load failure discards the unusable window; windows.ts owns renderer-process crash recovery.
+export const waitForStartupShell = (
+  window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
+): Promise<void> =>
+  new Promise((resolve) => {
+    let settled = false
+
+    const cleanup = (): void => {
+      window.removeListener('ready-to-show', settle)
+      window.removeListener('closed', settle)
+      window.webContents.removeListener('did-fail-load', onDidFailLoad)
+      window.webContents.removeListener('render-process-gone', settle)
+    }
+    const settle = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    const onDidFailLoad = (
+      _event: ElectronEvent,
+      _errorCode: number,
+      _errorDescription: string,
+      _validatedURL: string,
+      isMainFrame: boolean
+    ): void => {
+      if (!isMainFrame) return
+      // windows.ts logs document load failures but deliberately does not retry them. Discard this
+      // unusable hidden window so the lifecycle creates a fresh main window after composition.
+      window.destroy()
+      settle()
+    }
+
+    window.once('ready-to-show', settle)
+    window.once('closed', settle)
+    window.webContents.on('did-fail-load', onDidFailLoad)
+    window.webContents.once('render-process-gone', settle)
+  })
 
 // Runs the ordered startup sequence: gate on the single-instance lock (quitting a secondary launch
 // before any backend work), prepare the backend, install the migration guard, then the lifecycle, and

@@ -142,22 +142,24 @@ describe('database JSON constraints migration', () => {
       adoptedLegacy: false,
       applied: [
         MIGRATION_ID,
-        '0009_managed_file_version_foundation',
         '0009_vision_evidence',
         '0010_compute_password_auth',
-        '0011_cross_resource_tags'
+        '0011_cross_resource_tags',
+        '0012_tag_ordering',
+        '0013_managed_file_version_foundation'
       ],
       from: '0007_notification_attention_metadata',
-      to: '0011_cross_resource_tags'
+      to: '0013_managed_file_version_foundation'
     })
     await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
       code: 'ENOENT'
     })
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0010_compute_password_auth.backup`)
+      access(`${databasePath}.before-0013_managed_file_version_foundation.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

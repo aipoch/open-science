@@ -11,6 +11,18 @@ import {
 } from './locale'
 
 describe('resolveLocaleFromTags', () => {
+  it('matches Korean and its regional tags', () => {
+    expect(resolveLocaleFromTags(['ko'])).toBe('ko')
+    expect(resolveLocaleFromTags(['ko-KR'])).toBe('ko')
+    expect(resolveLocaleFromTags(['KO_kr'])).toBe('ko')
+  })
+
+  it('matches French and its regional tags', () => {
+    expect(resolveLocaleFromTags(['fr'])).toBe('fr')
+    expect(resolveLocaleFromTags(['fr-FR'])).toBe('fr')
+    expect(resolveLocaleFromTags(['FR_ca'])).toBe('fr')
+  })
+
   it('matches Japanese and its regional tags', () => {
     expect(resolveLocaleFromTags(['ja'])).toBe('ja')
     expect(resolveLocaleFromTags(['ja-JP'])).toBe('ja')
@@ -57,8 +69,8 @@ describe('resolveLocaleFromTags', () => {
 
   it('walks the whole list so an unsupported first entry does not shadow a supported later one', () => {
     // The bug this guards: reading only navigator.language would return 'en' here, not zh-Hans.
-    expect(resolveLocaleFromTags(['fr', 'zh-CN', 'en'])).toBe('zh-Hans')
-    expect(resolveLocaleFromTags(['ko-KR', 'de', 'zh-TW'])).toBe('zh-Hant')
+    expect(resolveLocaleFromTags(['de', 'zh-CN', 'en'])).toBe('zh-Hans')
+    expect(resolveLocaleFromTags(['vi-VN', 'de', 'zh-TW'])).toBe('zh-Hant')
   })
 
   it('honors list order between two supported tags', () => {
@@ -67,7 +79,7 @@ describe('resolveLocaleFromTags', () => {
   })
 
   it('falls back to English when nothing matches', () => {
-    expect(resolveLocaleFromTags(['fr', 'ko', 'de-DE'])).toBe('en')
+    expect(resolveLocaleFromTags(['vi', 'de-DE'])).toBe('en')
     expect(resolveLocaleFromTags([])).toBe('en')
     expect(resolveLocaleFromTags([''])).toBe('en')
   })
@@ -77,11 +89,15 @@ describe('resolveLocale', () => {
   it('consults the host list for the system preference', () => {
     expect(resolveLocale('system', ['zh-TW'])).toBe('zh-Hant')
     expect(resolveLocale('system', ['ja-JP'])).toBe('ja')
+    expect(resolveLocale('system', ['ko-KR'])).toBe('ko')
+    expect(resolveLocale('system', ['fr-CA'])).toBe('fr')
   })
 
   it('returns an explicit preference verbatim, ignoring the host list', () => {
     expect(resolveLocale('en', ['zh-TW'])).toBe('en')
+    expect(resolveLocale('fr', ['en-US'])).toBe('fr')
     expect(resolveLocale('ja', ['en-US'])).toBe('ja')
+    expect(resolveLocale('ko', ['en-US'])).toBe('ko')
     expect(resolveLocale('zh-Hant', ['en-US'])).toBe('zh-Hant')
     expect(resolveLocale('zh-Hans', [])).toBe('zh-Hans')
   })
@@ -91,13 +107,16 @@ describe('guards and constants', () => {
   it('recognizes locales and preferences', () => {
     expect(isLocale('zh-Hans')).toBe(true)
     expect(isLocale('ja')).toBe(true)
+    expect(isLocale('ko')).toBe(true)
+    expect(isLocale('fr')).toBe(true)
     expect(isLocale('zh-CN')).toBe(false)
     expect(isLocale('system')).toBe(false)
     expect(isLocale(undefined)).toBe(false)
     expect(isLanguagePreference('system')).toBe(true)
     expect(isLanguagePreference('zh-Hant')).toBe(true)
     expect(isLanguagePreference('ja')).toBe(true)
-    expect(isLanguagePreference('fr')).toBe(false)
+    expect(isLanguagePreference('ko')).toBe(true)
+    expect(isLanguagePreference('fr')).toBe(true)
   })
 
   it('defaults to system with an English fallback', () => {
@@ -107,7 +126,9 @@ describe('guards and constants', () => {
 
   it('emits valid BCP-47 html lang values', () => {
     expect(htmlLang('en')).toBe('en')
+    expect(htmlLang('fr')).toBe('fr')
     expect(htmlLang('ja')).toBe('ja')
+    expect(htmlLang('ko')).toBe('ko')
     expect(htmlLang('zh-Hans')).toBe('zh-Hans')
     expect(htmlLang('zh-Hant')).toBe('zh-Hant')
   })

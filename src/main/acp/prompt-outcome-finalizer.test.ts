@@ -326,6 +326,21 @@ describe('AcpPromptOutcomeFinalizer', () => {
       providerError: true
     },
     {
+      name: 'Claude Code provider 4xx with an unknown error kind',
+      error: Object.assign(
+        new Error(
+          'Internal error: API Error: 400 Authentication Fails, Your api key: ****e52d is invalid'
+        ),
+        {
+          code: -32603,
+          data: { errorKind: 'unknown' },
+          name: 'RequestError'
+        }
+      ),
+      recoverable: undefined,
+      providerError: true
+    },
+    {
       name: 'ACP error',
       error: new Error('protocol failed'),
       recoverable: undefined,

@@ -4,9 +4,12 @@ import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated
 import {
   isWebRpcChannel,
   isWebRpcEventChannel,
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
   WEB_RPC_ALLOWED_CHANNELS,
+  WEB_RPC_CAPABILITY_UPDATE_CLI_V1,
   WEB_RPC_PROTOCOL_VERSION,
   WEB_RPC_UNAVAILABLE_CHANNELS,
+  webRpcBootstrapSchema,
   webRpcRequestSchema,
   webRpcResponseSchema
 } from './web-rpc-contract'
@@ -176,6 +179,23 @@ describe('Web RPC contract', () => {
         error: {
           code: 'invalid-command-arguments',
           message: 'Invalid project request.'
+        }
+      }).success
+    ).toBe(true)
+  })
+
+  it('accepts the versioned CLI update capability in bootstrap data', () => {
+    expect(
+      webRpcBootstrapSchema.safeParse({
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' },
+        rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        rpcCapabilities: [WEB_RPC_CAPABILITY_UPDATE_CLI_V1],
+        rpcChannels: [],
+        eventStream: {
+          protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+          streamId: 'stream-1',
+          latestSequence: 0
         }
       }).success
     ).toBe(true)

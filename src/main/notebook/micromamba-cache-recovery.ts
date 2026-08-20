@@ -1,10 +1,11 @@
-import { type Dirent, existsSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { type Dirent, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { WINDOWS_MAX_USABLE_PATH } from './micromamba-cache'
 import { micromambaDiagnosticText } from './provisioner-runtime'
 
 const COMPLETE_MARKER = join('info', 'repodata_record.json')
+const PACKAGE_INDEX = join('info', 'index.json')
 const CONDA_SUBDIR = /^(?:noarch|win-64|osx-(?:64|arm64)|linux-(?:64|aarch64|ppc64le|s390x))$/i
 const isPackageDistLeaf = (value: string): boolean =>
   /^[A-Za-z0-9_.+-]+-[A-Za-z0-9_.+!]+-[A-Za-z0-9_.+]+$/.test(value)
@@ -21,8 +22,19 @@ const directories = (path: string): Dirent[] => {
   return entries(path).filter((entry) => entry.isDirectory())
 }
 
+const hasJsonObject = (path: string): boolean => {
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+  } catch {
+    return false
+  }
+}
+
 const removeIfIncomplete = (dir: string): boolean => {
-  if (existsSync(join(dir, COMPLETE_MARKER))) return false
+  if (hasJsonObject(join(dir, COMPLETE_MARKER)) && hasJsonObject(join(dir, PACKAGE_INDEX))) {
+    return false
+  }
   rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   return true
 }

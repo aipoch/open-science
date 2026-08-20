@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,7 @@ import type { ValidateProviderResult } from '../../shared/settings'
 import type { ResolvedProvider } from './provider-env'
 import type { StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
+import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -134,6 +135,97 @@ describe('ProviderAccountsModule', () => {
     await module.deleteProvider(stored.id)
     expect((await repository.getSettings()).providers).toEqual([])
   })
+
+  it('rejects a stale update without recreating the deleted provider', async () => {
+    const draft = {
+      type: 'custom' as const,
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key',
+      apiEndpoints: ['openai' as const]
+    }
+    await module.upsertProvider(draft)
+    const providerId = (await repository.getSettings()).providers[0].id
+    await module.deleteProvider(providerId)
+
+    await expect(
+      module.upsertProvider({ ...draft, id: providerId, requireExisting: true })
+    ).rejects.toThrow('Provider no longer exists.')
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('serializes Codex edits with deletion so authentication is not restored after removal', async () => {
+    const userCodexDir = join(dir, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), JSON.stringify({ tokens: { access: 'user' } }))
+    await module.upsertProvider({ type: 'codex-isolated' })
+
+    const editCancellation = deferred<void>()
+    const deleteCancellation = deferred<void>()
+    vi.mocked(codexAuth.cancelLogin)
+      .mockImplementationOnce(() => editCancellation.promise)
+      .mockImplementationOnce(() => deleteCancellation.promise)
+    const edit = module
+      .upsertProvider({
+        id: 'builtin-codex-subscription',
+        type: 'codex-shared',
+        requireExisting: true
+      })
+      .then(
+        () => 'saved' as const,
+        () => 'rejected' as const
+      )
+    await vi.waitFor(() => expect(codexAuth.cancelLogin).toHaveBeenCalledOnce())
+
+    const deletion = module.deleteProvider('builtin-codex-subscription')
+    const deletionEnteredDuringEdit = vi.mocked(codexAuth.cancelLogin).mock.calls.length === 2
+    if (deletionEnteredDuringEdit) {
+      deleteCancellation.resolve()
+      await deletion
+      editCancellation.resolve()
+    } else {
+      editCancellation.resolve()
+      await expect(edit).resolves.toBe('saved')
+      await vi.waitFor(() => expect(codexAuth.cancelLogin).toHaveBeenCalledTimes(2))
+      deleteCancellation.resolve()
+    }
+    await Promise.allSettled([edit, deletion])
+
+    await expect(
+      readFile(join(codexSubscriptionStorageDir(dir), 'auth.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(deletionEnteredDuringEdit).toBe(false)
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it.each([
+    {
+      sourceType: 'claude-isolated',
+      sourceId: 'builtin-claude-isolated',
+      destinationType: 'claude-shared',
+      destinationId: 'builtin-claude-shared'
+    },
+    {
+      sourceType: 'claude-shared',
+      sourceId: 'builtin-claude-shared',
+      destinationType: 'claude-isolated',
+      destinationId: 'builtin-claude-isolated'
+    }
+  ] as const)(
+    'allows a require-existing edit from $sourceType to $destinationType',
+    async ({ sourceType, sourceId, destinationType, destinationId }) => {
+      await module.upsertProvider({ type: sourceType })
+
+      await expect(
+        module.upsertProvider({ id: sourceId, type: destinationType, requireExisting: true })
+      ).resolves.toBeUndefined()
+
+      expect((await repository.getSettings()).providers.map((provider) => provider.id)).toEqual(
+        expect.arrayContaining([sourceId, destinationId])
+      )
+    }
+  )
 
   it('projects an ephemeral runtime target without changing the stored provider selection', async () => {
     await module.upsertProvider({

@@ -46,6 +46,7 @@
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
+          "src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts",
           "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
           "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
@@ -421,6 +422,7 @@
         "src/main/settings/native-responses-compatibility.ts",
         "src/main/settings/anthropic-provider-bridge.ts",
         "src/main/settings/openai-provider-bridge.ts",
+        "src/main/settings/provider-error-replay.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
         "src/main/settings/responses-bridge.ts",
@@ -458,6 +460,7 @@
           "src/main/settings/native-responses-compatibility.test.ts",
           "src/main/settings/anthropic-provider-bridge.test.ts",
           "src/main/settings/openai-provider-bridge.test.ts",
+          "src/main/settings/provider-error-replay.test.ts",
           "src/main/settings/system-proxy.test.ts",
           "src/main/settings/network-proxy-runtime.test.ts",
           "src/main/settings/environment-check-proxy.test.ts"
@@ -686,6 +689,7 @@
         "src/main/session-persistence/legacy-upload.ts",
         "src/main/session-persistence/message-delivery-owner.ts",
         "src/main/session-persistence/reconciliation-owner.ts",
+        "src/main/session-persistence/relay-projection.ts",
         "src/main/session-persistence/side-chat-owner.ts",
         "src/main/session-persistence/state-owner.ts"
       ],
@@ -714,7 +718,9 @@
         "src/renderer/src/i18n/index.ts",
         "src/renderer/src/i18n/i18next.d.ts",
         "src/renderer/src/i18n/resources.ts",
+        "src/renderer/src/locales/fr.json",
         "src/renderer/src/locales/ja.json",
+        "src/renderer/src/locales/ko.json",
         "src/renderer/src/locales/zh-Hans.json",
         "src/renderer/src/locales/zh-Hant.json"
       ],

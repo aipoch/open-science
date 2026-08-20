@@ -37,7 +37,7 @@ const notificationAdapterBlock = compact(
   between(
     ipcSource,
     "declareElectronAdapter('task-notifications'",
-    '// One MCP client manager backs both dispatch'
+    'const connectorApplication = await modules.add('
   )
 )
 const dependencyBlock = compact(

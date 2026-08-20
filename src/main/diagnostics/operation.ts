@@ -4,6 +4,7 @@ import { diagnosticErrorFields, type Logger } from '../logger'
 
 export type DiagnosticValue = string | number | boolean | null | undefined
 export type DiagnosticFields = Record<string, DiagnosticValue>
+export type DiagnosticCpuUsage = Readonly<{ system: number; user: number }>
 
 export type DiagnosticOperation = {
   phase: (name: string, fields?: DiagnosticFields) => void
@@ -16,6 +17,7 @@ export type DiagnosticOperationInput = {
   operation: string
   fields?: DiagnosticFields
   now?: () => number
+  cpuUsage?: () => DiagnosticCpuUsage
   operationId?: string
 }
 
@@ -102,6 +104,22 @@ export const startDiagnosticOperation = (
     }
   }
   const startedAt = readNow()
+  const rawCpuUsage = inputValue(input, 'cpuUsage')
+  const readCpuUsage =
+    typeof rawCpuUsage === 'function'
+      ? (): DiagnosticCpuUsage | undefined => {
+          try {
+            const usage = (rawCpuUsage as () => DiagnosticCpuUsage)()
+            return Number.isFinite(usage?.user) && Number.isFinite(usage?.system)
+              ? usage
+              : undefined
+          } catch {
+            return undefined
+          }
+        }
+      : undefined
+  const startedCpuUsage = readCpuUsage?.()
+  let phaseCpuUsage = startedCpuUsage
   const baseFields = scalarFields(inputValue(input, 'fields') as DiagnosticFields | undefined)
   let latestPhase: string | undefined
   let phaseStartedAt = startedAt
@@ -113,6 +131,25 @@ export const startDiagnosticOperation = (
     operation,
     operationId
   })
+  const cpuFields = (cpuIntervalPhase: string): Record<string, unknown> => {
+    if (!startedCpuUsage || !phaseCpuUsage || !readCpuUsage) return {}
+    const current = readCpuUsage()
+    if (!current) return {}
+    const cpuUserMs = Math.max(0, current.user - startedCpuUsage.user) / 1_000
+    const cpuSystemMs = Math.max(0, current.system - startedCpuUsage.system) / 1_000
+    const phaseCpuUserMs = Math.max(0, current.user - phaseCpuUsage.user) / 1_000
+    const phaseCpuSystemMs = Math.max(0, current.system - phaseCpuUsage.system) / 1_000
+    phaseCpuUsage = current
+    return {
+      cpuIntervalPhase,
+      cpuUserMs,
+      cpuSystemMs,
+      cpuTotalMs: cpuUserMs + cpuSystemMs,
+      phaseCpuUserMs,
+      phaseCpuSystemMs,
+      phaseCpuTotalMs: phaseCpuUserMs + phaseCpuSystemMs
+    }
+  }
   const finish = (
     level: keyof Logger,
     message: string,
@@ -122,11 +159,17 @@ export const startDiagnosticOperation = (
   ): void => {
     if (terminal) return
     terminal = true
+    const finishedAt = readNow()
+    const terminalCpuFields = cpuFields(latestPhase ?? 'operation-start')
     emitSafely(logger, level, message, {
       ...eventFields(fields),
       ...(latestPhase === undefined ? {} : { phase: latestPhase }),
       outcome,
-      durationMs: Math.max(0, readNow() - startedAt),
+      durationMs: Math.max(0, finishedAt - startedAt),
+      ...(Object.keys(terminalCpuFields).length === 0
+        ? {}
+        : { phaseDurationMs: Math.max(0, finishedAt - phaseStartedAt) }),
+      ...terminalCpuFields,
       ...extraFields
     })
   }
@@ -142,12 +185,14 @@ export const startDiagnosticOperation = (
     phase: (name, fields) => {
       if (terminal) return
       const phaseAt = readNow()
+      const cpuIntervalPhase = latestPhase ?? 'operation-start'
       latestPhase = name
       emitSafely(logger, 'info', 'operation phase', {
         ...eventFields(fields),
         phase: name,
         elapsedMs: Math.max(0, phaseAt - startedAt),
-        phaseDurationMs: Math.max(0, phaseAt - phaseStartedAt)
+        phaseDurationMs: Math.max(0, phaseAt - phaseStartedAt),
+        ...cpuFields(cpuIntervalPhase)
       })
       phaseStartedAt = phaseAt
     },

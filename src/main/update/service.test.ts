@@ -208,6 +208,53 @@ describe('UpdateService.download', () => {
     expect(existsSync(target)).toBe(true)
   })
 
+  it('uses the deterministic download path without opening a save dialog when non-interactive', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-headless-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+    const promptSavePath = vi.fn().mockResolvedValue(join(dir, 'wrong-path.dmg'))
+    const defaultDownloadPath = vi.fn(() => target)
+    const removeFile = vi.fn((path: string) => rm(path, { force: true }))
+    const broadcast = vi.fn()
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast,
+      promptSavePath,
+      defaultDownloadPath,
+      removeFile
+    })
+
+    await service.check()
+    const status = await service.download({ nonInteractive: true })
+
+    expect(status).toMatchObject({ state: 'ready', localPath: target })
+    expect(defaultDownloadPath).toHaveBeenCalledWith('installer.dmg')
+    expect(promptSavePath).not.toHaveBeenCalled()
+    expect(removeFile).toHaveBeenNthCalledWith(1, target)
+    expect(removeFile).toHaveBeenNthCalledWith(2, `${target}.part`)
+    expect(broadcast).toHaveBeenCalledWith(
+      'update:status',
+      expect.objectContaining({
+        state: 'downloading',
+        progress: 100,
+        downloadedBytes: body.byteLength,
+        totalBytes: body.byteLength
+      })
+    )
+  })
+
   it('preserves a completed download when a check is requested during the transfer', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
     const target = join(dir, 'installer.dmg')

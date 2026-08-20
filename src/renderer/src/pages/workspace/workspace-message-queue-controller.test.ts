@@ -17,6 +17,10 @@ import {
   isWorkspaceSpecialistBarrierInFlight,
   setWorkspaceSpecialistBarrier
 } from './workspace-specialist-barrier'
+import {
+  isWorkspacePresentationRevealing,
+  setWorkspacePresentationRevealing
+} from './workspace-presentation-revealing'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -90,6 +94,7 @@ const options = (
     cancelRun: vi.fn(async () => undefined)
   },
   isBarrierInFlight: vi.fn(() => false),
+  isPresentationRevealing: vi.fn(() => false),
   isSpecialistReady: vi.fn(() => true),
   hasPendingPermissionRequest: vi.fn(() => false),
   abortFixLoop: vi.fn(async () => undefined),
@@ -149,6 +154,7 @@ const mounted: Hook[] = []
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
   setWorkspaceSpecialistBarrier('session-a', false)
+  setWorkspacePresentationRevealing('session-a', false)
   vi.restoreAllMocks()
 })
 
@@ -221,6 +227,59 @@ describe('workspace message queue controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
 
     act(() => setWorkspaceSpecialistBarrier(currentSession.id, false))
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+  })
+
+  it('holds queued messages until the transcript presentation settles', async () => {
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    setWorkspacePresentationRevealing(currentSession.id, true)
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      isPresentationRevealing: isWorkspacePresentationRevealing,
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      }
+    })
+    const workspace = renderController(input)
+    mounted.push(workspace)
+
+    act(() => workspace.result.current.lifecycle.enqueue(admission('send after reveal')))
+    currentSession = session('idle')
+    act(() => notifySessionChanged?.())
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+
+    act(() => setWorkspacePresentationRevealing(currentSession.id, false))
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+  })
+
+  it('dispatches queued messages immediately when the session errored mid-reveal', async () => {
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    setWorkspacePresentationRevealing(currentSession.id, true)
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      isPresentationRevealing: isWorkspacePresentationRevealing,
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      }
+    })
+    const workspace = renderController(input)
+    mounted.push(workspace)
+
+    act(() => workspace.result.current.lifecycle.enqueue(admission('send despite error')))
+    currentSession = session('error')
+    act(() => notifySessionChanged?.())
 
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
   })

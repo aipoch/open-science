@@ -86,6 +86,7 @@ import { useNotebookRunsById } from './use-notebook-runs-by-id'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
+import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -99,6 +100,9 @@ type WorkspaceMessageScrollerProps = {
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
+  // Opt-in (main panel only): report smooth-streaming reveal activity so the workspace
+  // message queue can hold queued sends until the transcript finishes presenting.
+  reportPresentationRevealing?: boolean
 }
 
 type TerminalAnnouncement = {
@@ -122,6 +126,10 @@ type SessionScopedActivityExpansionState = {
 }
 
 const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
+
+// Extra hold after the paced reveal drains, so a queued message dispatches into a settled
+// transcript instead of the same moment as the final reveal frame.
+const PRESENTATION_SETTLE_MS = 500
 
 type SessionScopedMessagePresentationState = {
   scopeId: string | undefined
@@ -344,7 +352,8 @@ const WorkspaceMessageScrollerImpl = ({
   trailingContent,
   pendingElicitations = [],
   handoffLifecycleSource,
-  onRetryHandoff
+  onRetryHandoff,
+  reportPresentationRevealing = false
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const { t } = useTranslation()
   const currentSessionId = activeSession?.id
@@ -506,6 +515,26 @@ const WorkspaceMessageScrollerImpl = ({
     messagePresentationState.scopeId === currentPresentationScopeId
       ? messagePresentationState.messageIds
       : new Set<string>()
+  const presentationRevealing = presentingMessageIds.size > 0
+  // Let the workspace message queue hold queued sends until this transcript's reveal finishes,
+  // plus a short settle delay so the dispatched message's scroll anchor lands after the final
+  // frame. Session switch/unmount clears immediately so a stale flag can't deadlock a queue.
+  useEffect(() => {
+    if (!reportPresentationRevealing || !currentSessionId) return
+    if (presentationRevealing) {
+      setWorkspacePresentationRevealing(currentSessionId, true)
+      return
+    }
+    const settleTimer = setTimeout(
+      () => setWorkspacePresentationRevealing(currentSessionId, false),
+      PRESENTATION_SETTLE_MS
+    )
+    return () => clearTimeout(settleTimer)
+  }, [reportPresentationRevealing, currentSessionId, presentationRevealing])
+  useEffect(() => {
+    if (!reportPresentationRevealing || !currentSessionId) return
+    return () => setWorkspacePresentationRevealing(currentSessionId, false)
+  }, [reportPresentationRevealing, currentSessionId])
   const presentationBarrierIndex = conversationItems.findIndex(
     (item) => item.type === 'message' && presentingMessageIds.has(item.message.id)
   )
@@ -1438,6 +1467,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
+  (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&

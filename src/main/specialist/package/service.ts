@@ -45,6 +45,12 @@ import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from 
 const CANDIDATE_TTL_MS = 10 * 60 * 1000
 const log = createLogger('specialist.package.service')
 
+class SpecialistDeleteSelectionError extends Error {
+  constructor(readonly code: 'protected-skill' | 'stale-preview') {
+    super(`Specialist Skill deletion selection is ${code}.`)
+  }
+}
+
 const fallbackSkillDisplayName = (id: string): string =>
   id.replace(/^(?:personal|imported)-/, '') || id
 
@@ -65,6 +71,7 @@ type SpecialistPackageServiceOptions = {
   token?: () => string
   now?: () => Date
   onCommitted?: () => void
+  onSkillsDeleted?: (skillIds: readonly string[]) => Promise<void>
   onResourcesDeleted?: (specialistId: string, skillIds: readonly string[]) => Promise<void>
   skillPort?: SpecialistPackageSkillPort
 }
@@ -261,19 +268,19 @@ export class SpecialistPackageService {
           .map((candidate) => candidate.id)
           .sort()
         const reasons: Array<SpecialistDeletePreview['skills'][number]['reasons'][number]> = []
-        if (skill.standalone) reasons.push({ code: 'standalone', specialistIds: [] })
+        if (skill.mainEnabled) reasons.push({ code: 'main-enabled', specialistIds: [] })
         if (otherOwners.length > 0) {
           reasons.push({ code: 'shared-owner', specialistIds: otherOwners })
         }
         if (otherReferences.length > 0) {
           reasons.push({ code: 'referenced', specialistIds: otherReferences })
         }
-        const deletable = specialist.ownedSkillIds.includes(skill.id) && reasons.length === 0
+        const deletable = reasons.length === 0
         return {
           id: skill.id,
           displayName: skill.displayName?.trim() || fallbackSkillDisplayName(skill.id),
           source: skill.source ?? 'personal',
-          kind: deletable ? ('owned-exclusive' as const) : (reasons[0]?.code ?? 'referenced'),
+          kind: deletable ? ('exclusive' as const) : (reasons[0]?.code ?? 'referenced'),
           deletable,
           reasons
         }
@@ -353,9 +360,27 @@ export class SpecialistPackageService {
         code: previewedDeletable.has(protectedSelection) ? 'stale-preview' : 'protected-skill'
       }
     }
-    this.deletePreviews.delete(request.id)
     try {
-      await this.transaction.deleteSpecialist(request.id, request.expectedRevision, selected)
+      await this.transaction.deleteSpecialist(
+        request.id,
+        request.expectedRevision,
+        selected,
+        async () => {
+          const locked = await this.previewSpecialistDelete({ id: request.id })
+          if (locked.expectedRevision !== request.expectedRevision) {
+            throw new SpecialistPackageRevisionConflictError()
+          }
+          const lockedDeletable = new Set(
+            locked.skills.filter((skill) => skill.deletable).map((skill) => skill.id)
+          )
+          const lockedProtectedSelection = selected.find((id) => !lockedDeletable.has(id))
+          if (lockedProtectedSelection) {
+            throw new SpecialistDeleteSelectionError(
+              previewedDeletable.has(lockedProtectedSelection) ? 'stale-preview' : 'protected-skill'
+            )
+          }
+        }
+      )
     } catch (error) {
       return {
         status: 'failed',
@@ -366,8 +391,21 @@ export class SpecialistPackageService {
               ? 'revision-conflict'
               : error instanceof SpecialistPackageRollbackError
                 ? 'rollback-failed'
-                : 'commit-failed'
+                : error instanceof SpecialistDeleteSelectionError
+                  ? error.code
+                  : 'commit-failed'
       }
+    } finally {
+      this.deletePreviews.delete(request.id)
+    }
+    try {
+      await this.options.onSkillsDeleted?.(selected)
+    } catch (error) {
+      log.warn('post-delete Skill settings cleanup failed', {
+        code: 'package-delete-skill-settings-cleanup-failed',
+        specialistId: request.id,
+        error
+      })
     }
     try {
       await this.options.onResourcesDeleted?.(request.id, selected)

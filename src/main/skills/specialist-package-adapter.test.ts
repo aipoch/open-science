@@ -39,6 +39,35 @@ const plan = (id = 'analysis-tools'): SpecialistPackageSkillPlan => ({
 })
 
 describe('UserSkillSpecialistPackageAdapter', () => {
+  it('only exposes reentrant mutation context to the transaction holding the lock', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
+    roots.push(root)
+    const adapter = new UserSkillSpecialistPackageAdapter(root)
+    let operationCount = 0
+    const operation = async (): Promise<string> => {
+      operationCount += 1
+      return 'entered'
+    }
+
+    expect(() => adapter.runInMutationContext('missing-lock', operation)).toThrow(
+      /mutation lock is not held/i
+    )
+
+    await adapter.beginMutation('held-lock', 'research-synth', [])
+    expect(() => adapter.runInMutationContext('different-lock', operation)).toThrow(
+      /mutation lock is not held/i
+    )
+    await expect(
+      adapter.runInMutationContext('held-lock', () => adapter.runMutationExclusive(operation))
+    ).resolves.toBe('entered')
+    await adapter.endMutation('held-lock')
+
+    expect(() => adapter.runInMutationContext('held-lock', operation)).toThrow(
+      /mutation lock is not held/i
+    )
+    expect(operationCount).toBe(1)
+  })
+
   it('rejects reuse-owned when live ownership metadata becomes inconsistent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
     roots.push(root)
@@ -324,6 +353,11 @@ describe('UserSkillSpecialistPackageAdapter', () => {
     const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
     roots.push(root)
     const adapter = new UserSkillSpecialistPackageAdapter(root)
+    const standaloneId = await new UserSkillRepository(root).createPersonal({
+      name: 'standalone-delete-me',
+      description: 'Standalone Skill',
+      body: 'Standalone instructions.'
+    })
 
     await adapter.prepare('seed-recovery', 'research-synth', [plan('delete-me'), plan('retain-me')])
     await adapter.commit('seed-recovery')
@@ -332,7 +366,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
       'interrupted-delete',
       'research-synth',
       ['delete-me', 'retain-me'],
-      ['delete-me']
+      ['delete-me', standaloneId]
     )
     await adapter.commit('interrupted-delete')
     await expect(adapter.snapshot()).resolves.toEqual([
@@ -344,6 +378,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
 
     await expect(restarted.snapshot()).resolves.toEqual([
       expect.objectContaining({ id: 'delete-me', standalone: false, ownerIds: ['research-synth'] }),
+      expect.objectContaining({ id: standaloneId, standalone: true, ownerIds: [] }),
       expect.objectContaining({ id: 'retain-me', standalone: false, ownerIds: ['research-synth'] })
     ])
   })

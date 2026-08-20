@@ -21,6 +21,21 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home', getAppPath: () => '/no-such-app-root', isPackaged: false }
 }))
 
+vi.mock('./environment-check', () => ({
+  runEnvironmentCheck: vi.fn(async ({ agentFrameworkId, frameworks }) => ({
+    checkedAt: 1,
+    platform: 'linux',
+    architecture: 'arm64',
+    checks: [],
+    ready: true,
+    canAutoInstall: true,
+    agentFrameworkId,
+    runtime: frameworks.find((framework) => framework.id === agentFrameworkId)?.runtime ?? {
+      found: false
+    }
+  }))
+}))
+
 const { AgentRuntimeManager } = await import('./agent-runtime-manager')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
@@ -248,6 +263,155 @@ describe('AgentRuntimeManager', () => {
     })
     expect(providers.resolveProviderApiEndpoints).toHaveBeenCalledWith(storedProvider, 'model-a')
     expect(providers.isProviderKeyUsable).toHaveBeenCalledWith(storedProvider)
+  })
+
+  it('reuses one configured-runtime probe pass across the startup inspection chain', async () => {
+    const claudePath = join(storageRoot, 'bin', 'claude')
+    const opencodePath = join(storageRoot, 'bin', 'opencode')
+    inventory.claude.set(claudePath, '2.1.0')
+    inventory.opencode.set(opencodePath, '1.19.0')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
+    await repository.setClaudeInfo({ resolvedPath: claudePath, version: '2.1.0' })
+    await repository.setOpencodeInfo(opencodePath, '1.19.0')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.144.6'
+    })
+
+    const claudeDeps = createClaudeDeps(inventory)
+    const opencodeDeps = createOpencodeDeps(inventory)
+    const codexDeps = createCodexDeps(inventory, managedAdapterPath, managedCodexPath)
+    const getClaudeVersion = vi.fn(claudeDeps.getVersion)
+    const getOpencodeVersion = vi.fn(opencodeDeps.getVersion)
+    const getAdapterVersion = vi.fn(codexDeps.getAdapterVersion)
+    const getCodexVersion = vi.fn(codexDeps.getCodexVersion)
+    manager = createManager({
+      detectDeps: { ...claudeDeps, getVersion: getClaudeVersion },
+      opencodeDetectDeps: { ...opencodeDeps, getVersion: getOpencodeVersion },
+      codexDetectDeps: { ...codexDeps, getAdapterVersion, getCodexVersion }
+    })
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(undefined),
+      resolveActiveModel: vi.fn().mockReturnValue(undefined),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    await manager.getPreflight(providers)
+    await manager.checkEnvironment()
+    const refreshed = await manager.getPreflight(providers)
+
+    expect(refreshed).toMatchObject({
+      claudeReady: true,
+      opencodeReady: true,
+      codexReady: true
+    })
+    expect(getClaudeVersion).toHaveBeenCalledTimes(1)
+    expect(getOpencodeVersion).toHaveBeenCalledTimes(1)
+    expect(getAdapterVersion).toHaveBeenCalledTimes(1)
+    expect(getCodexVersion).toHaveBeenCalledTimes(1)
+  })
+
+  it('probes again for an independent Preflight call after an external runtime change', async () => {
+    const claudePath = join(storageRoot, 'bin', 'claude')
+    inventory.claude.set(claudePath, '2.1.0')
+    await repository.setClaudeInfo({ resolvedPath: claudePath, version: '2.1.0' })
+    const claudeDeps = createClaudeDeps(inventory)
+    const getVersion = vi.fn(claudeDeps.getVersion)
+    manager = createManager({ detectDeps: { ...claudeDeps, getVersion } })
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(undefined),
+      resolveActiveModel: vi.fn().mockReturnValue(undefined),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    await manager.getPreflight(providers)
+    inventory.claude.set(claudePath, undefined)
+    const refreshed = await manager.getPreflight(providers)
+
+    expect(refreshed.claudeReady).toBe(false)
+    expect(getVersion).toHaveBeenCalledTimes(2)
+  })
+
+  it('projects a newly detected runtime without a third version subprocess', async () => {
+    const claudePath = posix.join('/detected', 'claude')
+    inventory.claude.set(claudePath, '2.1.0')
+    const claudeDeps = createClaudeDeps(inventory)
+    const getVersion = vi.fn(claudeDeps.getVersion)
+    manager = createManager({
+      detectDeps: {
+        ...claudeDeps,
+        env: { PATH: posix.dirname(claudePath) },
+        getVersion
+      }
+    })
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(undefined),
+      resolveActiveModel: vi.fn().mockReturnValue(undefined),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    expect((await manager.getPreflight(providers)).claudeReady).toBe(false)
+    await manager.checkEnvironment()
+    const refreshed = await manager.getPreflight(providers)
+
+    expect(refreshed.claudeReady).toBe(true)
+    expect(getVersion).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses a failed configured-runtime probe across the startup chain', async () => {
+    const claudePath = join(storageRoot, 'broken', 'claude')
+    await mkdir(dirname(claudePath), { recursive: true })
+    await writeFile(claudePath, '#!/bin/sh\n')
+    await repository.setClaudeInfo({ resolvedPath: claudePath, version: 'stale' })
+    const claudeDeps = createClaudeDeps(inventory)
+    const getVersion = vi.fn(claudeDeps.getVersion)
+    manager = createManager({ detectDeps: { ...claudeDeps, getVersion } })
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(undefined),
+      resolveActiveModel: vi.fn().mockReturnValue(undefined),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    expect((await manager.getPreflight(providers)).claudeReady).toBe(false)
+    await manager.checkEnvironment()
+    expect((await manager.getPreflight(providers)).claudeReady).toBe(false)
+
+    expect(getVersion).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses partial Codex probes through fallback detection and component diagnostics', async () => {
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: 'stale-adapter',
+      nativePath: managedCodexPath,
+      nativeVersion: 'stale-native'
+    })
+    const codexDeps = createCodexDeps(inventory, managedAdapterPath, managedCodexPath)
+    const getAdapterVersion = vi.fn(codexDeps.getAdapterVersion)
+    const getCodexVersion = vi.fn(codexDeps.getCodexVersion)
+    const smokeInitialize = vi.fn(codexDeps.smokeInitialize)
+    manager = createManager({
+      codexDetectDeps: { ...codexDeps, getAdapterVersion, getCodexVersion, smokeInitialize }
+    })
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(undefined),
+      resolveActiveModel: vi.fn().mockReturnValue(undefined),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    expect((await manager.getPreflight(providers)).codexReady).toBe(false)
+    await manager.checkEnvironment()
+    expect((await manager.getPreflight(providers)).codexReady).toBe(false)
+
+    expect(
+      getAdapterVersion.mock.calls.filter(([path]) => path === managedAdapterPath)
+    ).toHaveLength(1)
+    expect(getCodexVersion.mock.calls.filter(([path]) => path === managedCodexPath)).toHaveLength(1)
+    expect(smokeInitialize).toHaveBeenCalledTimes(1)
   })
 
   it('uses the shared allocator and forwards the same event sink through managed installs', async () => {

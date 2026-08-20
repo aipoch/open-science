@@ -110,20 +110,25 @@ describe('module impact shadow', () => {
     expect(report.comparison.coverage).toBe(authoritativeMode === 'full' ? 'covered' : 'gap')
   })
 
-  it('owns locale catalog edits as a selective i18n module instead of an unknown full plan', () => {
-    const report = reportFor([{ path: 'src/renderer/src/locales/ja.json', status: 'modified' }])
+  it.each(['fr.json', 'ja.json', 'ko.json', 'zh-Hans.json', 'zh-Hant.json'])(
+    'owns %s catalog edits as a selective i18n module instead of an unknown full plan',
+    (catalog) => {
+      const report = reportFor([
+        { path: `src/renderer/src/locales/${catalog}`, status: 'modified' }
+      ])
 
-    expect(report.authoritative.mode).toBe('selective')
-    expect(report.shadow).toMatchObject({
-      mode: 'selective',
-      modules: ['i18n_catalog']
-    })
-    expect(report.shadow.testFiles).toEqual(['src/renderer/src/i18n/resources.test.ts'])
-    expect(report.comparison.requiredLanes).toContain('i18n')
-    expect(report.comparison.selectedLanes).toContain('i18n')
-    expect(report.comparison.missingLanes).toEqual([])
-    expect(report.comparison.coverage).toBe('covered')
-  })
+      expect(report.authoritative.mode).toBe('selective')
+      expect(report.shadow).toMatchObject({
+        mode: 'selective',
+        modules: ['i18n_catalog']
+      })
+      expect(report.shadow.testFiles).toEqual(['src/renderer/src/i18n/resources.test.ts'])
+      expect(report.comparison.requiredLanes).toContain('i18n')
+      expect(report.comparison.selectedLanes).toContain('i18n')
+      expect(report.comparison.missingLanes).toEqual([])
+      expect(report.comparison.coverage).toBe('covered')
+    }
+  )
 
   it('keeps slash-based macOS and Linux fixtures portable and handles no diff', () => {
     for (const path of [

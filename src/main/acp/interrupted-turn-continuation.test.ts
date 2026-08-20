@@ -365,6 +365,8 @@ describe('continueInterruptedTurn', () => {
       startedAt: 2
     })
     const startContinuation = vi.fn()
+    const trackPrompt = vi.fn(() => ({ token: 11 }))
+    const untrackPrompt = vi.fn()
 
     await expect(
       continueInterruptedTurn(
@@ -374,7 +376,8 @@ describe('continueInterruptedTurn', () => {
             getLatestUserPrompt: () => undefined,
             startContinuation
           },
-          loadSession: vi.fn(async () => durable)
+          loadSession: vi.fn(async () => durable),
+          notifications: { trackPrompt, untrackPrompt }
         },
         {
           sessionId: 'session-1',
@@ -390,6 +393,7 @@ describe('continueInterruptedTurn', () => {
       )
     ).rejects.toThrow('history could not be replayed after context reset')
     expect(startContinuation).not.toHaveBeenCalled()
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 11 })
   })
 
   it('does not dispatch a second continuation while the recovered prompt is already running', async () => {
@@ -414,6 +418,39 @@ describe('continueInterruptedTurn', () => {
         { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
       )
     ).resolves.toBe(current)
+    expect(startContinuation).not.toHaveBeenCalled()
+  })
+
+  it('revalidates the durable turn inside dispatch-admitted root admission', async () => {
+    const durable = session([message('prompt-1', 'user', 'Keep going')])
+    const startContinuation = vi.fn()
+    const startDispatchAdmittedContinuation = vi.fn(
+      async (_request: AcpPromptRequest, validate: () => Promise<void>) => {
+        durable.resumeRecovery = {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'newer-prompt'
+        }
+        await validate()
+      }
+    )
+
+    await expect(
+      continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable),
+          startDispatchAdmittedContinuation
+        },
+        { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+      )
+    ).rejects.toThrow(/no longer matches the interrupted turn/i)
+
+    expect(startDispatchAdmittedContinuation).toHaveBeenCalledOnce()
     expect(startContinuation).not.toHaveBeenCalled()
   })
 

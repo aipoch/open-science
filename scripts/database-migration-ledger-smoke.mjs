@@ -38,10 +38,6 @@ const EXPECTED_MIGRATION_LEDGER = [
     checksum: 'c4e978ff2a0176b61cf9d07f80a521c5444ec716d11804c6d26b9d8757766423'
   },
   {
-    id: '0009_managed_file_version_foundation',
-    checksum: '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
-  },
-  {
     id: '0009_vision_evidence',
     checksum: 'ac24cc106a57fbd5560231b14a292274ebc586344ceb363c2953f4ebb6d01d19'
   },
@@ -52,6 +48,14 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0011_cross_resource_tags',
     checksum: 'fd269c67c41caf4b0863d04564165a0373737817c5ec742a3160739324e1d3c1'
+  },
+  {
+    id: '0012_tag_ordering',
+    checksum: '2cbc89454c8642d65806366add598ef4547fb7f513e04c267d1ad0274a472e2f'
+  },
+  {
+    id: '0013_managed_file_version_foundation',
+    checksum: 'ed8b5f4ad1a326a98f844193ec182396cc486d86c90969b19996e9a485aaf6c7'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

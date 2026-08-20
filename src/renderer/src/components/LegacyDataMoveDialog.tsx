@@ -1,6 +1,6 @@
 import { AlertDialog } from 'radix-ui'
-import { FolderInput, FolderOpen } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { FolderInput, FolderOpen, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -56,32 +56,54 @@ const LegacyDataMoveDialog = ({
   >(undefined)
   const defaultInspection =
     defaultInspectionState?.parent === defaultParent ? defaultInspectionState.result : undefined
-  const [pickError, setPickError] = useState<string | undefined>(undefined)
+  const defaultInspectionRequestId = useRef(0)
+  const [defaultInspectionError, setDefaultInspectionError] = useState<string | undefined>(
+    undefined
+  )
+  const defaultInspectionFailed = defaultInspectionError !== undefined
+  const [operationError, setOperationError] = useState<string | undefined>(undefined)
   const [isPicking, setIsPicking] = useState(false)
+  const [isDismissing, setIsDismissing] = useState(false)
+
+  const requestDefaultInspection = useCallback((): void => {
+    const requestId = ++defaultInspectionRequestId.current
+    void window.api.storage.inspectDataRoot(defaultParent).then(
+      (result) => {
+        if (defaultInspectionRequestId.current !== requestId) return
+        setDefaultInspectionState({ parent: defaultParent, result })
+        setDefaultInspectionError(undefined)
+      },
+      () => {
+        if (defaultInspectionRequestId.current !== requestId) return
+        setDefaultInspectionError(t('Could not check the data folder. Try again.'))
+      }
+    )
+  }, [defaultParent, t])
 
   useEffect(() => {
-    void window.api.storage.inspectDataRoot(defaultParent).then((result) => {
-      setDefaultInspectionState({ parent: defaultParent, result })
-    })
-  }, [defaultParent])
+    requestDefaultInspection()
+    return () => {
+      defaultInspectionRequestId.current += 1
+    }
+  }, [requestDefaultInspection])
 
-  const refreshDefaultDestination = (): void => {
+  const refreshDefaultInspection = (): void => {
     setDefaultInspectionState(undefined)
-    void window.api.storage.inspectDataRoot(defaultParent).then((result) => {
-      setDefaultInspectionState({ parent: defaultParent, result })
-    })
+    setDefaultInspectionError(undefined)
+    setOperationError(undefined)
+    requestDefaultInspection()
   }
 
   const handleMigrationClose = (): void => {
     const resolvedTarget = migrationTarget
     setMigrationTarget(null)
     if (resolvedTarget?.path === defaultParent) {
-      refreshDefaultDestination()
+      refreshDefaultInspection()
     }
   }
 
   const handleMoveToDefault = (): void => {
-    setPickError(undefined)
+    setOperationError(undefined)
     if (!defaultInspection) return
     if (defaultInspection.kind === 'move' || defaultInspection.kind === 'recover') {
       setMigrationTarget({
@@ -91,7 +113,7 @@ const LegacyDataMoveDialog = ({
       })
       return
     }
-    setPickError(
+    setOperationError(
       defaultInspection.kind === 'adopt'
         ? t(
             'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
@@ -101,12 +123,12 @@ const LegacyDataMoveDialog = ({
   }
 
   const handleChooseFolder = async (): Promise<void> => {
-    setPickError(undefined)
-    const picked = await window.api.storage.pickDirectory()
-    if (!picked) return
-
+    setOperationError(undefined)
     setIsPicking(true)
     try {
+      const picked = await window.api.storage.pickDirectory()
+      if (!picked) return
+
       const inspection = await window.api.storage.inspectDataRoot(picked)
       if (inspection.kind === 'move' || inspection.kind === 'recover') {
         setMigrationTarget({
@@ -118,20 +140,32 @@ const LegacyDataMoveDialog = ({
       // This prompt moves data into a fresh location or resumes the same interrupted move. An
       // 'adopt' target (already holds unrelated data) would mean abandoning the legacy data, which
       // isn't what "move it out" should do here.
-      setPickError(
+      setOperationError(
         inspection.kind === 'adopt'
           ? t(
               'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
             )
           : (inspection.error ?? t('That folder can’t be used. Pick another one.'))
       )
+    } catch {
+      setOperationError(t('Could not check the data folder. Try again.'))
     } finally {
       setIsPicking(false)
     }
   }
 
-  const handleKeepHere = (): void => {
-    void window.api.storage.dismissLegacyMovePrompt().finally(() => onDismiss())
+  const handleKeepHere = async (): Promise<void> => {
+    setOperationError(undefined)
+    setIsDismissing(true)
+    try {
+      await window.api.storage.dismissLegacyMovePrompt()
+    } catch {
+      setOperationError(t('Could not save changes.'))
+      setIsDismissing(false)
+      return
+    }
+    setIsDismissing(false)
+    onDismiss()
   }
 
   // Accepted a move: the shared modal drives detect → copy → Restart/Keep. Cancelling it returns here.
@@ -180,13 +214,14 @@ const LegacyDataMoveDialog = ({
                 className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border-200 bg-bg-10 px-2.5 py-1.5 font-mono text-xs text-text-000"
                 aria-label={t('New data location')}
               >
-                {defaultInspection?.dataRoot ?? t('Resolving…')}
+                {defaultInspection?.dataRoot ??
+                  (defaultInspectionFailed ? t('Unavailable') : t('Resolving…'))}
               </pre>
             </div>
 
-            {pickError ? (
+            {(operationError ?? defaultInspectionError) ? (
               <p className="text-xs text-destructive" role="alert">
-                {pickError}
+                {operationError ?? defaultInspectionError}
               </p>
             ) : null}
           </div>
@@ -194,26 +229,37 @@ const LegacyDataMoveDialog = ({
           <div className={cn(dialogFooterClassName, 'flex-col items-stretch')}>
             <Button
               type="button"
-              disabled={isPicking || defaultInspection === undefined}
-              onClick={handleMoveToDefault}
+              disabled={
+                isPicking ||
+                isDismissing ||
+                (!defaultInspectionFailed && defaultInspection === undefined)
+              }
+              onClick={defaultInspectionFailed ? refreshDefaultInspection : handleMoveToDefault}
             >
-              <FolderInput aria-hidden="true" />
-              {t('Move to OpenScience')}
+              {defaultInspectionFailed ? (
+                <RefreshCw aria-hidden="true" />
+              ) : (
+                <FolderInput aria-hidden="true" />
+              )}
+              {defaultInspectionFailed ? t('Try again') : t('Move to OpenScience')}
             </Button>
             <Button
               type="button"
               variant="outline"
-              disabled={isPicking}
+              disabled={isPicking || isDismissing}
               onClick={() => void handleChooseFolder()}
             >
               <FolderOpen aria-hidden="true" />
               {isPicking ? t('Checking…') : t('Choose another folder…')}
             </Button>
-            <AlertDialog.Cancel asChild>
-              <Button type="button" variant="ghost" disabled={isPicking} onClick={handleKeepHere}>
-                {t('Keep it in the current folder')}
-              </Button>
-            </AlertDialog.Cancel>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={isPicking || isDismissing}
+              onClick={() => void handleKeepHere()}
+            >
+              {isDismissing ? t('Saving…') : t('Keep it in the current folder')}
+            </Button>
             <p className="text-xs text-muted-foreground">
               {t(
                 "You can always change this later in Settings → Data location. We won't ask again."

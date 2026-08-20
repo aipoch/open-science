@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
-import type { StoredProvider } from './types'
+import type { StoredCustomMcpServer, StoredProvider } from './types'
 import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
@@ -487,11 +487,12 @@ describe('settings repository', () => {
     const repository = new SettingsRepository(root)
 
     expect(sanitizeSettings({}).localePreference).toBeUndefined()
-    expect(sanitizeSettings({ localePreference: 'fr' }).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'de' }).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'ko' }).localePreference).toBe('ko')
     expect(sanitizeSettings({ localePreference: 'system' }).localePreference).toBe('system')
 
-    await repository.setLocalePreference('ja')
-    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('ja')
+    await repository.setLocalePreference('fr')
+    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('fr')
   })
 
   it('serializes startup locale and runtime settings writes through one document store', async () => {
@@ -616,6 +617,48 @@ describe('settings repository', () => {
     const settings = await repository.getSettings()
     expect(settings.providers).toHaveLength(1)
     expect(settings.providers[0].name).toBe('Renamed')
+  })
+
+  it('rejects a conditional provider upsert queued after deletion', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertProvider(provider({ name: 'Original' }))
+    const staleProvider = (await repository.getSettings()).providers[0]
+
+    const deleting = repository.deleteProvider(staleProvider.id)
+    const updating = repository.upsertProvider(
+      provider({ id: 'destination', name: 'Stale edit' }),
+      staleProvider.id
+    )
+
+    await expect(deleting).resolves.toMatchObject({ providers: [] })
+    await expect(updating).rejects.toThrow('Provider no longer exists.')
+    await expect(repository.getSettings()).resolves.toMatchObject({ providers: [] })
+  })
+
+  it('rejects a custom server update queued after deletion', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const server: StoredCustomMcpServer = {
+      id: 'custom-server',
+      name: 'custom-server',
+      displayName: 'Custom server',
+      transport: 'stdio',
+      command: 'npx',
+      enabled: true,
+      trustedAt: 1
+    }
+    await repository.addCustomServer(server)
+    const staleServer = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    if (!staleServer) throw new Error('Expected custom server fixture')
+
+    const deleting = repository.removeCustomServer(server.id)
+    const updating = repository.updateCustomServer(server.id, {
+      ...staleServer,
+      displayName: 'Stale edit'
+    })
+
+    await expect(deleting).resolves.toMatchObject({ connectors: { customMcpServers: [] } })
+    await expect(updating).rejects.toThrow(`Unknown custom connector: ${server.id}`)
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
   it('keeps provider order stable when an existing provider is updated in place', async () => {
@@ -903,16 +946,24 @@ describe('settings repository', () => {
     expect(reloaded.pathsNormalizedAt).toBe(1000)
   })
 
-  it('sets dataRoot, overwrites on a later call, and survives a reload', async () => {
+  it('sets dataRoot with an idempotent onboarding marker and survives a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
 
-    const first = await repository.setDataRoot('/mnt/data-a')
+    const first = await repository.setDataRoot({
+      dataRoot: '/mnt/data-a',
+      onboardingCompletedAt: 1000
+    })
     expect(first.dataRoot).toBe('/mnt/data-a')
+    expect(first.onboardingCompletedAt).toBe(1000)
 
-    // Unlike the marker fields above, dataRoot is not idempotent-once: a later call must move it.
-    const second = await repository.setDataRoot('/mnt/data-b')
+    // dataRoot moves, but the one-time onboarding marker keeps its original timestamp.
+    const second = await repository.setDataRoot({
+      dataRoot: '/mnt/data-b',
+      onboardingCompletedAt: 2000
+    })
     expect(second.dataRoot).toBe('/mnt/data-b')
+    expect(second.onboardingCompletedAt).toBe(1000)
 
     // getSettings reads through sanitizeSettings, which normalizes the stored path (backslashes on
     // Windows), so compare against the platform-normalized form rather than the literal.

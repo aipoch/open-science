@@ -221,18 +221,21 @@ export class SpecialistPackageTransaction {
         await this.writeJournal(journal)
         await this.skillPort.beginMutation?.(transactionId, plan.specialistId, plan.skills)
         skillMutationBegun = true
-        await assertApprovedImpact?.(before)
-        await this.repository.replaceAllIfUnchanged(before, after)
-        specialistCommitted = true
-        await this.skillPort.commit(transactionId)
-        journal.phase = 'committed'
-        await this.writeJournal(journal)
-        await this.skillPort.recover(transactionId, 'commit')
-        await this.cleanupTransactionData()
-        log.info('committed specialist package transaction', {
-          transactionId: journal.transactionId,
-          specialistId: stored.id
-        })
+        const commit = async (): Promise<void> => {
+          await assertApprovedImpact?.(before)
+          await this.repository.replaceAllIfUnchanged(before, after)
+          specialistCommitted = true
+          await this.skillPort.commit(transactionId)
+          journal.phase = 'committed'
+          await this.writeJournal(journal)
+          await this.skillPort.recover(transactionId, 'commit')
+          await this.cleanupTransactionData()
+          log.info('committed specialist package transaction', {
+            transactionId: journal.transactionId,
+            specialistId: stored.id
+          })
+        }
+        await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
         return toView(stored)
       } catch (error) {
         try {
@@ -264,7 +267,8 @@ export class SpecialistPackageTransaction {
   deleteSpecialist(
     specialistId: string,
     expectedRevision: number,
-    deleteSkillIds: readonly string[]
+    deleteSkillIds: readonly string[],
+    assertDeletionAllowed?: () => Promise<void>
   ): Promise<void> {
     const run = this.queue.then(async () => {
       await this.recover()
@@ -290,23 +294,27 @@ export class SpecialistPackageTransaction {
       try {
         await this.skillPort.beginMutation?.(transactionId, specialistId, [])
         skillMutationBegun = true
-        await this.skillPort.prepareDeletion?.(
-          transactionId,
-          specialistId,
-          existing.ownedSkillIds,
-          deleteSkillIds
-        )
-        await this.writeTransactionData(before, after)
-        await this.writeJournal(journal)
-        journal.phase = 'committing'
-        await this.writeJournal(journal)
-        await this.repository.replaceAllIfUnchanged(before, after)
-        specialistCommitted = true
-        await this.skillPort.commit(transactionId)
-        journal.phase = 'committed'
-        await this.writeJournal(journal)
-        await this.skillPort.recover(transactionId, 'commit')
-        await this.cleanupTransactionData()
+        const commit = async (): Promise<void> => {
+          await assertDeletionAllowed?.()
+          await this.skillPort.prepareDeletion?.(
+            transactionId,
+            specialistId,
+            existing.ownedSkillIds,
+            deleteSkillIds
+          )
+          await this.writeTransactionData(before, after)
+          await this.writeJournal(journal)
+          journal.phase = 'committing'
+          await this.writeJournal(journal)
+          await this.repository.replaceAllIfUnchanged(before, after)
+          specialistCommitted = true
+          await this.skillPort.commit(transactionId)
+          journal.phase = 'committed'
+          await this.writeJournal(journal)
+          await this.skillPort.recover(transactionId, 'commit')
+          await this.cleanupTransactionData()
+        }
+        await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
       } catch (error) {
         try {
           journal.phase = 'rolling-back'

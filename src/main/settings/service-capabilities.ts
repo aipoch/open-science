@@ -23,3 +23,15 @@ export type WindowSettingsCapabilities = Pick<
   SettingsService,
   'getAppIconVariant' | 'getClosePreference' | 'setClosePreference'
 >
+
+export type ConnectorApplicationSettingsCapabilities = Pick<
+  SettingsService,
+  | 'getConnectors'
+  | 'saveCustomServerOAuthState'
+  | 'setCustomServerRuntimeProjectionProvider'
+  | 'setCustomServerAuthenticator'
+  | 'previewSkillArchive'
+  | 'importSkillArchiveBatch'
+  | 'scanRepoSkills'
+  | 'importSkill'
+>

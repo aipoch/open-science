@@ -1,4 +1,16 @@
-import { resolve } from 'node:path'
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
@@ -8,7 +20,8 @@ import {
   reportCliError,
   rollbackCommand,
   runCli,
-  runTaskCommand
+  runTaskCommand,
+  updateCommand
 } from './cli.mjs'
 
 const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
@@ -17,6 +30,41 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 
 describe('task CLI', () => {
   it('parses the first milestone run interface', () => {
+    expect(
+      parseCliArgs(['project', 'create', 'Research', '--agent-context', 'Always cite sources.'])
+    ).toMatchObject({
+      command: 'project',
+      subcommand: 'create',
+      options: { agentContext: 'Always cite sources.' }
+    })
+    expect(
+      parseCliArgs([
+        'project',
+        'update',
+        'Research',
+        '--name',
+        'Evidence review',
+        '--clear-agent-context'
+      ])
+    ).toMatchObject({
+      command: 'project',
+      subcommand: 'update',
+      options: { name: 'Evidence review', clearAgentContext: true }
+    })
+    expect(() =>
+      parseCliArgs([
+        'project',
+        'create',
+        'Research',
+        '--agent-context',
+        'Inline',
+        '--agent-context-file',
+        'context.md'
+      ])
+    ).toThrow('Use only one Agent Context source.')
+    expect(() =>
+      parseCliArgs(['project', 'create', 'Research', '--agent-context', 'x'.repeat(16_001)])
+    ).toThrow('Agent Context must not exceed 16000 characters.')
     expect(
       parseCliArgs([
         'run',
@@ -166,6 +214,17 @@ describe('task CLI', () => {
       'codex login accepts no arguments.'
     )
     expect(() => parseCliArgs(['status', '--force'])).toThrow('--force requires codex login.')
+  })
+
+  it('parses application update output and rejects positional arguments', () => {
+    expect(parseCliArgs(['update', '--json', '--no-sandbox'])).toEqual({
+      command: 'update',
+      options: { open: true, json: true, noSandbox: true }
+    })
+    expect(() => parseCliArgs(['update', 'latest'])).toThrow('update accepts no arguments.')
+    expect(() => parseCliArgs(['status', '--no-sandbox'])).toThrow(
+      '--no-sandbox requires start or update.'
+    )
   })
 
   it('reads a prompt file, waits for completion, and emits one JSON result', async () => {
@@ -462,6 +521,319 @@ describe('task CLI', () => {
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
     expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
+  })
+
+  it('preserves an existing artifact output when the download stream fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+    const output = join(directory, 'report.md')
+    await writeFile(output, 'existing report')
+    const failure = new Error('download interrupted')
+    let pullCount = 0
+    const response = new Response(
+      new ReadableStream({
+        async pull(controller) {
+          if (pullCount++ === 0) {
+            controller.enqueue(new TextEncoder().encode('partial replacement'))
+          } else {
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 20))
+            controller.error(failure)
+          }
+        }
+      })
+    )
+    const client = { downloadArtifact: vi.fn().mockResolvedValue(response) }
+
+    try {
+      await expect(
+        runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+      ).rejects.toBe(failure)
+
+      expect(await readFile(output, 'utf8')).toBe('existing report')
+      expect(await readdir(directory)).toEqual(['report.md'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces an existing artifact output after the complete download succeeds', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+    const output = join(directory, 'report.md')
+    await writeFile(output, 'existing report')
+    const client = {
+      downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+    }
+
+    try {
+      await runTaskCommand(
+        {
+          command: 'artifacts',
+          subcommand: 'download',
+          positionals: ['artifact-1'],
+          options: { output, json: true, jsonl: false }
+        },
+        { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+      )
+
+      expect(await readFile(output, 'utf8')).toBe('replacement report')
+      expect(await readdir(directory)).toEqual(['report.md'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'preserves existing artifact output permissions after replacement',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+      const output = join(directory, 'report.md')
+      await writeFile(output, 'existing report')
+      await chmod(output, 0o600)
+      const client = {
+        downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+      }
+
+      try {
+        await runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+
+        expect((await stat(output)).mode & 0o777).toBe(0o600)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'follows an existing artifact output symlink',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+      const target = join(directory, 'target.md')
+      const output = join(directory, 'report.md')
+      await writeFile(target, 'existing report')
+      await symlink('target.md', output)
+      const client = {
+        downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+      }
+
+      try {
+        await runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+
+        expect(await readlink(output)).toBe('target.md')
+        expect(await readFile(target, 'utf8')).toBe('replacement report')
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')('follows a dangling artifact output symlink', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+    const target = join(directory, 'target.md')
+    const output = join(directory, 'report.md')
+    await symlink('target.md', output)
+    const client = {
+      downloadArtifact: vi.fn().mockResolvedValue(new Response('downloaded report'))
+    }
+
+    try {
+      await runTaskCommand(
+        {
+          command: 'artifacts',
+          subcommand: 'download',
+          positionals: ['artifact-1'],
+          options: { output, json: true, jsonl: false }
+        },
+        { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+      )
+
+      expect(await readlink(output)).toBe('target.md')
+      expect(await readFile(target, 'utf8')).toBe('downloaded report')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'follows a 40-link artifact output symlink chain',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+      const target = join(directory, 'target.md')
+      const output = join(directory, 'link-0.md')
+      await writeFile(target, 'existing report')
+      for (let index = 39; index >= 0; index -= 1) {
+        await symlink(
+          index === 39 ? 'target.md' : `link-${index + 1}.md`,
+          join(directory, `link-${index}.md`)
+        )
+      }
+      const client = {
+        downloadArtifact: vi.fn().mockResolvedValue(new Response('replacement report'))
+      }
+
+      try {
+        await runTaskCommand(
+          {
+            command: 'artifacts',
+            subcommand: 'download',
+            positionals: ['artifact-1'],
+            options: { output, json: true, jsonl: false }
+          },
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+
+        expect(await readlink(output)).toBe('link-1.md')
+        expect(await readFile(target, 'utf8')).toBe('replacement report')
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('creates, updates, and clears persistent Project Agent Context without printing it', async () => {
+    const projects = [
+      {
+        id: 'project-1',
+        name: 'Research',
+        description: '',
+        updatedAt: 7,
+        hasAgentContext: false
+      }
+    ]
+    const client = {
+      listProjects: vi.fn().mockResolvedValue(projects),
+      createProject: vi.fn().mockResolvedValue({
+        ...projects[0],
+        id: 'project-2',
+        hasAgentContext: true
+      }),
+      updateProject: vi.fn().mockResolvedValue({ ...projects[0], hasAgentContext: true })
+    }
+    const log = vi.fn()
+    const dependencies = {
+      connect: vi.fn().mockResolvedValue(client),
+      readBinaryFile: vi.fn().mockResolvedValue(new TextEncoder().encode('Prefer Python.\n')),
+      log,
+      stdinIsTTY: true
+    }
+
+    await runTaskCommand(
+      {
+        command: 'project',
+        subcommand: 'create',
+        positionals: ['Created'],
+        options: {
+          agentContext: 'Always cite sources.',
+          json: true,
+          jsonl: false
+        }
+      },
+      dependencies
+    )
+    await runTaskCommand(
+      {
+        command: 'project',
+        subcommand: 'update',
+        positionals: ['Research'],
+        options: {
+          agentContextFile: 'context.md',
+          json: true,
+          jsonl: false
+        }
+      },
+      dependencies
+    )
+    await runTaskCommand(
+      {
+        command: 'project',
+        subcommand: 'update',
+        positionals: ['project-1'],
+        options: {
+          clearAgentContext: true,
+          json: true,
+          jsonl: false
+        }
+      },
+      dependencies
+    )
+
+    expect(client.createProject).toHaveBeenCalledWith({
+      name: 'Created',
+      description: undefined,
+      agentContext: 'Always cite sources.'
+    })
+    expect(client.updateProject).toHaveBeenNthCalledWith(1, 'project-1', {
+      expectedUpdatedAt: 7,
+      agentContext: 'Prefer Python.'
+    })
+    expect(client.updateProject).toHaveBeenNthCalledWith(2, 'project-1', {
+      expectedUpdatedAt: 7,
+      agentContext: ''
+    })
+    expect(JSON.stringify(log.mock.calls)).not.toContain('Always cite sources.')
+    expect(JSON.stringify(log.mock.calls)).not.toContain('Prefer Python.')
+  })
+
+  it('rejects invalid Agent Context files before mutating a Project', async () => {
+    const client = {
+      listProjects: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'project-1', name: 'Research', updatedAt: 7, hasAgentContext: false }
+        ]),
+      updateProject: vi.fn()
+    }
+    const readBinaryFile = vi
+      .fn()
+      .mockResolvedValueOnce(Uint8Array.from([0xc3, 0x28]))
+      .mockResolvedValueOnce(new TextEncoder().encode('  \n'))
+      .mockResolvedValueOnce(new TextEncoder().encode('x'.repeat(16_001)))
+    const dependencies = {
+      connect: vi.fn().mockResolvedValue(client),
+      readBinaryFile,
+      stdinIsTTY: true
+    }
+    const updateFrom = (agentContextFile: string): Promise<void> =>
+      runTaskCommand(
+        {
+          command: 'project',
+          subcommand: 'update',
+          positionals: ['Research'],
+          options: { agentContextFile, json: true, jsonl: false }
+        },
+        dependencies
+      )
+
+    await expect(updateFrom('invalid.md')).rejects.toThrow(
+      'Agent Context file must contain valid UTF-8 text.'
+    )
+    await expect(updateFrom('empty.md')).rejects.toThrow('Agent Context must not be empty.')
+    await expect(updateFrom('oversized.md')).rejects.toThrow(
+      'Agent Context must not exceed 16000 characters.'
+    )
+    expect(client.updateProject).not.toHaveBeenCalled()
   })
 
   it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {
@@ -889,6 +1261,370 @@ describe('task CLI', () => {
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }
+  })
+
+  it('applies an in-place update without relaunching the desktop app', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string, args?: unknown[]) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart'
+        }
+      }
+      if (channel === 'update:apply') {
+        expect(args).toEqual([{ relaunch: false }])
+        return {
+          state: 'applying',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart'
+        }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const log = vi.fn()
+
+    await expect(
+      updateCommand(
+        { open: true, json: true },
+        {
+          ensureService: vi.fn().mockResolvedValue({ started: true }),
+          connect: vi.fn().mockResolvedValue({}),
+          getBootstrap: vi.fn().mockResolvedValue({
+            appVersion: '1.0.0',
+            rpcCapabilities: ['update-cli-v1']
+          }),
+          supportsCommand: vi.fn().mockResolvedValue(true),
+          invokeCommand,
+          log,
+          setExitCode: vi.fn()
+        }
+      )
+    ).resolves.toEqual({ outcome: 'install-started', current: '1.0.0', latest: '1.1.0' })
+
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual({
+      outcome: 'install-started',
+      current: '1.0.0',
+      latest: '1.1.0'
+    })
+  })
+
+  it('uses the authenticated local Web RPC envelope for update commands', async () => {
+    const fetch = vi.fn(async (url: string) => {
+      const channel = decodeURIComponent(url.split('/rpc/')[1] ?? '')
+      const result =
+        channel === 'update:check'
+          ? {
+              state: 'ready',
+              current: '1.0.0',
+              latest: '1.1.0',
+              applyKind: 'restart'
+            }
+          : {
+              state: 'applying',
+              current: '1.0.0',
+              latest: '1.1.0',
+              applyKind: 'restart'
+            }
+      return new Response(JSON.stringify({ protocolVersion: 1, ok: true, result }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    })
+    const client = {
+      health: vi.fn().mockResolvedValue({
+        appVersion: '1.0.0',
+        rpcProtocolVersion: 1,
+        rpcCapabilities: ['update-cli-v1'],
+        rpcChannels: ['update:check', 'update:apply']
+      }),
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'local-token',
+      fetch
+    }
+
+    await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: false }),
+        connect: vi.fn().mockResolvedValue(client),
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[0][0]).toBe('http://127.0.0.1:44100/rpc/update%3Acheck')
+    expect(fetch.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        authorization: 'Bearer local-token',
+        'x-open-science-client': 'open-science-cli'
+      }),
+      body: JSON.stringify({ protocolVersion: 1, args: [{ relaunch: false }] })
+    })
+  })
+
+  it('downloads a manual installer non-interactively and returns exit code 6', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string, args?: unknown[]) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'available',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer'
+        }
+      }
+      if (channel === 'update:download') {
+        expect(args).toEqual([{ nonInteractive: true }])
+        return {
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          localPath: 'C:\\Users\\test\\Downloads\\Open-Science.exe'
+        }
+      }
+      if (channel === 'storage:detect-active') return []
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const setExitCode = vi.fn()
+
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        sleep: vi.fn().mockResolvedValue(undefined),
+        log: vi.fn(),
+        setExitCode
+      }
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'manual-action-required',
+      installerPath: 'C:\\Users\\test\\Downloads\\Open-Science.exe'
+    })
+    expect(setExitCode).toHaveBeenCalledWith(6)
+  })
+
+  it('reports an already-current installation without downloading or applying', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return { state: 'up-to-date', current: '1.1.0', latest: '1.1.0' }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+
+    const ensureService = vi.fn().mockResolvedValue({ started: false })
+    const result = await updateCommand(
+      { open: true, json: true, noSandbox: true },
+      {
+        ensureService,
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.1.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(result).toEqual({ outcome: 'up-to-date', current: '1.1.0', latest: '1.1.0' })
+    expect(ensureService).toHaveBeenCalledWith(
+      expect.objectContaining({ open: false, noSandbox: true })
+    )
+    expect(invokeCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['a failed transfer', 'Network connection lost'],
+    ['a checksum failure', 'Downloaded update checksum mismatch']
+  ])('surfaces %s as a command failure', async (_case, message) => {
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'available',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer'
+        }
+      }
+      if (channel === 'update:download') {
+        return {
+          state: 'error',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          error: message
+        }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+
+    await expect(
+      updateCommand(
+        { open: true, json: true },
+        {
+          ensureService: vi.fn().mockResolvedValue({ started: true }),
+          connect: vi.fn().mockResolvedValue({}),
+          getBootstrap: vi.fn().mockResolvedValue({
+            appVersion: '1.0.0',
+            rpcCapabilities: ['update-cli-v1']
+          }),
+          supportsCommand: vi.fn().mockResolvedValue(true),
+          invokeCommand,
+          sleep: vi.fn().mockResolvedValue(undefined),
+          log: vi.fn(),
+          setExitCode: vi.fn()
+        }
+      )
+    ).rejects.toThrow(message)
+  })
+
+  it('prints observable download progress in human-readable mode', async () => {
+    const ready = {
+      state: 'ready',
+      current: '1.0.0',
+      latest: '1.1.0',
+      applyKind: 'installer',
+      localPath: '/data/update/Open-Science.dmg'
+    }
+    let finishDownload: ((status: typeof ready) => void) | undefined
+    const download = new Promise<typeof ready>((resolve) => {
+      finishDownload = resolve
+    })
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'available',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer'
+        }
+      }
+      if (channel === 'update:download') return download
+      if (channel === 'update:get-status') {
+        finishDownload?.(ready)
+        return {
+          state: 'downloading',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          progress: 37
+        }
+      }
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const log = vi.fn()
+
+    await updateCommand(
+      { open: true, json: false },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        sleep: vi.fn().mockResolvedValue(undefined),
+        log,
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(log).toHaveBeenCalledWith('Downloading update: 37%')
+  })
+
+  it('reports active research blockers with exit code 5 and keeps the service running', async () => {
+    const invokeCommand = vi.fn(async (_client, channel: string) => {
+      if (channel === 'update:check') {
+        return {
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart'
+        }
+      }
+      if (channel === 'update:apply') {
+        return {
+          state: 'error',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'restart',
+          blockedBy: ['agent', 'notebook'],
+          error: 'Research work is still running.'
+        }
+      }
+      if (channel === 'storage:detect-active') return [{ kind: 'agent' }]
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const setExitCode = vi.fn()
+
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand,
+        log: vi.fn(),
+        setExitCode
+      }
+    )
+
+    expect(result).toEqual({
+      outcome: 'blocked',
+      current: '1.0.0',
+      latest: '1.1.0',
+      blockedBy: ['agent', 'notebook']
+    })
+    expect(setExitCode).toHaveBeenCalledWith(5)
+    expect(invokeCommand).not.toHaveBeenCalledWith({}, 'storage:detect-active')
+  })
+
+  it('falls back when a legacy app advertises update channels without the CLI capability', async () => {
+    const setExitCode = vi.fn()
+    const supportsCommand = vi.fn().mockResolvedValue(true)
+    const invokeCommand = vi.fn()
+
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        connect: vi.fn().mockResolvedValue({ bootstrap: { appVersion: '0.9.0' } }),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '0.9.0',
+          rpcChannels: ['update:check', 'update:download', 'update:apply']
+        }),
+        supportsCommand,
+        invokeCommand,
+        log: vi.fn(),
+        setExitCode
+      }
+    )
+
+    expect(result).toMatchObject({ outcome: 'manual-action-required', current: '0.9.0' })
+    expect(setExitCode).toHaveBeenCalledWith(6)
+    expect(supportsCommand).not.toHaveBeenCalled()
+    expect(invokeCommand).not.toHaveBeenCalled()
   })
 
   it('emits structured machine errors with stable exit codes', () => {

@@ -274,7 +274,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   ]),
   group('tags', 'tags', [
     ['onChanged', 'tags:changed', EVENT], ['create', 'tags:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
-    ['delete', 'tags:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['setAssignment', 'tags:set-assignment', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['delete', 'tags:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['reorder', 'tags:reorder', WEB, undefined, undefined, RUNTIME_VALIDATED], ['setAssignment', 'tags:set-assignment', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['snapshot', 'tags:snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'tags:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
   ]),
   group('remote-access', 'remoteAccess', [
@@ -315,7 +315,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   ]),
   group('sessions', 'sessions', [
     ['exportConversation', 'sessions:export-conversation', MAPPED_ELECTRON], ['onCreated', 'session:created', EVENT], ['onDeleted', 'session:deleted', EVENT],
-    ['onFlushRequest', 'sessions:flush-request', ELECTRON_EVENT], ['onUpdated', 'session:updated', EVENT], ['deleteSession', 'sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['onFlushAborted', 'sessions:flush-aborted', ELECTRON_EVENT], ['onFlushRequest', 'sessions:flush-request', ELECTRON_EVENT], ['onUpdated', 'session:updated', EVENT], ['deleteSession', 'sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['loadAll', 'sessions:load-all'], ['loadOne', 'sessions:load-one'], ['saveManifest', 'sessions:save-manifest'],
     ['saveSession', 'sessions:save-session', WEB, SESSION_SAVE, SESSION_SAVE_JSON], ['updateArchive', 'sessions:update-archive'], ['sendFlushResponse', 'sessions:flush-response', SEND],
   ]),

@@ -2,6 +2,7 @@ import {
   tagApplicationCommandContracts,
   type CreateTagRequest,
   type DeleteTagRequest,
+  type ReorderTagsRequest,
   type SetTagAssignmentRequest,
   type TagSnapshot,
   type UpdateTagRequest
@@ -18,6 +19,7 @@ type TagCommandOwner = Readonly<{
   create(request: CreateTagRequest): Promise<TagSnapshot>
   update(request: UpdateTagRequest): Promise<TagSnapshot>
   delete(request: DeleteTagRequest): Promise<TagSnapshot>
+  reorder(request: ReorderTagsRequest): Promise<TagSnapshot>
   setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot>
 }>
 
@@ -38,6 +40,10 @@ const tagApplicationCommands = Object.freeze({
     'tags:delete',
     tagApplicationCommandContracts.delete
   ),
+  reorder: defineApplicationCommand<'tags:reorder', readonly [ReorderTagsRequest], TagSnapshot>(
+    'tags:reorder',
+    tagApplicationCommandContracts.reorder
+  ),
   setAssignment: defineApplicationCommand<
     'tags:set-assignment',
     readonly [SetTagAssignmentRequest],
@@ -48,6 +54,7 @@ const tagApplicationCommands = Object.freeze({
 const tagApplicationCommandGroup = defineApplicationCommandGroup('tags', [
   tagApplicationCommands.create,
   tagApplicationCommands.delete,
+  tagApplicationCommands.reorder,
   tagApplicationCommands.setAssignment,
   tagApplicationCommands.snapshot,
   tagApplicationCommands.update
@@ -64,6 +71,7 @@ const registerTagApplicationCommands = (
       'tags:create': ({ args }) => owner.create(args[0]),
       'tags:update': ({ args }) => owner.update(args[0]),
       'tags:delete': ({ args }) => owner.delete(args[0]),
+      'tags:reorder': ({ args }) => owner.reorder(args[0]),
       'tags:set-assignment': ({ args }) => owner.setAssignment(args[0])
     })
     return scope.complete()

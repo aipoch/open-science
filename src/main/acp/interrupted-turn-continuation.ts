@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
@@ -39,6 +41,10 @@ type InterruptedTurnContinuationRuntime = {
 type InterruptedTurnContinuationDependencies = {
   runtime: InterruptedTurnContinuationRuntime
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
+  startDispatchAdmittedContinuation?: (
+    request: AcpPromptRequest,
+    validate: () => Promise<void>
+  ) => Promise<unknown>
   notifications?: Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
 }
 
@@ -231,9 +237,29 @@ export const continueInterruptedTurn = async (
     text: prompt.content
   })
   try {
-    await dependencies.runtime.startContinuation(
-      buildContinuationRequest(session, prompt, request, livePrompt)
-    )
+    const continuation = buildContinuationRequest(session, prompt, request, livePrompt)
+    if (dependencies.startDispatchAdmittedContinuation) {
+      await dependencies.startDispatchAdmittedContinuation(continuation, async () => {
+        const admittedSession = await dependencies.loadSession(request.projectId, request.sessionId)
+        if (!admittedSession) throw new Error('Interrupted Session could not be loaded.')
+        const admittedPrompt = requireInterruptedTurn(admittedSession, request)
+        const admittedLivePrompt = dependencies.runtime.getLatestUserPrompt(
+          request.sessionId,
+          request.promptMessageId
+        )
+        const admittedContinuation = buildContinuationRequest(
+          admittedSession,
+          admittedPrompt,
+          request,
+          admittedLivePrompt
+        )
+        if (!isDeepStrictEqual(admittedContinuation, continuation)) {
+          throw new Error('Interrupted Session changed before provider admission.')
+        }
+      })
+    } else {
+      await dependencies.runtime.startContinuation(continuation)
+    }
   } catch (error) {
     if (tracked) dependencies.notifications?.untrackPrompt(request.sessionId, tracked)
     throw error

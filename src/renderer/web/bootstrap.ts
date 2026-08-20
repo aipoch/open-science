@@ -46,12 +46,17 @@ type Listener = (payload: unknown) => void
 
 const BOOTSTRAP_ATTEMPTS = 8
 const BOOTSTRAP_TIMEOUT_MS = 8_000
+const WEB_RPC_TIMEOUT_MS = 30_000
+const WEB_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
 const EVENT_CONNECTION_ATTEMPTS = 8
+const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
+const MODEL_OWNED_WEB_RPC_CHANNELS = new Set(['notebook:execute', 'notebook:run-cell'])
 
 const clientId = sessionStorage.getItem('open-science-web-client') ?? crypto.randomUUID()
 sessionStorage.setItem('open-science-web-client', clientId)
 
 const listeners = new Map<string, Set<Listener>>()
+let eventConnectionController = new AbortController()
 
 const connectionMessage = (): HTMLElement | null =>
   document.getElementById('open-science-connection-message')
@@ -73,6 +78,28 @@ if (connectionLogo) {
 
 const wait = (delayMs: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, delayMs))
+
+const withRequestTimeout = async <T>(
+  timeoutMs: number,
+  operation: (signal: AbortSignal) => Promise<T>,
+  externalSignal?: AbortSignal
+): Promise<T> => {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(
+    () =>
+      controller.abort(
+        new DOMException(`Request timed out after ${timeoutMs} milliseconds.`, 'TimeoutError')
+      ),
+    timeoutMs
+  )
+  try {
+    return await operation(
+      externalSignal ? AbortSignal.any([externalSignal, controller.signal]) : controller.signal
+    )
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
 
 const responseError = (response: Response, body: string, fallback: string): Error => {
   if (response.status === 401) return new RemoteAccessOffError(REMOTE_ACCESS_OFF_MESSAGE)
@@ -104,26 +131,24 @@ const fetchBootstrap = async (): Promise<unknown> => {
       )
       await wait(Math.min(500 * 2 ** (attempt - 2), 5_000))
     }
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), BOOTSTRAP_TIMEOUT_MS)
     try {
-      const response = await fetch('/api/bootstrap', {
-        cache: 'no-store',
-        signal: controller.signal
+      return await withRequestTimeout(BOOTSTRAP_TIMEOUT_MS, async (signal) => {
+        const response = await fetch('/api/bootstrap', {
+          cache: 'no-store',
+          signal
+        })
+        if (!response.ok) {
+          throw responseError(
+            response,
+            await response.text(),
+            `Open Science returned HTTP ${response.status}.`
+          )
+        }
+        return await response.json()
       })
-      if (!response.ok) {
-        throw responseError(
-          response,
-          await response.text(),
-          `Open Science returned HTTP ${response.status}.`
-        )
-      }
-      return response.json()
     } catch (error) {
       if (error instanceof RemoteAccessOffError) throw error
       lastError = error
-    } finally {
-      window.clearTimeout(timeout)
     }
   }
   throw lastError instanceof Error
@@ -180,15 +205,24 @@ const encodeBinary = (_key: string, value: unknown): unknown => {
 }
 
 const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
-  const response = await fetch(`/rpc/${encodeURIComponent(channel)}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-open-science-client': clientId
-    },
-    body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args }, encodeBinary)
-  })
-  const body = await response.text()
+  const request = async (signal?: AbortSignal): Promise<{ response: Response; body: string }> => {
+    const response = await fetch(`/rpc/${encodeURIComponent(channel)}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-open-science-client': clientId
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args }, encodeBinary),
+      signal
+    })
+    return { response, body: await response.text() }
+  }
+  // Notebook execution has its own optional domain deadline. A transport wall clock must not report
+  // failure while the kernel is still legitimately running; connection liveness owns disconnects.
+  const connectionSignal = eventConnectionController.signal
+  const { response, body } = MODEL_OWNED_WEB_RPC_CHANNELS.has(channel)
+    ? await request(connectionSignal)
+    : await withRequestTimeout(WEB_RPC_TIMEOUT_MS, request)
   let payload
   try {
     payload = webRpcResponseSchema.parse(JSON.parse(body, reviveBinary))
@@ -248,18 +282,36 @@ const requireEventReload = (socket: WebSocket): void => {
 
 const connectEvents = (): void => {
   if (eventRecoveryRequired) return
+  if (eventConnectionController.signal.aborted) {
+    eventConnectionController = new AbortController()
+  }
+  const connectionLease = eventConnectionController
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = new URL(`${protocol}//${location.host}/events`)
   url.searchParams.set('client', clientId)
   url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
   url.searchParams.set('stream', eventCursor.streamId)
   url.searchParams.set('after', String(eventCursor.latestSequence))
+  url.searchParams.set('liveness', '1')
   const socket = new WebSocket(url.toString())
+  const expireConnection = (): void => {
+    if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
+      connectionLease.abort(new DOMException('Event stream liveness timed out.', 'TimeoutError'))
+    }
+    socket.close(4000, 'Event stream liveness timeout')
+  }
+  let idleTimeout = window.setTimeout(expireConnection, EVENT_CONNECTION_IDLE_TIMEOUT_MS)
+  const armIdleTimeout = (): void => {
+    window.clearTimeout(idleTimeout)
+    idleTimeout = window.setTimeout(expireConnection, EVENT_CONNECTION_IDLE_TIMEOUT_MS)
+  }
 
   socket.addEventListener('open', () => {
+    armIdleTimeout()
     publishEventConnectionPhase('replaying')
   })
   socket.addEventListener('message', (event) => {
+    armIdleTimeout()
     let decoded: unknown
     try {
       decoded = JSON.parse(String(event.data), reviveBinary)
@@ -296,6 +348,10 @@ const connectEvents = (): void => {
       eventCursor.latestSequence = message.sequence
       return
     }
+    if (message.kind === 'heartbeat') {
+      if (message.latestSequence !== eventCursor.latestSequence) requireEventReload(socket)
+      return
+    }
     if (message.latestSequence !== eventCursor.latestSequence) {
       requireEventReload(socket)
       return
@@ -305,6 +361,10 @@ const connectEvents = (): void => {
     window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
   })
   socket.addEventListener('close', () => {
+    window.clearTimeout(idleTimeout)
+    if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
+      connectionLease.abort(new DOMException('Event stream disconnected.', 'NetworkError'))
+    }
     if (eventRecoveryRequired) return
     eventReconnectAttempt += 1
     if (eventReconnectAttempt >= EVENT_CONNECTION_ATTEMPTS) {
@@ -369,9 +429,12 @@ const installWebApi = async (): Promise<EventCursor> => {
           { source: request.source, path: request.path }
         ])) as { id: string; url: string }
         try {
-          const response = await fetch(resource.url)
-          if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`)
-          downloadBlob(await response.blob(), request.suggestedName)
+          const blob = await withRequestTimeout(WEB_DOWNLOAD_TIMEOUT_MS, async (signal) => {
+            const response = await fetch(resource.url, { signal })
+            if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`)
+            return await response.blob()
+          })
+          downloadBlob(blob, request.suggestedName)
           return { saved: true }
         } finally {
           await invoke('preview-resources:release', [{ resourceId: resource.id }])

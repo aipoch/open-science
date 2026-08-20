@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
-import type { AcpPermissionResponse, AcpStateSnapshot } from '../../../../shared/acp'
+import type {
+  AcpPermissionResponse,
+  AcpRuntimeEvent,
+  AcpStateSnapshot
+} from '../../../../shared/acp'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,6 +19,7 @@ import {
 
 type AcpRuntimeApi = ReturnType<typeof useAcpRuntime>
 type OnStateListener = (snapshot: AcpStateSnapshot) => void
+type OnEventListener = (event: AcpRuntimeEvent) => void
 
 // Minimal renderHook so we can exercise the real hook without pulling in @testing-library/react,
 // which the repo does not depend on. A null-rendering harness captures each render's return value.
@@ -74,10 +79,13 @@ const createDeferred = <Value>(): {
 
 // Captures the applySnapshot listener the hook registers so tests can push broadcasts through it.
 let capturedStateListener: OnStateListener | undefined
+let capturedEventListener: OnEventListener | undefined
 let removeStateListener: ReturnType<typeof vi.fn>
+let removeEventListener: ReturnType<typeof vi.fn>
 let acpApi: {
   getState: ReturnType<typeof vi.fn>
   onState: ReturnType<typeof vi.fn>
+  onEvent: ReturnType<typeof vi.fn>
   connect: ReturnType<typeof vi.fn>
   disconnect: ReturnType<typeof vi.fn>
   createSession: ReturnType<typeof vi.fn>
@@ -106,12 +114,18 @@ const mountRuntime = async (): Promise<{
 beforeEach(() => {
   resetAcpRuntimeSnapshotRevisionForTests()
   capturedStateListener = undefined
+  capturedEventListener = undefined
   removeStateListener = vi.fn()
+  removeEventListener = vi.fn()
   acpApi = {
     getState: vi.fn().mockResolvedValue(createSnapshot({ status: 'idle' })),
     onState: vi.fn((listener: OnStateListener) => {
       capturedStateListener = listener
       return removeStateListener
+    }),
+    onEvent: vi.fn((listener: OnEventListener) => {
+      capturedEventListener = listener
+      return removeEventListener
     }),
     connect: vi.fn().mockResolvedValue(createSnapshot()),
     disconnect: vi.fn().mockResolvedValue(createSnapshot({ status: 'idle' })),
@@ -418,6 +432,84 @@ describe('useAcpRuntime payload construction', () => {
 })
 
 describe('useAcpRuntime state subscription', () => {
+  it('keeps snapshot delivery enabled when the Main event channel is unavailable', async () => {
+    const event: AcpRuntimeEvent = {
+      id: 'runtime-1:event-1',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'snapshot output'
+    }
+    Reflect.deleteProperty(acpApi, 'onEvent')
+    acpApi.getState.mockResolvedValueOnce(createSnapshot({ events: [event] }))
+
+    const { result } = await mountRuntime()
+
+    expect(result.current.subscribeRuntimeEvents).toBeUndefined()
+    expect(result.current.state.events).toEqual([event])
+  })
+
+  it('streams runtime events outside React state and unsubscribes both IPC listeners', async () => {
+    const { result, unmount } = await mountRuntime()
+    const delivered = vi.fn()
+    result.current.subscribeRuntimeEvents?.(delivered)
+    const event: AcpRuntimeEvent = {
+      id: 'runtime-1:event-1',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'incremental output'
+    }
+
+    expect(acpApi.onEvent).toHaveBeenCalledTimes(1)
+    expect(acpApi.onState.mock.invocationCallOrder[0]).toBeLessThan(
+      acpApi.getState.mock.invocationCallOrder[0]
+    )
+    expect(acpApi.onEvent.mock.invocationCallOrder[0]).toBeLessThan(
+      acpApi.getState.mock.invocationCallOrder[0]
+    )
+    act(() => capturedEventListener?.(event))
+
+    expect(delivered).toHaveBeenCalledWith([event], undefined)
+    expect(result.current.currentRuntimeEvents()).toEqual([event])
+    expect(result.current.state.events).toEqual([])
+
+    unmount()
+    expect(removeEventListener).toHaveBeenCalledTimes(1)
+    expect(removeStateListener).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers an incremental event that arrives before the initial snapshot resolves', async () => {
+    const initial = createDeferred<AcpStateSnapshot>()
+    acpApi.getState.mockReturnValueOnce(initial.promise)
+    const { result } = await mountRuntime()
+    const delivered: AcpRuntimeEvent[] = []
+    result.current.subscribeRuntimeEvents?.((events) => delivered.push(...events))
+    const event: AcpRuntimeEvent = {
+      id: 'runtime-1:event-1',
+      timestamp: 2,
+      kind: 'thought',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'newer live output'
+    }
+
+    act(() => capturedEventListener?.(event))
+    await act(async () => {
+      initial.resolve(createSnapshot({ revision: 1, events: [] }))
+      await initial.promise
+    })
+
+    expect(delivered).toEqual([event])
+    expect(result.current.currentRuntimeEvents()).toEqual([event])
+    expect(result.current.state.events).toEqual([])
+  })
+
   it('subscribes on mount, applies pushed snapshots, and unsubscribes on unmount', async () => {
     const { result, unmount } = await mountRuntime()
 

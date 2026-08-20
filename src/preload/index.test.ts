@@ -61,6 +61,7 @@ type PreloadApi = {
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
+    onFlushAborted: (listener: () => void) => unknown
     onFlushRequest: (listener: (request: { requestId: string }) => void) => unknown
     sendFlushResponse: (response: { requestId: string }) => void
   }
@@ -181,7 +182,9 @@ beforeAll(async () => {
   // Take the contextBridge branch of the preload's expose logic (production path with context isolation).
   Object.defineProperty(process, 'contextIsolated', { value: true, configurable: true })
   invokeMock.mockImplementation(async (channel: string) =>
-    validatedApplicationCommandChannels.has(channel) ? { ok: true, result: undefined } : undefined
+    validatedApplicationCommandChannels.has(channel) || channel === 'sessions:save-session'
+      ? { ok: true, result: undefined }
+      : undefined
   )
 
   await import('./index')
@@ -435,6 +438,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.loadOne',
       'sessions.onCreated',
       'sessions.onDeleted',
+      'sessions.onFlushAborted',
       'sessions.onFlushRequest',
       'sessions.onUpdated',
       'sessions.saveManifest',
@@ -589,6 +593,7 @@ describe('preload bridge — public surface inventory', () => {
       'tags.create',
       'tags.delete',
       'tags.onChanged',
+      'tags.reorder',
       'tags.setAssignment',
       'tags.snapshot',
       'tags.update',
@@ -853,6 +858,22 @@ describe('preload bridge — core renderer contract catalog', () => {
       ...request,
       sourcePath: '/data/large.csv'
     })
+  })
+
+  it('restores a revision-conflict rejection from the Session save IPC outcome', async () => {
+    invokeMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'session-revision-conflict',
+        message:
+          'Session revision conflict: expected 3, actual 4. Reload the latest conversation before retrying.'
+      }
+    })
+
+    await expect(api.sessions.saveSession({ id: 'session-1' })).rejects.toMatchObject({
+      code: 'session-revision-conflict'
+    })
+    expect(invokeMock).toHaveBeenCalledWith('sessions:save-session', { id: 'session-1' })
   })
 
   it('returns null without IPC when native upload path extraction fails', async () => {
@@ -1362,7 +1383,15 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
 
   it('bridges the bounded Session flush request and acknowledgement channels', () => {
     const listener = vi.fn()
+    const abortedListener = vi.fn()
     const response = { requestId: 'flush-1' }
+
+    api.sessions.onFlushAborted(abortedListener)
+    expect(onMock).toHaveBeenCalledWith('sessions:flush-aborted', expect.any(Function))
+    const wrappedAbortedListener = onMock.mock.calls.at(-1)?.[1] as
+      ((_event: unknown) => void) | undefined
+    wrappedAbortedListener?.({})
+    expect(abortedListener).toHaveBeenCalledOnce()
 
     api.sessions.onFlushRequest(listener)
     expect(onMock).toHaveBeenCalledWith('sessions:flush-request', expect.any(Function))

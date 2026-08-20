@@ -87,6 +87,119 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json(
+        { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
+        { status: 401 }
+      )
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://provider.example.test/v1', key: 'wrong-key', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    const send = (): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello', stream: true })
+      })
+
+    try {
+      const first = await send()
+      const second = await send()
+
+      expect(first.status).toBe(400)
+      expect(second.status).toBe(400)
+      expect(second.headers.get('x-open-science-upstream-status')).toBe('401')
+      await expect(second.json()).resolves.toMatchObject({
+        error: { type: 'authentication_error', message: 'Incorrect API key provided' }
+      })
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it.each([
+    ['empty', ''],
+    ['malformed', '{not-json']
+  ])(
+    'replays an identical deterministic provider error with a %s JSON body',
+    async (_name, body) => {
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(body, { status: 401, headers: { 'content-type': 'application/json' } })
+      )
+      const proxy = new NativeResponsesCompatibilityProxy(
+        { baseUrl: 'https://provider.example.test/v1', key: 'wrong-key', model: 'model-a' },
+        fetchImpl
+      )
+      const connection = await proxy.start()
+      const send = (): Promise<Response> =>
+        fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ model: 'ignored', input: 'hello', stream: true })
+        })
+
+      try {
+        const first = await send()
+        const second = await send()
+        expect(first.status).toBe(400)
+        expect(second.status).toBe(400)
+        expect(first.headers.get('x-open-science-upstream-status')).toBe('401')
+        expect(second.headers.get('x-open-science-upstream-status')).toBe('401')
+        expect(fetchImpl).toHaveBeenCalledOnce()
+      } finally {
+        await proxy.close()
+      }
+    }
+  )
+
+  it('does not replay an error after an upstream-visible request header changes', async () => {
+    const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      return headers.get('x-provider-feature') === 'invalid'
+        ? Response.json({ error: { message: 'Invalid feature' } }, { status: 400 })
+        : Response.json({
+            id: 'response',
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 1 }
+          })
+    })
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://provider.example.test/v1', key: 'key-a', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    const send = (feature?: string): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          ...(feature ? { 'x-provider-feature': feature } : {})
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello', stream: false })
+      })
+
+    try {
+      expect((await send('invalid')).status).toBe(400)
+      expect((await send()).status).toBe(200)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('flattens namespace tools and matching history without changing plain functions', () => {
     const { request, aliases } = flattenNativeResponsesRequest({
       model: 'MiniMax-M3',
@@ -381,6 +494,65 @@ describe('native Responses compatibility', () => {
     } finally {
       if (interval) clearInterval(interval)
       if (completion) clearTimeout(completion)
+      await proxy.close()
+    }
+  })
+
+  it('aborts a blocking native Responses body after the configured idle period', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    let failUpstream: ((reason?: unknown) => void) | undefined
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamSignal = init?.signal ?? undefined
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              failUpstream = (reason) => controller.error(reason)
+              upstreamSignal?.addEventListener(
+                'abort',
+                () => failUpstream?.(upstreamSignal?.reason),
+                { once: true }
+              )
+            }
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
+      fetchImpl,
+      { streamIdleTimeoutMs: 25 }
+    )
+    const connection = await proxy.start()
+
+    try {
+      const outcome = await Promise.race([
+        fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ model: 'deepseek-v4-pro', input: 'analyze', stream: false })
+        }),
+        new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 500))
+      ])
+
+      expect(outcome).toBeInstanceOf(Response)
+      const response = outcome as Response
+      expect(response.status).toBe(400)
+      expect(upstreamSignal?.aborted).toBe(true)
+      expect(logSpies.warn.mock.calls).toContainEqual([
+        'native Responses compatibility request failed',
+        expect.objectContaining({
+          phase: 'forward-response',
+          outcome: 'error',
+          errorCategory: 'timeout'
+        })
+      ])
+    } finally {
+      failUpstream?.()
       await proxy.close()
     }
   })

@@ -471,7 +471,7 @@ const managedFileVersionFoundationStatements = [
 ] as const
 
 const managedFileVersionFoundationMigration = {
-  id: '0009_managed_file_version_foundation',
+  id: '0013_managed_file_version_foundation',
   statements: managedFileVersionFoundationStatements,
   verifiers: [
     {

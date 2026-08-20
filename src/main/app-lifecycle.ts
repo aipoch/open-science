@@ -55,6 +55,8 @@ export type AppLifecycleDeps = {
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  // Reopens Main/renderer admission when persistence prevents an orderly quit from committing.
+  abortQuitPreparation: () => Promise<void> | void
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
   flushSessionPersistence: (
     timeoutMs?: number
@@ -132,6 +134,11 @@ export const installAppLifecycle = (
     if (outcome === 'renderer-gone') return 'degraded'
     return 'completed'
   }
+  const rendererOutcomeBlocksQuit = (outcome: RendererSessionPersistenceFlushOutcome): boolean =>
+    outcome === 'conflict' ||
+    outcome === 'renderer-failed' ||
+    outcome === 'send-failed' ||
+    outcome === 'timeout'
   const shutdownTrigger = (): ApplicationShutdownTrigger => {
     try {
       return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()
@@ -315,7 +322,7 @@ export const installAppLifecycle = (
       let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
       let rendererFlushResult: ShutdownStepOutcome
       let backendTeardownResult: ShutdownStepOutcome
-      let shutdownAbortedForSessionConflict = false
+      let shutdownAbortedForRendererPersistence = false
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
         timeoutMs: number
@@ -341,8 +348,8 @@ export const installAppLifecycle = (
         )
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
-        if (rendererPreflightOutcome === 'conflict') {
-          shutdownAbortedForSessionConflict = true
+        if (rendererOutcomeBlocksQuit(rendererPreflightOutcome)) {
+          shutdownAbortedForRendererPersistence = true
           diagnostics?.complete({
             degraded: true,
             rendererPreflightOutcome,
@@ -375,6 +382,22 @@ export const installAppLifecycle = (
         )
         rendererFlushOutcome = finalFlush.outcome
         rendererFlushResult = finalFlush.result
+        if (rendererOutcomeBlocksQuit(rendererFlushOutcome)) {
+          shutdownAbortedForRendererPersistence = true
+          diagnostics?.complete({
+            degraded: true,
+            rendererPreflightResult,
+            rendererPreflightOutcome,
+            usageDrainResult,
+            rendererFlushResult,
+            rendererFlushOutcome,
+            backendTeardownResult: 'degraded'
+          })
+          if (deps.flushLogs) {
+            await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
+          }
+          return
+        }
 
         diagnostics?.phase('backend-teardown')
         try {
@@ -406,7 +429,16 @@ export const installAppLifecycle = (
           if (result === 'timeout') console.warn('[shutdown] final log flush timed out')
         }
       } finally {
-        if (shutdownAbortedForSessionConflict) {
+        if (shutdownAbortedForRendererPersistence) {
+          try {
+            await deps.abortQuitPreparation()
+          } catch (error) {
+            try {
+              deps.log?.error('quit preparation rollback failed', diagnosticErrorFields(error))
+            } catch {
+              // Restoring the visible app remains authoritative; rollback diagnostics are best-effort.
+            }
+          }
           shutdownStarted = false
           quitConfirmed = false
           clearApplicationShutdownTrigger()

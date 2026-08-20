@@ -77,6 +77,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'officePreview.onState',
   'officePreview.open',
   'officePreview.reportState',
+  'sessions.onFlushAborted',
   'sessions.onFlushRequest',
   'sessions.sendFlushResponse',
   'settings.exportCustomServerTemplate',

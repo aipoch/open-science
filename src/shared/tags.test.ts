@@ -53,4 +53,13 @@ describe('tag application command contracts', () => {
       ])
     ).toThrow()
   })
+
+  it('accepts only a strict ordered Tag id list', () => {
+    expect(tagApplicationCommandContracts.reorder.args.parse([{ tagIds: ['a', 'b'] }])).toEqual([
+      { tagIds: ['a', 'b'] }
+    ])
+    expect(() =>
+      tagApplicationCommandContracts.reorder.args.parse([{ tagIds: ['a'], extra: true }])
+    ).toThrow()
+  })
 })

@@ -49,6 +49,35 @@ describe('TagRepository', () => {
     ).rejects.toThrow('A Tag with this name already exists.')
   })
 
+  it('appends new Tags and persists a validated global custom order', async () => {
+    await repository.create({ name: 'Alpha', iconKey: 'tag', colorKey: 'blue' })
+    await repository.create({ name: 'Beta', iconKey: 'bookmark', colorKey: 'green' })
+    const before = await repository.snapshot(1)
+    const custom = before.tags.filter((tag) => !('systemKey' in tag))
+
+    expect(before.tags[0]).toMatchObject({ systemKey: 'favorite' })
+    expect(custom.map((tag) => ('name' in tag ? tag.name : 'system'))).toEqual(['Alpha', 'Beta'])
+
+    await repository.reorder({ tagIds: [custom[1]!.id, custom[0]!.id] })
+    const after = await repository.snapshot(2)
+    expect(after.tags[0]).toMatchObject({ systemKey: 'favorite' })
+    expect(after.tags.slice(1).map((tag) => ('name' in tag ? tag.name : 'system'))).toEqual([
+      'Beta',
+      'Alpha'
+    ])
+    await expect(repository.reorder({ tagIds: [custom[0]!.id] })).rejects.toThrow(
+      'Tag order must include every custom Tag exactly once.'
+    )
+    await expect(repository.reorder({ tagIds: [custom[0]!.id, 'tag-favorite'] })).rejects.toThrow(
+      'Tag order must include every custom Tag exactly once.'
+    )
+
+    await repository.delete(custom[1]!.id)
+    await expect(
+      client.tag.findUniqueOrThrow({ where: { id: custom[0]!.id } })
+    ).resolves.toMatchObject({ sortOrder: 1 })
+  })
+
   it('rejects names whose normalized comparison key exceeds the storage limit', async () => {
     const expandingName = 'İ'.repeat(64)
 

@@ -11,6 +11,7 @@ const VERSION = '1.0.0'
 const PERMISSION_PROMPT = 'Request fixture permission.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
+const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
 const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
 const DELEGATION_BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
@@ -29,7 +30,10 @@ const RELIABLE_FAILURE_PROMPT = 'Start the reliable messaging post-fence failure
 const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fence failure.'
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
+const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
+const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
+const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
 const DELEGATION_INHERITED_SPECIALIST_PROMPT =
   'Run the production inherited Specialist delegation journey.'
@@ -329,7 +333,7 @@ const verifyProviderBridge = () => {
   return 'Provider bridge verified through the Agent process.'
 }
 
-const verifyNotebookLifecycle = async (sessionId) =>
+const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const initial = toolResult(
       'notebook_state',
@@ -339,7 +343,9 @@ const verifyNotebookLifecycle = async (sessionId) =>
       'bash_execute',
       await client.callTool({
         name: 'bash_execute',
-        arguments: { command: 'node -e "console.log(\'notebook-lifecycle-e2e\')"' }
+        arguments: {
+          command: `node -e "setTimeout(() => console.log('notebook-lifecycle-e2e'), ${delayMs})"`
+        }
       })
     )
     const after = toolResult(
@@ -481,7 +487,47 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(TOOL_ORDER_PROMPT)) {
+        if (
+          prompt.includes(TOOL_LAYOUT_SHIFT_PROMPT) ||
+          prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)
+        ) {
+          // Keep the completed tool group on screen before streaming the final Markdown so the
+          // renderer test can observe whether the existing row moves while the next row mounts.
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'e2e-layout-tool-1',
+              title: 'Prepare layout fixture',
+              kind: 'other',
+              status: 'in_progress'
+            }
+          })
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'e2e-layout-tool-1',
+              title: 'Layout probe completed',
+              status: 'completed'
+            }
+          })
+          if (prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)) {
+            process.stderr.write('Layout fixture status.\n')
+          }
+          await delay(750)
+
+          const finalMessageId = `e2e-message-${nextMessageId++}`
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: finalMessageId,
+              content: { type: 'text', text: 'Layout fixture complete.' }
+            }
+          })
+          reply = ''
+        } else if (prompt.includes(TOOL_ORDER_PROMPT)) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
           const intentMessageId = `e2e-message-${nextMessageId++}`
           // A long intent text, chunked quickly so live pacing trails far behind arrival.
@@ -574,6 +620,36 @@ if (process.argv.includes('--version')) {
           })
           await streamSegment(3, 8)
           reply = ''
+        } else if (prompt.includes(QUEUE_GATE_PROMPT)) {
+          // Regression journey for queue dispatch gating: a slow lead-in, then one large final
+          // chunk so the renderer's paced reveal trails the store-complete state by seconds.
+          // An ungated queue would dispatch the next message mid-reveal.
+          const gateMessageId = `e2e-message-${nextMessageId++}`
+          for (let chunk = 0; chunk < 4; chunk += 1) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: gateMessageId,
+                content: { type: 'text', text: `Queue gate lead-in chunk ${chunk}.\n\n` }
+              }
+            })
+            await delay(50)
+          }
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: gateMessageId,
+              content: {
+                type: 'text',
+                text: 'Queue gate backlog paragraph: the reveal keeps pacing after the store completes. '.repeat(
+                  200
+                )
+              }
+            }
+          })
+          reply = ''
         } else if (
           await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
         ) {
@@ -606,6 +682,8 @@ if (process.argv.includes('--version')) {
           reply = verifyProviderBridge()
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
+        } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {
+          reply = await verifyNotebookLifecycle(context.params.sessionId, 1_500)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           reply = await createProvenanceArtifact(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {

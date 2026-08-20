@@ -214,6 +214,7 @@ describe('renderer contract catalog', () => {
       'sessions.deleteSession',
       'tags.create',
       'tags.delete',
+      'tags.reorder',
       'tags.setAssignment',
       'tags.snapshot',
       'tags.update'
@@ -228,6 +229,7 @@ describe('renderer contract catalog', () => {
       'sessions:delete-session',
       'tags:create',
       'tags:delete',
+      'tags:reorder',
       'tags:set-assignment',
       'tags:snapshot',
       'tags:update'

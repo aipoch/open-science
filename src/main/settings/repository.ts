@@ -49,9 +49,10 @@ import {
 } from './subagent-model-settings'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
+type Write = Promise<StoredSettings>
+type DataRootUpdate = Readonly<{ dataRoot: string; onboardingCompletedAt?: number }>
 
-// Stable semantic mutation facade. The injected document store owns arbitration and atomic IO; all
-// secret handling remains above this layer in crypto.ts and service.ts.
+// Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly store: SettingsDocumentStore
 
@@ -67,17 +68,16 @@ class SettingsRepository {
     return this.store.read()
   }
 
-  // Inserts or replaces a provider by id, then returns the persisted document. An existing provider is
-  // replaced in place so the list keeps its creation order (editing or re-testing must not reorder it);
-  // a new provider is appended.
-  async upsertProvider(provider: StoredProvider): Promise<StoredSettings> {
+  // Inserts or replaces a provider without reordering existing entries. existingId, when supplied,
+  // is checked in the same mutation so stale edits cannot append a deleted provider.
+  async upsertProvider(provider: StoredProvider, existingId?: string): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
+      if (existingId && !settings.providers.some(({ id }) => id === existingId))
+        throw new Error('Provider no longer exists.')
       const providers = [...settings.providers]
-
       if (index >= 0) providers[index] = provider
       else providers.push(provider)
-
       return {
         ...settings,
         providers,
@@ -414,10 +414,9 @@ class SettingsRepository {
     )
   }
 
-  // Persists the new data-root path after a successful migration (see storage/migration-service.ts).
-  // Unlike the marker fields above this is not idempotent-once: each call overwrites the prior value.
-  async setDataRoot(path: string): Promise<StoredSettings> {
-    return this.mutate((settings) => ({ ...settings, dataRoot: path }))
+  // Persists the relocatable data root, optionally with the idempotent onboarding marker.
+  async setDataRoot(update: DataRootUpdate): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...update, ...settings, dataRoot: update.dataRoot }))
   }
 
   // Sets (or clears, when `selection` is null) the persisted runtime choice for one language. The
@@ -617,12 +616,13 @@ class SettingsRepository {
     })
   }
 
-  // Replaces one custom MCP server record (identity fields must be preserved by the caller).
-  async updateCustomServer(id: string, server: StoredCustomMcpServer): Promise<StoredSettings> {
+  // Replaces one custom MCP server record; background migrations may ignore a concurrently deleted id.
+  async updateCustomServer(id: string, server: StoredCustomMcpServer, allowMissing = false): Write {
     return this.mutateConnectors((connectors) => {
-      connectors.customMcpServers = (connectors.customMcpServers ?? []).map((s) =>
-        s.id === id ? server : s
-      )
+      const servers = connectors.customMcpServers
+      if (!servers?.some(({ id: existingId }) => existingId === id) && !allowMissing)
+        throw new Error(`Unknown custom connector: ${id}`)
+      connectors.customMcpServers = servers?.map((stored) => (stored.id === id ? server : stored))
     })
   }
 

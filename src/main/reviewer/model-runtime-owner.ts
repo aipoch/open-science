@@ -62,6 +62,7 @@ const unavailableRuntime = (error: unknown): ReviewerAcpRuntime => {
 class ReviewerModelRuntimeOwner {
   private readonly runtimeFactory: NonNullable<ReviewerModelRuntimeOwnerOptions['createRuntime']>
   private readonly activeRuntimes = new Set<ActiveReviewerRuntime>()
+  private readonly activeSharedRuntimeAdmissions = new Set<object>()
   private readonly pendingAdmissions = new Set<Promise<void>>()
   private updateGatePromise: Promise<{ reaped: boolean }> | undefined
   private shuttingDown = false
@@ -88,12 +89,27 @@ class ReviewerModelRuntimeOwner {
     return admission
   }
 
+  hasActiveWork(): boolean {
+    return (
+      this.activeRuntimes.size > 0 ||
+      this.activeSharedRuntimeAdmissions.size > 0 ||
+      this.pendingAdmissions.size > 0
+    )
+  }
+
   private async admitOwned(): Promise<ReviewerModelRuntimeAdmission> {
     if (this.shuttingDown) throw new Error('Reviewer model runtime is shutting down.')
     const captured = await this.options.captureModel()
     if (this.shuttingDown) throw new Error('Reviewer model runtime is shutting down.')
     if (!captured.fixedTarget) {
-      return Object.freeze({ model: captured.model, release: async () => undefined })
+      const admission = Object.freeze({})
+      this.activeSharedRuntimeAdmissions.add(admission)
+      return Object.freeze({
+        model: captured.model,
+        release: async () => {
+          this.activeSharedRuntimeAdmissions.delete(admission)
+        }
+      })
     }
 
     const target = captured.fixedTarget

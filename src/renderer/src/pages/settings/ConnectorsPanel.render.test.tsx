@@ -271,7 +271,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
-  it('orders scope controls before search and lets the narrow toolbar wrap', () => {
+  it('keeps the agent filter and search in the first row with Add Connector at the far right', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
@@ -281,31 +281,29 @@ describe('ConnectorsPanel (groups)', () => {
     const filter = document.body.querySelector<HTMLElement>(
       '[aria-label="Filter connectors by group"]'
     )
-    const scopeFilter = document.body.querySelector<HTMLElement>(
-      '[aria-label="Filter Connectors by scope"]'
+    const agentFilter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter Connectors by agent"]'
     )
-    const specialistFilter = document.body.querySelector<HTMLElement>(
-      '[aria-label="Filter Connectors by Specialist"]'
-    )
+    const tagFilter = document.body.querySelector<HTMLElement>('[aria-label="Filter by Tag"]')
     const addConnector = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).find((button) => button.textContent?.includes('Add connector'))
 
     expect(toolbar?.className).toContain('flex-wrap')
-    expect(filter?.compareDocumentPosition(scopeFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(scopeFilter?.compareDocumentPosition(specialistFilter!)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    )
-    expect(specialistFilter?.compareDocumentPosition(search!)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    )
+    expect(filter?.compareDocumentPosition(agentFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(agentFilter?.compareDocumentPosition(tagFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(tagFilter?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(search?.compareDocumentPosition(addConnector!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(search?.parentElement?.className).toContain('min-w-48')
     expect(filter?.className).toContain('w-36')
+    expect(agentFilter?.className).toContain('w-48')
+    expect(addConnector?.className).toContain('ml-auto')
     expect(addConnector?.className).toContain('shrink-0')
+    expect(toolbar?.lastElementChild).toBe(addConnector)
+    expect(document.body.querySelector('[aria-label="Filter Connectors by scope"]')).toBeNull()
   })
 
-  it('shows each Connector scope without changing its Main Agent toggle', () => {
+  it('shows actual Connector users as avatar stacks without changing the Main Agent toggle', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
@@ -317,16 +315,53 @@ describe('ConnectorsPanel (groups)', () => {
       document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
     ).find((row) => row.textContent?.includes('Europe PMC'))
 
-    expect(pubmedRow?.textContent).toContain('Shared with Main')
-    expect(pubmedRow?.textContent).toContain('Main Agent')
-    expect(europePmcRow?.textContent).toContain('Specialist only')
-    expect(europePmcRow?.textContent).toContain('Main Agent')
-    expect(pubmedRow?.querySelector('[aria-label="PubMed"]')?.getAttribute('data-state')).toBe(
-      'checked'
+    expect(pubmedRow?.textContent).not.toContain('Shared with Main')
+    expect(pubmedRow?.textContent).not.toContain('Main Agent')
+    expect(europePmcRow?.textContent).not.toContain('Specialist only')
+    expect(europePmcRow?.textContent).not.toContain('Main Agent')
+    expect(pubmedRow?.textContent).toContain('Used by')
+    const usageLabel = pubmedRow?.querySelector('[data-slot="skill-usage-agents-label"]')
+    const usageTrigger = pubmedRow?.querySelector('[data-slot="skill-usage-agents-trigger"]')
+    expect(usageLabel?.compareDocumentPosition(usageTrigger!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
     )
     expect(
-      europePmcRow?.querySelector('[aria-label="Europe PMC"]')?.getAttribute('data-state')
+      pubmedRow
+        ?.querySelector('[data-slot="skill-usage-agents-trigger"]')
+        ?.getAttribute('data-resource-kind')
+    ).toBe('connector')
+    expect(europePmcRow?.querySelector('[data-slot="skill-usage-agents-trigger"]')).not.toBeNull()
+    expect(
+      pubmedRow?.querySelector('[aria-label="Toggle PubMed"]')?.getAttribute('data-state')
+    ).toBe('checked')
+    expect(
+      europePmcRow?.querySelector('[aria-label="Toggle Europe PMC"]')?.getAttribute('data-state')
     ).toBe('unchecked')
+  })
+
+  it('combines Main Agent and Specialists in the All Agents/Specialists filter', () => {
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    const agentFilter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter Connectors by agent"]'
+    )
+    expect(agentFilter?.textContent).toContain('All Agents/Specialists')
+
+    openMenu('Filter Connectors by agent')
+    clickItemByText('option', 'Main Agent')
+    expect(document.body.textContent).toContain('PubMed')
+    expect(document.body.textContent).toContain('OpenAlex')
+    expect(document.body.textContent).toContain('My MCP')
+    expect(document.body.textContent).not.toContain('Europe PMC')
+
+    openMenu('Filter Connectors by agent')
+    clickItemByText('option', 'Selected by ID')
+    expect(document.body.textContent).toContain('My MCP')
+    expect(document.body.textContent).not.toContain('PubMed')
+    expect(document.body.textContent).not.toContain('Europe PMC')
+    expect(document.body.textContent).not.toContain('OpenAlex')
   })
 
   it('keeps Connector Tags in the third metadata row', () => {
@@ -348,7 +383,9 @@ describe('ConnectorsPanel (groups)', () => {
       root.render(<ConnectorsPanel onNavigate={onNavigate} />)
     })
 
-    act(() => document.body.querySelector<HTMLButtonElement>('[aria-label="PubMed"]')?.click())
+    act(() =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle PubMed"]')?.click()
+    )
     expect(useSettingsStore.getState().setConnectorEnabled).toHaveBeenCalledWith('pubmed', false)
 
     const row = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -417,30 +454,27 @@ describe('ConnectorsPanel (groups)', () => {
       root.render(<ConnectorsPanel onNavigate={onNavigate} />)
     })
 
-    act(() => document.body.querySelector<HTMLButtonElement>('[aria-label="My MCP"]')?.click())
+    act(() =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle My MCP"]')?.click()
+    )
     expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith(
       'custom-server-uuid',
       false
     )
 
-    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')
-    const exportButton = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Export My MCP"]'
+    const title = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('My MCP') && button.textContent?.includes('my-mcp')
     )
-    const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')
-    expect(edit?.getAttribute('data-slot')).toBe('button')
-    expect(exportButton?.getAttribute('data-slot')).toBe('button')
-    expect(remove?.getAttribute('data-slot')).toBe('button')
-    expect(edit?.getAttribute('data-size')).toBe('icon-sm')
-    expect(remove?.getAttribute('data-size')).toBe('icon-sm')
-    expect(edit?.getAttribute('data-state')).toBe('closed')
-    expect(remove?.getAttribute('data-state')).toBe('closed')
+    act(() => title?.click())
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'custom-server-uuid' })
 
-    act(() => exportButton?.click())
+    openMenu('Actions for My MCP')
+    clickItemByText('menuitem', 'Export')
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'custom-server-uuid' })
 
+    openMenu('Actions for My MCP')
+    clickItemByText('menuitem', 'Remove')
     await act(async () => {
-      remove?.click()
       await Promise.resolve()
     })
     expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
@@ -488,8 +522,9 @@ describe('ConnectorsPanel (groups)', () => {
     useSpecialistStore.setState({ load })
     act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
 
+    openMenu('Actions for My MCP')
+    clickItemByText('menuitem', 'Remove')
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')?.click()
       await Promise.resolve()
     })
 
@@ -535,8 +570,9 @@ describe('ConnectorsPanel (groups)', () => {
     useSpecialistStore.setState({ load })
     act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
 
+    openMenu('Actions for My MCP')
+    clickItemByText('menuitem', 'Remove')
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')?.click()
       await Promise.resolve()
     })
     await act(async () => {
@@ -588,7 +624,9 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
-    const waitingToggle = document.body.querySelector<HTMLButtonElement>('[aria-label="OAuth MCP"]')
+    const waitingToggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle OAuth MCP"]'
+    )
     expect(waitingToggle?.disabled).toBe(false)
     expect(waitingToggle?.getAttribute('aria-disabled')).toBe('true')
     expect(waitingToggle?.className).toContain('cursor-not-allowed')
@@ -620,7 +658,7 @@ describe('ConnectorsPanel (groups)', () => {
     })
     expect(document.body.textContent).toContain('Connected')
     const connectedToggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="OAuth MCP"]'
+      '[aria-label="Toggle OAuth MCP"]'
     )
     expect(connectedToggle?.disabled).toBe(false)
     expect(connectedToggle?.getAttribute('aria-disabled')).toBeNull()
@@ -693,8 +731,8 @@ describe('ConnectorsPanel (groups)', () => {
       )
     ).toBe(false)
 
-    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit Invalid MCP"]')
-    act(() => edit?.click())
+    openMenu('Actions for Invalid MCP')
+    clickItemByText('menuitem', 'Edit')
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'invalid-mcp' })
   })
 
@@ -738,7 +776,7 @@ describe('ConnectorsPanel (groups)', () => {
 
     expect(document.body.textContent).toContain('Sign-in required')
     const expiredToggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Expired OAuth"]'
+      '[aria-label="Toggle Expired OAuth"]'
     )
     expect(expiredToggle?.getAttribute('data-state')).toBe('checked')
     expect(expiredToggle?.getAttribute('aria-disabled')).toBeNull()

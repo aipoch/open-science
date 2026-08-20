@@ -144,7 +144,7 @@ export const BASE_R_PACKAGES: string[] = ['r-base', 'r-jsonlite']
 export type ProvisionerDeps = {
   root: string
   mm: string
-  channel: string
+  channel: string | (() => Promise<string>)
   // Downloads the (spec, version) bundle into the pkgs cache and returns its local lock path, or
   // undefined when no bundle is published (the caller must fail closed rather than silently solving
   // online for the default envs).
@@ -311,6 +311,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private readonly liveUnconfirmedPrefixes = new Set<string>()
 
   constructor(private readonly deps: ProvisionerDeps) {}
+
+  private async resolveChannel(): Promise<string> {
+    return typeof this.deps.channel === 'string' ? this.deps.channel : this.deps.channel()
+  }
 
   private get cache(): MicromambaCache {
     return this.deps.cache ?? selectMicromambaCache(this.deps.root)
@@ -1102,6 +1106,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Refuse if recovery flagged this named prefix possibly-live (an orphan create/install may still
     // be writing it) — the service also gates this, but self-guarding covers every caller.
     this.assertPrefixWritable(prefix)
+    // Named environments are the only online-solving path. Resolve/probe the channel here so normal
+    // application startup and offline default-runtime provisioning never wait for mirror selection.
+    const channel = await this.resolveChannel()
     // Journal the create (child PID + prefix) so a crash mid-create is recovered like any other prefix
     // write: a survivor is killed and, if unconfirmed, the prefix is blocked so a later create/remove
     // can't race it. Take the shared pkgs cache lock (+ MAX_PATH recovery) for the whole prefix cleanup
@@ -1125,13 +1132,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             // (ipc.ts wires them separately). Passing this.abort here would let a cancel of the default env
             // abort this unrelated named-env child. Named create has no per-language cancel path of its own.
             await this.deps.runArgv(
-              createFromPackagesArgv(
-                this.deps.mm,
-                this.deps.root,
-                prefix,
-                [this.deps.channel],
-                pkgs
-              ),
+              createFromPackagesArgv(this.deps.mm, this.deps.root, prefix, [channel], pkgs),
               undefined,
               onChild,
               onBeforeSpawn,
@@ -1536,7 +1537,7 @@ export const planStartupAction = (root: string, expectedVersion: number): Startu
 // is resolved centrally when no override is supplied.
 export type ProductionProvisionerOptions = {
   root: string
-  channel: string
+  channel: string | (() => Promise<string>)
   micromamba?: MicromambaRunnerDeps
   // PEM CA bundle path (enterprise TLS proxy) exported into micromamba's env so an ONLINE provision /
   // named-env create verifies HTTPS against it. Offline bundle creates need no network, so this only
@@ -1578,7 +1579,7 @@ export type ProductionProvisionerDeps = {
 export const createProductionProvisioner = (
   opts: ProductionProvisionerOptions,
   deps: ProductionProvisionerDeps = {}
-): RuntimeProvisioner => {
+): DefaultRuntimeProvisioner => {
   // `root` is `<storageRoot>/runtime`; derive the real home dir from it (storageRoot's parent) as a
   // robust fallback for resolveMicromamba's storage-root branch, instead of leaving it to fall back to
   // resolveMicromamba's own process.env.HOME lookup — which can be unset for a packaged Electron app

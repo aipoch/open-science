@@ -25,10 +25,14 @@ import { projectPreviewStateOwnerFkMigration } from './migrations/0005-project-p
 import { databaseDomainConstraintsMigration } from './migrations/0006-database-domain-constraints'
 import { notificationAttentionMetadataMigration } from './migrations/0007-notification-attention-metadata'
 import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
-import { managedFileVersionFoundationMigration } from './migrations/0009-managed-file-version-foundation'
 import { visionEvidenceMigration } from './migrations/0009-vision-evidence'
 import { computePasswordAuthMigration } from './migrations/0010-compute-password-auth'
 import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tags'
+import { tagOrderingMigration } from './migrations/0012-tag-ordering'
+import {
+  managedFileVersionFoundationCurrentSchemaAdoptionStatements,
+  managedFileVersionFoundationMigration
+} from './migrations/0013-managed-file-version-foundation'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -206,6 +210,12 @@ const MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
   managedFileVersionFoundationMigration.statements,
   managedFileVersionFoundationMigration.verifiers
 )
+const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID = '0009_managed_file_version_foundation'
+const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
+  LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
+  managedFileVersionFoundationMigration.statements,
+  managedFileVersionFoundationMigration.verifiers
+)
 const VISION_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   visionEvidenceMigration.id,
   visionEvidenceMigration.statements,
@@ -223,6 +233,12 @@ const CROSS_RESOURCE_TAGS_CHECKSUM = checksumMigrationPayload(
   crossResourceTagsMigration.statements,
   crossResourceTagsMigration.verifiers,
   crossResourceTagsMigration.operations
+)
+const TAG_ORDERING_CHECKSUM = checksumMigrationPayload(
+  tagOrderingMigration.id,
+  tagOrderingMigration.statements,
+  tagOrderingMigration.verifiers,
+  tagOrderingMigration.operations
 )
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
@@ -338,13 +354,6 @@ const MIGRATION_MANIFEST = [
     backupRetention: 'retain'
   },
   {
-    ...managedFileVersionFoundationMigration,
-    checksum: MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
-    backupOnApply: 'required',
-    backupRetention: 'retain',
-    foreignKeysDuringApply: 'disabled'
-  },
-  {
     ...visionEvidenceMigration,
     checksum: VISION_EVIDENCE_CHECKSUM,
     backupOnApply: 'required',
@@ -361,6 +370,19 @@ const MIGRATION_MANIFEST = [
     checksum: CROSS_RESOURCE_TAGS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...tagOrderingMigration,
+    checksum: TAG_ORDERING_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...managedFileVersionFoundationMigration,
+    checksum: MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    foreignKeysDuringApply: 'disabled'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -840,30 +862,42 @@ const retireDatabaseMigrationBackups = async (
   if (boundaryIndex < 0) {
     throw new Error(`Unknown database backup retention boundary ${scope.throughMigrationId}.`)
   }
-  const retainedMigrationIds = new Set(
+  const retainedCandidates = manifest
+    .slice(0, boundaryIndex + 1)
+    .filter(
+      (migration) =>
+        migration.backupOnApply === 'required' && migration.backupRetention === 'retain'
+    )
+  const manifestRetainedMigrationIds = new Set(
+    retainedCandidates
+      .slice(-RETAINED_DATABASE_MIGRATION_BACKUP_LIMIT)
+      .map((migration) => migration.id)
+  )
+  const retirementCandidates = (
+    retainedMigrationIds: ReadonlySet<string>
+  ): readonly MigrationManifestEntry[] =>
     manifest
       .slice(0, boundaryIndex + 1)
       .filter(
         (migration) =>
-          migration.backupOnApply === 'required' && migration.backupRetention === 'retain'
+          (scope.includeDeleteAfterSuccess &&
+            migration.backupRetention === 'delete-after-success') ||
+          (migration.backupOnApply === 'required' &&
+            migration.backupRetention === 'retain' &&
+            !retainedMigrationIds.has(migration.id))
       )
-      .slice(-RETAINED_DATABASE_MIGRATION_BACKUP_LIMIT)
-      .map((migration) => migration.id)
-  )
-  const retired = manifest.filter(
-    (migration) =>
-      (scope.includeDeleteAfterSuccess && migration.backupRetention === 'delete-after-success') ||
-      (migration.backupOnApply === 'required' &&
-        migration.backupRetention === 'retain' &&
-        !retainedMigrationIds.has(migration.id))
-  )
-  if (retired.length === 0) return
-  let databasePath: string | undefined
+  const manifestRetired = retirementCandidates(manifestRetainedMigrationIds)
+  if (manifestRetired.length === 0) return
+
+  let databasePath: string
   try {
-    databasePath = options.databasePath ?? (await readMainDatabasePath(client))
-    if (!databasePath) throw new Error('The database backup retention path is unavailable.')
+    const resolvedDatabasePath = options.databasePath ?? (await readMainDatabasePath(client))
+    if (!resolvedDatabasePath) {
+      throw new Error('The database backup retention path is unavailable.')
+    }
+    databasePath = resolvedDatabasePath
   } catch (error) {
-    for (const migration of retired) {
+    for (const migration of manifestRetired) {
       try {
         options.onBackupRetirementFailed?.({ migrationId: migration.id, error })
       } catch {
@@ -872,6 +906,22 @@ const retireDatabaseMigrationBackups = async (
     }
     return
   }
+
+  // Retain the newest backups that actually exist. A history bridge may create an older backup
+  // after newer ledger entries are already present, and that recovery point must survive startup.
+  const existingRetainedCandidates: MigrationManifestEntry[] = []
+  for (const migration of retainedCandidates) {
+    if (await pathExists(`${databasePath}.before-${migration.id}.backup`)) {
+      existingRetainedCandidates.push(migration)
+    }
+  }
+  const retainedMigrationIds = new Set(
+    existingRetainedCandidates
+      .slice(-RETAINED_DATABASE_MIGRATION_BACKUP_LIMIT)
+      .map((migration) => migration.id)
+  )
+  const retired = retirementCandidates(retainedMigrationIds)
+  if (retired.length === 0) return
   for (const migration of retired) {
     const path = `${databasePath}.before-${migration.id}.backup`
     try {
@@ -940,7 +990,7 @@ const validateLedger = (
   return ledger.length
 }
 
-const requiresManagedFileVersionHistoryBridge = (
+const requiresLegacyDraftManagedFileVersionHistoryBridge = (
   ledger: readonly LedgerRow[],
   manifest: readonly MigrationManifestEntry[]
 ): boolean => {
@@ -949,12 +999,26 @@ const requiresManagedFileVersionHistoryBridge = (
       migration.id === managedFileVersionFoundationMigration.id &&
       migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
   )
-  if (managedIndex < 0 || ledger.length <= managedIndex) return false
-
-  const historyBeforeManagedRelease = manifest.filter((_migration, index) => index !== managedIndex)
-  if (ledger.length > historyBeforeManagedRelease.length) return false
+  const legacyInsertionIndex = manifest.findIndex(
+    (migration) => migration.id > LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID
+  )
+  if (
+    managedIndex < 0 ||
+    legacyInsertionIndex < 0 ||
+    legacyInsertionIndex >= managedIndex ||
+    ledger.length <= legacyInsertionIndex ||
+    ledger.length > managedIndex + 1
+  ) {
+    return false
+  }
   return ledger.every((row, index) => {
-    const expected = historyBeforeManagedRelease[index]
+    if (index === legacyInsertionIndex) {
+      return (
+        row.id === LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID &&
+        row.checksum === LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+      )
+    }
+    const expected = manifest[index < legacyInsertionIndex ? index : index - 1]
     return expected !== undefined && row.id === expected.id && row.checksum === expected.checksum
   })
 }
@@ -1160,7 +1224,10 @@ const applyBaselineMigration = async (
 const applyManifestMigration = async (
   client: PrismaClient,
   migration: MigrationManifestEntry,
-  options: { repairVisionEvidenceReference?: boolean } = {}
+  options: {
+    repairVisionEvidenceReference?: boolean
+    legacyLedgerIdentityToReplace?: { id: string; checksum: string }
+  } = {}
 ): Promise<void> => {
   const preserveCurrentSchema = await hasCurrentManagedFileVersionFoundation(client)
   const canAdaptCurrentSchema =
@@ -1206,6 +1273,15 @@ const applyManifestMigration = async (
       } catch {
         // The migration statements below own bringing this schema suffix into compliance.
       }
+      if (
+        contractAlreadySatisfied &&
+        migration.id === managedFileVersionFoundationMigration.id &&
+        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+      ) {
+        for (const statement of managedFileVersionFoundationCurrentSchemaAdoptionStatements) {
+          await migrationSqlExecutor.execute(transaction, statement)
+        }
+      }
       if (!contractAlreadySatisfied) {
         if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {
           await migrationSqlExecutor.execute(
@@ -1240,6 +1316,17 @@ const applyManifestMigration = async (
           migration.id,
           { cause: error }
         )
+      }
+      if (options.legacyLedgerIdentityToReplace) {
+        const removed = await migrationSqlExecutor.execute(
+          transaction,
+          `DELETE FROM "_open_science_migrations" WHERE "id" = ? AND "checksum" = ?`,
+          options.legacyLedgerIdentityToReplace.id,
+          options.legacyLedgerIdentityToReplace.checksum
+        )
+        if (removed !== 1) {
+          throw new Error('The legacy Draft managed migration ledger changed during startup.')
+        }
       }
       await insertLedgerRow(transactionClient, migration)
     })
@@ -1348,8 +1435,12 @@ const migrateApplicationDatabaseWithManifest = async (
     })
   }
 
-  const bridgeApplied: string[] = []
-  if (requiresManagedFileVersionHistoryBridge(ledger, manifest)) {
+  const requiresLegacyDraftManagedBridge = requiresLegacyDraftManagedFileVersionHistoryBridge(
+    ledger,
+    manifest
+  )
+  let legacyDraftManagedBackupReady = false
+  if (requiresLegacyDraftManagedBridge) {
     const managedMigration = manifest.find(
       (migration) =>
         migration.id === managedFileVersionFoundationMigration.id &&
@@ -1357,15 +1448,10 @@ const migrateApplicationDatabaseWithManifest = async (
     )!
     options.onProgress?.({ phase: 'migrating', migrationId: managedMigration.id })
     await backupBeforeMigration(managedMigration)
-    await applyManifestMigration(client, managedMigration, {
-      repairVisionEvidenceReference: true
-    })
-    bridgeApplied.push(managedMigration.id)
-    try {
-      ledger = await readLedger(client)
-    } catch (error) {
-      throw classifyDatabaseFailure(error, 'open')
-    }
+    legacyDraftManagedBackupReady = true
+    // Validate and apply the canonical suffix against an in-memory view. The durable legacy row
+    // remains in place until the canonical managed migration can replace it atomically.
+    ledger = ledger.filter(({ id }) => id !== LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID)
   }
 
   const appliedCount = validateLedger(ledger, manifest)
@@ -1391,7 +1477,7 @@ const migrateApplicationDatabaseWithManifest = async (
     return result
   }
   if (appliedCount === manifest.length) {
-    return complete({ adoptedLegacy: false, applied: bridgeApplied, from, to: latest.id })
+    return complete({ adoptedLegacy: false, applied: [], from, to: latest.id })
   }
   const repairsPreviewStateForeignKeyViolations = manifest.some(
     (candidate) =>
@@ -1427,7 +1513,7 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === crossResourceTagsMigration.id &&
       candidate.checksum === CROSS_RESOURCE_TAGS_CHECKSUM
   )
-  const applied: string[] = [...bridgeApplied]
+  const applied: string[] = []
   const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1456,8 +1542,27 @@ const migrateApplicationDatabaseWithManifest = async (
 
   for (const migration of manifest.slice(nextIndex)) {
     options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
-    await backupBeforeMigration(migration)
-    await applyManifestMigration(client, migration)
+    if (
+      !legacyDraftManagedBackupReady ||
+      migration.id !== managedFileVersionFoundationMigration.id ||
+      migration.checksum !== MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+    ) {
+      await backupBeforeMigration(migration)
+    }
+    await applyManifestMigration(client, migration, {
+      repairVisionEvidenceReference:
+        migration.id === managedFileVersionFoundationMigration.id &&
+        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
+      legacyLedgerIdentityToReplace:
+        requiresLegacyDraftManagedBridge &&
+        migration.id === managedFileVersionFoundationMigration.id &&
+        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+          ? {
+              id: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
+              checksum: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+            }
+          : undefined
+    })
     applied.push(migration.id)
   }
 
@@ -1479,6 +1584,7 @@ export {
   MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
   VISION_EVIDENCE_CHECKSUM,
   COMPUTE_PASSWORD_AUTH_CHECKSUM,
+  TAG_ORDERING_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

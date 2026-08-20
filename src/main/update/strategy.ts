@@ -1,4 +1,9 @@
-import type { UpdateStatus } from '../../shared/update'
+import type {
+  UpdateApplyOptions,
+  UpdateBlocker,
+  UpdateDownloadOptions,
+  UpdateStatus
+} from '../../shared/update'
 
 // Readiness reported by the pre-install gate: whether the backend teardown completed within its budget
 // and whether every process tree was cleanly reaped. Structurally matches lifecycle-shutdown's
@@ -6,7 +11,7 @@ import type { UpdateStatus } from '../../shared/update'
 export type InstallReadiness = {
   completed: boolean
   reaped: boolean
-  blockedBy?: 'delegated-work'
+  blockedBy?: UpdateBlocker[]
 }
 
 // Runs backend teardown before an in-place install and reports whether it is safe to proceed. The
@@ -14,14 +19,14 @@ export type InstallReadiness = {
 // never starts while a background process still holds app files open.
 export type InstallGate = () => Promise<InstallReadiness>
 
-// Performs the delegated-work check before invoking the destructive backend teardown gate. Kept
-// independent of Electron/runtime types so composition tests can prove the backend remains untouched.
-export const createDelegatedSafeInstallGate =
-  (hasRunningDelegatedWork: () => boolean, runTeardownGate: InstallGate): InstallGate =>
-  async () =>
-    hasRunningDelegatedWork()
-      ? { completed: false, reaped: false, blockedBy: 'delegated-work' }
-      : runTeardownGate()
+// Performs the active-research check before invoking the destructive backend teardown gate. Kept
+// independent of Electron/runtime types so composition tests can prove blocked work remains untouched.
+export const createActiveResearchSafeInstallGate =
+  (detectBlockers: () => UpdateBlocker[], runTeardownGate: InstallGate): InstallGate =>
+  async () => {
+    const blockedBy = [...new Set(detectBlockers())]
+    return blockedBy.length > 0 ? { completed: false, reaped: false, blockedBy } : runTeardownGate()
+  }
 
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:
 // ElectronUpdaterStrategy (win/linux, and signed stable macOS — in-place download/restart) and
@@ -30,10 +35,10 @@ export const createDelegatedSafeInstallGate =
 export interface UpdateStrategy {
   getStatus(): UpdateStatus
   check(): Promise<UpdateStatus>
-  download(): Promise<UpdateStatus>
+  download(options?: UpdateDownloadOptions): Promise<UpdateStatus>
   // Aborts an in-flight download, stops network activity, and returns the reset status (back to
   // 'available' when a download was running). A no-op when nothing is downloading.
   cancel(): Promise<UpdateStatus>
   // Applies a ready update: open the installer (mac) or quitAndInstall (win/linux).
-  apply(): Promise<UpdateStatus>
+  apply(options?: UpdateApplyOptions): Promise<UpdateStatus>
 }

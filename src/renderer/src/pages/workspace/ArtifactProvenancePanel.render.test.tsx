@@ -895,6 +895,20 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).not.toContain('Loading Messages')
   })
 
+  it('asks for an update when a Message snapshot uses a newer persistence version', async () => {
+    getVersionMessages.mockResolvedValueOnce({
+      messages: { state: 'unavailable', reason: 'message-snapshot-unsupported' }
+    })
+
+    await clickTab('Messages')
+    await flush()
+
+    expect(container.textContent).toContain(
+      'This message snapshot was created by a newer version of Open Science. Update the app to view it.'
+    )
+    expect(container.textContent).not.toContain('(message-snapshot-unsupported)')
+  })
+
   it('reuses a loaded lazy section when switching away and back', async () => {
     await clickTab('Messages')
     await flush()

@@ -330,6 +330,14 @@ const createAcpHandlerWorkflows = (
           runtime,
           loadSession: (projectId, sessionId) =>
             interruptedTurnSessions.loadSession(projectId, sessionId),
+          ...(archiveAvailability
+            ? {
+                startDispatchAdmittedContinuation: (
+                  continuation: AcpPromptRequest,
+                  validate: () => Promise<void>
+                ) => runtime.startContinuationWhenDispatchAdmitted(continuation, validate)
+              }
+            : {}),
           notifications: taskNotifications
         },
         request

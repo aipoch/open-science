@@ -20,6 +20,16 @@ beforeEach(() => {
 })
 
 describe('tag store', () => {
+  it('preserves browser scroll when restoring the currently selected Tag', () => {
+    useTagStore.setState({ browserSelectedId: 'tag-favorite', browserScrollTop: 240 })
+
+    useTagStore.getState().setBrowserSelectedId('tag-favorite')
+    expect(useTagStore.getState().browserScrollTop).toBe(240)
+
+    useTagStore.getState().setBrowserSelectedId('tag-research')
+    expect(useTagStore.getState().browserScrollTop).toBe(0)
+  })
+
   it('hydrates the authoritative snapshot', async () => {
     setTagsApi({ snapshot: vi.fn().mockResolvedValue(favoriteSnapshot()) })
 
@@ -149,5 +159,73 @@ describe('tag store', () => {
 
     expect(snapshot).toHaveBeenCalledOnce()
     expect(useTagStore.getState()).toMatchObject({ revision: 2, assignments: [] })
+  })
+
+  it('optimistically reorders custom Tags while keeping the system Tag first', async () => {
+    const tags: TagSnapshot['tags'] = [
+      ...favoriteSnapshot().tags,
+      {
+        id: 'tag-a',
+        name: 'A',
+        iconKey: 'tag',
+        colorKey: 'blue',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'tag-b',
+        name: 'B',
+        iconKey: 'tag',
+        colorKey: 'green',
+        createdAt: 3,
+        updatedAt: 3
+      }
+    ]
+    let resolveReorder: ((snapshot: TagSnapshot) => void) | undefined
+    const pending = new Promise<TagSnapshot>((resolve) => {
+      resolveReorder = resolve
+    })
+    const reorder = vi.fn(() => pending)
+    setTagsApi({ reorder })
+    useTagStore.setState({ ...favoriteSnapshot(1), tags, status: 'ready' })
+
+    const mutation = useTagStore.getState().reorder({ tagIds: ['tag-b', 'tag-a'] })
+    expect(useTagStore.getState().tags.map((tag) => tag.id)).toEqual([
+      'tag-favorite',
+      'tag-b',
+      'tag-a'
+    ])
+    resolveReorder?.({ ...favoriteSnapshot(2), tags: [tags[0]!, tags[2]!, tags[1]!] })
+    await mutation
+    expect(reorder).toHaveBeenCalledWith({ tagIds: ['tag-b', 'tag-a'] })
+    expect(useTagStore.getState().revision).toBe(2)
+  })
+
+  it('reloads the authoritative Tag order after a failed optimistic reorder', async () => {
+    const authoritative = favoriteSnapshot(2)
+    const snapshot = vi.fn().mockResolvedValue(authoritative)
+    setTagsApi({
+      reorder: vi.fn().mockRejectedValue(new Error('failed')),
+      snapshot
+    })
+    useTagStore.setState({
+      ...favoriteSnapshot(1),
+      status: 'ready',
+      tags: [
+        ...favoriteSnapshot().tags,
+        {
+          id: 'tag-a',
+          name: 'A',
+          iconKey: 'tag',
+          colorKey: 'blue',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    await expect(useTagStore.getState().reorder({ tagIds: ['tag-a'] })).rejects.toThrow('failed')
+    expect(snapshot).toHaveBeenCalledOnce()
+    expect(useTagStore.getState()).toMatchObject(authoritative)
   })
 })

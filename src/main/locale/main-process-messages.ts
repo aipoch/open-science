@@ -234,11 +234,128 @@ const jaMessages: NativeMessages = {
   'Connector configuration': 'Connector 設定'
 }
 
+const koMessages: NativeMessages = {
+  'Open Web UI': 'Web UI 열기',
+  'Copy URL': 'URL 복사',
+  Quit: '종료',
+  Show: '표시',
+  Hide: '숨기기',
+  'Return to tasks': '작업으로 돌아가기',
+  'Minimize to tray': '트레이로 최소화',
+  'Subagents are still running': '서브에이전트가 아직 실행 중입니다',
+  'Return to the running tasks and stop their subagents before quitting Open Science.':
+    'Open Science를 종료하기 전에 실행 중인 작업으로 돌아가 해당 서브에이전트를 중지하세요.',
+  Cancel: '취소',
+  'Quit Open Science?': 'Open Science를 종료하시겠습니까?',
+  'Work is still running and will be interrupted if you quit.':
+    '작업이 아직 실행 중입니다. 종료하면 중단됩니다.',
+  'Minimize to tray or quit?': '트레이로 최소화하시겠습니까, 아니면 종료하시겠습니까?',
+  'Background work may still be running.': '백그라운드 작업이 아직 실행 중일 수 있습니다.',
+  "Don't ask again": '다시 묻지 않기',
+  'Keep waiting': '계속 기다리기',
+  'Quit anyway': '그래도 종료',
+  'Move in progress': '이동 진행 중',
+  'Open Science is still moving your data.': 'Open Science에서 아직 데이터를 이동하고 있습니다.',
+  'Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.':
+    '어느 쪽을 선택해도 데이터는 안전하지만, 지금 종료하면 이동이 완료되지 않아 다시 시작해야 할 수 있습니다. 완료될 때까지 앱을 열어 두세요.',
+  Reload: '새로고침',
+  'Close window': '창 닫기',
+  'The app window stopped responding repeatedly.': '앱 창이 반복해서 응답하지 않았습니다.',
+  'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.':
+    '자동 복구가 일시 중지되었습니다. 새로고침하면 이 창이 홈 화면으로 돌아갑니다. 백그라운드 작업은 계속 실행 중일 수 있습니다.',
+  'Save file': '파일 저장',
+  'Save artifact': '아티팩트 저장',
+  'Choose where to save artifacts': '아티팩트를 저장할 위치 선택',
+  'Download project artifacts': '프로젝트 아티팩트 다운로드',
+  'Export conversation': '대화 내보내기',
+  Markdown: 'Markdown',
+  PDF: 'PDF',
+  'Export notebook': 'Notebook 내보내기',
+  'Jupyter Notebook': 'Jupyter Notebook',
+  'Export notebooks by kernel': '커널별로 Notebook 내보내기',
+  'Overwrite existing notebooks?': '기존 Notebook을 덮어쓰시겠습니까?',
+  '{{count}} notebook already exists in the chosen directory.':
+    '선택한 디렉터리에 이미 Notebook {{count}}개가 있습니다.',
+  '{{count}} notebooks already exist in the chosen directory.':
+    '선택한 디렉터리에 이미 Notebook {{count}}개가 있습니다.',
+  Overwrite: '덮어쓰기',
+  'Save the update installer': '업데이트 설치 프로그램 저장',
+  'Export Skill': '스킬 내보내기',
+  'Skill ZIP': '스킬 ZIP',
+  'ZIP archive': 'ZIP 아카이브',
+  'Save contribution template': '기여 템플릿 저장',
+  'Specialist ZIP': '스페셜리스트 ZIP',
+  'JSON report': 'JSON 보고서',
+  'Import Connector configuration': '커넥터 구성 가져오기',
+  'Export Connector configuration': '커넥터 구성 내보내기',
+  'Connector configuration': '커넥터 구성'
+}
+
+const frMessages: NativeMessages = {
+  'Open Web UI': "Ouvrir l'interface Web",
+  'Copy URL': "Copier l'URL",
+  Quit: 'Quitter',
+  Show: 'Afficher',
+  Hide: 'Masquer',
+  'Return to tasks': 'Revenir aux tâches',
+  'Minimize to tray': 'Réduire dans la zone de notification',
+  'Subagents are still running': "Des sous-agents sont encore en cours d'exécution",
+  'Return to the running tasks and stop their subagents before quitting Open Science.':
+    'Revenez aux tâches en cours et arrêtez leurs sous-agents avant de quitter Open Science.',
+  Cancel: 'Annuler',
+  'Quit Open Science?': 'Quitter Open Science ?',
+  'Work is still running and will be interrupted if you quit.':
+    "Des tâches sont encore en cours et seront interrompues si vous quittez l'application.",
+  'Minimize to tray or quit?': 'Réduire dans la zone de notification ou quitter ?',
+  'Background work may still be running.': "Des tâches peuvent encore s'exécuter en arrière-plan.",
+  "Don't ask again": 'Ne plus demander',
+  'Keep waiting': "Continuer d'attendre",
+  'Quit anyway': 'Quitter quand même',
+  'Move in progress': 'Déplacement en cours',
+  'Open Science is still moving your data.': 'Open Science déplace encore vos données.',
+  'Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.':
+    "Vos données restent en sécurité, mais quitter maintenant laissera le déplacement inachevé et vous devrez peut-être le recommencer. Gardez l'application ouverte jusqu'à la fin.",
+  Reload: 'Recharger',
+  'Close window': 'Fermer la fenêtre',
+  'The app window stopped responding repeatedly.':
+    "La fenêtre de l'application a cessé de répondre à plusieurs reprises.",
+  'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.':
+    "La récupération automatique a été suspendue. Le rechargement ramène cette fenêtre à l'écran d'accueil ; des tâches peuvent encore s'exécuter en arrière-plan.",
+  'Save file': 'Enregistrer le fichier',
+  'Save artifact': "Enregistrer l'artefact",
+  'Choose where to save artifacts': 'Choisir où enregistrer les artefacts',
+  'Download project artifacts': 'Télécharger les artefacts du projet',
+  'Export conversation': 'Exporter la conversation',
+  Markdown: 'Markdown',
+  PDF: 'PDF',
+  'Export notebook': 'Exporter le Notebook',
+  'Jupyter Notebook': 'Jupyter Notebook',
+  'Export notebooks by kernel': 'Exporter les Notebooks par noyau',
+  'Overwrite existing notebooks?': 'Écraser les Notebooks existants ?',
+  '{{count}} notebook already exists in the chosen directory.':
+    'Le dossier choisi contient déjà {{count}} Notebook.',
+  '{{count}} notebooks already exist in the chosen directory.':
+    'Le dossier choisi contient déjà {{count}} Notebooks.',
+  Overwrite: 'Écraser',
+  'Save the update installer': "Enregistrer le programme d'installation de la mise à jour",
+  'Export Skill': 'Exporter la compétence',
+  'Skill ZIP': 'Archive ZIP de la compétence',
+  'ZIP archive': 'Archive ZIP',
+  'Save contribution template': 'Enregistrer le modèle de contribution',
+  'Specialist ZIP': 'Archive ZIP du spécialiste',
+  'JSON report': 'Rapport JSON',
+  'Import Connector configuration': 'Importer la configuration du connecteur',
+  'Export Connector configuration': 'Exporter la configuration du connecteur',
+  'Connector configuration': 'Configuration du connecteur'
+}
+
 const messages: Record<Locale, NativeMessages> = {
   en: englishMessages,
+  fr: frMessages,
   'zh-Hans': zhHansMessages,
   'zh-Hant': zhHantMessages,
-  ja: jaMessages
+  ja: jaMessages,
+  ko: koMessages
 }
 
 export const translateNativeMessage = (

@@ -205,7 +205,7 @@ describe('WorkspaceSidebar accessible render', () => {
   it('keeps the sidebar card inset even on both sides', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
 
-    expect(html).toContain('m-2 flex min-h-0 flex-1 flex-col rounded-lg')
+    expect(html).toContain('m-[0.7px] flex min-h-0 flex-1 flex-col rounded-lg')
     expect(html).not.toContain('mr-0')
     expect(html).toContain('aria-label="Messages, no unread messages"')
   })

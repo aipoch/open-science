@@ -251,6 +251,30 @@ describe('workspace page component boundaries', () => {
     for (const source of horizontalScrollerSources) expect(source).toContain('scroll-fade-x')
   })
 
+  it('keeps desktop workspace bottom spacing aligned with the tighter top spacing', () => {
+    const workspacePanelLayoutSource = readFileSync(workspacePanelLayoutPath, 'utf8')
+    const sidebarSource = readFileSync(workspaceSidebarPath, 'utf8')
+    const conversationPanelSource = readFileSync(conversationPanelPath, 'utf8')
+    const previewPanelSource = readFileSync(resolve(__dirname, 'PreviewPanel.tsx'), 'utf8')
+
+    expect(workspacePanelLayoutSource).not.toContain('-my-[10px]')
+    expect(workspacePanelLayoutSource).not.toContain('h-[calc(100%+20px)]')
+    expect(workspacePanelLayoutSource).toContain("'min-w-0 flex-1'")
+    expect(sidebarSource).toContain('m-[0.7px]')
+    expect(sidebarSource).not.toContain('m-px flex min-h-0')
+    expect(sidebarSource).not.toContain('m-0.5 flex min-h-0')
+    expect(sidebarSource).not.toContain('m-1 flex min-h-0')
+    expect(sidebarSource).not.toContain('m-2 flex min-h-0')
+    expect(conversationPanelSource).toContain('p-[6px] pl-4')
+    expect(conversationPanelSource).toContain('md:pb-[6px]')
+    expect(previewPanelSource).toContain('py-[0.7px]')
+    expect(previewPanelSource).not.toContain('py-px')
+    expect(previewPanelSource).not.toContain('py-0.5')
+    expect(previewPanelSource).not.toContain('py-1')
+    expect(previewPanelSource).not.toContain('py-2')
+    expect(previewPanelSource).not.toContain('py-[10px]')
+  })
+
   it('registers the semantic chart tokens used by the response Usage breakdown', () => {
     const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     const messageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
@@ -395,7 +419,7 @@ describe('conversation message scroller integration', () => {
     expect(conversationPanelSource).toContain('composerContentClassName')
     expect(conversationPanelSource).toContain('mx-auto w-full max-w-4xl')
     expect(conversationPanelSource).toContain(
-      'px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-2'
+      'px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-[6px]'
     )
     expect(conversationPanelSource).toContain('px-1 md:px-3')
     expect(workspaceMessageScrollerSource).toContain('bg-bg-10')

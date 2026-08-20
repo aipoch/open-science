@@ -63,7 +63,7 @@ describe('Specialist resource scope', () => {
   })
 
   it('keeps Main availability independent from Specialist membership', () => {
-    const used = [{ id: 'selected', name: 'Selected Specialist' }]
+    const used = [{ id: 'selected', name: 'Selected Specialist', kind: 'custom' as const }]
     expect(resourceScope(true, [])).toBe('main-only')
     expect(resourceScope(false, used)).toBe('specialist-only')
     expect(resourceScope(true, used)).toBe('shared')

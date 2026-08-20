@@ -25,6 +25,7 @@ import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
+  resumeAutoReviewsAfterQuitAbort,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
@@ -2716,6 +2717,27 @@ describe('workspace runtime events', () => {
       await vi.runAllTimersAsync()
 
       expect(reviewerRun).not.toHaveBeenCalled()
+      vi.unstubAllGlobals()
+    })
+
+    it('allows future auto-reviews after quit preparation is aborted', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+      suppressAutoReviewsForQuit()
+
+      resumeAutoReviewsAfterQuitAbort()
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-after-abort', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledOnce()
       vi.unstubAllGlobals()
     })
 

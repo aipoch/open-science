@@ -2,14 +2,16 @@
 
 ## i18n — translating new user-visible strings
 
-The renderer ships three translated locales: **zh-Hans** (Simplified Chinese), **zh-Hant**
-(Traditional Chinese), and **ja** (Japanese). Every user-visible string added to the renderer must
-have a corresponding entry in all catalog files:
+The renderer ships five translated locales: **fr** (French), **zh-Hans** (Simplified Chinese),
+**zh-Hant** (Traditional Chinese), **ja** (Japanese), and **ko** (Korean). Every user-visible string added to the
+renderer must have a corresponding entry in all catalog files:
 
 ```
 src/renderer/src/locales/zh-Hans.json
 src/renderer/src/locales/zh-Hant.json
 src/renderer/src/locales/ja.json
+src/renderer/src/locales/ko.json
+src/renderer/src/locales/fr.json
 ```
 
 The guard suite in `src/renderer/src/i18n/resources.test.ts` runs on every `npm test` and **will
@@ -51,10 +53,16 @@ an i18next suffix appended). Entries are plain JSON strings at the top level —
 "Data folder not found": "未找到数据文件夹",
 
 // zh-Hant.json
-"Data folder not found": "找不到資料夾"
+"Data folder not found": "找不到資料夾",
+
+// fr.json
+"Data folder not found": "Dossier de données introuvable"
 
 // ja.json
 "Data folder not found": "データフォルダーが見つかりません"
+
+// ko.json
+"Data folder not found": "데이터 폴더를 찾을 수 없습니다"
 ```
 
 Each catalog must be updated independently. **Every translated locale falls back directly to
@@ -62,18 +70,23 @@ English**, so a missing key renders in English instead of borrowing another tran
 
 ### Plurals
 
-Chinese and Japanese have a single plural category. Use the `_other` suffix only — never `_one`,
-`_few`, etc. The English singular is passed as `defaultValue_one` at the call site; it never needs a
-catalog entry.
+Chinese, Japanese, and Korean have a single plural category. Use the `_other` suffix only — never `_one`,
+`_few`, etc. French has `_one`, `_many`, and `_other` categories, so all three entries are required;
+`_many` is selected for values such as 1,000,000 and can usually reuse the `_other` translation. The
+English singular is passed as `defaultValue_one` at the call site.
 
 ```tsx
 // Call site — English needs no catalog entry
 t('{{count}} files', { count: n, defaultValue_one: '{{count}} file' })
 
-// Catalog entries — _other suffix only
+// Catalog entries — every category selected by the locale
 "{{count}} files_other": "{{count}} 个文件"   // zh-Hans
 "{{count}} files_other": "{{count}} 個檔案"   // zh-Hant
 "{{count}} files_other": "{{count}}個のファイル" // ja
+"{{count}} files_other": "파일 {{count}}개" // ko
+"{{count}} files_one": "{{count}} fichier"      // fr
+"{{count}} files_many": "{{count}} fichiers"    // fr
+"{{count}} files_other": "{{count}} fichiers"   // fr
 ```
 
 ### Context suffixes
@@ -95,19 +108,19 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term                 | zh-Hans      | zh-Hant      | ja                     | Note                                              |
-| -------------------- | ------------ | ------------ | ---------------------- | ------------------------------------------------- |
-| Skill / Skills       | **技能**     | **技能**     | **スキル**             | Translate user-visible prose                      |
-| Agent / Agents       | **智能体**   | **智能體**   | **エージェント**       | Translate user-visible prose                      |
-| Notebook             | **Notebook** | **Notebook** | **Notebook**           | Keep as-is                                        |
-| token (model usage)  | **词元**     | **詞元**     | **トークン**           | Model input, output, context, and usage counts    |
-| token (credential)   | **令牌**     | **權杖**     | **トークン**           | Authentication and personal access credentials    |
-| Specialist           | **专家**     | **專家**     | **スペシャリスト**     | Generic role; translate                           |
-| Marketplace          | **市场**     | **市集**     | **マーケットプレイス** | Generic surface; retain third-party product names |
-| Connector            | **连接器**   | **連接器**   | **コネクタ**           | Generic noun; retain exact directory names        |
-| Main Agent           | **主智能体** | **主智能體** | **メインエージェント** | Translate as a complete compound                  |
-| Subagent / Subagents | **子智能体** | **子智能體** | **サブエージェント**   | Translate as a complete compound                  |
-| Shell                | **命令行**   | **命令列**   | **シェル**             | User-facing label; `Notebook` remains English     |
+| Term                 | fr                  | zh-Hans      | zh-Hant      | ja                     | ko                | Note                                              |
+| -------------------- | ------------------- | ------------ | ------------ | ---------------------- | ----------------- | ------------------------------------------------- |
+| Skill / Skills       | **Compétence(s)**   | **技能**     | **技能**     | **スキル**             | **스킬**          | Translate user-visible prose                      |
+| Agent / Agents       | **Agent(s)**        | **智能体**   | **智能體**   | **エージェント**       | **에이전트**      | Translate user-visible prose                      |
+| Notebook             | **Notebook**        | **Notebook** | **Notebook** | **Notebook**           | **Notebook**      | Keep as-is                                        |
+| token (model usage)  | **Jeton(s)**        | **词元**     | **詞元**     | **トークン**           | **토큰**          | Model input, output, context, and usage counts    |
+| token (credential)   | **Jeton(s)**        | **令牌**     | **權杖**     | **トークン**           | **토큰**          | Authentication and personal access credentials    |
+| Specialist           | **Spécialiste**     | **专家**     | **專家**     | **スペシャリスト**     | **스페셜리스트**  | Generic role; translate                           |
+| Marketplace          | **Place de marché** | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | Generic surface; retain third-party product names |
+| Connector            | **Connecteur**      | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | Generic noun; retain exact directory names        |
+| Main Agent           | **Agent principal** | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | Translate as a complete compound                  |
+| Subagent / Subagents | **Sous-agent(s)**   | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | Translate as a complete compound                  |
+| Shell                | **Terminal**        | **命令行**   | **命令列**   | **シェル**             | **셸**            | User-facing label; `Notebook` remains English     |
 
 Exact technical identifiers are exempt from prose translation. Keep file names, extensions,
 commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`, `.skill`,
@@ -124,6 +137,36 @@ npx vitest run src/renderer/src/i18n/resources.test.ts
 The suite checks: no empty strings, placeholder parity, correct plural categories, no void-element
 Trans tags, no orphaned catalog keys, no missing translations for every `t()` call site, and no
 bare JSX text nodes left unwrapped.
+
+## Reusable error surfaces
+
+### ErrorNotice (`src/renderer/src/components/error-notice.tsx`)
+
+The generic error display. The flask brand mark is fixed; every other section is an optional prop
+and renders only when provided:
+
+- `icon` + `tone` — `teal` (update the app), `amber` (transient / retryable), `red` (data or
+  installation integrity). Tones resolve to the `status-info` / `status-warning` /
+  `status-failure` token families registered in `main.css` and documented in `docs/design.md` —
+  do not reintroduce inline `oklch()`/hex values.
+- `title`, `description`, `errorCode`
+- `help` — `{ whyLabel, why, howLabel, how }`
+- `issueLink` — `{ label, tooltip, onClick }`
+- `secondaryButton` / `primaryButton` — `{ label, onClick, disabled?, loading? }`; `loading` shows
+  a spinner and disables the button.
+
+All copy arrives as final display strings — the **caller** translates with `t()`; the component
+holds no user-visible copy of its own. Current consumer: `DatabaseStartupGate`. New error surfaces
+should compose `ErrorNotice` instead of rolling their own layout.
+
+### Startup issue draft helpers (`src/renderer/src/lib/startup-issue.ts`)
+
+- `buildStartupIssueUrl(error)` — GitHub `issues/new` URL with a prefilled title and body
+  (What happened / Environment / Steps to reproduce / Error stack). Oversized stacks are trimmed
+  by binary search against the real percent-encoded URL length (~7800-char budget).
+- `openStartupIssueDraft(error)` — opens that URL in a new browser window. This is a stateless
+  side effect, so it stays a plain function: don't wrap it in a hook unless React state or
+  lifecycle actually gets involved.
 
 ## Known patterns
 

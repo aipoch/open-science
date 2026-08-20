@@ -1340,9 +1340,14 @@ const ArtifactProvenancePanel = ({
             />
           ) : (
             <p className="p-5 text-sm text-text-300">
-              {t('The immutable message snapshot is not available for this version ({{reason}}).', {
-                reason: provenance.messages.reason
-              })}
+              {provenance.messages.reason === 'message-snapshot-unsupported'
+                ? t(
+                    'This message snapshot was created by a newer version of Open Science. Update the app to view it.'
+                  )
+                : t(
+                    'The immutable message snapshot is not available for this version ({{reason}}).',
+                    { reason: provenance.messages.reason }
+                  )}
             </p>
           )
         ) : null}

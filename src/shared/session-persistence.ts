@@ -570,13 +570,7 @@ export type MaterializedPersistedChatSession = PersistedChatSession & {
 // Renderer-owned preferences that can be replayed onto a newer durable graph after a stale-graph
 // conflict. The field list records intent explicitly, including changes that clear optional values.
 export type SessionConflictRebaseField =
-  | 'title'
-  | 'permissionProfile'
-  | 'autoReviewEnabled'
-  | 'enabledComputeHosts'
-  | 'pinned'
-  | 'specialistId'
-  | 'specialistBindingPending'
+  'title' | 'permissionProfile' | 'autoReviewEnabled' | 'enabledComputeHosts' | 'pinned'
 
 export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]

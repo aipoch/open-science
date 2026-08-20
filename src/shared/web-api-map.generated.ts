@@ -250,6 +250,7 @@ export const WEB_INVOKE_CHANNELS = {
   'storage.validateDataRoot': 'storage:validate-data-root',
   'tags.create': 'tags:create',
   'tags.delete': 'tags:delete',
+  'tags.reorder': 'tags:reorder',
   'tags.setAssignment': 'tags:set-assignment',
   'tags.snapshot': 'tags:snapshot',
   'tags.update': 'tags:update',
