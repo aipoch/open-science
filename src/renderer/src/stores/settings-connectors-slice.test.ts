@@ -77,9 +77,10 @@ const createCommands = (): ConnectorCommands => ({
 const createHarness = (
   commands: ConnectorCommands
 ): { store: StoreApi<TestStore>; commands: ConnectorCommands } => {
-  const store = createStore<TestStore>((set) => ({
+  const store = createStore<TestStore>((set, get) => ({
     ...createInitialSettingsConnectorsState(),
     ...createSettingsConnectorsSlice({
+      getState: get,
       setState: (patch) => set(patch),
       getCommands: () => commands
     })
@@ -107,6 +108,32 @@ describe('settings Connectors slice', () => {
     await store.getState().loadConnectors()
 
     expect(store.getState()).toMatchObject(result)
+  })
+
+  it('reuses the in-memory projection when the panel loads again', async () => {
+    vi.mocked(commands.listConnectors).mockResolvedValue(snapshot([connector('pubmed')]))
+
+    await store.getState().loadConnectors()
+    await store.getState().loadConnectors()
+
+    expect(commands.listConnectors).toHaveBeenCalledOnce()
+    expect(store.getState().connectors).toEqual([connector('pubmed')])
+  })
+
+  it('deduplicates overlapping initial catalog loads', async () => {
+    let settle!: (snapshot: ConnectorsSnapshot) => void
+    vi.mocked(commands.listConnectors).mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve
+      })
+    )
+
+    const first = store.getState().loadConnectors()
+    const second = store.getState().loadConnectors()
+    settle(snapshot([connector('pubmed')]))
+    await Promise.all([first, second])
+
+    expect(commands.listConnectors).toHaveBeenCalledOnce()
   })
 
   it('reloads the authoritative snapshot when runtime availability changes', async () => {

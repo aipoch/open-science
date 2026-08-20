@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeApprovalRequest, ComputeHost, ProbeResult } from '../../../shared/compute'
-import { createInitialComputeState, useComputeStore } from './compute-store'
+import {
+  consumeComputeHostsPreload,
+  createInitialComputeState,
+  preloadComputeHosts,
+  useComputeStore
+} from './compute-store'
 
 const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -51,6 +56,39 @@ describe('compute store', () => {
       'ssh:new',
       'ssh:old'
     ])
+  })
+
+  it('deduplicates only overlapping host loads and refreshes after they settle', async () => {
+    let finishFirst!: (hosts: ComputeHost[]) => void
+    const list = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise<ComputeHost[]>((resolve) => (finishFirst = resolve))
+      )
+      .mockResolvedValueOnce([createHost({ providerId: 'ssh:refreshed' })])
+    setComputeApi({ list })
+
+    const first = useComputeStore.getState().loadHosts()
+    const overlapping = useComputeStore.getState().loadHosts()
+    expect(list).toHaveBeenCalledOnce()
+
+    finishFirst([createHost()])
+    await Promise.all([first, overlapping])
+    await useComputeStore.getState().loadHosts()
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(useComputeStore.getState().hosts[0]?.providerId).toBe('ssh:refreshed')
+  })
+
+  it('marks a lazy-boundary preload for exactly one panel mount', async () => {
+    const list = vi.fn().mockResolvedValue([createHost()])
+    setComputeApi({ list })
+
+    await preloadComputeHosts()
+
+    expect(list).toHaveBeenCalledOnce()
+    expect(consumeComputeHostsPreload()).toBe(true)
+    expect(consumeComputeHostsPreload()).toBe(false)
   })
 
   it('records a load error instead of throwing', async () => {

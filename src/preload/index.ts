@@ -800,6 +800,7 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('runtime.unregisterInterpreter', language, path)
   },
   storage: {
+    getStatus: () => electronRendererContracts.invoke('storage.getStatus'),
     getInfo: () => electronRendererContracts.invoke('storage.getInfo'),
     revealAppStorage: () => electronRendererContracts.invoke('storage.revealAppStorage'),
     detectActive: () => electronRendererContracts.invoke('storage.detectActive'),

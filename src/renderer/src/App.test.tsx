@@ -101,6 +101,7 @@ const mocks = vi.hoisted(() => {
       closeDialog: vi.fn()
     },
     startupView: 'app' as 'app' | 'onboarding',
+    getStatus: vi.fn(),
     getInfo: vi.fn(),
     onboarding: {
       props: undefined as { loadStorageInfo: () => Promise<unknown> } | undefined
@@ -350,6 +351,7 @@ vi.mock('@/pages/workspace/use-side-chat-controller', () => ({
   useOpenSideChatParentSessionIds: (): ReadonlySet<string> => mocks.sideChatParentSessionIds
 }))
 
+import { useStorageInfoStore } from '@/stores/storage-info-store'
 import App from './App'
 
 describe('App startup routing', () => {
@@ -358,6 +360,14 @@ describe('App startup routing', () => {
   let canvasContextSpy: { mockRestore: () => void }
 
   beforeEach(() => {
+    useStorageInfoStore.setState({
+      status: null,
+      info: null,
+      scannedAt: null,
+      isLoading: false,
+      isRefreshing: false,
+      loadError: undefined
+    })
     canvasContextSpy = vi
       .spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockImplementation(() => null)
@@ -408,15 +418,23 @@ describe('App startup routing', () => {
     mocks.environment.retry.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
     mocks.syncUnreadTaskView.mockClear()
-    mocks.getInfo.mockReset().mockResolvedValue({
+    const storageStatus = {
       dataRoot: '/workspace/OpenScience',
+      isDefault: true,
+      defaultDataRoot: '/workspace/OpenScience',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
       defaultParent: '/workspace'
+    }
+    mocks.getStatus.mockReset().mockResolvedValue(storageStatus)
+    mocks.getInfo.mockReset().mockResolvedValue({
+      ...storageStatus,
+      usage: { categories: [], totalBytes: 0 },
+      availableBytes: 1_000_000_000
     })
     mocks.onboarding.props = undefined
     window.api = {
-      storage: { getInfo: mocks.getInfo },
+      storage: { getStatus: mocks.getStatus, getInfo: mocks.getInfo },
       settings: {
         onConnectorApprovalRequest: vi.fn(() => vi.fn()),
         onConnectorApprovalSettled: vi.fn(() => vi.fn()),
@@ -1005,12 +1023,13 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
-  it('shares the startup storage lookup with onboarding', async () => {
+  it('uses lightweight storage status at startup and defers the full scan to onboarding', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'
 
     await render()
-    expect(mocks.getInfo).toHaveBeenCalledOnce()
+    expect(mocks.getStatus).toHaveBeenCalledOnce()
+    expect(mocks.getInfo).not.toHaveBeenCalled()
 
     await act(async () => {
       await mocks.onboarding.props?.loadStorageInfo()
@@ -1019,23 +1038,46 @@ describe('App startup routing', () => {
     expect(mocks.getInfo).toHaveBeenCalledOnce()
   })
 
-  it('allows onboarding to retry a failed shared storage lookup', async () => {
+  it('allows onboarding to retry a failed deferred storage scan', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'
-    mocks.getInfo.mockRejectedValueOnce(new Error('storage unavailable')).mockResolvedValueOnce({
-      dataRoot: '/workspace/OpenScience',
-      dataRootMissing: false,
-      legacyDataMovePrompt: false,
-      defaultParent: '/workspace'
-    })
+    mocks.getInfo.mockRejectedValueOnce(new Error('storage unavailable'))
 
     await render()
 
+    await expect(mocks.onboarding.props?.loadStorageInfo()).rejects.toThrow('storage unavailable')
     await act(async () => {
       await mocks.onboarding.props?.loadStorageInfo()
     })
 
+    expect(mocks.getStatus).toHaveBeenCalledOnce()
     expect(mocks.getInfo).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to legacy getInfo when storage status is unavailable', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+    mocks.getStatus.mockRejectedValueOnce(
+      new Error("No handler registered for 'storage:get-status'")
+    )
+    mocks.getInfo.mockResolvedValue({
+      dataRoot: '/workspace/OpenScience',
+      isDefault: true,
+      defaultDataRoot: '/workspace/OpenScience',
+      dataRootMissing: false,
+      legacyDataMovePrompt: false,
+      defaultParent: '/workspace',
+      usage: { categories: [], totalBytes: 0 },
+      availableBytes: 1_000_000_000
+    })
+
+    await render()
+    await act(async () => {
+      await mocks.onboarding.props?.loadStorageInfo()
+    })
+
+    expect(mocks.getStatus).toHaveBeenCalledOnce()
+    expect(mocks.getInfo).toHaveBeenCalledOnce()
   })
 
   it('continues the startup animation while the initial session snapshot loads', async () => {
@@ -1077,7 +1119,7 @@ describe('App startup routing', () => {
     expect(mocks.loadProjects).toHaveBeenCalled()
     expect(mocks.settings.load).toHaveBeenCalled()
     expect(mocks.settings.checkEnvironment).toHaveBeenCalled()
-    expect(mocks.getInfo).toHaveBeenCalled()
+    expect(mocks.getStatus).toHaveBeenCalled()
     expect(window.api.permissions.onChanged).toHaveBeenCalledOnce()
   })
 
@@ -1312,7 +1354,7 @@ describe('App startup routing', () => {
   it('renders Workspace and exposes a missing data-root recovery dialog', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
-    mocks.getInfo.mockResolvedValue({
+    mocks.getStatus.mockResolvedValue({
       dataRoot: '/Volumes/Science/OpenScience',
       dataRootMissing: true,
       legacyDataMovePrompt: false,

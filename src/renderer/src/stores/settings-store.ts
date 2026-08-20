@@ -291,9 +291,17 @@ export const selectProviderModelOptions = (
 let settingsLoadPromise: Promise<boolean> | undefined
 const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
 
+const trackSettingsLoad = (loadPromise: Promise<boolean>): Promise<boolean> => {
+  settingsLoadPromise = loadPromise
+  void loadPromise.then(() => {
+    if (settingsLoadPromise === loadPromise) settingsLoadPromise = undefined
+  })
+  return loadPromise
+}
+
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
 const reportSettingsLoadError = (error: unknown): void => {
-  console.warn('Settings startup loading failed', error)
+  console.warn('Settings loading failed', error)
 }
 
 // Renderer cache of the main-process settings service. The main process stays the source of truth
@@ -349,6 +357,7 @@ const createSettingsStoreState = (
     getCommands: () => window.api.settings
   }),
   ...createSettingsConnectorsSlice({
+    getState: get,
     setState: (patch) => set(patch),
     getCommands: () => window.api.settings
   }),
@@ -359,6 +368,24 @@ const createSettingsStoreState = (
     // request cannot supersede its successful result; an explicit user retry still starts a new
     // generation and remains authoritative over any older request.
     if (!options?.force && settingsLoadPromise) return settingsLoadPromise
+    // Reopening Settings refreshes the lightweight snapshot so mutations from another renderer or
+    // backend path are visible. Keep subprocess-based preflight and availability probes startup-only.
+    if (!options?.force && get().isLoaded) {
+      const generation = get().settingsLoadGeneration + 1
+      set({ settingsLoadGeneration: generation })
+      const refreshPromise = window.api.settings
+        .getSettings()
+        .then((snapshot) => {
+          if (get().settingsLoadGeneration !== generation) return false
+          set({ ...applySnapshot(snapshot), loadError: undefined })
+          return true
+        })
+        .catch((error: unknown) => {
+          if (get().settingsLoadGeneration === generation) reportSettingsLoadError(error)
+          return false
+        })
+      return trackSettingsLoad(refreshPromise)
+    }
 
     const generation = get().settingsLoadGeneration + 1
     set({ settingsLoadGeneration: generation, isLoading: true, loadError: undefined })
@@ -395,11 +422,7 @@ const createSettingsStoreState = (
       }
     })()
 
-    settingsLoadPromise = loadPromise
-    void loadPromise.then(() => {
-      if (settingsLoadPromise === loadPromise) settingsLoadPromise = undefined
-    })
-    return loadPromise
+    return trackSettingsLoad(loadPromise)
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),

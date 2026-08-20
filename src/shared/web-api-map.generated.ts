@@ -241,6 +241,7 @@ export const WEB_INVOKE_CHANNELS = {
   'storage.discardMigratedCopy': 'storage:discard-migrated-copy',
   'storage.dismissLegacyMovePrompt': 'storage:dismiss-legacy-move-prompt',
   'storage.getInfo': 'storage:get-info',
+  'storage.getStatus': 'storage:get-status',
   'storage.inspectDataRoot': 'storage:inspect-data-root',
   'storage.migrate': 'storage:migrate',
   'storage.pickDirectory': 'storage:pick-directory',

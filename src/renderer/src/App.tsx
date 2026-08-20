@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
-import type { StorageInfo } from '../../shared/storage'
+import type { StorageInfo, StorageStatus } from '../../shared/storage'
 
 import { useDeepLinkNavigation } from '@/lib/deep-link'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -51,6 +51,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
@@ -159,31 +160,25 @@ const AppContent = (): React.JSX.Element | null => {
   const [legacyMove, setLegacyMove] = useState<
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
-  const storageInfoRequest = useRef<Promise<StorageInfo> | undefined>(undefined)
-  const loadStorageInfo = useCallback((): Promise<StorageInfo> => {
-    if (storageInfoRequest.current) return storageInfoRequest.current
-
-    const request = Promise.resolve()
-      .then(() => window.api.storage.getInfo())
-      .then(
-        (info) => {
-          if (info.dataRootMissing) setMissingDataRoot(info.dataRoot)
-          else if (info.legacyDataMovePrompt) {
-            setLegacyMove({
-              currentDataRoot: info.dataRoot,
-              defaultParent: info.defaultParent
-            })
-          }
-          return info
-        },
-        (error: unknown) => {
-          if (storageInfoRequest.current === request) storageInfoRequest.current = undefined
-          throw error
-        }
-      )
-    storageInfoRequest.current = request
-    return request
+  const applyStorageStatus = useCallback((status: StorageStatus): void => {
+    if (status.dataRootMissing) setMissingDataRoot(status.dataRoot)
+    else if (status.legacyDataMovePrompt) {
+      setLegacyMove({
+        currentDataRoot: status.dataRoot,
+        defaultParent: status.defaultParent
+      })
+    }
   }, [])
+  const loadStorageStatus = useCallback(async (): Promise<StorageStatus> => {
+    const status = await useStorageInfoStore.getState().loadStatus()
+    applyStorageStatus(status)
+    return status
+  }, [applyStorageStatus])
+  const loadStorageInfo = useCallback(async (): Promise<StorageInfo> => {
+    const info = await useStorageInfoStore.getState().load()
+    applyStorageStatus(info)
+    return info
+  }, [applyStorageStatus])
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
@@ -328,11 +323,13 @@ const AppContent = (): React.JSX.Element | null => {
 
   // Checked once at startup, after the gate is settled: dataRootMissing only fires for an
   // explicitly-configured root, which implies onboarding already completed - never during the
-  // wizard itself. Onboarding shares this promise because usage calculation recursively scans the
-  // data root; a rejection clears the cache so its Retry action can start a fresh request.
+  // wizard itself. This lightweight status request deliberately does not calculate directory usage.
+  // Onboarding requests the full StorageInfo independently when it needs location details.
   useEffect(() => {
-    void loadStorageInfo().catch(() => undefined)
-  }, [loadStorageInfo])
+    void Promise.resolve()
+      .then(loadStorageStatus)
+      .catch(() => undefined)
+  }, [loadStorageStatus])
 
   // Subscribe once to connector approval requests from the main-process gate; they surface as a
   // modal the user must answer before the held connector call proceeds.

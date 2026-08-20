@@ -30,6 +30,7 @@ beforeEach(() => {
   usePermissionGrantsStore.setState({
     ...snapshot,
     status: 'ready',
+    loadedAt: null,
     error: undefined,
     undo: undefined,
     undoQueue: [],
@@ -38,6 +39,17 @@ beforeEach(() => {
 })
 
 describe('permission grants store', () => {
+  it('reuses a snapshot for 60 seconds and supports an event-driven forced refresh', async () => {
+    const list = vi.fn().mockResolvedValue(snapshot)
+    setPermissionApi({ list })
+
+    await usePermissionGrantsStore.getState().load()
+    await usePermissionGrantsStore.getState().load()
+    await usePermissionGrantsStore.getState().load({ force: true })
+
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
   it('optimistically removes a row and records the durable Undo receipt', async () => {
     let resolveMutation: ((result: unknown) => void) | undefined
     setPermissionApi({
