@@ -1,5 +1,6 @@
 import { createLogger, diagnosticErrorFields } from '../logger'
 import { withExclusiveCacheLocks } from './pkgs-cache-lock'
+import { isChildUnconfirmedError } from './provisioner-runtime'
 
 const logger = createLogger('notebook:package-cache')
 
@@ -10,13 +11,13 @@ export const packageCacheCleanArgv = (micromamba: string): string[] => [
   '--no-rc',
   'clean',
   '--packages',
-  '--tarballs',
   '--yes'
 ]
 
-// Cache maintenance is opportunistic: a cleanup bug must not turn a package/environment mutation that
-// could otherwise succeed into a new hard failure. The existing exclusive cache locks still make the
-// deletion safe with respect to concurrent create/install operations.
+// Cache maintenance is opportunistic for ordinary failures: a cleanup bug must not turn a package or
+// environment mutation that could otherwise succeed into a new hard failure. CHILD_UNCONFIRMED is the
+// exception: the cleanup worker may still be deleting cache entries, so the journaled caller must retain
+// its recovery evidence and refuse to start another cache writer.
 export const maintainPackageCacheBestEffort = async (
   cacheLockKeys: string[],
   run: () => Promise<void>
@@ -24,6 +25,7 @@ export const maintainPackageCacheBestEffort = async (
   try {
     await withExclusiveCacheLocks(cacheLockKeys, run)
   } catch (error) {
+    if (isChildUnconfirmedError(error)) throw error
     logger.warn('package cache maintenance failed', diagnosticErrorFields(error))
   }
 }

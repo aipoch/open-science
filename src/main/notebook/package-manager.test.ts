@@ -22,6 +22,7 @@ import {
 } from './package-manager'
 import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
+import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import {
   envPrefix,
   pipBin,
@@ -927,7 +928,12 @@ describe('installPackages', () => {
     // deps.onBeforeSpawn is threaded to baseSpawn as its 5th arg; a faithful stub invokes it (as the real
     // defaultSpawn does) BEFORE reporting the child, so we can assert both that it ran and that it ran first.
     const spawn: InstallSpawn = async (_command, args, _env, onChild, onBeforeSpawn) => {
-      if (isCacheClean(args)) return ok
+      if (isCacheClean(args)) {
+        onBeforeSpawn?.()
+        order.push('cleanup-child')
+        onChild?.(999)
+        return ok
+      }
       onBeforeSpawn?.()
       order.push(`child#${i}`)
       onChild?.(1000 + i)
@@ -954,7 +960,7 @@ describe('installPackages', () => {
     expect(result.ok).toBe(true)
     // The intent fired before the child on the FIRST spawn AND again on the RETRY (old bug: zero intents,
     // since runConda dropped deps.onBeforeSpawn entirely).
-    expect(order).toEqual(['intent', 'child#0', 'intent', 'child#1'])
+    expect(order).toEqual(['intent', 'cleanup-child', 'intent', 'child#0', 'intent', 'child#1'])
     expect(i).toBe(2)
   })
 
@@ -1571,7 +1577,7 @@ describe('installPackages shared pkgs cache lock', () => {
     expect(result.ok).toBe(true)
     expect(existsSync(stalePackage)).toBe(false)
     expect(order).toEqual(['clean', 'install'])
-    expect(cleanArgs).toEqual(['--no-rc', 'clean', '--packages', '--tarballs', '--yes'])
+    expect(cleanArgs).toEqual(['--no-rc', 'clean', '--packages', '--yes'])
     expect(cleanEnv).toMatchObject({
       MAMBA_ROOT_PREFIX: root,
       CONDA_PKGS_DIRS: cachePath
@@ -1596,6 +1602,22 @@ describe('installPackages shared pkgs cache lock', () => {
 
     expect(result.ok).toBe(true)
     expect(order).toEqual(['clean-failed', 'install'])
+  })
+
+  it('does not continue when the cleanup worker cannot be confirmed stopped', async () => {
+    let installStarted = false
+    const spawn: InstallSpawn = async (_command, args) => {
+      if (isCacheClean(args)) {
+        throw new Error(`${CHILD_UNCONFIRMED}: cleanup worker may still be running`)
+      }
+      installStarted = true
+      return ok
+    }
+
+    await expect(
+      installPackages({ language: 'python', packages: ['numpy'] }, { ...base, spawn })
+    ).rejects.toThrow(CHILD_UNCONFIRMED)
+    expect(installStarted).toBe(false)
   })
 
   it.each(['legacy', 'selected'] as const)(

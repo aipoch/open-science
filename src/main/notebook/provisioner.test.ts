@@ -85,7 +85,7 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
 }
 
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
-  it('maintains the package cache before fetching and materializing the runtime', async () => {
+  it('maintains the package cache under the materialize journal after fetching the runtime', async () => {
     const root = makeRoot()
     const cachePath = join(root, 'pkgs')
     const order: string[] = []
@@ -98,8 +98,10 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
           order.push('fetch')
           return { lockPath: join(root, 'python.lock') }
         },
-        maintainCache: async (cache) => {
+        maintainCache: async (cache, onBeforeSpawn, onChild) => {
           expect(cache.path).toBe(cachePath)
+          expect(onBeforeSpawn).toEqual(expect.any(Function))
+          expect(onChild).toEqual(expect.any(Function))
           order.push('clean')
         },
         runArgv: async (argv) => {
@@ -114,7 +116,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 
     await provisioner.provisionPython(() => undefined)
 
-    expect(order).toEqual(['clean', 'fetch', 'create'])
+    expect(order).toEqual(['fetch', 'clean', 'create'])
   })
 
   it('materializes python, stamps the marker, and emits monotonic progress ending at 1', async () => {
@@ -1311,6 +1313,22 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
 
     expect(order).toEqual(['clean', 'create'])
+  })
+
+  it('does not start a named create when the cleanup worker cannot be confirmed stopped', async () => {
+    const root = makeRoot()
+    const runArgv = vi.fn(async () => undefined)
+    const { deps } = makeNamedEnvDeps(root, {
+      maintainCache: async () => {
+        throw new Error(`${CHILD_UNCONFIRMED}: cleanup worker may still be running`)
+      },
+      runArgv
+    })
+
+    await expect(
+      new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+    ).rejects.toThrow(CHILD_UNCONFIRMED)
+    expect(runArgv).not.toHaveBeenCalled()
   })
 
   it('builds the create argv from the base floor + user packages (deduped), targeting envs/<name>', async () => {

@@ -298,12 +298,13 @@ describe('createProductionProvisioner', () => {
       '--no-rc',
       'clean',
       '--packages',
-      '--tarballs',
       '--yes'
     ])
     expect(runCacheMaintenance.mock.calls[0]?.[1]).toMatchObject({
       MAMBA_ROOT_PREFIX: root,
       CONDA_PKGS_DIRS: selectMicromambaCache(root).path
     })
+    expect(runCacheMaintenance.mock.calls[0]?.[3]).toEqual(expect.any(Function))
+    expect(runCacheMaintenance.mock.calls[0]?.[4]).toEqual(expect.any(Function))
   })
 })

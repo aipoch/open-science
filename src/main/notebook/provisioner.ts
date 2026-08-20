@@ -169,10 +169,15 @@ export type ProvisionerDeps = {
     cache?: MicromambaCache,
     maxCacheRelativePath?: number
   ) => Promise<void>
-  // Runs micromamba's supported unused-package/tarball cleanup with MAMBA_ROOT_PREFIX bound to this
-  // provisioner's root. Optional only for directly-constructed test provisioners; production always
-  // wires it in createProductionProvisioner.
-  maintainCache?: (cache: MicromambaCache) => Promise<void>
+  // Runs micromamba's supported unused-package cleanup with MAMBA_ROOT_PREFIX bound to this provisioner's
+  // root. Tarballs remain available for offline data-root relocation. The existing prefix-operation
+  // journal hooks supervise the cleanup child; no separate persisted operation kind is needed. Optional
+  // only for directly-constructed test provisioners; production always wires it in.
+  maintainCache?: (
+    cache: MicromambaCache,
+    onBeforeSpawn: () => void,
+    onChild: (pid: number) => void
+  ) => Promise<void>
   // Verifies `<bin> --version`; rejects otherwise.
   verify: (bin: string, prefix: string) => Promise<void>
   // Clock injection for the ready-marker timestamp.
@@ -347,10 +352,16 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     ]
   }
 
-  private maintainCacheBeforeMutation(cache: MicromambaCache = this.cache): Promise<void> {
+  private maintainCacheBeforeMutation(
+    cache: MicromambaCache,
+    onBeforeSpawn: () => void,
+    onChild: (pid: number) => void
+  ): Promise<void> {
     const maintainCache = this.deps.maintainCache
     if (!maintainCache) return Promise.resolve()
-    return maintainPackageCacheBestEffort(this.cacheLockKeys(cache), () => maintainCache(cache))
+    return maintainPackageCacheBestEffort(this.cacheLockKeys(cache), () =>
+      maintainCache(cache, onBeforeSpawn, onChild)
+    )
   }
 
   private async seedBundleCache(bundle: FetchedBundle, cache: MicromambaCache): Promise<void> {
@@ -1131,7 +1142,6 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Named environments are the only online-solving path. Resolve/probe the channel here so normal
     // application startup and offline default-runtime provisioning never wait for mirror selection.
     const channel = await this.resolveChannel()
-    await this.maintainCacheBeforeMutation(this.cache)
     // Journal the create (child PID + prefix) so a crash mid-create is recovered like any other prefix
     // write: a survivor is killed and, if unconfirmed, the prefix is blocked so a later create/remove
     // can't race it. Take the shared pkgs cache lock (+ MAX_PATH recovery) for the whole prefix cleanup
@@ -1144,8 +1154,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       name,
       prefix,
       `create-${language}`,
-      (onBeforeSpawn, onChild) =>
-        this.runWithMaxPathRecovery(() =>
+      async (onBeforeSpawn, onChild) => {
+        await this.maintainCacheBeforeMutation(this.cache, onBeforeSpawn, onChild)
+        return this.runWithMaxPathRecovery(() =>
           withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
             // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
             // interpreter) so micromamba doesn't abort on it.
@@ -1164,6 +1175,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             )
           })
         )
+      }
     )
     await this.deps.verify(bin, prefix)
     return {
@@ -1236,10 +1248,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     spec: EnvSpec,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
-    // Bundle adapters validate and seed archives into the legacy root/pkgs cache while fetching. Reclaim
-    // that cache first so a nearly-full data disk does not fail before post-fetch cache selection runs.
     const fetchCache = this.legacyCache
-    await this.maintainCacheBeforeMutation(fetchCache)
     const bundle = await this.deps.fetchBundle(
       spec,
       DEFAULT_ENV_VERSION,
@@ -1262,18 +1271,22 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // must not delete an incomplete extraction mid-upgrade, and a Windows path-limit failure is retried
     // once after a short cache recovery.
     const selected = this.cacheForBundle(spec, bundle)
-    if (selected.cache.path !== fetchCache.path) {
-      await this.maintainCacheBeforeMutation(selected.cache)
-    }
-    await this.seedBundleCache(bundle, selected.cache)
-    await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     await this.withJournaledPrefixWrite(
       'upgrade',
       spec.name,
       prefix,
       `upgrade-${spec.language}`,
-      (onBeforeSpawn, onChild) =>
-        this.runWithMaxPathRecovery(
+      async (onBeforeSpawn, onChild) => {
+        // Fetch adapters seed relocation-critical archives into root/pkgs before this journaled section.
+        // Clean only unused extracted directories, then seed any selected short cache. Running the child
+        // here lets the existing upgrade journal supervise it without a new durable operation kind.
+        await this.maintainCacheBeforeMutation(fetchCache, onBeforeSpawn, onChild)
+        if (selected.cache.path !== fetchCache.path) {
+          await this.maintainCacheBeforeMutation(selected.cache, onBeforeSpawn, onChild)
+        }
+        await this.seedBundleCache(bundle, selected.cache)
+        await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
+        return this.runWithMaxPathRecovery(
           () =>
             withSharedCacheLocks(this.cacheLockKeys(selected.cache), () =>
               this.deps.runArgv(
@@ -1288,6 +1301,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           undefined,
           selected.cache
         )
+      }
     )
     await this.deps.verify(bin, prefix)
   }
@@ -1341,10 +1355,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       message: `Preparing ${spec.name} packages…`,
       progress: 0.1
     })
-    // Fetch adapters write verified package archives into root/pkgs. Cleanup must precede that write or
-    // an already-full data disk can prevent the bundle from being staged at all.
     const fetchCache = this.legacyCache
-    await this.maintainCacheBeforeMutation(fetchCache)
     const bundle = await this.deps.fetchBundle(
       spec,
       DEFAULT_ENV_VERSION,
@@ -1365,11 +1376,6 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
     // packages before the create, so a Windows path-limit blocker doesn't fail the first attempt.
     const selected = this.cacheForBundle(spec, bundle)
-    if (selected.cache.path !== fetchCache.path) {
-      await this.maintainCacheBeforeMutation(selected.cache)
-    }
-    await this.seedBundleCache(bundle, selected.cache)
-    await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     // Journal the create (child PID + prefix) so a process death mid-materialize is reconciled at next
     // startup: the recorded child is killed if it survived and, if liveness is unconfirmed, the prefix
     // is blocked. verify() is read-only and stays outside the journaled window.
@@ -1379,6 +1385,14 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       prefix,
       `create-${spec.language}`,
       async (onBeforeSpawn, onChild) => {
+        // Fetch completes before cleanup so its child can reuse this materialize journal. Tarballs stay
+        // intact for future offline relocation; only unused extracted package directories are reclaimed.
+        await this.maintainCacheBeforeMutation(fetchCache, onBeforeSpawn, onChild)
+        if (selected.cache.path !== fetchCache.path) {
+          await this.maintainCacheBeforeMutation(selected.cache, onBeforeSpawn, onChild)
+        }
+        await this.seedBundleCache(bundle, selected.cache)
+        await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
         const runCreate = (
           lockPath: string,
           cache: MicromambaCache = selected.cache,
@@ -1697,15 +1711,21 @@ export const createProductionProvisioner = (
     },
     maintainCache:
       deps.maintainCache ??
-      (async (runCache) => {
+      (async (runCache, onBeforeSpawn, onChild) => {
         const selected = await runner.resolve()
-        await (deps.runCacheMaintenance ?? runMicromamba)(packageCacheCleanArgv(selected), {
-          ...micromambaSpawnEnv(opts.root, opts.caBundle, {
-            selectCache: () => runCache
-          }),
-          MAMBA_ROOT_PREFIX: opts.root,
-          CONDA_PKGS_DIRS: runCache.path
-        })
+        await (deps.runCacheMaintenance ?? runMicromamba)(
+          packageCacheCleanArgv(selected),
+          {
+            ...micromambaSpawnEnv(opts.root, opts.caBundle, {
+              selectCache: () => runCache
+            }),
+            MAMBA_ROOT_PREFIX: opts.root,
+            CONDA_PKGS_DIRS: runCache.path
+          },
+          undefined,
+          onChild,
+          onBeforeSpawn
+        )
       }),
     verify: deps.verify ?? ((bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv })),
     isPrefixBlocked: opts.isPrefixBlocked,

@@ -51,7 +51,7 @@ const baseDeps = (root: string, over: Partial<ProvisionerDeps> = {}): Provisione
 })
 
 describe('upgradeIfNeeded', () => {
-  it('maintains the package cache before fetching and applying an offline upgrade', async () => {
+  it('maintains the package cache under the upgrade journal after fetching the offline bundle', async () => {
     const root = makeRoot()
     const cachePath = join(root, 'pkgs')
     touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
@@ -67,12 +67,16 @@ describe('upgradeIfNeeded', () => {
           order.push('fetch')
           return { lockPath: join(root, 'python.lock') }
         },
-        maintainCache: async () => void order.push('clean'),
+        maintainCache: async (_cache, onBeforeSpawn, onChild) => {
+          expect(onBeforeSpawn).toEqual(expect.any(Function))
+          expect(onChild).toEqual(expect.any(Function))
+          order.push('clean')
+        },
         runArgv: async () => void order.push('install')
       })
     ).upgradeIfNeeded(() => undefined)
 
-    expect(order).toEqual(['clean', 'fetch', 'install'])
+    expect(order).toEqual(['fetch', 'clean', 'install'])
   })
 
   it('is a no-op when already at the expected version', async () => {

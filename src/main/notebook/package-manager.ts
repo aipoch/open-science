@@ -1145,9 +1145,9 @@ export async function installPackages(
   ]
   // A single install request may run a dry-run and a real transaction. Maintain the persistent cache
   // once, before whichever conda subprocess comes first, so old versions are reclaimed without adding
-  // duplicate scans. Cleanup is deliberately outside the prefix-write journal: it never writes the
-  // target environment, and maintainPackageCacheBestEffort owns the cache-exclusive lock and failure
-  // isolation.
+  // duplicate scans. Cleanup reuses the package operation's spawn hooks. It does not write the target
+  // prefix, but a crash may leave its cache-deleting child alive; recording that child lets the existing
+  // recovery barrier prevent a later cache mutation from racing it without another journal kind.
   let condaCacheMaintenance: Promise<void> | undefined
   const maintainCondaCache = (command: string): Promise<void> => {
     if (condaCacheMaintenance) return condaCacheMaintenance
@@ -1156,11 +1156,17 @@ export async function installPackages(
     condaCacheMaintenance = maintainPackageCacheBestEffort(
       condaCacheKeys(context.cache),
       async () => {
-        const result = await baseSpawn(argv[0], argv.slice(1), {
-          ...context.env,
-          MAMBA_ROOT_PREFIX: root,
-          CONDA_PKGS_DIRS: context.cache.path
-        })
+        const result = await baseSpawn(
+          argv[0],
+          argv.slice(1),
+          {
+            ...context.env,
+            MAMBA_ROOT_PREFIX: root,
+            CONDA_PKGS_DIRS: context.cache.path
+          },
+          deps.onChild,
+          deps.onBeforeSpawn
+        )
         if (result.code !== 0) {
           throw Object.assign(new Error('micromamba package cache maintenance failed'), {
             code: 'MICROMAMBA_CACHE_CLEAN_EXIT'
@@ -1171,9 +1177,9 @@ export async function installPackages(
     return condaCacheMaintenance
   }
   // A dry-run may refresh repodata in the shared package cache, so it takes the same in-process cache
-  // locks as a real transaction. It deliberately does NOT reuse the install journal hooks: the solver
-  // cannot write the target prefix, and recording it as an `install` would make a crash after a harmless
-  // probe quarantine an untouched runtime at the next startup.
+  // locks as a real transaction. The solver itself deliberately does NOT reuse the install journal hooks:
+  // it cannot write the target prefix. Cache maintenance above does reuse them because its deleting child
+  // must remain supervised until it exits.
   const runCondaPreflight: InstallSpawn = async (command, args) => {
     const context = resolveCondaContext()
     await maintainCondaCache(command)
