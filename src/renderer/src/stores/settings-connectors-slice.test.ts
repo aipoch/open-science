@@ -136,6 +136,19 @@ describe('settings Connectors slice', () => {
     expect(commands.listConnectors).toHaveBeenCalledOnce()
   })
 
+  it('rejects a missing Settings command surface as a promise', async () => {
+    const { store } = createHarness({
+      ...createCommands(),
+      onConnectorRuntimeChanged: () => {
+        throw new Error('settings unavailable')
+      }
+    })
+
+    const result = store.getState().loadConnectors()
+    expect(result).toBeInstanceOf(Promise)
+    await expect(result).rejects.toThrow('settings unavailable')
+  })
+
   it('reloads the authoritative snapshot when runtime availability changes', async () => {
     let runtimeChanged: (() => void) | undefined
     const onConnectorRuntimeChanged = vi.fn((listener: () => void) => {

@@ -127,16 +127,22 @@ export const createSettingsSkillsSlice = ({
   }
 
   return {
-    loadSkills: () => {
+    loadSkills: async () => {
+      // Keep subscription and command lookup inside this async action so a missing Settings
+      // surface rejects the returned promise. Marketplace install settles that rejection and
+      // must not treat it as a synchronous install failure.
       subscribeToCatalogChanges()
-      if (getState().skillsLoaded) return Promise.resolve()
-      if (catalogLoadRequest) return catalogLoadRequest
+      if (getState().skillsLoaded) return
+      if (catalogLoadRequest) {
+        await catalogLoadRequest
+        return
+      }
       const request = reconcileCatalog(() => getCommands().listSkills()).then(() => undefined)
       const trackedRequest = request.finally(() => {
         if (catalogLoadRequest === trackedRequest) catalogLoadRequest = undefined
       })
       catalogLoadRequest = trackedRequest
-      return trackedRequest
+      await trackedRequest
     },
     setSkillEnabled: async (id, enabled) => {
       const current = getState().skills.find((skill) => skill.id === id)

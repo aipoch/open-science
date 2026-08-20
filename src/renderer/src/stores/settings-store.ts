@@ -291,14 +291,6 @@ export const selectProviderModelOptions = (
 let settingsLoadPromise: Promise<boolean> | undefined
 const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
 
-const trackSettingsLoad = (loadPromise: Promise<boolean>): Promise<boolean> => {
-  settingsLoadPromise = loadPromise
-  void loadPromise.then(() => {
-    if (settingsLoadPromise === loadPromise) settingsLoadPromise = undefined
-  })
-  return loadPromise
-}
-
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
 const reportSettingsLoadError = (error: unknown): void => {
   console.warn('Settings loading failed', error)
@@ -362,44 +354,42 @@ const createSettingsStoreState = (
     getCommands: () => window.api.settings
   }),
 
-  // Loads settings, preflight, and encryption availability in one startup pass.
+  // Loads settings, preflight, and encryption availability in one startup pass. Reopening Settings
+  // reuses this same action and the same Settings reads, skipping the subprocess probes after the
+  // first successful load so feature actions stay in their slices.
   load: (options) => {
     // StrictMode replays the startup effect. Reuse that identical in-flight pass so a duplicate
     // request cannot supersede its successful result; an explicit user retry still starts a new
     // generation and remains authoritative over any older request.
     if (!options?.force && settingsLoadPromise) return settingsLoadPromise
-    // Reopening Settings refreshes the lightweight snapshot so mutations from another renderer or
-    // backend path are visible. Keep subprocess-based preflight and availability probes startup-only.
-    if (!options?.force && get().isLoaded) {
-      const generation = get().settingsLoadGeneration + 1
-      set({ settingsLoadGeneration: generation })
-      const refreshPromise = window.api.settings
-        .getSettings()
-        .then((snapshot) => {
-          if (get().settingsLoadGeneration !== generation) return false
-          set({ ...applySnapshot(snapshot), loadError: undefined })
-          return true
-        })
-        .catch((error: unknown) => {
-          if (get().settingsLoadGeneration === generation) reportSettingsLoadError(error)
-          return false
-        })
-      return trackSettingsLoad(refreshPromise)
-    }
-
     const generation = get().settingsLoadGeneration + 1
-    set({ settingsLoadGeneration: generation, isLoading: true, loadError: undefined })
+    set(
+      options?.force || !get().isLoaded
+        ? { settingsLoadGeneration: generation, isLoading: true, loadError: undefined }
+        : { settingsLoadGeneration: generation }
+    )
 
     const loadPromise = (async (): Promise<boolean> => {
       try {
         const [snapshot, preflight, encryptionAvailable, npmAvailable] = await Promise.all([
           window.api.settings.getSettings(),
-          window.api.settings.getPreflight(),
-          window.api.settings.isEncryptionAvailable(),
-          window.api.settings.isNpmAvailable()
+          get().isLoading ? window.api.settings.getPreflight() : Promise.resolve(undefined),
+          get().isLoading
+            ? window.api.settings.isEncryptionAvailable()
+            : Promise.resolve(undefined),
+          get().isLoading ? window.api.settings.isNpmAvailable() : Promise.resolve(undefined)
         ])
 
         if (get().settingsLoadGeneration !== generation) return false
+
+        if (
+          preflight === undefined ||
+          encryptionAvailable === undefined ||
+          npmAvailable === undefined
+        ) {
+          set({ ...applySnapshot(snapshot), loadError: undefined })
+          return true
+        }
 
         set({
           ...applySnapshot(snapshot),
@@ -414,15 +404,21 @@ const createSettingsStoreState = (
         if (get().settingsLoadGeneration !== generation) return false
 
         reportSettingsLoadError(error)
-        set({
-          isLoading: false,
-          loadError: SAFE_SETTINGS_LOAD_ERROR
-        })
+        if (get().isLoading) {
+          set({
+            isLoading: false,
+            loadError: SAFE_SETTINGS_LOAD_ERROR
+          })
+        }
         return false
       }
     })()
 
-    return trackSettingsLoad(loadPromise)
+    settingsLoadPromise = loadPromise
+    void loadPromise.then(() => {
+      if (settingsLoadPromise === loadPromise) settingsLoadPromise = undefined
+    })
+    return loadPromise
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
