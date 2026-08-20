@@ -54,7 +54,7 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     await sendPrompt(page, NOTEBOOK_PROMPT, NOTEBOOK_REPLY, 60_000)
     await app.sampleResourceProfileNow()
 
-    await app.markResourceProfilePhase('recovery')
+    page = await app.restart({ resourceProfilePhase: 'recovery' })
     await page.waitForTimeout(phaseDurationMs)
     await app.sampleResourceProfileNow()
   } finally {

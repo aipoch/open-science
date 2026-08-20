@@ -405,27 +405,33 @@ const renderSummaryMarkdown = (summary: RuntimeProfileSummary): string => {
       topRssRole ?? 'unavailable'
     ].join(' | ')
   })
-  const sessionTraceRows = summary.sessionHydrationTrace
-    .filter((event) => event.phaseCpuTotalMs !== undefined)
-    .map((event) =>
-      [
-        event.cpuIntervalPhase ?? 'unavailable',
-        event.event === 'phase' ? (event.phase ?? 'phase') : event.event,
-        formatNumber(event.phaseDurationMs ?? 0),
-        formatNumber(event.phaseCpuUserMs ?? 0),
-        formatNumber(event.phaseCpuSystemMs ?? 0),
-        formatNumber(event.phaseCpuTotalMs ?? 0)
-      ].join(' | ')
-    )
+  const sessionTraceRows = summary.sessionHydrationTrace.filter(
+    (event) => event.phaseCpuTotalMs !== undefined
+  )
+  const sessionOperationNumbers = new Map<string, number>()
+  const numberedSessionTraceRows = sessionTraceRows.map((event) => {
+    const operationNumber =
+      sessionOperationNumbers.get(event.operationId) ?? sessionOperationNumbers.size + 1
+    sessionOperationNumbers.set(event.operationId, operationNumber)
+    return [
+      operationNumber,
+      event.cpuIntervalPhase ?? 'unavailable',
+      event.event === 'phase' ? (event.phase ?? 'phase') : event.event,
+      formatNumber(event.phaseDurationMs ?? 0),
+      formatNumber(event.phaseCpuUserMs ?? 0),
+      formatNumber(event.phaseCpuSystemMs ?? 0),
+      formatNumber(event.phaseCpuTotalMs ?? 0)
+    ].join(' | ')
+  })
   const sessionTraceSection =
-    sessionTraceRows.length === 0
+    numberedSessionTraceRows.length === 0
       ? ''
       : `
 ## Session hydration CPU trace
 
-CPU interval | Boundary/outcome | Wall ms | CPU user ms | CPU system ms | CPU total ms
---- | --- | ---: | ---: | ---: | ---:
-${sessionTraceRows.join('\n')}
+Operation | CPU interval | Boundary/outcome | Wall ms | CPU user ms | CPU system ms | CPU total ms
+---: | --- | --- | ---: | ---: | ---: | ---:
+${numberedSessionTraceRows.join('\n')}
 `
   return `# Runtime resource profile
 

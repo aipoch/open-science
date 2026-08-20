@@ -236,7 +236,7 @@ describe('runtime resource profiler', () => {
 
     expect(summary.sessionHydrationTrace).toHaveLength(1)
     expect(renderSummaryMarkdown(summary)).toContain(
-      'load-authority | authority-loaded | 20.0 | 6.0 | 2.0 | 8.0'
+      '1 | load-authority | authority-loaded | 20.0 | 6.0 | 2.0 | 8.0'
     )
   })
 })
