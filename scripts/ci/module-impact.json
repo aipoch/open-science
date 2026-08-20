@@ -689,6 +689,7 @@
         "src/main/session-persistence/legacy-upload.ts",
         "src/main/session-persistence/message-delivery-owner.ts",
         "src/main/session-persistence/reconciliation-owner.ts",
+        "src/main/session-persistence/relay-projection.ts",
         "src/main/session-persistence/side-chat-owner.ts",
         "src/main/session-persistence/state-owner.ts"
       ],

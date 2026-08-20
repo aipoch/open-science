@@ -22,6 +22,7 @@ import {
   resolveRevisionedSessionSave,
   type MainSaveSessionOptions
 } from './revision-conflict'
+import { mergeMainOwnedRelayProjection } from './relay-projection'
 import { saveSessionWithRevision } from './save-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
@@ -133,20 +134,6 @@ const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
       }
     : null
   return createHash('sha256').update(JSON.stringify(topology)).digest('hex')
-}
-
-const mergeMainOwnedRelayMessages = (
-  submitted: readonly PersistedChatMessage[],
-  authoritative: readonly PersistedChatMessage[] | undefined
-): PersistedChatMessage[] => {
-  const authoritativeRelays =
-    authoritative?.filter(
-      (message) =>
-        message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
-    ) ?? []
-  if (authoritativeRelays.length === 0) return [...submitted]
-  const relayIds = new Set(authoritativeRelays.map((message) => message.id))
-  return [...submitted.filter((message) => !relayIds.has(message.id)), ...authoritativeRelays]
 }
 
 const delegatedSubtreeFrameIds = (graph: PersistedConversationGraph): Set<string> => {
@@ -605,9 +592,10 @@ class SessionPersistenceStateOwner {
           rendererOwnedSession.status === 'waiting-plan-approval'
         ? (authority?.status ?? 'idle')
         : undefined
+    const relayProjection = mergeMainOwnedRelayProjection(rendererOwnedSession, authority)
     const mergedSession: PersistedChatSession = {
       ...rendererOwnedSession,
-      messages: mergeMainOwnedRelayMessages(rendererOwnedSession.messages, authority?.messages),
+      ...relayProjection,
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
       ...(authority && !specialistBindingOwnedByCaller

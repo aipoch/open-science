@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  activateConversationBranch,
+  forkEditedConversationMessage,
+  synchronizeActiveConversationMessages
+} from '../../../../shared/conversation-graph'
+import {
   materializeSessionConversationGraph,
   SESSION_MANIFEST_VERSION,
   SessionRevisionConflictError,
@@ -1078,6 +1083,261 @@ describe('renderer session persistence bridge', () => {
         eventIds: [`side-chat-delivered:${relay.id}`]
       })
     )
+  })
+
+  it('projects an edit fork after rebasing a concurrent Main message onto the previous Branch', async () => {
+    const target = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Original prompt',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [target]
+      })
+    )
+    const remoteMessage = {
+      id: 'remote-message-1',
+      role: 'agent' as const,
+      content: 'Completed on the original Branch',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      responseToMessageId: target.id,
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      messages: [...base.messages, remoteMessage],
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().removeMessage(base.id, target.id)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    const rebased = saveSession.mock.calls[1][0]
+    expect(rebased.messages).toEqual([])
+    expect(rebased.conversationGraph?.messages.map(({ id }) => id)).toEqual([
+      target.id,
+      remoteMessage.id
+    ])
+    expect(() => materializeSessionConversationGraph(rebased)).not.toThrow()
+  })
+
+  it('projects the selected Branch after rebasing a concurrent Main message on the prior Branch', async () => {
+    const originalPrompt = {
+      id: 'prompt-original',
+      role: 'user' as const,
+      content: 'Original prompt',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const linear = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [originalPrompt]
+      })
+    )
+    const originalBranchId = linear.conversationGraph.branches[0].id
+    const editedBranchId = 'edited-branch'
+    const editedPrompt = {
+      ...originalPrompt,
+      id: 'prompt-edited',
+      content: 'Edited prompt',
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const editedGraph = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(linear.conversationGraph, originalPrompt.id, editedBranchId, 2),
+      [editedPrompt],
+      2
+    )
+    const base = {
+      ...linear,
+      conversationGraph: activateConversationBranch(editedGraph, originalBranchId),
+      messages: [originalPrompt]
+    }
+    const remoteMessage = {
+      id: 'remote-message-1',
+      role: 'agent' as const,
+      content: 'Completed on the original Branch',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      responseToMessageId: originalPrompt.id,
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      messages: [...base.messages, remoteMessage],
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().activateMessageBranch(base.id, editedBranchId)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    const rebased = saveSession.mock.calls[1][0]
+    expect(rebased.messages).toEqual([expect.objectContaining({ id: editedPrompt.id })])
+    expect(rebased.conversationGraph?.messages.map(({ id }) => id)).toEqual([
+      originalPrompt.id,
+      editedPrompt.id,
+      remoteMessage.id
+    ])
+    expect(() => materializeSessionConversationGraph(rebased)).not.toThrow()
+  })
+
+  it('merges disjoint streaming and artifact updates on the same Message identity', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Create a chart',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Partial',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [prompt, partial]
+      })
+    )
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      messages: [prompt, { ...partial, artifactIds: ['artifact-version-1'], updatedAt: 3 }],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          kind: 'managed-file',
+          path: '/data/artifacts/chart.png',
+          name: 'chart.png'
+        }
+      ],
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: base.id,
+      streamId: partial.streamId,
+      eventId: 'event-2',
+      promptMessageId: prompt.id,
+      content: ' response'
+    })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      artifacts: authoritative.artifacts,
+      messages: [
+        expect.objectContaining({ id: prompt.id }),
+        expect.objectContaining({
+          id: partial.id,
+          content: 'Partial response',
+          eventIds: ['event-1', 'event-2'],
+          artifactIds: ['artifact-version-1']
+        })
+      ]
+    })
+  })
+
+  it('does not merge competing edits that select different Branch identities', async () => {
+    const target = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Original prompt',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [target]
+      })
+    )
+    const authoritative = {
+      ...base,
+      revision: 9,
+      messages: [],
+      conversationGraph: forkEditedConversationMessage(
+        base.conversationGraph,
+        target.id,
+        'remote-edit-branch',
+        2
+      ),
+      updatedAt: base.updatedAt + 1
+    }
+    const conflict = new SessionRevisionConflictError(8, 9)
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>().mockRejectedValue(conflict)
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(authoritative),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().removeMessage(base.id, target.id)
+
+    await expect(save(useSessionStore.getState())).rejects.toBe(conflict)
+    expect(saveSession).toHaveBeenCalledOnce()
   })
 
   it('rebases a Reviewer correction insertion over concurrent Main runtime authority', async () => {

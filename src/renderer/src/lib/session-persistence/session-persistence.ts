@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
+import {
+  projectConversationMessage,
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../../../shared/conversation-graph'
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
@@ -136,7 +141,11 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
   submittedItems: readonly Item[],
   latestItems: readonly Item[],
   ignoreUpdatedAt = false,
-  resolveConcurrent?: (submittedItem: Item, latestItem: Item) => Item | undefined
+  resolveConcurrent?: (
+    baseItem: Item | undefined,
+    submittedItem: Item,
+    latestItem: Item
+  ) => Item | undefined
 ): Item[] | undefined => {
   const baseById = new Map(baseItems.map((item) => [item.id, item]))
   const submittedById = new Map(submittedItems.map((item) => [item.id, item]))
@@ -163,7 +172,9 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
       selected = submittedItem
     } else {
       selected =
-        submittedItem && latestItem ? resolveConcurrent?.(submittedItem, latestItem) : undefined
+        submittedItem && latestItem
+          ? resolveConcurrent?.(baseItem, submittedItem, latestItem)
+          : undefined
       if (!selected) return undefined
     }
     if (selected) rebased.push(structuredClone(selected))
@@ -172,10 +183,10 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
   return rebased
 }
 
-// Runtime delivery can attach an event identity to a Message that Main has already persisted (Side
-// chat relays are the canonical example). Event identities are append-only evidence, so union that
-// one field when every other property of the same Message identity agrees. Content, ownership,
-// status, provenance, and deletion conflicts remain fail-closed.
+// Message payloads have more than one legitimate owner: runtime streaming updates content while
+// artifact/upload finalization can update a disjoint field on the same durable identity. Apply a
+// property-level three-way merge, union append-only event evidence, and fail closed whenever both
+// sides changed the same semantic property differently.
 const rebaseMessageCollection = <Item extends { id: string; eventIds: string[] }>(
   baseItems: readonly Item[],
   submittedItems: readonly Item[],
@@ -186,14 +197,55 @@ const rebaseMessageCollection = <Item extends { id: string; eventIds: string[] }
     submittedItems,
     latestItems,
     false,
-    (submittedItem, latestItem) => {
-      const { eventIds: submittedEventIds, ...submittedRest } = submittedItem
-      const { eventIds: latestEventIds, ...latestRest } = latestItem
-      if (!jsonValuesEqual(submittedRest, latestRest)) return undefined
-      return {
-        ...structuredClone(latestItem),
-        eventIds: [...new Set([...latestEventIds, ...submittedEventIds])]
+    (baseItem, submittedItem, latestItem) => {
+      const rebased = structuredClone(latestItem) as Record<string, unknown>
+      const base = baseItem as Record<string, unknown> | undefined
+      const submitted = submittedItem as Record<string, unknown>
+      const latest = latestItem as Record<string, unknown>
+      const keys = new Set([
+        ...Object.keys(base ?? {}),
+        ...Object.keys(submitted),
+        ...Object.keys(latest)
+      ])
+
+      for (const key of keys) {
+        if (key === 'id') continue
+        if (key === 'eventIds') {
+          const baseEventIds = (base?.eventIds as string[] | undefined) ?? []
+          const submittedEventIds = submitted.eventIds as string[]
+          const latestEventIds = latest.eventIds as string[]
+          const onlyAppends = (candidate: readonly string[]): boolean =>
+            baseEventIds.every((eventId) => candidate.includes(eventId))
+          if (!onlyAppends(submittedEventIds) || !onlyAppends(latestEventIds)) return undefined
+          rebased.eventIds = [...new Set([...latestEventIds, ...submittedEventIds])]
+          continue
+        }
+        if (key === 'updatedAt') {
+          rebased.updatedAt = Math.max(
+            Number(base?.updatedAt ?? 0),
+            Number(submitted.updatedAt ?? 0),
+            Number(latest.updatedAt ?? 0)
+          )
+          continue
+        }
+
+        const baseValue = base?.[key]
+        const submittedValue = submitted[key]
+        const latestValue = latest[key]
+        const localChanged = !jsonValuesEqual(submittedValue, baseValue)
+        const remoteChanged = !jsonValuesEqual(latestValue, baseValue)
+        if (localChanged && remoteChanged && !jsonValuesEqual(submittedValue, latestValue)) {
+          return undefined
+        }
+        const selected = localChanged ? submittedValue : latestValue
+        if (selected === undefined && !Object.hasOwn(localChanged ? submitted : latest, key)) {
+          Reflect.deleteProperty(rebased, key)
+        } else {
+          rebased[key] = structuredClone(selected)
+        }
       }
+
+      return rebased as Item
     }
   )
 
@@ -304,6 +356,9 @@ const rebaseSessionAfterRevisionConflict = (
   latest: PersistedChatSession
 ): PersistedChatSession | undefined => {
   const rebased: PersistedChatSession = structuredClone(latest)
+  const graphOwnsCompatibilityProjections = Boolean(
+    base.conversationGraph && submitted.conversationGraph && latest.conversationGraph
+  )
   const keys = new Set([
     ...Object.keys(base),
     ...Object.keys(submitted),
@@ -314,6 +369,12 @@ const rebaseSessionAfterRevisionConflict = (
     latest.status === 'waiting-plan-approval'
 
   for (const key of keys) {
+    if (
+      graphOwnsCompatibilityProjections &&
+      (key === 'messages' || key === 'activities' || key === 'activityGroups')
+    ) {
+      continue
+    }
     if (
       MAIN_OWNED_SESSION_FIELDS.has(key) ||
       key === 'updatedAt' ||
@@ -355,6 +416,21 @@ const rebaseSessionAfterRevisionConflict = (
     } else {
       Reflect.deleteProperty(rebased, key)
     }
+  }
+
+  // messages/activities/activityGroups are compatibility views of the active Branch. Rebasing them
+  // independently can project a concurrent Main insertion from the previous Branch onto a locally
+  // selected or newly edited Branch. Once all three snapshots carry a graph, derive those flat views
+  // from the rebased graph instead of treating them as separate authorities.
+  if (graphOwnsCompatibilityProjections && rebased.conversationGraph) {
+    rebased.messages = resolveActiveConversationMessages(rebased.conversationGraph).map(
+      projectConversationMessage
+    )
+    const projection = resolveActiveConversationActivities(rebased.conversationGraph)
+    if (projection.activities.length > 0) rebased.activities = projection.activities
+    else delete rebased.activities
+    if (projection.activityGroups.length > 0) rebased.activityGroups = projection.activityGroups
+    else delete rebased.activityGroups
   }
 
   rebased.revision = sessionRevision(latest)
