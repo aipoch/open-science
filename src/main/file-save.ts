@@ -1,11 +1,13 @@
 import { BrowserWindow, app, dialog, type OpenDialogOptions } from 'electron'
-import { zipSync } from 'fflate'
+import { Zip, ZipDeflate } from 'fflate'
 
 import { ipcMainHandle } from './ipc-handler-registry'
 import { constants } from 'node:fs'
-import { open, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, open, rm, writeFile, type FileHandle } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 
 import type {
   SaveBlobFileRequest,
@@ -42,19 +44,28 @@ type ProjectArtifactExportLimits = {
   maxTotalBytes: number
 }
 
-// Structural subset of fs FileHandle: the size check and the read must observe one open file.
+// Structural subset of fs FileHandle: the size check and stream must observe one open file.
 type ProjectArtifactFileHandle = {
   stat: () => Promise<{ isFile: () => boolean; size: number }>
-  readFile: () => Promise<Uint8Array>
+  createReadStream: (options: {
+    autoClose: false
+    highWaterMark: number
+  }) => AsyncIterable<Uint8Array>
   close: () => Promise<void>
 }
 
-// Project exports buffer every file plus one zipSync output in main-process memory; cap the
-// per-file and cumulative bytes so a batch of multi-GB uploads cannot exhaust the process.
 const PROJECT_ARTIFACT_EXPORT_LIMITS: ProjectArtifactExportLimits = {
   maxFiles: 5000,
   maxFileBytes: 1024 ** 3,
   maxTotalBytes: 2 * 1024 ** 3
+}
+
+const PROJECT_ARTIFACT_STREAM_CHUNK_BYTES = 64 * 1024
+
+type ProjectArtifactExportCandidate = {
+  file: SaveProjectArtifactsRequest['files'][number]
+  sourcePath: string
+  entryName: string
 }
 
 type ManagedFileHandle = {
@@ -165,6 +176,131 @@ const openManagedFile = async (sourcePath: string): Promise<ManagedFileHandle> =
 // file, mirroring the inode-pinning approach of openManagedFile.
 const openProjectArtifactFile = (sourcePath: string): Promise<ProjectArtifactFileHandle> =>
   open(sourcePath, 'r')
+
+const appendArchiveChunk = async (handle: FileHandle, chunk: Uint8Array): Promise<void> => {
+  let offset = 0
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset, null)
+    if (bytesWritten === 0) throw new Error('Failed to make progress writing Project Artifact ZIP.')
+    offset += bytesWritten
+  }
+}
+
+const writeProjectArtifactArchive = async (options: {
+  destinationPath: string
+  candidates: ProjectArtifactExportCandidate[]
+  failures: SaveProjectArtifactFailure[]
+  limits: ProjectArtifactExportLimits
+  openSource: (sourcePath: string) => Promise<ProjectArtifactFileHandle>
+}): Promise<boolean> => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-project-export-'))
+  const temporaryArchivePath = join(temporaryRoot, 'project-artifacts.zip')
+  let archiveHandle: FileHandle | undefined
+  let archiveHandleClosed = false
+  let zip: Zip | undefined
+
+  try {
+    archiveHandle = await open(temporaryArchivePath, 'wx', 0o600)
+    let archiveFailure: Error | undefined
+    let pendingArchiveWrite = Promise.resolve()
+    let streamedEntries = 0
+    let streamedBytes = 0
+
+    zip = new Zip((error, chunk) => {
+      if (error) {
+        archiveFailure ??= error
+        return
+      }
+      if (!chunk) return
+      pendingArchiveWrite = pendingArchiveWrite
+        .then(() => (archiveFailure ? undefined : appendArchiveChunk(archiveHandle!, chunk)))
+        .catch((writeError) => {
+          archiveFailure = writeError instanceof Error ? writeError : new Error(String(writeError))
+        })
+    })
+
+    const throwIfArchiveFailed = (): void => {
+      if (archiveFailure) throw archiveFailure
+    }
+
+    for (const candidate of options.candidates) {
+      let source: ProjectArtifactFileHandle | undefined
+      let entryStarted = false
+      try {
+        source = await options.openSource(candidate.sourcePath)
+        const metadata = await source.stat()
+        if (!metadata.isFile()) {
+          throw new Error('Project export source is not a regular file.')
+        }
+        if (metadata.size > options.limits.maxFileBytes) {
+          throw new Error('Project export file exceeds the per-file size limit.')
+        }
+        if (streamedBytes + metadata.size > options.limits.maxTotalBytes) {
+          throw new Error('Project export exceeds the total size limit.')
+        }
+
+        const zipEntry = new ZipDeflate(candidate.entryName, { level: 6 })
+        zip.add(zipEntry)
+        entryStarted = true
+        let entryBytes = 0
+        const sourceStream = source.createReadStream({
+          autoClose: false,
+          highWaterMark: PROJECT_ARTIFACT_STREAM_CHUNK_BYTES
+        })
+        for await (const chunk of sourceStream) {
+          entryBytes += chunk.byteLength
+          if (entryBytes > options.limits.maxFileBytes) {
+            throw new Error('Project export file exceeds the per-file size limit.')
+          }
+          if (streamedBytes + entryBytes > options.limits.maxTotalBytes) {
+            throw new Error('Project export exceeds the total size limit.')
+          }
+
+          zipEntry.push(chunk, false)
+          await pendingArchiveWrite
+          throwIfArchiveFailed()
+          // Bound each synchronous compression slice and explicitly let Electron service IPC,
+          // window, and lifecycle events between source chunks.
+          await yieldToEventLoop()
+        }
+        zipEntry.push(new Uint8Array(0), true)
+        await pendingArchiveWrite
+        throwIfArchiveFailed()
+        streamedBytes += entryBytes
+        streamedEntries += 1
+      } catch (error) {
+        if (entryStarted) throw error
+        options.failures.push({
+          ...candidate.file,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      } finally {
+        await source?.close()
+      }
+    }
+
+    if (streamedEntries === 0) {
+      zip.terminate()
+      return false
+    }
+
+    zip.end()
+    await pendingArchiveWrite
+    throwIfArchiveFailed()
+    await archiveHandle.close()
+    archiveHandleClosed = true
+    await copyFile(temporaryArchivePath, options.destinationPath)
+    return true
+  } catch (error) {
+    zip?.terminate()
+    throw error
+  } finally {
+    if (archiveHandle && !archiveHandleClosed) {
+      await archiveHandle.close().catch(() => undefined)
+    }
+    await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
 
 const isAlreadyExistsError = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && error.code === 'EEXIST'
@@ -442,9 +578,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       assertSaveProjectArtifactsRequest(request)
 
       const limits = options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS
-      // Null-prototype map: entry names are renderer-controlled, so a suggestedName like
-      // '__proto__' must become a real own key instead of polluting the prototype chain.
-      const zipEntries: Record<string, Uint8Array> = Object.create(null)
+      const candidates: ProjectArtifactExportCandidate[] = []
       const takenNames = new Set<string>()
       const failures: SaveProjectArtifactFailure[] = []
       let totalBytes = 0
@@ -478,18 +612,10 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
             takenNames,
             `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName, sourcePath)}`
           )
-          const bytes = new Uint8Array(await exportFile.readFile())
-          // Re-check the bytes actually read: the source may have grown between stat and read.
-          if (bytes.byteLength > limits.maxFileBytes) {
-            throw new Error('Project export file exceeds the per-file size limit.')
-          }
-          if (totalBytes + bytes.byteLength > limits.maxTotalBytes) {
-            throw new Error('Project export exceeds the total size limit.')
-          }
-          zipEntries[entryName] = bytes
+          candidates.push({ file, sourcePath, entryName })
           // Claim checks are case-insensitive; the entry itself keeps its original casing.
           takenNames.add(entryName.toLowerCase())
-          totalBytes += bytes.byteLength
+          totalBytes += metadata.size
         } catch (error) {
           failures.push({
             ...file,
@@ -499,7 +625,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           await exportFile?.close()
         }
       }
-      if (takenNames.size === 0) {
+      if (candidates.length === 0) {
         return { saved: true, ...(failures.length > 0 ? { failures } : {}) }
       }
 
@@ -522,9 +648,18 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         : await dialog.showSaveDialog(dialogOptions)
       if (canceled || !filePath) return { saved: false }
 
-      // Compress only after the user confirms the destination so a canceled dialog costs nothing.
-      await writeFile(filePath, zipSync(zipEntries, { level: 6 }))
-      return { saved: true, filePath, ...(failures.length > 0 ? { failures } : {}) }
+      const wroteArchive = await writeProjectArtifactArchive({
+        destinationPath: filePath,
+        candidates,
+        failures,
+        limits,
+        openSource: options.openProjectArtifactFile ?? openProjectArtifactFile
+      })
+      return {
+        saved: true,
+        ...(wroteArchive ? { filePath } : {}),
+        ...(failures.length > 0 ? { failures } : {})
+      }
     }
   )
 }
