@@ -284,27 +284,34 @@ describe('createProductionProvisioner', () => {
       },
       {
         runner: { initialPath: primary, resolve: async () => compatibility },
+        fetchBundle: async () => ({ lockPath: join(root, 'python.lock') }),
         runCacheMaintenance,
         runArgv,
         verify: async () => undefined
       }
     )
 
-    await provisioner.createNamedEnvironment('analysis', 'python')
+    await provisioner.provisionPython(() => undefined)
 
-    expect(runCacheMaintenance).toHaveBeenCalledOnce()
-    expect(runCacheMaintenance.mock.calls[0]?.[0]).toEqual([
+    expect(runCacheMaintenance).toHaveBeenCalled()
+    const selectedCacheCall = runCacheMaintenance.mock.calls.find(
+      ([, env]) => env?.CONDA_PKGS_DIRS === selectMicromambaCache(root).path
+    )
+    expect(selectedCacheCall?.[0]).toEqual([
       compatibility,
       '--no-rc',
       'clean',
       '--packages',
       '--yes'
     ])
-    expect(runCacheMaintenance.mock.calls[0]?.[1]).toMatchObject({
+    expect(selectedCacheCall?.[1]).toMatchObject({
       MAMBA_ROOT_PREFIX: root,
       CONDA_PKGS_DIRS: selectMicromambaCache(root).path
     })
-    expect(runCacheMaintenance.mock.calls[0]?.[3]).toEqual(expect.any(Function))
-    expect(runCacheMaintenance.mock.calls[0]?.[4]).toEqual(expect.any(Function))
+    for (const call of runCacheMaintenance.mock.calls) {
+      expect(call[2]).toBeInstanceOf(AbortSignal)
+      expect(call[3]).toEqual(expect.any(Function))
+      expect(call[4]).toEqual(expect.any(Function))
+    }
   })
 })

@@ -336,6 +336,37 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     await expect(run).rejects.toThrow(/cancelled/i)
   })
 
+  it('cancel() aborts in-flight cache maintenance before create', async () => {
+    const root = makeRoot()
+    const cachePath = join(root, 'pkgs')
+    let seenSignal: AbortSignal | undefined
+    let releaseMaintenance: (() => void) | undefined
+    const deps = makeDeps(root, {
+      platform: 'linux',
+      cache: { path: cachePath, lockKey: 'selected-cache-key' },
+      maintainCache: (_cache, _onBeforeSpawn, _onChild, signal?: AbortSignal) => {
+        seenSignal = signal
+        return new Promise<void>((resolve, reject) => {
+          releaseMaintenance = resolve
+          signal?.addEventListener('abort', () => reject(signal.reason))
+        })
+      },
+      runArgv: async (_argv, signal) => {
+        if (signal?.aborted) throw signal.reason
+      }
+    })
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+    const run = provisioner.provisionPython(() => {})
+    await vi.waitFor(() => expect(releaseMaintenance).toBeDefined())
+
+    provisioner.cancel()
+    if (!seenSignal) releaseMaintenance?.()
+
+    await expect(run).rejects.toThrow(/cancelled/i)
+    expect(seenSignal).toBeDefined()
+    expect(seenSignal?.aborted).toBe(true)
+  })
+
   it('cancel(runningLang) aborts that run', async () => {
     const root = makeRoot()
     let seenSignal: AbortSignal | undefined

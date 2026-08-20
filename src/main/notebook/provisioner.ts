@@ -176,7 +176,8 @@ export type ProvisionerDeps = {
   maintainCache?: (
     cache: MicromambaCache,
     onBeforeSpawn: () => void,
-    onChild: (pid: number) => void
+    onChild: (pid: number) => void,
+    signal?: AbortSignal
   ) => Promise<void>
   // Verifies `<bin> --version`; rejects otherwise.
   verify: (bin: string, prefix: string) => Promise<void>
@@ -352,19 +353,24 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     ]
   }
 
-  private maintainCacheBeforeMutation(
+  private async maintainCacheBeforeMutation(
     cache: MicromambaCache,
     onBeforeSpawn: () => void,
     onChild: (pid: number) => void,
-    onSettled: () => Promise<void>
+    onSettled: () => Promise<void>,
+    signal?: AbortSignal
   ): Promise<void> {
     const maintainCache = this.deps.maintainCache
-    if (!maintainCache) return Promise.resolve()
-    return maintainPackageCacheBestEffort(
+    if (!maintainCache) return
+    await maintainPackageCacheBestEffort(
       this.cacheLockKeys(cache),
-      () => maintainCache(cache, onBeforeSpawn, onChild),
+      () => maintainCache(cache, onBeforeSpawn, onChild, signal),
       onSettled
     )
+    // Cancellation is not an ordinary best-effort maintenance failure. The subprocess adapter rejects
+    // when the signal aborts; after confirmed settlement, stop this provision immediately instead of
+    // attempting another cache or waiting for the following create to observe the already-aborted signal.
+    if (signal?.aborted) throw signal.reason
   }
 
   private async seedBundleCache(bundle: FetchedBundle, cache: MicromambaCache): Promise<void> {
@@ -1308,14 +1314,16 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           fetchCache,
           onBeforeSpawn,
           onChild,
-          onCacheMaintenanceSettled
+          onCacheMaintenanceSettled,
+          this.abort?.signal
         )
         if (selected.cache.path !== fetchCache.path) {
           await this.maintainCacheBeforeMutation(
             selected.cache,
             onBeforeSpawn,
             onChild,
-            onCacheMaintenanceSettled
+            onCacheMaintenanceSettled,
+            this.abort?.signal
           )
         }
         await this.seedBundleCache(bundle, selected.cache)
@@ -1425,14 +1433,16 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           fetchCache,
           onBeforeSpawn,
           onChild,
-          onCacheMaintenanceSettled
+          onCacheMaintenanceSettled,
+          this.abort?.signal
         )
         if (selected.cache.path !== fetchCache.path) {
           await this.maintainCacheBeforeMutation(
             selected.cache,
             onBeforeSpawn,
             onChild,
-            onCacheMaintenanceSettled
+            onCacheMaintenanceSettled,
+            this.abort?.signal
           )
         }
         await this.seedBundleCache(bundle, selected.cache)
@@ -1755,7 +1765,7 @@ export const createProductionProvisioner = (
     },
     maintainCache:
       deps.maintainCache ??
-      (async (runCache, onBeforeSpawn, onChild) => {
+      (async (runCache, onBeforeSpawn, onChild, signal) => {
         const selected = await runner.resolve()
         await (deps.runCacheMaintenance ?? runMicromamba)(
           packageCacheCleanArgv(selected),
@@ -1766,7 +1776,7 @@ export const createProductionProvisioner = (
             MAMBA_ROOT_PREFIX: opts.root,
             CONDA_PKGS_DIRS: runCache.path
           },
-          undefined,
+          signal,
           onChild,
           onBeforeSpawn
         )
