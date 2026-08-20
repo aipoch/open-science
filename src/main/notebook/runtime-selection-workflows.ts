@@ -117,6 +117,14 @@ const createRuntimeSelectionWorkflows = (
       managed: createManagedAdapter({ runtimeRoot: deps.runtimeRoot }),
       external: createExternalAdapter(defaultExternalAdapterDeps())
     })
+  let discoveredSnapshot:
+    { python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] } | undefined
+  let discoveredRuntimeRoot: string | undefined
+
+  const invalidateDiscovery = (): void => {
+    discoveredSnapshot = undefined
+    discoveredRuntimeRoot = undefined
+  }
 
   // A selected external runtime must report readiness for its persisted path, not the unrelated PATH
   // interpreter returned by the source-wide survey.
@@ -167,14 +175,17 @@ const createRuntimeSelectionWorkflows = (
         deps.settingsService.getManualInterpreters('python'),
         deps.settingsService.getManualInterpreters('r')
       ])
-      const discovery = defaultDiscoveryDeps(deps.runtimeRoot(), (language) =>
+      const currentRuntimeRoot = deps.runtimeRoot()
+      const discovery = defaultDiscoveryDeps(currentRuntimeRoot, (language) =>
         language === 'python' ? manualPython : manualR
       )
       const [python, r] = await Promise.all([
         discoverInterpreters('python', discovery),
         discoverInterpreters('r', discovery)
       ])
-      return { python, r }
+      discoveredRuntimeRoot = currentRuntimeRoot
+      discoveredSnapshot = { python, r }
+      return discoveredSnapshot
     },
     // Read-only installed-package inventory for one env (Settings "Packages" dialog). The envId is
     // validated against a FRESH discovery result — the renderer only names the env; the interpreter
@@ -194,7 +205,12 @@ const createRuntimeSelectionWorkflows = (
     // runnable env with bounded concurrency so a machine with many envs doesn't spawn a burst of
     // subprocesses. A failed listing maps to null (the card simply omits its badge).
     listPackageCounts: async (request) => {
-      const runnable = (await discoverLanguageEnvs(request.language)).filter((env) => env.runnable)
+      const currentRuntimeRoot = deps.runtimeRoot()
+      const discovered =
+        discoveredSnapshot && discoveredRuntimeRoot === currentRuntimeRoot
+          ? discoveredSnapshot[request.language]
+          : await discoverLanguageEnvs(request.language)
+      const runnable = discovered.filter((env) => env.runnable)
       const counts: Record<string, number | null> = {}
       let next = 0
       const worker = async (): Promise<void> => {
@@ -269,10 +285,19 @@ const createRuntimeSelectionWorkflows = (
         request.envId,
         request.authorized
       ),
-    register: (request) =>
-      deps.settingsService.addManualInterpreter(request.language, request.path),
-    unregister: (request) =>
-      deps.settingsService.removeManualInterpreter(request.language, request.path)
+    register: async (request) => {
+      const result = await deps.settingsService.addManualInterpreter(request.language, request.path)
+      invalidateDiscovery()
+      return result
+    },
+    unregister: async (request) => {
+      const result = await deps.settingsService.removeManualInterpreter(
+        request.language,
+        request.path
+      )
+      invalidateDiscovery()
+      return result
+    }
   }
 }
 

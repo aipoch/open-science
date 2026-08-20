@@ -21,11 +21,11 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
+import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
 import {
   isEnvEnabled,
   type DiscoveredInterpreter,
   type EnvPackage,
-  type RuntimeEnablement,
   type RuntimeUsage
 } from '../../../../shared/notebook-runtime'
 import type { NotebookLanguage } from '../../../../shared/notebook'
@@ -49,21 +49,25 @@ const LANGUAGES: ReadonlyArray<{ id: NotebookLanguage; label: string; icon: Reac
   { id: 'r', label: 'R', icon: <RIcon /> }
 ]
 
-type EnvLists = { python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }
-type Enablements = Partial<Record<NotebookLanguage, RuntimeEnablement>>
-
 type RuntimesPanelProps = {
   title: string
   description: React.ReactNode
 }
 
 const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
-  const { t, i18n } = useTranslation()
-  const [envs, setEnvs] = useState<EnvLists | null>(null)
-  const [enablement, setEnablement] = useState<Enablements>({})
-  const [loaded, setLoaded] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { t } = useTranslation()
+  const envs = useRuntimeSettingsStore((state) => state.envs)
+  const enablement = useRuntimeSettingsStore((state) => state.enablement)
+  const loaded = useRuntimeSettingsStore((state) => state.loaded)
+  const busy = useRuntimeSettingsStore((state) => state.busy)
+  const error = useRuntimeSettingsStore((state) => state.error)
+  const packageCounts = useRuntimeSettingsStore((state) => state.packageCounts)
+  const loadRuntimeSettings = useRuntimeSettingsStore((state) => state.load)
+  const recheckRuntimeSettings = useRuntimeSettingsStore((state) => state.recheck)
+  const setBusy = useRuntimeSettingsStore((state) => state.setBusy)
+  const setError = useRuntimeSettingsStore((state) => state.setError)
+  const setEnablement = useRuntimeSettingsStore((state) => state.setEnablement)
+  const updatePackageCount = useRuntimeSettingsStore((state) => state.updatePackageCount)
   const [managedOperations, setManagedOperations] = useState<
     Partial<Record<NotebookLanguage, boolean>>
   >({})
@@ -86,12 +90,6 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const [packagesFilter, setPackagesFilter] = useState('')
   const packagesFilterRef = useRef<HTMLInputElement>(null)
   useSettingsSearchShortcut(packagesFilterRef, packagesEnv !== null)
-  // Per-env package counts for the card button badges, fetched lazily AFTER the panel loads.
-  // countsRef is the source of truth (readable inside effects without re-triggering them); the
-  // state mirror drives rendering. A present null entry means "fetch attempted, unavailable" —
-  // the card simply omits the badge (a count failure is never surfaced as card-level error UI).
-  const countsRef = useRef<Record<string, number | null>>({})
-  const [packageCounts, setPackageCounts] = useState<Record<string, number | null>>({})
   const initEnv = useNotebookEnvStore((state) => state.init)
   const provisionEnv = useNotebookEnvStore((state) => state.provision)
   const cancelEnv = useNotebookEnvStore((state) => state.cancel)
@@ -105,59 +103,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     void initEnv()
   }, [initEnv])
 
-  // Loads discovery and PERSISTED enablement as one strict snapshot. Any failed read rejects the
-  // snapshot rather than substituting empty/default state that could misrepresent the registry.
-  const fetchAll = (): Promise<[EnvLists, Enablements]> =>
-    Promise.all([
-      window.api.runtime.listEnvironments(),
-      window.api.runtime.getEnablement('python'),
-      window.api.runtime.getEnablement('r')
-    ]).then(([nextEnvs, python, r]) => [nextEnvs, { python, r }])
-
-  // Commit discovery and persisted permissions as one snapshot. Mixing a fresh interpreter list
-  // with stale enablement could briefly expose the wrong toggle or package-install authorization.
-  const applyAll = ([nextEnvs, nextEnablement]: [EnvLists, Enablements]): void => {
-    setEnvs(nextEnvs)
-    setEnablement(nextEnablement)
-    setError(null)
-    setLoaded(true)
-  }
-
   useEffect(() => {
-    void fetchAll()
-      .then(applyAll)
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : i18n.t('Could not load runtimes.'))
-        setLoaded(true)
-      })
-  }, [i18n])
-
-  // Lazy package-count fetch: runs AFTER the env list lands (never blocks fetchAll). One bulk
-  // listPackageCounts call per language (the main process does ONE discovery sweep per call and
-  // bounds listing concurrency itself), so filling N badges costs 2 IPC calls — not N per-env calls
-  // that each re-run full discovery. A failed bulk call (or a null per-env count) simply leaves the
-  // badge absent; Recheck clears countsRef so the badges refetch against the new env list.
-  useEffect(() => {
-    if (envs === null) return
-    let cancelled = false
-    for (const language of LANGUAGES) {
-      // No runnable envs for the language -> nothing to count; skip the IPC call entirely.
-      if (!envs[language.id].some((env) => env.runnable)) continue
-      void window.api.runtime
-        .listPackageCounts(language.id)
-        .then((counts) => {
-          if (cancelled) return
-          Object.assign(countsRef.current, counts)
-          setPackageCounts({ ...countsRef.current })
-        })
-        .catch(() => {
-          // Best-effort badges: a bulk failure is not surfaced as card-level error UI.
-        })
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [envs])
+    void loadRuntimeSettings().catch(() => undefined)
+  }, [loadRuntimeSettings])
 
   // Fetches the open dialog's package list; re-runs on Retry via packagesRetryNonce. A successful
   // fetch also refreshes the card's count badge (the dialog shows the same truth). The loading/error
@@ -171,8 +119,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       .then((list) => {
         if (cancelled) return
         setPackages(list)
-        countsRef.current[env.envId] = list.length
-        setPackageCounts({ ...countsRef.current })
+        updatePackageCount(env.envId, list.length)
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -181,24 +128,18 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     return () => {
       cancelled = true
     }
-  }, [packagesEnv, packagesRetryNonce, t])
+  }, [packagesEnv, packagesRetryNonce, t, updatePackageCount])
 
   // Recheck refreshes both halves of the runtime registry together for the same reason as initial
   // loading: cards and their permissions must describe one coherent backend snapshot. Counts are
   // cleared after a successful refresh so every badge refetches against the new env list; a failed
   // refresh retains both the last complete registry snapshot and its matching counts.
   const recheck = async (): Promise<void> => {
-    setBusy(true)
     setError(null)
     try {
-      const next = await fetchAll()
-      countsRef.current = {}
-      setPackageCounts({})
-      applyAll(next)
+      await recheckRuntimeSettings()
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not re-check runtimes.'))
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -226,7 +167,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
         enabled,
         force
       )
-      setEnablement((current) => ({ ...current, [language]: next }))
+      setEnablement(language, next)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not change that runtime.'))
     } finally {
@@ -290,7 +231,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
         env.envId,
         !isInstallAuthorized(language, env)
       )
-      setEnablement((current) => ({ ...current, [language]: next }))
+      setEnablement(language, next)
     } catch (e) {
       setError(
         e instanceof Error ? e.message : t('Could not change package-install authorization.')
@@ -309,13 +250,12 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       // Add the picked path to the discovery catalog; it then surfaces as a (user-own) card once
       // discovery probes it. It starts DISABLED (user-own default) — the user enables it explicitly.
       await window.api.runtime.registerInterpreter(language, path)
-      const nextEnvs = await window.api.runtime.listEnvironments()
-      setEnvs(nextEnvs)
+      const nextSnapshot = await recheckRuntimeSettings()
       // Best-effort: enable the just-added env so it is usable immediately.
-      const added = nextEnvs[language].find((env) => env.interpreterPath === path)
-      if (added && !isEnvEnabled(added, enablement[language])) {
+      const added = nextSnapshot.envs[language].find((env) => env.interpreterPath === path)
+      if (added && !isEnvEnabled(added, nextSnapshot.enablement[language])) {
         const next = await window.api.runtime.setEnvironmentEnabled(language, added.envId, true)
-        setEnablement((current) => ({ ...current, [language]: next }))
+        setEnablement(language, next)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not add that interpreter.'))
@@ -334,7 +274,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       await provisionEnv(language)
       // The provisioner updates files and registry metadata in the main process; reload both the
       // discovered environments and persisted enablement before rendering the completed card.
-      applyAll(await fetchAll())
+      await recheckRuntimeSettings()
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not refresh runtime readiness.'))
     } finally {
@@ -350,7 +290,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     setError(null)
     try {
       await resetEnv(language)
-      applyAll(await fetchAll())
+      await recheckRuntimeSettings()
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not reset the runtime.'))
     } finally {
@@ -363,7 +303,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     setError(null)
     try {
       await cancelEnv(language)
-      applyAll(await fetchAll())
+      await recheckRuntimeSettings()
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not cancel the setup.'))
     }
@@ -499,7 +439,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       >
         {error !== null && (
           <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
-            {error}
+            {error === 'Could not load runtimes.' ? t('Could not load runtimes.') : error}
           </p>
         )}
         {loading ? (

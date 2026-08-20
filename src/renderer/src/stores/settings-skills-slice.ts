@@ -14,7 +14,7 @@ import type {
 
 import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolean'
 
-export type SettingsSkillsState = { skills: SkillView[] }
+export type SettingsSkillsState = { skills: SkillView[]; skillsLoaded: boolean }
 
 export type SettingsSkillsActions = {
   loadSkills: () => Promise<void>
@@ -66,7 +66,10 @@ type SettingsSkillsSliceOptions = {
   getCommands: () => SettingsSkillsCommands
 }
 
-export const createInitialSettingsSkillsState = (): SettingsSkillsState => ({ skills: [] })
+export const createInitialSettingsSkillsState = (): SettingsSkillsState => ({
+  skills: [],
+  skillsLoaded: false
+})
 
 // Owns the renderer Skill catalog projection and its command settlement. Preview-only commands keep
 // their detail state with callers, while catalog-returning imports reconcile this single projection.
@@ -87,7 +90,10 @@ export const createSettingsSkillsSlice = ({
     const projectionGeneration = skillEnabledWrites.beginProjection()
     const skills = await command()
     if (generation === reconcileGeneration)
-      setState({ skills: projectOptimisticEnablement(skills, projectionGeneration) })
+      setState({
+        skills: projectOptimisticEnablement(skills, projectionGeneration),
+        skillsLoaded: true
+      })
     return skills
   }
 
@@ -102,7 +108,10 @@ export const createSettingsSkillsSlice = ({
     const projectionGeneration = skillEnabledWrites.beginProjection()
     const result = await command()
     if (generation === reconcileGeneration)
-      setState({ skills: projectOptimisticEnablement(result.skills, projectionGeneration) })
+      setState({
+        skills: projectOptimisticEnablement(result.skills, projectionGeneration),
+        skillsLoaded: true
+      })
     return result
   }
 
@@ -110,6 +119,7 @@ export const createSettingsSkillsSlice = ({
   // Electron releases the preload subscription when the window is destroyed, while retaining the
   // remover here prevents repeated loadSkills calls from installing duplicate listeners.
   let removeCatalogChangedListener: (() => void) | undefined
+  let catalogLoadRequest: Promise<void> | undefined
   const subscribeToCatalogChanges = (): void => {
     removeCatalogChangedListener ??= getCommands().onSkillCatalogChanged(() => {
       void reconcileCatalog(() => getCommands().listSkills()).catch(() => undefined)
@@ -117,9 +127,16 @@ export const createSettingsSkillsSlice = ({
   }
 
   return {
-    loadSkills: async () => {
+    loadSkills: () => {
       subscribeToCatalogChanges()
-      await reconcileCatalog(() => getCommands().listSkills())
+      if (getState().skillsLoaded) return Promise.resolve()
+      if (catalogLoadRequest) return catalogLoadRequest
+      const request = reconcileCatalog(() => getCommands().listSkills()).then(() => undefined)
+      const trackedRequest = request.finally(() => {
+        if (catalogLoadRequest === trackedRequest) catalogLoadRequest = undefined
+      })
+      catalogLoadRequest = trackedRequest
+      return trackedRequest
     },
     setSkillEnabled: async (id, enabled) => {
       const current = getState().skills.find((skill) => skill.id === id)

@@ -22,6 +22,7 @@ type SettingsConnectorsProjection = {
 }
 
 export type SettingsConnectorsState = SettingsConnectorsProjection & {
+  connectorsLoaded: boolean
   pendingApprovals: ConnectorApprovalRequest[]
 }
 
@@ -62,6 +63,7 @@ type SettingsConnectorsCommands = Pick<
 >
 
 type SettingsConnectorsSliceOptions = {
+  getState: () => SettingsConnectorsState
   setState: (
     patch:
       | Partial<SettingsConnectorsState>
@@ -74,6 +76,7 @@ export const createInitialSettingsConnectorsState = (): SettingsConnectorsState 
   connectors: [],
   customServers: [],
   reservedCustomServerIds: [],
+  connectorsLoaded: false,
   pendingApprovals: [],
   ncbi: { hasApiKey: false }
 })
@@ -81,6 +84,7 @@ export const createInitialSettingsConnectorsState = (): SettingsConnectorsState 
 // Owns the renderer projection for Connector catalogs, custom servers, NCBI credentials, and the
 // approval queue. Main remains authoritative for every catalog mutation and trust decision.
 export const createSettingsConnectorsSlice = ({
+  getState,
   setState,
   getCommands
 }: SettingsConnectorsSliceOptions): SettingsConnectorsActions => {
@@ -120,7 +124,10 @@ export const createSettingsConnectorsSlice = ({
     const projectionGeneration = toggleWrites.beginProjection()
     const projection = await command()
     if (generation === reconcileGeneration)
-      setState(projectOptimisticToggles(projection, projectionGeneration))
+      setState({
+        ...projectOptimisticToggles(projection, projectionGeneration),
+        connectorsLoaded: true
+      })
     return projection
   }
   let mutationsInFlight = 0
@@ -150,6 +157,7 @@ export const createSettingsConnectorsSlice = ({
     await runMutation(() => reconcile(command))
   }
   let removeRuntimeChangedListener: (() => void) | undefined
+  let catalogLoadRequest: Promise<void> | undefined
   const subscribeToRuntimeChanges = (): void => {
     removeRuntimeChangedListener ??= getCommands().onConnectorRuntimeChanged(() => {
       reconcileRuntimeChange()
@@ -157,9 +165,16 @@ export const createSettingsConnectorsSlice = ({
   }
 
   return {
-    loadConnectors: async () => {
+    loadConnectors: () => {
       subscribeToRuntimeChanges()
-      await reconcile(() => getCommands().listConnectors())
+      if (getState().connectorsLoaded) return Promise.resolve()
+      if (catalogLoadRequest) return catalogLoadRequest
+      const request = reconcile(() => getCommands().listConnectors()).then(() => undefined)
+      const trackedRequest = request.finally(() => {
+        if (catalogLoadRequest === trackedRequest) catalogLoadRequest = undefined
+      })
+      catalogLoadRequest = trackedRequest
+      return trackedRequest
     },
     setConnectorEnabled: async (id, enabled) => {
       const key = connectorEnabledKey(id)

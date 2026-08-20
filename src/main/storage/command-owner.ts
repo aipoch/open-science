@@ -12,7 +12,8 @@ import type {
   MigrationOutcome,
   MigrationProgress,
   RevealAppStorageResult,
-  StorageInfo
+  StorageInfo,
+  StorageStatus
 } from '../../shared/storage'
 import {
   computeDefaultDataRoot,
@@ -127,15 +128,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     error: (message, data) => emitSafely('error', message, data)
   }
 
-  const getInfo = async (): Promise<StorageInfo> => {
+  const getStatus = async (): Promise<StorageStatus> => {
     const dataRoot = resolveDataRoot()
-    let available = 0
-    try {
-      available = await availableBytes(dataRoot)
-    } catch (err) {
-      logger.warn('available storage lookup failed', diagnosticErrorFields(err))
-    }
-
     // Only an explicitly-configured-but-now-gone root counts as "missing"; a fresh install's unset
     // dataRoot (default `~/OpenScience` not created yet) is normal and must never nag the user.
     let dataRootMissing = false
@@ -166,8 +160,22 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       defaultDataRoot: computeDefaultDataRoot(),
       defaultParent: defaultDataParent(),
       dataRootMissing,
-      legacyDataMovePrompt,
-      usage: await computeStorageUsage(dataRoot),
+      legacyDataMovePrompt
+    }
+  }
+
+  const getInfo = async (): Promise<StorageInfo> => {
+    const status = await getStatus()
+    let available = 0
+    try {
+      available = await availableBytes(status.dataRoot)
+    } catch (err) {
+      logger.warn('available storage lookup failed', diagnosticErrorFields(err))
+    }
+
+    return {
+      ...status,
+      usage: await computeStorageUsage(status.dataRoot),
       availableBytes: available
     }
   }
@@ -620,6 +628,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   }
 
   return Object.freeze({
+    getStatus,
     getInfo,
     revealAppStorage,
     dismissLegacyMovePrompt,

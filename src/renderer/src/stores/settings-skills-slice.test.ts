@@ -112,6 +112,22 @@ describe('settings Skills slice', () => {
     expect(store.getState().skills).toEqual([skill('loaded')])
   })
 
+  it('deduplicates overlapping initial catalog loads', async () => {
+    let settle!: (skills: SkillView[]) => void
+    vi.mocked(commands.listSkills).mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve
+      })
+    )
+
+    const first = store.getState().loadSkills()
+    const second = store.getState().loadSkills()
+    settle([skill('loaded')])
+    await Promise.all([first, second])
+
+    expect(commands.listSkills).toHaveBeenCalledOnce()
+  })
+
   it('subscribes once and reconciles a catalog change published by main', async () => {
     let onCatalogChanged: ((payload: undefined) => void) | undefined
     vi.mocked(commands.onSkillCatalogChanged).mockImplementation((listener) => {
@@ -128,6 +144,7 @@ describe('settings Skills slice', () => {
     await vi.waitFor(() => expect(store.getState().skills).toEqual([skill('direct')]))
 
     expect(commands.onSkillCatalogChanged).toHaveBeenCalledOnce()
+    expect(commands.listSkills).toHaveBeenCalledTimes(2)
   })
 
   it('optimistically toggles a Skill before reconciling the authoritative catalog', async () => {

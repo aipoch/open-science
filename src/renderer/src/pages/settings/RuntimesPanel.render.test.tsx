@@ -10,6 +10,7 @@ import type {
   RuntimeEnablement
 } from '../../../../shared/notebook-runtime'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
+import { useRuntimeSettingsStore } from '../../stores/runtime-settings-store'
 import { RuntimesPanel } from './RuntimesPanel'
 
 let container: HTMLDivElement
@@ -74,6 +75,15 @@ const enablement: RuntimeEnablement = { enabled: {}, installAuthorized: {} }
 
 beforeEach(() => {
   useNotebookEnvStore.setState(createInitialNotebookEnvState())
+  useRuntimeSettingsStore.setState({
+    envs: null,
+    enablement: {},
+    loaded: false,
+    busy: false,
+    error: null,
+    packageCounts: {},
+    packageCountsLoaded: {}
+  })
   listEnvironments = vi.fn().mockResolvedValue({ python: pythonEnvs, r: rEnvs })
   listPackages = vi
     .fn()

@@ -24,14 +24,15 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { Input } from '@/components/ui/input'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useStorageInfoStore } from '@/stores/storage-info-store'
 import type {
   DataRootKind,
   DataRootInspection,
   DataRootRecoveryStatus,
-  StorageInfo,
   UsageCategoryKey
 } from '../../../../shared/storage'
 import { SettingsSection } from './SettingsLayout'
@@ -95,10 +96,18 @@ type StoragePanelProps = {
 const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
-  const [info, setInfo] = useState<StorageInfo | null>(null)
+  const status = useStorageInfoStore((state) => state.status)
+  const info = useStorageInfoStore((state) => state.info)
+  const scannedAt = useStorageInfoStore((state) => state.scannedAt)
+  const isRefreshingUsage = useStorageInfoStore((state) => state.isRefreshing)
+  const storageLoadError = useStorageInfoStore((state) => state.loadError)
+  const loadStorageStatus = useStorageInfoStore((state) => state.loadStatus)
+  const loadStorageInfo = useStorageInfoStore((state) => state.load)
+  const refreshStorageInfo = useStorageInfoStore((state) => state.refresh)
   const initialStorageFailure = environmentCheck?.checks.some(
     (check) => check.id === 'storage' && check.status === 'failed'
   )
@@ -129,8 +138,9 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const inspectRequestRef = useRef(0)
 
   useEffect(() => {
-    void window.api.storage.getInfo().then(setInfo)
-  }, [])
+    void loadStorageStatus().catch(() => undefined)
+    void loadStorageInfo().catch(() => undefined)
+  }, [loadStorageInfo, loadStorageStatus])
 
   const storageCheck = environmentCheck?.checks.find((check) => check.id === 'storage')
   const storagePassed = storageCheck?.status === 'passed'
@@ -268,10 +278,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
 
   const categories = info?.usage.categories ?? []
   const totalBytes = info?.usage.totalBytes ?? 0
+  const storageStatus = info ?? status
   // What migration actually moves: everything except runtime/ (rebuilt on demand at the new root).
   const migratableBytes = categories
     .filter((category) => category.key !== 'runtime')
     .reduce((sum, category) => sum + category.bytes, 0)
+  const scanTime = scannedAt === null ? undefined : formatDate(scannedAt, 'dateTime')
 
   return (
     <div className="space-y-5 p-5">
@@ -362,23 +374,37 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           ) : undefined
         }
       >
-        {info === null ? (
-          <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
+        {storageStatus === null ? (
+          storageLoadError ? (
+            <div className="space-y-2">
+              <p className="text-sm text-destructive" role="alert">
+                {t('Could not scan storage usage. Try again.')}
+              </p>
+              <Button type="button" variant="outline" onClick={() => void refreshStorageInfo()}>
+                <RefreshCw className="size-4" aria-hidden="true" />
+                {t('Retry')}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
+          )
         ) : (
           <>
             <span className="text-xs font-medium text-muted-foreground">{t('Location')}</span>
             <pre className={cn('mt-1', PATH_PILL)} aria-label={t('Data root path')}>
-              {info.dataRoot}
+              {storageStatus.dataRoot}
             </pre>
             <p className="mt-1.5 text-xs text-muted-foreground">
-              {info.isDefault
-                ? t('{{size}} on disk · default location', {
-                    size: formatBytes(info.usage.totalBytes)
-                  })
-                : t('{{size}} on disk', { size: formatBytes(info.usage.totalBytes) })}
+              {info
+                ? info.isDefault
+                  ? t('{{size}} on disk · default location', {
+                      size: formatBytes(info.usage.totalBytes)
+                    })
+                  : t('{{size}} on disk', { size: formatBytes(info.usage.totalBytes) })
+                : t('Scanning…')}
             </p>
 
-            {isEditing ? (
+            {isEditing && info ? (
               <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
                 <label
                   htmlFor="data-dir-path-input"
@@ -524,97 +550,139 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
         )}
       </SettingsSection>
 
-      {info !== null ? (
-        <SettingsSection title={t('Disk usage')} aria-label={t('Disk usage')} separated>
-          {totalBytes > 0 ? (
-            <div className="flex h-2 gap-0.5 overflow-hidden rounded bg-muted">
-              {categories
-                .filter((category) => category.bytes > 0)
-                .map((category) => (
-                  <div
-                    key={category.key}
-                    className={cn('rounded', CATEGORY_COLORS[category.key])}
-                    style={{ width: `${(category.bytes / totalBytes) * 100}%` }}
-                    title={t('{{label}}: {{size}}', {
-                      label: t(CATEGORY_LABEL_KEYS[category.key]),
-                      size: formatBytes(category.bytes)
-                    })}
-                  />
-                ))}
-            </div>
+      {storageStatus !== null ? (
+        <SettingsSection
+          title={t('Disk usage')}
+          description={scanTime ? t('Last scanned {{time}}', { time: scanTime }) : undefined}
+          aria-label={t('Disk usage')}
+          separated
+          action={
+            info ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isRefreshingUsage}
+                onClick={() => void refreshStorageInfo()}
+              >
+                <RefreshCw
+                  className={cn('size-4', isRefreshingUsage && 'animate-spin')}
+                  aria-hidden="true"
+                />
+                {t('Refresh')}
+              </Button>
+            ) : undefined
+          }
+        >
+          {info === null ? (
+            storageLoadError ? (
+              <div className="space-y-2">
+                <p className="text-sm text-destructive" role="alert">
+                  {t('Could not scan storage usage. Try again.')}
+                </p>
+                <Button type="button" variant="outline" onClick={() => void refreshStorageInfo()}>
+                  <RefreshCw className="size-4" aria-hidden="true" />
+                  {t('Retry')}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{t('Scanning…')}</p>
+            )
           ) : (
-            <p className="text-xs text-muted-foreground">{t('No data yet.')}</p>
-          )}
-
-          <div className="mt-2 space-y-1.5">
-            {categories.map((category) => {
-              const hasChildren = (category.children?.length ?? 0) > 0
-              const isExpanded = expandedCategory === category.key
-
-              return (
-                <div key={category.key}>
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={cn('size-2 rounded-sm', CATEGORY_COLORS[category.key])}
-                        aria-hidden="true"
+            <>
+              {totalBytes > 0 ? (
+                <div className="flex h-2 gap-0.5 overflow-hidden rounded bg-muted">
+                  {categories
+                    .filter((category) => category.bytes > 0)
+                    .map((category) => (
+                      <div
+                        key={category.key}
+                        className={cn('rounded', CATEGORY_COLORS[category.key])}
+                        style={{ width: `${(category.bytes / totalBytes) * 100}%` }}
+                        title={t('{{label}}: {{size}}', {
+                          label: t(CATEGORY_LABEL_KEYS[category.key]),
+                          size: formatBytes(category.bytes)
+                        })}
                       />
-                      {hasChildren ? (
-                        <button
-                          type="button"
-                          aria-expanded={isExpanded}
-                          onClick={() => toggleCategory(category.key)}
-                          className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
-                        >
-                          {t(CATEGORY_LABEL_KEYS[category.key])}
-                          <ChevronRight
-                            className={cn('size-3 transition-transform', isExpanded && 'rotate-90')}
+                    ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{t('No data yet.')}</p>
+              )}
+
+              <div className="mt-2 space-y-1.5">
+                {categories.map((category) => {
+                  const hasChildren = (category.children?.length ?? 0) > 0
+                  const isExpanded = expandedCategory === category.key
+
+                  return (
+                    <div key={category.key}>
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={cn('size-2 rounded-sm', CATEGORY_COLORS[category.key])}
                             aria-hidden="true"
                           />
-                        </button>
-                      ) : (
-                        <span className="text-muted-foreground">
-                          {t(CATEGORY_LABEL_KEYS[category.key])}
-                        </span>
-                      )}
-                    </div>
-                    <span className="tabular-nums text-muted-foreground">
-                      {formatBytes(category.bytes)}
-                    </span>
-                  </div>
-
-                  {hasChildren && isExpanded ? (
-                    <div className="mt-1 mb-1.5 space-y-1 pl-[14px]">
-                      {category.children?.map((child) => (
-                        <div
-                          key={child.name}
-                          className="flex items-center justify-between gap-2 text-xs"
-                        >
-                          <span className="truncate text-muted-foreground" title={child.name}>
-                            {child.name}
-                          </span>
-                          <span className="shrink-0 tabular-nums text-muted-foreground">
-                            {formatBytes(child.bytes)}
-                          </span>
+                          {hasChildren ? (
+                            <button
+                              type="button"
+                              aria-expanded={isExpanded}
+                              onClick={() => toggleCategory(category.key)}
+                              className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+                            >
+                              {t(CATEGORY_LABEL_KEYS[category.key])}
+                              <ChevronRight
+                                className={cn(
+                                  'size-3 transition-transform',
+                                  isExpanded && 'rotate-90'
+                                )}
+                                aria-hidden="true"
+                              />
+                            </button>
+                          ) : (
+                            <span className="text-muted-foreground">
+                              {t(CATEGORY_LABEL_KEYS[category.key])}
+                            </span>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })}
+                        <span className="tabular-nums text-muted-foreground">
+                          {formatBytes(category.bytes)}
+                        </span>
+                      </div>
 
-            <div className="flex items-center justify-between border-t border-border pt-1.5 text-xs">
-              <span className="font-medium text-foreground">{t('Total')}</span>
-              <span className="font-medium tabular-nums text-foreground">
-                {formatBytes(totalBytes)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{t('Available on disk')}</span>
-              <span className="tabular-nums">{formatBytes(info.availableBytes)}</span>
-            </div>
-          </div>
+                      {hasChildren && isExpanded ? (
+                        <div className="mt-1 mb-1.5 space-y-1 pl-[14px]">
+                          {category.children?.map((child) => (
+                            <div
+                              key={child.name}
+                              className="flex items-center justify-between gap-2 text-xs"
+                            >
+                              <span className="truncate text-muted-foreground" title={child.name}>
+                                {child.name}
+                              </span>
+                              <span className="shrink-0 tabular-nums text-muted-foreground">
+                                {formatBytes(child.bytes)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+
+                <div className="flex items-center justify-between border-t border-border pt-1.5 text-xs">
+                  <span className="font-medium text-foreground">{t('Total')}</span>
+                  <span className="font-medium tabular-nums text-foreground">
+                    {formatBytes(totalBytes)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{t('Available on disk')}</span>
+                  <span className="tabular-nums">{formatBytes(info.availableBytes)}</span>
+                </div>
+              </div>
+            </>
+          )}
         </SettingsSection>
       ) : null}
 

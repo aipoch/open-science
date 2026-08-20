@@ -88,6 +88,8 @@ const SPECIALIST_DOCUMENT_READ_ONLY_ERROR =
 
 let latestCatalogRequest = 0
 let latestExportPreviewRequest = 0
+let removeCatalogChangedListener: (() => void) | undefined
+let catalogLoadRequest: Promise<void> | undefined
 
 const refreshCatalog = async (set: StoreApi<SpecialistStore>['setState']): Promise<void> => {
   const requestId = ++latestCatalogRequest
@@ -127,11 +129,20 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
       set({ items: [], integrity: { status: 'ok' }, isLoaded: true, loadError: undefined })
       return Promise.resolve()
     }
+    removeCatalogChangedListener ??= window.api.specialist.onCatalogChanged?.(() => {
+      void refreshCatalog(set).catch(() => undefined)
+    })
+    if (useSpecialistStore.getState().isLoaded) return Promise.resolve()
+    if (catalogLoadRequest) return catalogLoadRequest
     const request = refreshCatalog(set)
+    const trackedRequest = request.finally(() => {
+      if (catalogLoadRequest === trackedRequest) catalogLoadRequest = undefined
+    })
+    catalogLoadRequest = trackedRequest
     // Keep ignored startup/event refreshes handled while preserving rejection for
     // callers that await load() before consuming the catalog.
-    void request.catch(() => undefined)
-    return request
+    void trackedRequest.catch(() => undefined)
+    return trackedRequest
   },
 
   create: async (input: CreateSpecialistInput) => {

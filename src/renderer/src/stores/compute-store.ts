@@ -56,6 +56,9 @@ const describeError = (error: unknown): string =>
 const sortByCreatedDesc = (hosts: ComputeHost[]): ComputeHost[] =>
   [...hosts].sort((left, right) => right.createdAt - left.createdAt)
 
+let loadHostsRequest: Promise<void> | undefined
+let computePanelPreloadReady = false
+
 export const createInitialComputeState = (): ComputeStoreData => ({
   hosts: [],
   isLoaded: false,
@@ -71,14 +74,21 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
 
   // Loads the full host list. A DB/IPC failure is recorded (not thrown) so the panel can show an
   // error instead of a silent empty list.
-  loadHosts: async () => {
-    try {
-      const hosts = await window.api.compute.list()
-
-      set({ hosts: sortByCreatedDesc(hosts), isLoaded: true, loadError: undefined })
-    } catch (error) {
-      set({ isLoaded: true, loadError: describeError(error) })
-    }
+  loadHosts: () => {
+    if (loadHostsRequest) return loadHostsRequest
+    const request = window.api.compute.list().then(
+      (hosts) => {
+        set({ hosts: sortByCreatedDesc(hosts), isLoaded: true, loadError: undefined })
+      },
+      (error: unknown) => {
+        set({ isLoaded: true, loadError: describeError(error) })
+      }
+    )
+    const trackedRequest = request.finally(() => {
+      if (loadHostsRequest === trackedRequest) loadHostsRequest = undefined
+    })
+    loadHostsRequest = trackedRequest
+    return trackedRequest
   },
 
   // Loads ~/.ssh/config aliases for the Add form dropdown. A failure degrades to an empty list (the
@@ -267,3 +277,17 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     }))
   }
 }))
+
+// The lazy Settings boundary waits for the first host read before mounting ComputePanel. Consume
+// that one result exactly once so the mount effect does not immediately repeat it; later remounts
+// keep the panel's original fresh-read behavior.
+export const preloadComputeHosts = async (): Promise<void> => {
+  await useComputeStore.getState().loadHosts()
+  computePanelPreloadReady = true
+}
+
+export const consumeComputeHostsPreload = (): boolean => {
+  const ready = computePanelPreloadReady
+  computePanelPreloadReady = false
+  return ready
+}

@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
-import { act, createRef, Profiler } from 'react'
+import { act, createRef, Profiler, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
 import { Dialog } from 'radix-ui'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
+import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
+import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
@@ -34,6 +38,34 @@ const originalSettingsActions = (() => {
     updateCustomServer: state.updateCustomServer
   }
 })()
+
+// Settings feature modules are lazy in production. Pre-resolve their chunks for this broad legacy
+// interaction suite so existing assertions remain focused on panel behavior rather than the shared
+// Suspense boundary; lazy-loading itself has separate architecture coverage.
+beforeAll(async () => {
+  await Promise.all([
+    import('./AgentPanel'),
+    import('./ArchivedPanel'),
+    import('./ComputeAddForm'),
+    import('./ComputeHostDetail'),
+    import('./ComputePanel'),
+    import('./ConnectorAddForm'),
+    import('./ConnectorDetailView'),
+    import('./ConnectorExportView'),
+    import('./ConnectorImportView'),
+    import('./ConnectorsPanel'),
+    import('./GeneralPanel'),
+    import('./NetworkPanel'),
+    import('./PermissionsPanel'),
+    import('./RemoteControlPanel'),
+    import('./RuntimesPanel'),
+    import('./SkillsPanel'),
+    import('./SpecialistsPanel'),
+    import('./StoragePanel'),
+    import('./TagsPanel'),
+    import('./TokenUsagePanel')
+  ])
+})
 
 // Minimal window.api surface the settings store touches when the dialog opens. Attached onto the
 // real jsdom window so DOM globals radix relies on (getComputedStyle, etc.) stay intact.
@@ -142,9 +174,21 @@ const installApi = (): void => {
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
     storage: {
+      getStatus: vi.fn().mockResolvedValue({
+        dataRoot: '/Users/x/.open-science',
+        isDefault: true,
+        defaultDataRoot: '/Users/x/.open-science',
+        defaultParent: '/Users/x',
+        dataRootMissing: false,
+        legacyDataMovePrompt: false
+      }),
       getInfo: vi.fn().mockResolvedValue({
         dataRoot: '/Users/x/.open-science',
         isDefault: true,
+        defaultDataRoot: '/Users/x/.open-science',
+        defaultParent: '/Users/x',
+        dataRootMissing: false,
+        legacyDataMovePrompt: false,
         usage: { categories: [], totalBytes: 0 },
         availableBytes: 1_000_000_000
       })
@@ -195,6 +239,9 @@ const installApi = (): void => {
       setEnabled: vi.fn(),
       onCatalogChanged: vi.fn(() => vi.fn())
     },
+    compute: {
+      list: vi.fn().mockResolvedValue([])
+    },
     tags: {
       snapshot: vi.fn().mockResolvedValue({
         revision: 1,
@@ -211,9 +258,45 @@ beforeEach(() => {
   useSettingsStore.setState(createInitialSettingsState())
   useProjectStore.setState(createInitialProjectState())
   useSessionStore.setState(createInitialSessionState())
+  useComputeStore.setState(createInitialComputeState())
   useTagStore.setState(createInitialTagState())
+  useRuntimeSettingsStore.setState({
+    envs: null,
+    enablement: {},
+    loaded: false,
+    busy: false,
+    error: null,
+    packageCounts: {},
+    packageCountsLoaded: {}
+  })
+  useStorageInfoStore.setState({
+    status: null,
+    info: null,
+    scannedAt: null,
+    isLoading: false,
+    isRefreshing: false,
+    loadError: undefined
+  })
+  usePermissionGrantsStore.setState({
+    version: 0,
+    incompleteStores: [],
+    grants: [],
+    counts: { all: 0, global: 0, project: 0, session: 0 },
+    status: 'idle',
+    error: undefined,
+    undo: undefined,
+    undoQueue: [],
+    isRestoring: false,
+    loadedAt: null
+  })
   // Editor drafts persist across mounts by design; keep tests independent of each other.
-  useSpecialistStore.setState({ editorDrafts: {} })
+  useSpecialistStore.setState({
+    items: [],
+    isLoaded: false,
+    loadError: undefined,
+    integrity: { status: 'ok' },
+    editorDrafts: {}
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -714,6 +797,26 @@ describe('SettingsPage layout', () => {
     expect(addRow?.className).toContain('border-dashed')
   })
 
+  it('uses the Compute preload once, then refreshes hosts on a later entry', async () => {
+    const listHosts = vi.mocked(window.api.compute.list)
+
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <SettingsPage open onClose={vi.fn()} />
+        </StrictMode>
+      )
+    )
+    await act(async () => navButton('Compute')?.click())
+
+    expect(listHosts).toHaveBeenCalledOnce()
+
+    await act(async () => navButton('Model')?.click())
+    await act(async () => navButton('Compute')?.click())
+
+    expect(listHosts).toHaveBeenCalledTimes(2)
+  })
+
   it('opens the Permissions panel from Workspace navigation', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Permissions')?.click())
@@ -759,6 +862,13 @@ describe('SettingsPage layout', () => {
       root.render(<SettingsPage open onClose={vi.fn()} onOpenSession={onOpenSession} />)
     )
     await act(async () => navButton('Permissions')?.click())
+    await waitFor(() =>
+      expect(
+        document.body.querySelector<HTMLButtonElement>(
+          '[aria-label="Open Session: Analyze samples"]'
+        )
+      ).not.toBeNull()
+    )
     await act(async () =>
       document.body
         .querySelector<HTMLButtonElement>('[aria-label="Open Session: Analyze samples"]')
@@ -1176,14 +1286,17 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
   })
 
-  it('opens Usage as a standalone history-driven settings panel', () => {
-    act(() => {
+  it('opens Usage as a standalone history-driven settings panel', async () => {
+    await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
 
     const usageEntry = navButton('Usage')
     expect(usageEntry).not.toBeNull()
-    act(() => usageEntry?.click())
+    await act(async () => usageEntry?.click())
+    await waitFor(() =>
+      expect(document.body.querySelector('[data-slot="token-usage-panel"]')).not.toBeNull()
+    )
 
     expect(document.body.querySelector('[data-slot="token-usage-panel"]')).not.toBeNull()
     expect(
@@ -1717,6 +1830,104 @@ describe('SettingsPage layout', () => {
     })
 
     expect(remoteAccess.detect).not.toHaveBeenCalled()
+  })
+
+  it('reuses the Remote control snapshot when the panel is reopened within 60 seconds', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const manageableSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: false, loggedIn: false, registered: false },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(manageableSnapshot)
+    remoteAccess.detect.mockResolvedValue(manageableSnapshot)
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Model')?.click())
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(remoteAccess.getSnapshot).toHaveBeenCalledOnce()
+    expect(remoteAccess.detect).toHaveBeenCalledOnce()
+  })
+
+  it('does not let an older initial detection overwrite a newer lifecycle snapshot', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+            onChanged: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const initialSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: false, loggedIn: false, registered: false },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    const eventSnapshot = {
+      ...initialSnapshot,
+      mode: 'remoteit-public',
+      enabled: true,
+      lifecycle: 'running',
+      remoteIt: { installed: true, loggedIn: true, registered: true }
+    }
+    let finishInitialDetection!: (snapshot: typeof initialSnapshot) => void
+    remoteAccess.getSnapshot
+      .mockResolvedValueOnce(initialSnapshot)
+      .mockResolvedValueOnce(eventSnapshot)
+    remoteAccess.detect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishInitialDetection = resolve
+        })
+    )
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Remote control')?.click())
+    expect(remoteAccess.detect).toHaveBeenCalledOnce()
+
+    const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
+    await act(async () => {
+      lifecycleListener?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Browser access is on'
+    )
+
+    await act(async () => {
+      finishInitialDetection(initialSnapshot)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Browser access is on'
+    )
   })
 
   it('covers the whole app while a remote mode system command is still running', async () => {

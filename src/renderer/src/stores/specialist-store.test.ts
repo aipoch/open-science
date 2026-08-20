@@ -21,6 +21,19 @@ beforeEach(() => {
 })
 
 describe('specialist store catalog', () => {
+  it('reuses the in-memory catalog when the panel loads again', async () => {
+    const list = vi.fn().mockResolvedValue({
+      items: [{ kind: 'reviewer' as const, id: 'reviewer' }],
+      integrity: { status: 'ok' as const }
+    })
+    setSpecialistApi({ list })
+
+    await useSpecialistStore.getState().load()
+    await useSpecialistStore.getState().load()
+
+    expect(list).toHaveBeenCalledOnce()
+  })
+
   it('treats a missing specialist list API as an unavailable catalog', async () => {
     setSpecialistApi({})
 
@@ -53,38 +66,27 @@ describe('specialist store catalog', () => {
     })
   })
 
-  it('keeps the latest overlapping catalog refresh authoritative', async () => {
+  it('deduplicates overlapping initial catalog loads', async () => {
     type TestCatalog = {
-      items: [{ kind: 'reviewer'; id: string }]
+      items: [{ kind: 'reviewer'; id: 'reviewer' }]
       integrity: { status: 'ok' }
     }
     let resolveFirst: ((snapshot: TestCatalog) => void) | undefined
-    let resolveSecond: ((snapshot: TestCatalog) => void) | undefined
+    const list = vi.fn(() => new Promise<TestCatalog>((resolve) => (resolveFirst = resolve)))
     setSpecialistApi({
-      list: vi
-        .fn()
-        .mockImplementationOnce(
-          () => new Promise<TestCatalog>((resolve) => (resolveFirst = resolve))
-        )
-        .mockImplementationOnce(
-          () => new Promise<TestCatalog>((resolve) => (resolveSecond = resolve))
-        )
+      list
     })
 
     const firstLoad = useSpecialistStore.getState().load()
     const secondLoad = useSpecialistStore.getState().load()
-    resolveSecond?.({
-      items: [{ kind: 'reviewer', id: 'new-catalog' }],
-      integrity: { status: 'ok' }
-    })
-    await secondLoad
     resolveFirst?.({
-      items: [{ kind: 'reviewer', id: 'stale-catalog' }],
+      items: [{ kind: 'reviewer', id: 'reviewer' }],
       integrity: { status: 'ok' }
     })
-    await firstLoad
+    await Promise.all([firstLoad, secondLoad])
 
-    expect(useSpecialistStore.getState().items).toEqual([{ kind: 'reviewer', id: 'new-catalog' }])
+    expect(list).toHaveBeenCalledOnce()
+    expect(useSpecialistStore.getState().items).toEqual([{ kind: 'reviewer', id: 'reviewer' }])
   })
 
   it('prevents a pre-mutation load from overwriting the mutation refresh', async () => {

@@ -37,7 +37,37 @@ import { cn } from '@/lib/utils'
 import { SettingsIconAction, SettingsSection } from './SettingsLayout'
 
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
+const REMOTE_ACCESS_FRESH_MS = 60_000
 type CopyStatus = 'idle' | 'copied' | 'error'
+
+let cachedRemoteAccess: { snapshot: RemoteAccessSnapshot; loadedAt: number } | undefined
+let cachedRemoteAccessOwner: Window['api']['remoteAccess'] | undefined
+let remoteAccessLoadInFlight: Promise<RemoteAccessSnapshot> | undefined
+let remoteAccessRequestGeneration = 0
+let remoteAccessPanelMounts = 0
+
+const beginRemoteAccessRequest = (): number => ++remoteAccessRequestGeneration
+const beginRemoteAccessLoad = (): number =>
+  remoteAccessLoadInFlight ? remoteAccessRequestGeneration : beginRemoteAccessRequest()
+const isCurrentRemoteAccessRequest = (generation: number): boolean =>
+  generation === remoteAccessRequestGeneration
+
+const freshRemoteAccessSnapshot = (): RemoteAccessSnapshot | undefined =>
+  cachedRemoteAccessOwner === window.api.remoteAccess &&
+  cachedRemoteAccess &&
+  Date.now() - cachedRemoteAccess.loadedAt < REMOTE_ACCESS_FRESH_MS
+    ? cachedRemoteAccess.snapshot
+    : undefined
+
+const cacheRemoteAccessSnapshot = (
+  snapshot: RemoteAccessSnapshot,
+  generation: number
+): RemoteAccessSnapshot => {
+  if (!isCurrentRemoteAccessRequest(generation)) return snapshot
+  cachedRemoteAccessOwner = window.api.remoteAccess
+  cachedRemoteAccess = { snapshot, loadedAt: Date.now() }
+  return snapshot
+}
 
 const lifecycleLabel = (snapshot: RemoteAccessSnapshot, t: TFunction): string => {
   if (snapshot.lifecycle === 'starting') return t('Starting…')
@@ -89,12 +119,31 @@ const providerStatus = (snapshot: RemoteAccessSnapshot, t: TFunction): string =>
 
 const loadRemoteAccessSnapshot = async (
   onInitial: (snapshot: RemoteAccessSnapshot) => void = () => undefined,
-  isActive: () => boolean = () => true
+  isActive: () => boolean = () => true,
+  force = false,
+  generation = beginRemoteAccessLoad()
 ): Promise<RemoteAccessSnapshot> => {
-  const initial = await window.api.remoteAccess.getSnapshot()
-  if (!isActive()) return initial
-  onInitial(initial)
-  return initial.canManage ? window.api.remoteAccess.detect() : initial
+  const cached = !force ? freshRemoteAccessSnapshot() : undefined
+  if (cached) {
+    if (isActive()) onInitial(cached)
+    return cached
+  }
+  if (remoteAccessLoadInFlight) return remoteAccessLoadInFlight
+
+  const request = window.api.remoteAccess.getSnapshot().then(async (initial) => {
+    if (!isCurrentRemoteAccessRequest(generation)) return initial
+    if (!initial.canManage) cacheRemoteAccessSnapshot(initial, generation)
+    if (!isActive()) return initial
+    onInitial(initial)
+    if (!initial.canManage) return initial
+    const detected = await window.api.remoteAccess.detect()
+    return cacheRemoteAccessSnapshot(detected, generation)
+  })
+  const trackedRequest = request.finally(() => {
+    if (remoteAccessLoadInFlight === trackedRequest) remoteAccessLoadInFlight = undefined
+  })
+  remoteAccessLoadInFlight = trackedRequest
+  return trackedRequest
 }
 
 const BrowserAccessSteps = ({ t }: { t: TFunction }): React.JSX.Element => (
@@ -125,8 +174,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
 
-  const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(null)
-  const [busy, setBusy] = useState<string | null>('loading')
+  const initialSnapshot = freshRemoteAccessSnapshot()
+  const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(initialSnapshot ?? null)
+  const [busy, setBusy] = useState<string | null>(initialSnapshot ? null : 'loading')
   const [actionError, setActionError] = useState<string | undefined>()
   const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle')
 
@@ -135,37 +185,54 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const mountedRef = useRef(false)
   const copyResetTimerRef = useRef<number | undefined>(undefined)
   const refresh = async (detect = false, completesBusyOperation = true): Promise<void> => {
+    const generation = beginRemoteAccessRequest()
     try {
       const next = detect
         ? await window.api.remoteAccess.detect()
         : await window.api.remoteAccess.getSnapshot()
+      if (!detect && !isCurrentRemoteAccessRequest(generation)) return
+      // A manual Detect result is authoritative over progress broadcasts emitted while it ran.
+      const commitGeneration = detect ? beginRemoteAccessRequest() : generation
+      cacheRemoteAccessSnapshot(next, commitGeneration)
       setSnapshot(next)
       setActionError(undefined)
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error))
+      if (isCurrentRemoteAccessRequest(generation)) {
+        setActionError(error instanceof Error ? error.message : String(error))
+      }
     } finally {
-      if (completesBusyOperation) setBusy(null)
+      if (completesBusyOperation) {
+        setBusy(null)
+      } else if (isCurrentRemoteAccessRequest(generation)) {
+        setBusy((current) => (current === 'loading' ? null : current))
+      }
     }
   }
 
   useEffect(() => {
     let active = true
+    remoteAccessPanelMounts += 1
     mountedRef.current = true
+    const generation = beginRemoteAccessLoad()
     void loadRemoteAccessSnapshot(
       (initial) => {
         if (active) setSnapshot(initial)
       },
-      () => active
+      () => remoteAccessPanelMounts > 0,
+      false,
+      generation
     )
       .then((next) => {
-        if (!active) return
+        if (!active || !isCurrentRemoteAccessRequest(generation)) return
         setSnapshot(next)
       })
       .catch((error: unknown) => {
-        if (active) setActionError(error instanceof Error ? error.message : String(error))
+        if (active && isCurrentRemoteAccessRequest(generation)) {
+          setActionError(error instanceof Error ? error.message : String(error))
+        }
       })
       .finally(() => {
-        if (active) setBusy(null)
+        if (active && isCurrentRemoteAccessRequest(generation)) setBusy(null)
       })
     const unsubscribe = window.api.remoteAccess.onChanged(() => {
       // Lifecycle broadcasts are progress updates for an in-flight action. They must not clear
@@ -174,6 +241,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     })
     return () => {
       active = false
+      remoteAccessPanelMounts -= 1
       mountedRef.current = false
       if (copyResetTimerRef.current !== undefined) {
         window.clearTimeout(copyResetTimerRef.current)
@@ -188,11 +256,18 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     operationTriggerRef.current = null
   }, [busy])
 
-  const run = async (name: string, action: () => Promise<RemoteAccessSnapshot>): Promise<void> => {
+  const run = async (
+    name: string,
+    action: (generation: number) => Promise<RemoteAccessSnapshot>
+  ): Promise<void> => {
+    const generation = beginRemoteAccessRequest()
     setBusy(name)
     setActionError(undefined)
     try {
-      const next = await action()
+      const next = await action(generation)
+      // The completed user action is authoritative over lifecycle progress broadcasts.
+      const commitGeneration = beginRemoteAccessRequest()
+      cacheRemoteAccessSnapshot(next, commitGeneration)
       setSnapshot(next)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error))
@@ -204,8 +279,8 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const retryInitialLoad = (): void => {
     if (initialLoadRetryRef.current) return
     initialLoadRetryRef.current = true
-    void run('loading', () =>
-      loadRemoteAccessSnapshot(setSnapshot, () => mountedRef.current)
+    void run('loading', (generation) =>
+      loadRemoteAccessSnapshot(setSnapshot, () => mountedRef.current, true, generation)
     ).finally(() => {
       initialLoadRetryRef.current = false
     })
@@ -742,3 +817,5 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     </div>
   )
 }
+
+RemoteControlPanel.preload = (): Promise<RemoteAccessSnapshot> => loadRemoteAccessSnapshot()

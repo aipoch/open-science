@@ -275,6 +275,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(fakeDeps())
 
     for (const channel of [
+      'storage:get-status',
       'storage:get-info',
       'storage:reveal-app-storage',
       'storage:detect-active',
@@ -288,6 +289,24 @@ describe('storage IPC handlers', () => {
     ]) {
       expect(handlers.has(channel)).toBe(true)
     }
+  })
+
+  it('get-status returns data-root state without usage fields', async () => {
+    initDataRoot(undefined)
+    registerStorageIpcHandlers(fakeDeps())
+
+    const status = await invoke('storage:get-status')
+
+    expect(status).toEqual({
+      dataRoot: join('/home/user', 'OpenScience'),
+      isDefault: true,
+      defaultDataRoot: join('/home/user', 'OpenScience'),
+      defaultParent: '/home/user',
+      dataRootMissing: false,
+      legacyDataMovePrompt: false
+    })
+    expect(status).not.toHaveProperty('usage')
+    expect(status).not.toHaveProperty('availableBytes')
   })
 
   it('reveals the main-resolved config root without accepting a renderer path', async () => {

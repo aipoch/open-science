@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { StoragePanel } from './StoragePanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useStorageInfoStore } from '@/stores/storage-info-store'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
+import type { StorageInfo } from '../../../../shared/storage'
 
 let container: HTMLDivElement
 let root: Root
@@ -71,15 +73,35 @@ const openEditor = async (): Promise<void> => {
 
 beforeEach(() => {
   useSettingsStore.setState(createInitialSettingsState())
+  useStorageInfoStore.setState({
+    status: null,
+    info: null,
+    scannedAt: null,
+    isLoading: false,
+    isRefreshing: false,
+    loadError: undefined
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
 
   ;(window as unknown as { api: unknown }).api = {
     storage: {
+      getStatus: vi.fn().mockResolvedValue({
+        dataRoot: '/home/u/.open-science',
+        isDefault: true,
+        defaultDataRoot: '/home/u/.open-science',
+        defaultParent: '/home/u',
+        dataRootMissing: false,
+        legacyDataMovePrompt: false
+      }),
       getInfo: vi.fn().mockResolvedValue({
         dataRoot: '/home/u/.open-science',
         isDefault: true,
+        defaultDataRoot: '/home/u/.open-science',
+        defaultParent: '/home/u',
+        dataRootMissing: false,
+        legacyDataMovePrompt: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       }),
@@ -107,6 +129,74 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
+  it('shows the data location while the usage scan is still running', async () => {
+    let finishScan!: (info: StorageInfo) => void
+    vi.mocked(window.api.storage.getInfo).mockImplementationOnce(
+      () => new Promise<StorageInfo>((resolve) => (finishScan = resolve))
+    )
+
+    await act(async () => root.render(<StoragePanel />))
+
+    expect(document.body.textContent).toContain('/home/u/.open-science')
+    expect(document.body.textContent).toContain('Scanning…')
+
+    await act(async () => {
+      finishScan({
+        dataRoot: '/home/u/.open-science',
+        isDefault: true,
+        defaultDataRoot: '/home/u/.open-science',
+        defaultParent: '/home/u',
+        dataRootMissing: false,
+        legacyDataMovePrompt: false,
+        usage: { categories: [], totalBytes: 35_600_000 },
+        availableBytes: 500_000_000_000
+      })
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Scanning…')
+    expect(document.body.textContent).toContain('35.6 MB on disk')
+  })
+
+  it('offers a retry when both lightweight status and the initial usage scan fail', async () => {
+    vi.mocked(window.api.storage.getStatus).mockRejectedValueOnce(
+      new Error('storage status unavailable')
+    )
+    vi.mocked(window.api.storage.getInfo)
+      .mockRejectedValueOnce(new Error('storage scan unavailable'))
+      .mockResolvedValueOnce({
+        dataRoot: '/home/u/.open-science',
+        isDefault: true,
+        defaultDataRoot: '/home/u/.open-science',
+        defaultParent: '/home/u',
+        dataRootMissing: false,
+        legacyDataMovePrompt: false,
+        usage: { categories: [], totalBytes: 35_600_000 },
+        availableBytes: 500_000_000_000
+      })
+
+    await act(async () => {
+      root.render(<StoragePanel />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Could not scan storage usage. Try again.')
+    const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    expect(retry).not.toBeUndefined()
+
+    await act(async () => {
+      retry?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('/home/u/.open-science')
+    expect(document.body.textContent).not.toContain('Could not scan storage usage. Try again.')
+  })
+
   it('uses shared settings dialog chrome for data-location confirmations', async () => {
     ;(
       window as unknown as { api: { storage: { pickDirectory: ReturnType<typeof vi.fn> } } }

@@ -23,7 +23,15 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { FocusScope } from '@radix-ui/react-focus-scope'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import {
+  forwardRef,
+  lazy,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -37,38 +45,23 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
-import { useComputeStore } from '@/stores/compute-store'
+import { preloadComputeHosts, useComputeStore } from '@/stores/compute-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
-import { AgentPanel } from './AgentPanel'
 import { ProvidersPanel } from './ProvidersPanel'
-import { GeneralPanel } from './GeneralPanel'
-import { NetworkPanel } from './NetworkPanel'
-import { StoragePanel } from './StoragePanel'
-import { RuntimesPanel } from './RuntimesPanel'
-import { RemoteControlPanel } from './RemoteControlPanel'
-import { SkillsPanel, type SkillsView } from './SkillsPanel'
-import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
-import { SpecialistsPanel, type SpecialistsView } from './SpecialistsPanel'
-import { TagsPanel } from './TagsPanel'
+import type { SkillsView } from './SkillsPanel'
+import type { ConnectorsView } from './ConnectorsPanel'
+import type { SpecialistsView } from './SpecialistsPanel'
 import { ResourceTagSummary } from './ResourceTagControls'
-import { ConnectorDetailView } from './ConnectorDetailView'
-import { ConnectorAddForm } from './ConnectorAddForm'
-import { ConnectorExportView } from './ConnectorExportView'
-import { ConnectorImportView } from './ConnectorImportView'
 import { ConnectorsNavIcon } from './connector-icons'
-import { ComputePanel, type ComputeView } from './ComputePanel'
-import { ComputeAddForm } from './ComputeAddForm'
-import { ComputeHostDetail } from './ComputeHostDetail'
-import { PermissionsPanel } from './PermissionsPanel'
-import { ArchivedPanel, type ArchivedView } from './ArchivedPanel'
+import type { ComputeView } from './ComputePanel'
+import type { ArchivedView } from './ArchivedPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
-import { TokenUsagePanel } from './TokenUsagePanel'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
@@ -79,6 +72,113 @@ import {
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
+import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
+import { loadSettingsPanel } from './settings-panel-loader'
+
+const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).AgentPanel }))
+const GeneralPanel = lazy(async () => ({ default: (await import('./GeneralPanel')).GeneralPanel }))
+const NetworkPanel = lazy(async () => ({ default: (await import('./NetworkPanel')).NetworkPanel }))
+const StoragePanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./StoragePanel'),
+    () =>
+      import('@/stores/storage-info-store').then(({ useStorageInfoStore }) =>
+        useStorageInfoStore.getState().loadStatus()
+      )
+  )
+  return { default: module.StoragePanel }
+})
+const RuntimesPanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./RuntimesPanel'),
+    () =>
+      import('@/stores/runtime-settings-store').then(({ useRuntimeSettingsStore }) =>
+        useRuntimeSettingsStore.getState().load()
+      )
+  )
+  return { default: module.RuntimesPanel }
+})
+const RemoteControlPanel = lazy(async () => {
+  const module = await import('./RemoteControlPanel')
+  await module.RemoteControlPanel.preload().catch(() => undefined)
+  return { default: module.RemoteControlPanel }
+})
+const SkillsPanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./SkillsPanel'),
+    () => useSettingsStore.getState().loadSkills()
+  )
+  return { default: module.SkillsPanel }
+})
+const ConnectorsPanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./ConnectorsPanel'),
+    () => useSettingsStore.getState().loadConnectors()
+  )
+  return { default: module.ConnectorsPanel }
+})
+const SpecialistsPanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./SpecialistsPanel'),
+    () => useSpecialistStore.getState().load()
+  )
+  return { default: module.SpecialistsPanel }
+})
+const TagsPanel = lazy(async () => {
+  const tagState = useTagStore.getState()
+  const module = await loadSettingsPanel(
+    () => import('./TagsPanel'),
+    () =>
+      Promise.all([
+        tagState.status === 'idle' ? tagState.load() : Promise.resolve(),
+        useSettingsStore.getState().loadSkills(),
+        useSettingsStore.getState().loadConnectors(),
+        useSpecialistStore.getState().load()
+      ])
+  )
+  return { default: module.TagsPanel }
+})
+const ConnectorDetailView = lazy(async () => ({
+  default: (await import('./ConnectorDetailView')).ConnectorDetailView
+}))
+const ConnectorAddForm = lazy(async () => ({
+  default: (await import('./ConnectorAddForm')).ConnectorAddForm
+}))
+const ConnectorExportView = lazy(async () => ({
+  default: (await import('./ConnectorExportView')).ConnectorExportView
+}))
+const ConnectorImportView = lazy(async () => ({
+  default: (await import('./ConnectorImportView')).ConnectorImportView
+}))
+const ComputePanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./ComputePanel'),
+    () => preloadComputeHosts()
+  )
+  return { default: module.ComputePanel }
+})
+const ComputeAddForm = lazy(async () => ({
+  default: (await import('./ComputeAddForm')).ComputeAddForm
+}))
+const ComputeHostDetail = lazy(async () => ({
+  default: (await import('./ComputeHostDetail')).ComputeHostDetail
+}))
+const PermissionsPanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./PermissionsPanel'),
+    () =>
+      import('@/stores/permission-grants-store').then(({ usePermissionGrantsStore }) =>
+        usePermissionGrantsStore.getState().load()
+      )
+  )
+  return { default: module.PermissionsPanel }
+})
+const ArchivedPanel = lazy(async () => ({
+  default: (await import('./ArchivedPanel')).ArchivedPanel
+}))
+const TokenUsagePanel = lazy(async () => ({
+  default: (await import('./TokenUsagePanel')).TokenUsagePanel
+}))
 
 type SettingsPageProps = {
   open: boolean
@@ -451,29 +551,44 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (pendingComputeAuthentication !== undefined) consumePendingComputeAuthentication()
   }, [pendingComputeAuthentication, consumePendingComputeAuthentication])
 
+  const currentLocation = history[historyIndex]
+  const activePanel = currentLocation.panel
+
   // Auto-detect opencode the first time its detection card is shown without a known path, so the card
   // reflects reality without a manual re-detect. Guarded on path + in-flight to run at most once.
   useEffect(() => {
     if (
       open &&
+      activePanel === 'agent' &&
       agentFrameworkId === 'opencode' &&
       !opencode?.resolvedPath &&
       !isDetectingOpencode
     ) {
       void detectOpencode()
     }
-  }, [open, agentFrameworkId, opencode?.resolvedPath, isDetectingOpencode, detectOpencode])
+  }, [
+    open,
+    activePanel,
+    agentFrameworkId,
+    opencode?.resolvedPath,
+    isDetectingOpencode,
+    detectOpencode
+  ])
 
   // Codex detection probes the ACP adapter and its paired native runtime. Keep it lazy so opening
   // settings for another framework does not spawn an unnecessary process.
   useEffect(() => {
-    if (open && agentFrameworkId === 'codex' && !codex?.resolvedPath && !isDetectingCodex) {
+    if (
+      open &&
+      activePanel === 'agent' &&
+      agentFrameworkId === 'codex' &&
+      !codex?.resolvedPath &&
+      !isDetectingCodex
+    ) {
       void detectCodex()
     }
-  }, [open, agentFrameworkId, codex?.resolvedPath, isDetectingCodex, detectCodex])
+  }, [open, activePanel, agentFrameworkId, codex?.resolvedPath, isDetectingCodex, detectCodex])
 
-  const currentLocation = history[historyIndex]
-  const activePanel = currentLocation.panel
   const isUsageVisible = open && activePanel === 'usage'
   const sessions = useSessionStore((state) =>
     isUsageVisible ? state.sessions : EMPTY_USAGE_SESSIONS
@@ -1211,143 +1326,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
             <div data-slot="settings-content-scroll" className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto min-h-full w-full max-w-[880px]">
-                {activePanel === 'skills' ? (
-                  <SkillsPanel
-                    view={skillsView}
-                    onNavigate={navigateSkills}
-                    onOpenTag={navigateTag}
-                    onOpenSpecialist={(usage) =>
-                      navigate({
-                        ...currentLocation,
-                        panel: 'specialists',
-                        specialists:
-                          usage.kind === 'builtin'
-                            ? { kind: 'builtin', id: usage.id }
-                            : { kind: 'edit', id: usage.id }
-                      })
-                    }
-                    canImportInstalledSkills={canImportInstalledSkills}
-                  />
-                ) : activePanel === 'specialists' ? (
-                  <SpecialistsPanel
-                    view={specialistsView}
-                    onNavigate={navigateSpecialists}
-                    onOpenTag={navigateTag}
-                    onOpenSkillDetail={(skillId) =>
-                      navigate({
-                        ...currentLocation,
-                        panel: 'skills',
-                        skills: { kind: 'detail', id: skillId }
-                      })
-                    }
-                    onOpenConnectorDetail={(connectorId) =>
-                      navigate({
-                        ...currentLocation,
-                        panel: 'connectors',
-                        connectors: customServers.some((server) => server.id === connectorId)
-                          ? { kind: 'edit', id: connectorId }
-                          : { kind: 'detail', id: connectorId }
-                      })
-                    }
-                  />
-                ) : activePanel === 'tags' ? (
-                  <TagsPanel
-                    onSelectedTagChange={recordSelectedTag}
-                    onOpenResource={(reference) => {
-                      if (reference.resourceType === 'catalog.skill') {
-                        navigate({
-                          ...currentLocation,
-                          panel: 'skills',
-                          skills: { kind: 'detail', id: reference.resourceId }
-                        })
-                        return
-                      }
-                      if (reference.resourceType === 'catalog.connector') {
-                        navigate({
-                          ...currentLocation,
-                          panel: 'connectors',
-                          connectors: customServers.some(
-                            (server) => server.id === reference.resourceId
-                          )
-                            ? { kind: 'edit', id: reference.resourceId }
-                            : { kind: 'detail', id: reference.resourceId }
-                        })
-                        return
-                      }
-                      const specialist = specialistItems.find(
-                        (item) => item.id === reference.resourceId
-                      )
-                      navigate({
-                        ...currentLocation,
-                        panel: 'specialists',
-                        specialists:
-                          specialist?.kind === 'builtin'
-                            ? { kind: 'builtin', id: reference.resourceId }
-                            : { kind: 'edit', id: reference.resourceId }
-                      })
-                    }}
-                  />
-                ) : activePanel === 'connectors' ? (
-                  connectorsView.kind === 'detail' ? (
-                    <div>
-                      <ResourceTagSummary
-                        reference={{
-                          resourceType: 'catalog.connector',
-                          resourceId: connectorsView.id
-                        }}
-                        className="px-5 pt-5"
-                        onOpenTag={navigateTag}
-                      />
-                      <ConnectorDetailView
-                        key={connectorsView.id}
-                        id={connectorsView.id}
-                        onManagePermissions={() => navigatePanel('permissions')}
-                      />
-                    </div>
-                  ) : connectorsView.kind === 'add' ? (
-                    <ConnectorAddForm
-                      initialTransport={connectorsView.transport}
-                      initialTemplate={connectorsView.template}
-                      onDone={() => navigateConnectors({ kind: 'list' })}
-                      onCancel={() => navigateConnectors({ kind: 'list' })}
-                    />
-                  ) : connectorsView.kind === 'import' ? (
-                    <ConnectorImportView
-                      onUse={(template) =>
-                        navigateConnectors({
-                          kind: 'add',
-                          transport: template.transport === 'stdio' ? 'local' : 'remote',
-                          template
-                        })
-                      }
-                      onCancel={() => navigateConnectors({ kind: 'list' })}
-                    />
-                  ) : connectorsView.kind === 'export' ? (
-                    <ConnectorExportView
-                      key={connectorsView.id}
-                      id={connectorsView.id}
-                      onDone={() => navigateConnectors({ kind: 'list' })}
-                    />
-                  ) : connectorsView.kind === 'edit' ? (
-                    <div>
-                      <ResourceTagSummary
-                        reference={{
-                          resourceType: 'catalog.connector',
-                          resourceId: connectorsView.id
-                        }}
-                        className="px-5 pt-5"
-                        onOpenTag={navigateTag}
-                      />
-                      <ConnectorAddForm
-                        editServer={customServers.find((s) => s.id === connectorsView.id)}
-                        editServerId={connectorsView.id}
-                        onDone={() => navigateConnectors({ kind: 'list' })}
-                        onCancel={() => navigateConnectors({ kind: 'list' })}
-                      />
-                    </div>
-                  ) : (
-                    <ConnectorsPanel
-                      onNavigate={navigateConnectors}
+                <SettingsPanelLoadingBoundary
+                  panelKey={`${activePanel}:${historyIndex}`}
+                  onClose={onClose}
+                >
+                  {activePanel === 'skills' ? (
+                    <SkillsPanel
+                      view={skillsView}
+                      onNavigate={navigateSkills}
                       onOpenTag={navigateTag}
                       onOpenSpecialist={(usage) =>
                         navigate({
@@ -1359,142 +1345,281 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               : { kind: 'edit', id: usage.id }
                         })
                       }
+                      canImportInstalledSkills={canImportInstalledSkills}
                     />
-                  )
-                ) : activePanel === 'compute' ? (
-                  computeView.kind === 'add' ? (
-                    <ComputeAddForm
-                      onCreated={(providerId) => navigateCompute({ kind: 'detail', providerId })}
-                      onCancel={() => navigateCompute({ kind: 'list' })}
-                    />
-                  ) : computeView.kind === 'detail' ? (
-                    <ComputeHostDetail
-                      providerId={computeView.providerId}
-                      authenticationFocus={computeView.authenticationFocus}
-                      authenticationRequestId={computeView.authenticationRequestId}
-                    />
-                  ) : (
-                    <ComputePanel onNavigate={navigateCompute} />
-                  )
-                ) : activePanel === 'storage' ? (
-                  <StoragePanel
-                    onContinueToAgent={() => {
-                      navigatePanel('agent')
-                    }}
-                  />
-                ) : activePanel === 'permissions' ? (
-                  <PermissionsPanel
-                    onOpenSession={onOpenSession}
-                    onOpenConnector={(id) =>
-                      navigateConnectors(
-                        customServers.some((server) => server.id === id)
-                          ? { kind: 'edit', id }
-                          : { kind: 'detail', id }
-                      )
-                    }
-                  />
-                ) : activePanel === 'archived' ? (
-                  <ArchivedPanel
-                    view={archivedView}
-                    onNavigate={navigateArchived}
-                    canDeleteProjects={canDeleteProjects}
-                    hasCompleteSessionCatalog={hasCompleteSessionCatalog}
-                    catalogRecovery={catalogRecovery}
-                    onRetryCatalogRecovery={onRetryCatalogRecovery}
-                  />
-                ) : activePanel === 'runtimes' ? (
-                  <RuntimesPanel
-                    title={t('Notebook runtimes')}
-                    description={t(
-                      'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
-                    )}
-                  />
-                ) : activePanel === 'network' ? (
-                  <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
-                ) : activePanel === 'usage' ? (
-                  <TokenUsagePanel sessions={sessions} projects={projects} />
-                ) : activePanel === 'general' ? (
-                  <GeneralPanel />
-                ) : activePanel === 'remote-control' ? (
-                  <RemoteControlPanel />
-                ) : activePanel === 'agent' ? (
-                  <AgentPanel
-                    title={t('Agent framework')}
-                    description={t(
-                      "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
-                    )}
-                  />
-                ) : isProviderFormOpen ? (
-                  // Add/edit provider is a secondary page reached via the shared back/forward arrows.
-                  <div className="p-5">
-                    {/* Secret writes fail closed when the OS keychain is unavailable. */}
-                    {!encryptionAvailable ? (
-                      <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                        {t(
-                          'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
-                        )}
-                      </p>
-                    ) : null}
-                    {providerEditTargetMissing ? (
-                      <p
-                        className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-                        role="alert"
-                      >
-                        {t('This Provider no longer exists. Your draft has not been saved.')}
-                      </p>
-                    ) : null}
-                    <ProviderForm
-                      value={formValue}
-                      onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
-                      hasStoredKey={editingProvider?.hasKey}
-                      maskedKey={editingProvider?.maskedKey}
-                      needsKey={editingProvider?.needsKey}
-                      errors={formErrors}
-                      supportedModels={editingProvider?.models}
-                      onRefreshModels={
-                        editingProvider?.type === 'official' &&
-                        editingProvider.hasKey &&
-                        editingProvider.vendorId &&
-                        resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
-                          ? () => void handleRefreshModels(editingProvider.id)
-                          : undefined
+                  ) : activePanel === 'specialists' ? (
+                    <SpecialistsPanel
+                      view={specialistsView}
+                      onNavigate={navigateSpecialists}
+                      onOpenTag={navigateTag}
+                      onOpenSkillDetail={(skillId) =>
+                        navigate({
+                          ...currentLocation,
+                          panel: 'skills',
+                          skills: { kind: 'detail', id: skillId }
+                        })
                       }
-                      isRefreshingModels={isRefreshingModels}
-                      disabled={isSaving}
-                      encryptionAvailable={encryptionAvailable}
-                      showCodexSubscriptions={
-                        agentFrameworkId === 'codex' && modelView.kind === 'create'
+                      onOpenConnectorDetail={(connectorId) =>
+                        navigate({
+                          ...currentLocation,
+                          panel: 'connectors',
+                          connectors: customServers.some((server) => server.id === connectorId)
+                            ? { kind: 'edit', id: connectorId }
+                            : { kind: 'detail', id: connectorId }
+                        })
                       }
-                      showClaudeIsolated={
-                        agentFrameworkId === 'claude-code' && modelView.kind === 'create'
-                      }
-                      defaultCustomApiEndpoint={customApiEndpoint}
                     />
-                    {statusMessage ? (
-                      <p
-                        className={`mt-3 text-sm ${statusOk ? 'text-primary' : 'text-destructive'}`}
-                        role="alert"
-                      >
-                        {statusMessage}
-                      </p>
-                    ) : null}
-                    <div className="mt-6 flex justify-end gap-2">
-                      <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
-                        {t('Cancel')}
-                      </Button>
-                      <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-                        {isSaving ? t('Saving…') : t('Save')}
-                      </Button>
+                  ) : activePanel === 'tags' ? (
+                    <TagsPanel
+                      onSelectedTagChange={recordSelectedTag}
+                      onOpenResource={(reference) => {
+                        if (reference.resourceType === 'catalog.skill') {
+                          navigate({
+                            ...currentLocation,
+                            panel: 'skills',
+                            skills: { kind: 'detail', id: reference.resourceId }
+                          })
+                          return
+                        }
+                        if (reference.resourceType === 'catalog.connector') {
+                          navigate({
+                            ...currentLocation,
+                            panel: 'connectors',
+                            connectors: customServers.some(
+                              (server) => server.id === reference.resourceId
+                            )
+                              ? { kind: 'edit', id: reference.resourceId }
+                              : { kind: 'detail', id: reference.resourceId }
+                          })
+                          return
+                        }
+                        const specialist = specialistItems.find(
+                          (item) => item.id === reference.resourceId
+                        )
+                        navigate({
+                          ...currentLocation,
+                          panel: 'specialists',
+                          specialists:
+                            specialist?.kind === 'builtin'
+                              ? { kind: 'builtin', id: reference.resourceId }
+                              : { kind: 'edit', id: reference.resourceId }
+                        })
+                      }}
+                    />
+                  ) : activePanel === 'connectors' ? (
+                    connectorsView.kind === 'detail' ? (
+                      <div>
+                        <ResourceTagSummary
+                          reference={{
+                            resourceType: 'catalog.connector',
+                            resourceId: connectorsView.id
+                          }}
+                          className="px-5 pt-5"
+                          onOpenTag={navigateTag}
+                        />
+                        <ConnectorDetailView
+                          key={connectorsView.id}
+                          id={connectorsView.id}
+                          onManagePermissions={() => navigatePanel('permissions')}
+                        />
+                      </div>
+                    ) : connectorsView.kind === 'add' ? (
+                      <ConnectorAddForm
+                        initialTransport={connectorsView.transport}
+                        initialTemplate={connectorsView.template}
+                        onDone={() => navigateConnectors({ kind: 'list' })}
+                        onCancel={() => navigateConnectors({ kind: 'list' })}
+                      />
+                    ) : connectorsView.kind === 'import' ? (
+                      <ConnectorImportView
+                        onUse={(template) =>
+                          navigateConnectors({
+                            kind: 'add',
+                            transport: template.transport === 'stdio' ? 'local' : 'remote',
+                            template
+                          })
+                        }
+                        onCancel={() => navigateConnectors({ kind: 'list' })}
+                      />
+                    ) : connectorsView.kind === 'export' ? (
+                      <ConnectorExportView
+                        key={connectorsView.id}
+                        id={connectorsView.id}
+                        onDone={() => navigateConnectors({ kind: 'list' })}
+                      />
+                    ) : connectorsView.kind === 'edit' ? (
+                      <div>
+                        <ResourceTagSummary
+                          reference={{
+                            resourceType: 'catalog.connector',
+                            resourceId: connectorsView.id
+                          }}
+                          className="px-5 pt-5"
+                          onOpenTag={navigateTag}
+                        />
+                        <ConnectorAddForm
+                          editServer={customServers.find((s) => s.id === connectorsView.id)}
+                          editServerId={connectorsView.id}
+                          onDone={() => navigateConnectors({ kind: 'list' })}
+                          onCancel={() => navigateConnectors({ kind: 'list' })}
+                        />
+                      </div>
+                    ) : (
+                      <ConnectorsPanel
+                        onNavigate={navigateConnectors}
+                        onOpenTag={navigateTag}
+                        onOpenSpecialist={(usage) =>
+                          navigate({
+                            ...currentLocation,
+                            panel: 'specialists',
+                            specialists:
+                              usage.kind === 'builtin'
+                                ? { kind: 'builtin', id: usage.id }
+                                : { kind: 'edit', id: usage.id }
+                          })
+                        }
+                      />
+                    )
+                  ) : activePanel === 'compute' ? (
+                    computeView.kind === 'add' ? (
+                      <ComputeAddForm
+                        onCreated={(providerId) => navigateCompute({ kind: 'detail', providerId })}
+                        onCancel={() => navigateCompute({ kind: 'list' })}
+                      />
+                    ) : computeView.kind === 'detail' ? (
+                      <ComputeHostDetail
+                        providerId={computeView.providerId}
+                        authenticationFocus={computeView.authenticationFocus}
+                        authenticationRequestId={computeView.authenticationRequestId}
+                      />
+                    ) : (
+                      <ComputePanel onNavigate={navigateCompute} />
+                    )
+                  ) : activePanel === 'storage' ? (
+                    <StoragePanel
+                      onContinueToAgent={() => {
+                        navigatePanel('agent')
+                      }}
+                    />
+                  ) : activePanel === 'permissions' ? (
+                    <PermissionsPanel
+                      onOpenSession={onOpenSession}
+                      onOpenConnector={(id) =>
+                        navigateConnectors(
+                          customServers.some((server) => server.id === id)
+                            ? { kind: 'edit', id }
+                            : { kind: 'detail', id }
+                        )
+                      }
+                    />
+                  ) : activePanel === 'archived' ? (
+                    <ArchivedPanel
+                      view={archivedView}
+                      onNavigate={navigateArchived}
+                      canDeleteProjects={canDeleteProjects}
+                      hasCompleteSessionCatalog={hasCompleteSessionCatalog}
+                      catalogRecovery={catalogRecovery}
+                      onRetryCatalogRecovery={onRetryCatalogRecovery}
+                    />
+                  ) : activePanel === 'runtimes' ? (
+                    <RuntimesPanel
+                      title={t('Notebook runtimes')}
+                      description={t(
+                        'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
+                      )}
+                    />
+                  ) : activePanel === 'network' ? (
+                    <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
+                  ) : activePanel === 'usage' ? (
+                    <TokenUsagePanel sessions={sessions} projects={projects} />
+                  ) : activePanel === 'general' ? (
+                    <GeneralPanel />
+                  ) : activePanel === 'remote-control' ? (
+                    <RemoteControlPanel />
+                  ) : activePanel === 'agent' ? (
+                    <AgentPanel
+                      title={t('Agent framework')}
+                      description={t(
+                        "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+                      )}
+                    />
+                  ) : isProviderFormOpen ? (
+                    // Add/edit provider is a secondary page reached via the shared back/forward arrows.
+                    <div className="p-5">
+                      {/* Secret writes fail closed when the OS keychain is unavailable. */}
+                      {!encryptionAvailable ? (
+                        <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                          {t(
+                            'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
+                          )}
+                        </p>
+                      ) : null}
+                      {providerEditTargetMissing ? (
+                        <p
+                          className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                          role="alert"
+                        >
+                          {t('This Provider no longer exists. Your draft has not been saved.')}
+                        </p>
+                      ) : null}
+                      <ProviderForm
+                        value={formValue}
+                        onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
+                        hasStoredKey={editingProvider?.hasKey}
+                        maskedKey={editingProvider?.maskedKey}
+                        needsKey={editingProvider?.needsKey}
+                        errors={formErrors}
+                        supportedModels={editingProvider?.models}
+                        onRefreshModels={
+                          editingProvider?.type === 'official' &&
+                          editingProvider.hasKey &&
+                          editingProvider.vendorId &&
+                          resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
+                            ? () => void handleRefreshModels(editingProvider.id)
+                            : undefined
+                        }
+                        isRefreshingModels={isRefreshingModels}
+                        disabled={isSaving}
+                        encryptionAvailable={encryptionAvailable}
+                        showCodexSubscriptions={
+                          agentFrameworkId === 'codex' && modelView.kind === 'create'
+                        }
+                        showClaudeIsolated={
+                          agentFrameworkId === 'claude-code' && modelView.kind === 'create'
+                        }
+                        defaultCustomApiEndpoint={customApiEndpoint}
+                      />
+                      {statusMessage ? (
+                        <p
+                          className={`mt-3 text-sm ${statusOk ? 'text-primary' : 'text-destructive'}`}
+                          role="alert"
+                        >
+                          {statusMessage}
+                        </p>
+                      ) : null}
+                      <div className="mt-6 flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={closeForm}
+                          disabled={isSaving}
+                        >
+                          {t('Cancel')}
+                        </Button>
+                        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+                          {isSaving ? t('Saving…') : t('Save')}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <ProvidersPanel
-                    onCreateProvider={openCreate}
-                    onEditProvider={openEdit}
-                    busyProviderId={busyProviderId}
-                    onBusyProviderChange={setBusyProviderId}
-                  />
-                )}
+                  ) : (
+                    <ProvidersPanel
+                      onCreateProvider={openCreate}
+                      onEditProvider={openEdit}
+                      busyProviderId={busyProviderId}
+                      onBusyProviderChange={setBusyProviderId}
+                    />
+                  )}
+                </SettingsPanelLoadingBoundary>
               </div>
             </div>
           </div>

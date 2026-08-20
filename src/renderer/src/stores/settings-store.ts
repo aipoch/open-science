@@ -349,6 +349,7 @@ const createSettingsStoreState = (
     getCommands: () => window.api.settings
   }),
   ...createSettingsConnectorsSlice({
+    getState: get,
     setState: (patch) => set(patch),
     getCommands: () => window.api.settings
   }),
@@ -359,6 +360,9 @@ const createSettingsStoreState = (
     // request cannot supersede its successful result; an explicit user retry still starts a new
     // generation and remains authoritative over any older request.
     if (!options?.force && settingsLoadPromise) return settingsLoadPromise
+    // Settings mutations and the process-lifetime settings:onChanged listener keep this snapshot
+    // authoritative. Reopening the dialog must not rerun Agent preflight subprocess probes.
+    if (!options?.force && get().isLoaded) return Promise.resolve(true)
 
     const generation = get().settingsLoadGeneration + 1
     set({ settingsLoadGeneration: generation, isLoading: true, loadError: undefined })
