@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CircleArrowUp,
-  CircleQuestionMark,
   Cpu,
   Lock,
   RefreshCw,
@@ -12,10 +11,8 @@ import {
   type LucideIcon
 } from 'lucide-react'
 
-import { FlaskLogo } from '@/components/flask-logo'
+import { ErrorNotice, type ErrorNoticeTone } from '@/components/error-notice'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { buildStartupIssueUrl } from '@/lib/startup-issue'
 import type {
   DatabaseStartupErrorCode,
@@ -43,11 +40,8 @@ const restoreUnavailableUnlessReady = (current: DatabaseStartupState): DatabaseS
 
 // Per-error-code presentation: semantic tone, icon, and the self-help guidance block. Copy lives
 // here as English source text; the catalogs translate it by exact-match key (see AGENTS.md i18n).
-// teal = update the app, amber = transient / retryable, red = data or installation integrity.
-type BlockedTone = 'teal' | 'amber' | 'red'
-
 type BlockedGuidance = {
-  tone: BlockedTone
+  tone: ErrorNoticeTone
   icon: LucideIcon
   why: string
   how: string
@@ -96,13 +90,6 @@ const BLOCKED_GUIDANCE: Partial<Record<DatabaseStartupErrorCode, BlockedGuidance
     why: "The background service that owns the database didn't respond in time — this is usually transient.",
     how: 'Retry. If it keeps happening, fully quit Open Science and start it again.'
   }
-}
-
-const TONE_CLASSES: Record<BlockedTone, string> = {
-  teal: 'bg-[oklch(0.93_0.03_195)] text-[oklch(0.47_0.105_184)] dark:bg-[oklch(0.32_0.05_200)] dark:text-[oklch(0.72_0.1_184)]',
-  amber:
-    'bg-[oklch(0.94_0.045_85)] text-[oklch(0.52_0.11_65)] dark:bg-[oklch(0.32_0.05_75)] dark:text-[oklch(0.78_0.11_75)]',
-  red: 'bg-[oklch(0.94_0.03_25)] text-[oklch(0.55_0.19_25)] dark:bg-[oklch(0.32_0.06_25)] dark:text-[oklch(0.72_0.16_25)]'
 }
 
 const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.Element => {
@@ -181,85 +168,37 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
 
   const { error } = state
   const guidance = BLOCKED_GUIDANCE[error.code]
-  const GuidanceIcon = guidance?.icon
 
   return (
     <main
       className="flex min-h-screen items-center justify-center bg-background px-6"
       aria-live="polite"
     >
-      <section className="flex w-full max-w-md flex-col items-center gap-5">
-        <FlaskLogo className="mb-1 h-auto w-1/3 text-text-300" />
-
-        <div className="flex w-full items-start gap-4">
-          {GuidanceIcon && guidance ? (
-            <div
-              className={`flex size-11 shrink-0 items-center justify-center rounded-full ${TONE_CLASSES[guidance.tone]}`}
-            >
-              <GuidanceIcon className="size-5" strokeWidth={1.8} />
-            </div>
-          ) : null}
-          <div className="flex flex-col gap-1.5 pt-0.5">
-            <h1 className="text-lg font-semibold text-foreground">
-              {t("Open Science couldn't start")}
-            </h1>
-            <p className="text-sm leading-6 text-muted-foreground">{t(error.message)}</p>
-          </div>
-        </div>
-
-        <p className="w-full rounded-lg bg-muted px-3.5 py-2.5 text-center font-mono text-xs text-muted-foreground">
-          {error.code}
-          {error.migrationId ? ` · ${error.migrationId}` : ''}
-        </p>
-
-        {guidance ? (
-          <div className="flex w-full flex-col gap-3.5 rounded-2xl bg-[#f1f0eb] p-5 dark:bg-[#24231e]">
-            <div className="flex flex-col gap-1">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                {t('Why this happened')}
-              </p>
-              <p className="text-[13px] leading-6 text-foreground/90">{t(guidance.why)}</p>
-            </div>
-            <div className="flex flex-col gap-1">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                {t('How to fix')}
-              </p>
-              <p className="text-[13px] leading-6 text-foreground/90">{t(guidance.how)}</p>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="flex items-center gap-3">
-          <Button variant="secondary" onClick={() => void databaseStartup?.quit()}>
-            {t('Quit')}
-          </Button>
-          {error.retryable ? (
-            <Button onClick={retry} disabled={retrying}>
-              {retrying ? t('Retrying…') : t('Retry')}
-            </Button>
-          ) : null}
-        </div>
-
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
-                onClick={openIssueDraft}
-              >
-                <CircleQuestionMark className="size-3.5" />
-                {t('Still stuck? Create an issue for help')}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t(
-                'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.'
-              )}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </section>
+      <ErrorNotice
+        icon={guidance?.icon}
+        tone={guidance?.tone}
+        title={t("Open Science couldn't start")}
+        description={t(error.message)}
+        errorCode={error.migrationId ? `${error.code} · ${error.migrationId}` : error.code}
+        help={guidance ? { why: t(guidance.why), how: t(guidance.how) } : undefined}
+        issueLink={{
+          label: t('Still stuck? Create an issue for help'),
+          tooltip: t(
+            'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.'
+          ),
+          onClick: openIssueDraft
+        }}
+        secondaryButton={{ label: t('Quit'), onClick: () => void databaseStartup?.quit() }}
+        primaryButton={
+          error.retryable
+            ? {
+                label: retrying ? t('Retrying…') : t('Retry'),
+                onClick: retry,
+                disabled: retrying
+              }
+            : undefined
+        }
+      />
     </main>
   )
 }
