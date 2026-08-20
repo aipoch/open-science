@@ -9,7 +9,6 @@ import type {
   NewCheck,
   ReviewCheck,
   ReviewerLogEntry,
-  ReviewOutcome,
   ReviewWithChecks,
   TurnScope
 } from '../../shared/reviewer'
@@ -21,7 +20,10 @@ import { ReviewerHostServer, type ArtifactVersionContentResolver } from './host-
 import { ReviewerMcpServer } from './mcp-server'
 import type { ReviewRepository } from './repository'
 import { driveReviewerToStop } from './reviewer-session-driver'
-import { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } from './rubric'
+import {
+  INITIAL_REVIEW_CHECKABILITY_GUIDANCE,
+  REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
+} from './rubric'
 import { buildReviewScopeSnapshot } from './scope-snapshot'
 import { assertDelegatedReviewEvidenceScope } from './scope'
 
@@ -214,12 +216,13 @@ export const runReviewAssessment = async (
         }
       },
       evidence,
+      options.mode,
       trackedChecks.map((check) => check.id),
       { command: process.execPath, entryPath: reviewerMcpEntryPath }
     )
     await mcpServer.start()
 
-    const reviewerPrompt = buildReviewerPrompt(scope, trackedChecks)
+    const reviewerPrompt = buildReviewerPrompt(scope, options.mode, trackedChecks)
     const built = await acpRuntime.buildReviewerSession({
       cwd: session.cwd || homedir(),
       mcpServers: [mcpServer.toAcpMcpServerConfig()],
@@ -345,27 +348,26 @@ export const runReviewAssessment = async (
 
   let finalReview: ReviewWithChecks
   try {
-    const hasWarnOrFailCheck = checksReceived.some(
-      (check) => check.status === 'warn' || check.status === 'fail'
-    )
-    const outcome: ReviewOutcome = hasWarnOrFailCheck ? 'flagged' : 'pass'
     finalReview = await runReviewMutation(runSessionMutation, () =>
       reviewRepository.commitScopedSubmission({
+        mode: options.mode,
         reviewId: review.id,
         checks: checksReceived,
         expectedSourceFindingIds: trackedChecks.map((check) => check.id),
-        outcome,
         reviewerLog: capturedLog
       })
     )
     review = finalReview
-    if (options.mode === 'initial') {
-      log.info('review complete', {
-        reviewId: review.id,
-        outcome,
-        checkCount: checksReceived.length
-      })
-    }
+    log.info(options.mode === 'tracked' ? 'scoped re-review complete' : 'review complete', {
+      reviewId: review.id,
+      outcome: finalReview.outcome,
+      checkCount: checksReceived.length,
+      model: finalReview.model,
+      assessmentKind:
+        options.mode === 'initial' && checksReceived.length === 0
+          ? 'no_checkable_claims'
+          : 'assessed'
+    })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     log.error(
@@ -399,6 +401,7 @@ export const runReviewAssessment = async (
 
 export const buildReviewerPrompt = (
   scope: TurnScope,
+  mode: ReviewAssessmentOptions['mode'],
   trackedChecks: readonly ReviewCheck[] = []
 ): string => {
   const blockSummary =
@@ -417,11 +420,11 @@ export const buildReviewerPrompt = (
       : `Artifact version ids: ${scope.artifactVersionIds.join(', ')}`
 
   const trackedSummary =
-    trackedChecks.length === 0
+    mode === 'initial'
       ? []
       : [
           '',
-          'This is a fix-loop re-review. Disposition every tracked finding exactly once by copying',
+          'This is a fix-loop re-review. Disposition every tracked check exactly once by copying',
           '`sourceFindingId` unchanged into its check. Use pass if fixed, warn/fail if it remains:',
           JSON.stringify(
             trackedChecks.map((check) => ({
@@ -431,9 +434,15 @@ export const buildReviewerPrompt = (
               evidence: check.evidence
             }))
           ),
-          'You may report a newly discovered issue without sourceFindingId, but omission of any tracked',
-          'finding or reuse of an unknown/duplicate id is rejected.'
+          'You may report a newly discovered issue without sourceFindingId, but omission of any',
+          'tracked check or reuse of an unknown/duplicate id is rejected.'
         ]
+
+  const submissionInstruction =
+    mode === 'tracked'
+      ? 'This tracked re-review must submit a non-empty checks array that dispositions every tracked check.'
+      : `${INITIAL_REVIEW_CHECKABILITY_GUIDANCE} Do not create a pass check merely because you ` +
+        'read the turn or the agent replied.'
 
   return [
     `You are reviewing turn: ${scope.turnMessageId}`,
@@ -446,6 +455,6 @@ export const buildReviewerPrompt = (
     'They expose only this audited scope. Do not use Bash, filesystem, network, or other tools.',
     '',
     'After reading the turn data, apply the rubric, then call submit_findings once with your findings.',
-    'Call submit_findings with at least one explicit pass check if you find no issues; an empty array is invalid.'
+    submissionInstruction
   ].join('\n')
 }

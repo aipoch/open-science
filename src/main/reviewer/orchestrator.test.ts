@@ -443,6 +443,63 @@ describe('reviewer orchestrator', () => {
     await client.$disconnect()
   })
 
+  it('reads a greeting-only turn and explicitly completes with no Review Checks', async () => {
+    const process = new FakeAgentProcess()
+    startFakeReviewerAgent(process, 'reviewer-session-1', {
+      simulateFindingsViaHttp: true,
+      checksToSubmit: []
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const client = createProjectDbClient(temporaryRoot!)
+    await migrateApplicationDatabase(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () =>
+        makeSession({
+          messages: [
+            {
+              id: 'msg-1',
+              role: 'user',
+              content: 'hi',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1000,
+              updatedAt: 1000
+            },
+            {
+              id: 'msg-2',
+              role: 'agent',
+              content: 'Hi! How can I help?',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 2000,
+              updatedAt: 2000
+            }
+          ]
+        }),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!
+    })
+
+    expect(review).toMatchObject({ lifecycle: 'complete', outcome: 'pass', checks: [] })
+    expect(review.scope.blocks.map((block) => block.sourceId)).toEqual(['msg-1', 'msg-2'])
+    expect(review.reviewerLog).not.toEqual([])
+    const [reloaded] = await repository.getReviewsForSession('session-1')
+    expect(reloaded).toMatchObject({ lifecycle: 'complete', outcome: 'pass', checks: [] })
+    expect(reloaded?.reviewerLog).toEqual(review.reviewerLog)
+
+    await client.$disconnect()
+  })
+
   it('persists checks and reviewer log (v3: reasoning removed, log captured from stream)', async () => {
     const process = new FakeAgentProcess()
 

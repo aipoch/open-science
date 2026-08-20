@@ -78,7 +78,7 @@ const checkFields = {
     .min(1)
     .optional()
     .describe(
-      'Stable id of an original finding being re-evaluated. Required for every tracked finding ' +
+      'Stable id of an original Review Check being re-evaluated. Required for every tracked check ' +
         'during a fix-loop re-review; never invent or rewrite this id.'
     ),
   artifactVersionId: z
@@ -117,11 +117,13 @@ type SubmitFindingsObjectSchema = z.ZodObject<{
 export type SubmitFindingsInput = z.infer<SubmitFindingsObjectSchema>
 
 const createSubmitFindingsObjectSchema = (
+  mode: 'initial' | 'tracked',
   trackedCheckAllowance: number | null = 0
 ): SubmitFindingsObjectSchema => {
-  const checksSchema = z
-    .array(checkSchema)
-    .min(1, 'Submit at least one explicit pass, warn, or fail check.')
+  const checksSchema =
+    mode === 'tracked'
+      ? z.array(checkSchema).min(1, 'A tracked re-review must disposition every tracked check.')
+      : z.array(checkSchema)
   const boundedChecksSchema =
     trackedCheckAllowance === null
       ? checksSchema
@@ -135,16 +137,18 @@ const createSubmitFindingsObjectSchema = (
       checks: boundedChecksSchema.describe(
         'All checks you ran, each with status pass|warn|fail, claim, and evidence. ' +
           'A locator is required for warn/fail and optional for pass. ' +
-          'A completed review requires at least one explicit check; an empty array is never a pass.'
+          'An initial review may submit an empty array only when the frozen turn contains no ' +
+          'checkable claims; tracked re-reviews must disposition every tracked check.'
       )
     })
     .strict() // Reject unknown fields including the old `summary`, old `findings`, and old `reasoning`
 }
 
 const createSubmitFindingsInputSchema = (
+  mode: 'initial' | 'tracked',
   trackedCheckAllowance = 0
 ): z.ZodType<SubmitFindingsInput> =>
-  createSubmitFindingsObjectSchema(trackedCheckAllowance).superRefine((input, context) => {
+  createSubmitFindingsObjectSchema(mode, trackedCheckAllowance).superRefine((input, context) => {
     const bytes = reviewSubmissionByteLength(input.checks)
     if (bytes > MAX_REVIEW_SUBMISSION_BYTES) {
       context.addIssue({
@@ -157,8 +161,8 @@ const createSubmitFindingsInputSchema = (
     }
   })
 
-export const submitFindingsInputSchema = createSubmitFindingsInputSchema()
-export const submitFindingsBridgeInputSchema = createSubmitFindingsObjectSchema(null)
+export const submitFindingsInputSchema = createSubmitFindingsInputSchema('initial')
+export const submitFindingsBridgeInputSchema = createSubmitFindingsObjectSchema('initial', null)
 
 export type ReviewerEvidenceAccessLedger = {
   turnRead: boolean
@@ -293,7 +297,8 @@ export class ReviewerMcpServer {
   constructor(
     private readonly scope: TurnScope,
     private readonly onSubmitFindings: SubmitFindingsHandler,
-    private readonly evidence?: ReviewerEvidenceAccess,
+    private readonly evidence: ReviewerEvidenceAccess | undefined,
+    private readonly mode: 'initial' | 'tracked',
     trackedFindingIds: readonly string[] = [],
     private readonly options: ReviewerMcpServerOptions = {}
   ) {
@@ -380,8 +385,14 @@ export class ReviewerMcpServer {
     })
 
     const trackedCheckAllowance = this.trackedFindingIds.size
-    const submitFindingsObjectSchema = createSubmitFindingsObjectSchema(trackedCheckAllowance)
-    const submitFindingsInputSchema = createSubmitFindingsInputSchema(trackedCheckAllowance)
+    const submitFindingsObjectSchema = createSubmitFindingsObjectSchema(
+      this.mode,
+      trackedCheckAllowance
+    )
+    const submitFindingsInputSchema = createSubmitFindingsInputSchema(
+      this.mode,
+      trackedCheckAllowance
+    )
 
     const evidence = this.evidence
     if (evidence) {
@@ -472,7 +483,10 @@ export class ReviewerMcpServer {
         title: 'Submit review checks',
         description:
           'Submit your structured review checks. Call this exactly once, then stop. ' +
-          'Submit at least one explicit check; an empty checks array is invalid. ' +
+          (this.mode === 'initial'
+            ? 'For an initial review, submit an empty checks array only when the frozen turn ' +
+              'contains no checkable claims. '
+            : 'Disposition every tracked check; an empty checks array is invalid. ') +
           'Each check has status (pass/warn/fail), claim, and evidence; locator is required for ' +
           'warn/fail and optional for pass. ' +
           'Do NOT include a reasoning or summary field — they are no longer accepted.',
@@ -510,7 +524,7 @@ export class ReviewerMcpServer {
         // an initial review; discard it there so a valid assessment is not lost to a non-semantic
         // tracking mistake. Re-reviews remain strict because their tracked ids are authoritative.
         const trackedChecks =
-          this.trackedFindingIds.size === 0
+          this.mode === 'initial'
             ? parsed.checks.map((check) => {
                 const sanitized = { ...check }
                 delete sanitized.sourceFindingId
@@ -591,7 +605,7 @@ export class ReviewerMcpServer {
 
     const missing = [...this.trackedFindingIds].filter((id) => !supplied.has(id))
     if (missing.length > 0) {
-      return `Missing disposition for tracked finding id(s): ${missing.join(', ')}.`
+      return `Missing disposition for tracked Review Check id(s): ${missing.join(', ')}.`
     }
 
     return undefined
