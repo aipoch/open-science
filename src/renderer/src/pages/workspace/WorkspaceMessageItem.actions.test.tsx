@@ -397,7 +397,7 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(measuredArtifact?.dataset.content).toBe('@evidence.csv')
     expect(measuredArtifact?.classList.contains('inline-flex')).toBe(true)
     measurement.style.lineHeight = '20px'
-    let scrollHeight = 240
+    let scrollHeight = 250
     Object.defineProperty(measurement, 'scrollHeight', {
       configurable: true,
       get: () => scrollHeight

@@ -445,7 +445,7 @@ const userMessageBubbleClassName =
   'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'
 const userMessageCollapseButtonClassName =
   'inline-flex items-center gap-1 whitespace-nowrap rounded-md text-[13px] font-medium text-text-200 transition-colors duration-200 ease-out hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:pointer-events-none disabled:opacity-50 motion-reduce:active:translate-y-0 motion-reduce:transition-none'
-const USER_MESSAGE_PREVIEW_LINE_COUNT = 12
+const USER_MESSAGE_PREVIEW_LINE_COUNT = 12.5
 // Hover actions sit left of the user bubble, revealed on row hover or keyboard focus.
 const userMessageActionsClassName =
   'flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
