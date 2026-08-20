@@ -718,6 +718,7 @@
         "src/renderer/src/i18n/index.ts",
         "src/renderer/src/i18n/i18next.d.ts",
         "src/renderer/src/i18n/resources.ts",
+        "src/renderer/src/locales/fr.json",
         "src/renderer/src/locales/ja.json",
         "src/renderer/src/locales/ko.json",
         "src/renderer/src/locales/zh-Hans.json",

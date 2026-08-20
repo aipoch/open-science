@@ -110,7 +110,7 @@ describe('module impact shadow', () => {
     expect(report.comparison.coverage).toBe(authoritativeMode === 'full' ? 'covered' : 'gap')
   })
 
-  it.each(['ja.json', 'ko.json', 'zh-Hans.json', 'zh-Hant.json'])(
+  it.each(['fr.json', 'ja.json', 'ko.json', 'zh-Hans.json', 'zh-Hant.json'])(
     'owns %s catalog edits as a selective i18n module instead of an unknown full plan',
     (catalog) => {
       const report = reportFor([
