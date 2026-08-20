@@ -166,6 +166,25 @@ describe('UpdateDialog', () => {
     expect(link?.textContent).toContain('Download manually')
   })
 
+  it('guides background-process shutdown failures to diagnostics and GitHub issues', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'error',
+        current: '0.17.0',
+        latest: '0.18.0',
+        error: 'Could not fully stop background processes before updating. Please try again.'
+      }
+    })
+
+    act(() => root.render(<UpdateDialog />))
+
+    expect(document.body.textContent).toContain('Settings → General → Diagnostics')
+    expect(document.body.textContent).toContain('Quit and reopen Open Science')
+    const issueLink = document.body.querySelector(`a[href="${APP.links.githubIssues}"]`)
+    expect(issueLink?.textContent).toContain('open a GitHub issue')
+  })
+
   it('shows download size on the download button when totalBytes is present', () => {
     useUpdateStore.setState({
       isDialogOpen: true,
