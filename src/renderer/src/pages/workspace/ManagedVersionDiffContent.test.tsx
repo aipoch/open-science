@@ -116,6 +116,109 @@ describe('ManagedVersionDiffContent', () => {
     expect(container.querySelector('pre')).toBeNull()
   })
 
+  it('keeps changed Markdown paragraphs rendered while marking only visible character changes', async () => {
+    const removedTail =
+      ' (e.g. via ccswitch / CC Switch), you may notice that your local agent mode sessions (Cowork) and xcode-mode sessions are isolated per account. Each provider login creates a different account ID under ~/Library/Application Support/Claude/, so the app only shows sessions belonging to the currently logged-in account. Your other sessions appear to vanish, but they are still on disk, just in a different directory'
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'render-visible-character-markdown-diff',
+      before: [
+        '### What Is This?',
+        '',
+        "If you switch between Claude's **official subscription** and **third-party API routing** (e.g. via ccswitch / CC Switch), you may notice that your **local agent mode sessions** (Cowork) and xcode-mode sessions are isolated per account. Each provider login creates a different account ID under ~/Library/Application Support/Claude/, so the app only shows sessions belonging to the **currently logged-in account**. Your other sessions appear to vanish, but they are still on disk, just in a different directory.",
+        ''
+      ].join('\n'),
+      after: [
+        '### What Is This?? ?',
+        '',
+        'Wonderful',
+        '',
+        'If you switch between **official subscription** and **third-party API routing**.',
+        ''
+      ].join('\n')
+    })
+
+    await act(async () => {
+      root.render(
+        <ManagedVersionDiffContent
+          result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+          format="markdown"
+          name="README.md"
+        />
+      )
+    })
+
+    const heading = container.querySelector('h3')
+    expect(heading).not.toBeNull()
+    expect(
+      heading?.querySelector('ins[data-managed-diff="added"] [data-managed-diff-content]')
+        ?.textContent
+    ).toBe('? ?')
+
+    const changedParagraph = Array.from(container.querySelectorAll('p')).find((paragraph) =>
+      paragraph.textContent?.includes('If you switch between')
+    )
+    expect(changedParagraph).toBeDefined()
+    expect(
+      Array.from(
+        changedParagraph?.querySelectorAll('[data-streamdown="strong"]') ?? [],
+        (element) => element.textContent
+      )
+    ).toEqual(['official subscription', 'third-party API routing'])
+    expect(
+      Array.from(
+        changedParagraph?.querySelectorAll(
+          'del[data-managed-diff="removed"] [data-managed-diff-content]'
+        ) ?? [],
+        (element) => element.textContent
+      )
+    ).toEqual(["Claude's ", removedTail])
+
+    const insertedParagraph = Array.from(container.querySelectorAll('p')).find((paragraph) =>
+      paragraph.textContent?.includes('Wonderful')
+    )
+    expect(
+      insertedParagraph?.querySelector('ins[data-managed-diff="added"] [data-managed-diff-content]')
+        ?.textContent
+    ).toBe('Wonderful')
+
+    expect(container.textContent).not.toContain('**')
+    expect(
+      Array.from(container.querySelectorAll('pre')).some((element) =>
+        element.textContent?.includes('If you switch between')
+      )
+    ).toBe(false)
+    expect(container.querySelector('[data-managed-version-diff-fallback]')).toBeNull()
+  })
+
+  it('keeps Markdown punctuation inside a visible-character marker literal', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'render-literal-markdown-punctuation-diff',
+      before: 'Prefix \\*\\* **stable** and **removed formatting**.\n',
+      after: 'Prefix x **stable**.\n'
+    })
+
+    await act(async () => {
+      root.render(
+        <ManagedVersionDiffContent
+          result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+          format="markdown"
+          name="README.md"
+        />
+      )
+    })
+
+    const removedText = Array.from(
+      container.querySelectorAll('del[data-managed-diff="removed"] [data-managed-diff-content]'),
+      (element) => element.textContent
+    ).join('')
+    expect(removedText).toBe('** and removed formatting')
+    expect(
+      container.querySelector('ins[data-managed-diff="added"] [data-managed-diff-content]')
+        ?.textContent
+    ).toBe('x')
+    expect(container.querySelector('[data-streamdown="strong"]')?.textContent).toBe('stable')
+  })
+
   it('highlights a changed raw segment without coloring its entire row', async () => {
     const result: ManagedFileVersionDiffResult = {
       baseVersionId: 'v1',

@@ -1,3 +1,4 @@
+import { diffArrays } from 'diff'
 import { marked } from 'marked'
 import { html, parseFragment, type DefaultTreeAdapterTypes } from 'parse5'
 
@@ -19,6 +20,10 @@ const MARKDOWN_SEMANTIC_LEX_MAX_CHARS = 64 * 1024
 const MARKDOWN_SEMANTIC_LEX_MAX_LINE_CHARS = 2 * 1024
 const MARKDOWN_RENDERED_DIFF_MAX_MARKERS = 256
 const MARKDOWN_RENDERED_DIFF_MAX_CHARS = 128 * 1024
+const MARKDOWN_GRAPHEME_SEGMENTER =
+  typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : undefined
 const MARKDOWN_BLOCK_SIGNAL =
   /(?:^ {0,3}(?:>|[-+*][ \t]+|\d+[.)][ \t]+|`{3,}|~{3,}|<|(?:=+|-+)\s*$)|^ {4}\S|\|)/mu
 const MARKDOWN_ENTITY = /&(?:#\d+|#x[\da-f]+|[a-z][\da-z]+);/iu
@@ -103,6 +108,42 @@ type MarkedInlineReplacement = {
 type InlineMarkdownReplacement = {
   content: string
   semanticSafety: 'simple' | 'html' | 'markdown'
+  requiresSourceFallback?: boolean
+}
+
+type RenderedMarkdownTextNode = {
+  htmlStart: number
+  htmlEnd: number
+  textStart: number
+  textEnd: number
+  value: string
+  ancestors: string[]
+}
+
+type RenderedInlineMarkdown = {
+  content: string
+  structure: string
+  text: string
+  textNodes: RenderedMarkdownTextNode[]
+}
+
+type VisibleMarkdownChange = DiffSegment & {
+  beforeStart: number
+  beforeEnd: number
+  afterStart: number
+  afterEnd: number
+}
+
+type RenderedMarkdownBoundary = {
+  htmlOffset: number
+  ancestors: string[]
+}
+
+type RenderedHtmlChange = {
+  start: number
+  end: number
+  content: string
+  markers: HtmlMarkerExpectation[]
 }
 
 const isSimpleMarkdownText = (content: string): boolean => {
@@ -885,6 +926,426 @@ const hasValidInjectedMarkdownMarkers = (
   })
 }
 
+const RENDERED_INLINE_MARKDOWN_TOKEN_TYPES = new Set(['text', 'escape', 'strong', 'em', 'del'])
+
+const markdownGraphemes = (content: string): string[] =>
+  MARKDOWN_GRAPHEME_SEGMENTER
+    ? Array.from(MARKDOWN_GRAPHEME_SEGMENTER.segment(content), ({ segment }) => segment)
+    : Array.from(content)
+
+const isSafeRenderedInlineMarkdownToken = (token: MarkdownToken): boolean =>
+  RENDERED_INLINE_MARKDOWN_TOKEN_TYPES.has(token.type) &&
+  (token.tokens?.every(isSafeRenderedInlineMarkdownToken) ?? true)
+
+const renderedInlineMarkdown = (
+  source: string,
+  rejectedMarkerTags: ReadonlySet<string>
+): RenderedInlineMarkdown | undefined => {
+  if (
+    source.length > MARKDOWN_RENDERED_DIFF_MAX_CHARS ||
+    /[\r\n$`|]/u.test(source) ||
+    MARKDOWN_ENTITY.test(source) ||
+    MARKDOWN_LINK_OR_REFERENCE.test(source) ||
+    MARKDOWN_REFERENCE_LINK.test(source)
+  ) {
+    return undefined
+  }
+
+  let rendered: string
+  try {
+    const tokens = marked.lexer(source).filter((token) => token.type !== 'space') as MarkdownToken[]
+    const token = tokens[0]
+    if (
+      tokens.length !== 1 ||
+      token?.type !== 'paragraph' ||
+      token.raw !== source ||
+      token.tokens === undefined ||
+      !token.tokens.every(isSafeRenderedInlineMarkdownToken)
+    ) {
+      return undefined
+    }
+    rendered = marked.parseInline(source) as string
+  } catch {
+    return undefined
+  }
+
+  if (rendered.length > MARKDOWN_RENDERED_DIFF_MAX_CHARS) return undefined
+  const safeHtml = parseSafeHtmlFragmentSource(rendered, rejectedMarkerTags)
+  if (safeHtml === undefined) return undefined
+
+  let hasParseError = false
+  let fragment: DefaultTreeAdapterTypes.DocumentFragment
+  try {
+    fragment = parseFragment(rendered, {
+      sourceCodeLocationInfo: true,
+      onParseError: () => {
+        hasParseError = true
+      }
+    })
+  } catch {
+    return undefined
+  }
+  if (hasParseError) return undefined
+
+  const textNodes: RenderedMarkdownTextNode[] = []
+  let text = ''
+  const collectTextNodes = (
+    nodes: DefaultTreeAdapterTypes.ChildNode[],
+    ancestors: string[]
+  ): boolean => {
+    for (const node of nodes) {
+      if (isHtmlTextNode(node)) {
+        const location = node.sourceCodeLocation
+        if (!isValidSourceLocation(location, rendered)) return false
+        const textStart = text.length
+        text += node.value
+        textNodes.push({
+          htmlStart: location.startOffset,
+          htmlEnd: location.endOffset,
+          textStart,
+          textEnd: text.length,
+          value: node.value,
+          ancestors
+        })
+        continue
+      }
+      if (
+        !isHtmlElement(node) ||
+        !collectTextNodes(node.childNodes, [...ancestors, node.tagName])
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+  if (!collectTextNodes(fragment.childNodes, []) || textNodes.length === 0) return undefined
+
+  return { content: rendered, structure: safeHtml.structure, text, textNodes }
+}
+
+// Common affixes are fixed before Myers runs so repeated punctuation stays anchored to the nearest
+// natural-language boundary instead of an earlier identical character in a removed paragraph.
+const visibleMarkdownChanges = (
+  before: string,
+  after: string
+): VisibleMarkdownChange[] | undefined => {
+  if (before === after) return undefined
+  const beforeCharacters = markdownGraphemes(before)
+  const afterCharacters = markdownGraphemes(after)
+  let prefixLength = 0
+  while (
+    prefixLength < beforeCharacters.length &&
+    prefixLength < afterCharacters.length &&
+    beforeCharacters[prefixLength] === afterCharacters[prefixLength]
+  ) {
+    prefixLength += 1
+  }
+  let suffixLength = 0
+  while (
+    suffixLength < beforeCharacters.length - prefixLength &&
+    suffixLength < afterCharacters.length - prefixLength &&
+    beforeCharacters[beforeCharacters.length - suffixLength - 1] ===
+      afterCharacters[afterCharacters.length - suffixLength - 1]
+  ) {
+    suffixLength += 1
+  }
+  if (suffixLength > 0) {
+    const beforeSuffixStart = beforeCharacters.length - suffixLength
+    const afterSuffixStart = afterCharacters.length - suffixLength
+    const suffixStartsInsideWord =
+      /[\p{L}\p{M}\p{N}_]/u.test(beforeCharacters[beforeSuffixStart]!) &&
+      (/[\p{L}\p{M}\p{N}_]/u.test(beforeCharacters[beforeSuffixStart - 1] ?? '') ||
+        /[\p{L}\p{M}\p{N}_]/u.test(afterCharacters[afterSuffixStart - 1] ?? ''))
+    if (suffixStartsInsideWord) suffixLength = 0
+  }
+
+  const prefix = beforeCharacters.slice(0, prefixLength).join('')
+  const suffix = suffixLength === 0 ? '' : beforeCharacters.slice(-suffixLength).join('')
+  const beforeMiddle = beforeCharacters.slice(prefixLength, beforeCharacters.length - suffixLength)
+  const afterMiddle = afterCharacters.slice(prefixLength, afterCharacters.length - suffixLength)
+  const middleChanges = diffArrays(beforeMiddle, afterMiddle, {
+    maxEditLength: 10_000,
+    timeout: 100
+  })
+  if (middleChanges === undefined) return undefined
+
+  const segments: DiffSegment[] = []
+  if (prefix.length > 0) appendTextSegment(segments, { kind: 'context', text: prefix })
+  for (const change of middleChanges) {
+    appendTextSegment(segments, {
+      kind: change.added ? 'added' : change.removed ? 'removed' : 'context',
+      text: change.value.join('')
+    })
+  }
+  if (suffix.length > 0) appendTextSegment(segments, { kind: 'context', text: suffix })
+
+  let beforeOffset = 0
+  let afterOffset = 0
+  const changes = segments.map((segment) => {
+    const beforeStart = beforeOffset
+    const afterStart = afterOffset
+    if (segment.kind !== 'added') beforeOffset += segment.text.length
+    if (segment.kind !== 'removed') afterOffset += segment.text.length
+    return {
+      ...segment,
+      beforeStart,
+      beforeEnd: beforeOffset,
+      afterStart,
+      afterEnd: afterOffset
+    }
+  })
+  const reconstructedBefore = segments
+    .filter((segment) => segment.kind !== 'added')
+    .map((segment) => segment.text)
+    .join('')
+  const reconstructedAfter = segments
+    .filter((segment) => segment.kind !== 'removed')
+    .map((segment) => segment.text)
+    .join('')
+  return reconstructedBefore === before && reconstructedAfter === after ? changes : undefined
+}
+
+const sameFormattingAncestors = (left: string[], right: string[]): boolean =>
+  left.length === right.length && left.every((ancestor, index) => ancestor === right[index])
+
+const commonFormattingAncestors = (left: string[], right: string[]): string[] => {
+  const common: string[] = []
+  while (common.length < left.length && left[common.length] === right[common.length]) {
+    common.push(left[common.length]!)
+  }
+  return common
+}
+
+const renderedTextNodeAt = (
+  rendered: RenderedInlineMarkdown,
+  offset: number
+): RenderedMarkdownTextNode | undefined =>
+  rendered.textNodes.find((node) => node.textStart <= offset && offset < node.textEnd)
+
+const renderedGraphemesFitTextNodes = (rendered: RenderedInlineMarkdown): boolean => {
+  let offset = 0
+  for (const grapheme of markdownGraphemes(rendered.text)) {
+    const end = offset + grapheme.length
+    const node = renderedTextNodeAt(rendered, offset)
+    if (node === undefined || end > node.textEnd) return false
+    offset = end
+  }
+  return offset === rendered.text.length
+}
+
+const renderedContextFormattingMatches = (
+  before: RenderedInlineMarkdown,
+  after: RenderedInlineMarkdown,
+  changes: VisibleMarkdownChange[]
+): boolean => {
+  for (const change of changes) {
+    if (change.kind !== 'context') continue
+    let beforeOffset = change.beforeStart
+    let afterOffset = change.afterStart
+    while (beforeOffset < change.beforeEnd && afterOffset < change.afterEnd) {
+      const beforeNode = renderedTextNodeAt(before, beforeOffset)
+      const afterNode = renderedTextNodeAt(after, afterOffset)
+      if (
+        beforeNode === undefined ||
+        afterNode === undefined ||
+        !sameFormattingAncestors(beforeNode.ancestors, afterNode.ancestors)
+      ) {
+        return false
+      }
+      const length = Math.min(
+        beforeNode.textEnd - beforeOffset,
+        afterNode.textEnd - afterOffset,
+        change.beforeEnd - beforeOffset,
+        change.afterEnd - afterOffset
+      )
+      if (length <= 0) return false
+      beforeOffset += length
+      afterOffset += length
+    }
+    if (beforeOffset !== change.beforeEnd || afterOffset !== change.afterEnd) return false
+  }
+  return true
+}
+
+const removalCanUseFormatting = (
+  before: RenderedInlineMarkdown,
+  change: VisibleMarkdownChange,
+  insertionAncestors: string[]
+): boolean => {
+  const sourceNodes = before.textNodes.filter(
+    (node) => node.textStart < change.beforeEnd && node.textEnd > change.beforeStart
+  )
+  return (
+    sourceNodes.length > 0 &&
+    sourceNodes.every((node) =>
+      insertionAncestors.every((ancestor, index) => node.ancestors[index] === ancestor)
+    )
+  )
+}
+
+const renderedBoundary = (
+  rendered: RenderedInlineMarkdown,
+  textOffset: number
+): RenderedMarkdownBoundary | undefined => {
+  if (textOffset === 0) return { htmlOffset: 0, ancestors: [] }
+  if (textOffset === rendered.text.length) {
+    return { htmlOffset: rendered.content.length, ancestors: [] }
+  }
+  const previous = rendered.textNodes.findLast((node) => node.textEnd <= textOffset)
+  const next = rendered.textNodes.find((node) => node.textStart >= textOffset)
+  if (previous?.textEnd !== textOffset || next?.textStart !== textOffset) return undefined
+
+  // Markers at formatting boundaries belong between the closing and opening tags. Keeping them out
+  // of either sibling prevents a removed plain-text phrase from inheriting unrelated bold/emphasis.
+  const separator = rendered.content.slice(previous.htmlEnd, next.htmlStart)
+  const closingTags = separator.match(/^(?:<\/[a-z][a-z0-9-]*>)+/u)?.[0] ?? ''
+  return {
+    htmlOffset: previous.htmlEnd + closingTags.length,
+    ancestors: commonFormattingAncestors(previous.ancestors, next.ancestors)
+  }
+}
+
+const renderChangedTextNode = (
+  node: RenderedMarkdownTextNode,
+  changes: VisibleMarkdownChange[],
+  tags: MarkdownChangeTags
+): { content: string; markers: HtmlMarkerExpectation[] } | undefined => {
+  const content: string[] = []
+  const markers: HtmlMarkerExpectation[] = []
+  for (const change of changes) {
+    if (change.kind === 'removed') {
+      if (change.afterStart > node.textStart && change.afterStart < node.textEnd) {
+        content.push(markdownChangeMarkup('removed', change.text, tags))
+        markers.push({ tagName: tags.removed, text: change.text })
+      }
+      continue
+    }
+    const start = Math.max(node.textStart, change.afterStart)
+    const end = Math.min(node.textEnd, change.afterEnd)
+    if (start >= end) continue
+    const value = change.text.slice(start - change.afterStart, end - change.afterStart)
+    if (change.kind === 'added') {
+      content.push(markdownChangeMarkup('added', value, tags))
+      markers.push({ tagName: tags.added, text: value })
+    } else {
+      content.push(escapeHtmlText(value))
+    }
+  }
+  const sourceText = changes
+    .filter((change) => change.kind !== 'removed')
+    .map((change) => change.text)
+    .join('')
+    .slice(node.textStart, node.textEnd)
+  return sourceText === node.value ? { content: content.join(''), markers } : undefined
+}
+
+const toRenderedInlineMarkdownReplacement = (
+  segments: DiffSegment[],
+  tags: MarkdownChangeTags
+): string | undefined => {
+  if (
+    tags.added === tags.removed ||
+    !isSafeHtmlMarkerTag(tags.added) ||
+    !isSafeHtmlMarkerTag(tags.removed)
+  ) {
+    return undefined
+  }
+  const beforeSource = segments
+    .filter((segment) => segment.kind !== 'added')
+    .map((segment) => segment.text)
+    .join('')
+  const afterSource = segments
+    .filter((segment) => segment.kind !== 'removed')
+    .map((segment) => segment.text)
+    .join('')
+  const markerTags = new Set([tags.added, tags.removed])
+  const before = renderedInlineMarkdown(beforeSource, markerTags)
+  const after = renderedInlineMarkdown(afterSource, markerTags)
+  if (before === undefined || after === undefined) return undefined
+  const changes = visibleMarkdownChanges(before.text, after.text)
+  if (
+    changes === undefined ||
+    !renderedGraphemesFitTextNodes(before) ||
+    !renderedGraphemesFitTextNodes(after) ||
+    !renderedContextFormattingMatches(before, after, changes)
+  ) {
+    return undefined
+  }
+
+  for (const change of changes) {
+    if (change.kind !== 'removed') continue
+    const interiorNode = after.textNodes.find(
+      (node) => change.afterStart > node.textStart && change.afterStart < node.textEnd
+    )
+    const insertionAncestors =
+      interiorNode?.ancestors ?? renderedBoundary(after, change.afterStart)?.ancestors
+    if (
+      insertionAncestors === undefined ||
+      !removalCanUseFormatting(before, change, insertionAncestors)
+    ) {
+      return undefined
+    }
+  }
+
+  const htmlChanges: RenderedHtmlChange[] = []
+  for (const node of after.textNodes) {
+    const replacement = renderChangedTextNode(node, changes, tags)
+    if (replacement === undefined) return undefined
+    htmlChanges.push({
+      start: node.htmlStart,
+      end: node.htmlEnd,
+      content: replacement.content,
+      markers: replacement.markers
+    })
+  }
+
+  const boundaryRemovals = new Map<number, DiffSegment[]>()
+  for (const change of changes) {
+    if (change.kind !== 'removed') continue
+    const isInsideTextNode = after.textNodes.some(
+      (node) => change.afterStart > node.textStart && change.afterStart < node.textEnd
+    )
+    if (isInsideTextNode) continue
+    const boundary = renderedBoundary(after, change.afterStart)
+    if (boundary === undefined) return undefined
+    const removals = boundaryRemovals.get(boundary.htmlOffset) ?? []
+    removals.push(change)
+    boundaryRemovals.set(boundary.htmlOffset, removals)
+  }
+  for (const [htmlOffset, removals] of boundaryRemovals) {
+    htmlChanges.push({
+      start: htmlOffset,
+      end: htmlOffset,
+      content: removals
+        .map((removal) => markdownChangeMarkup('removed', removal.text, tags))
+        .join(''),
+      markers: removals.map((removal) => ({ tagName: tags.removed, text: removal.text }))
+    })
+  }
+
+  htmlChanges.sort((left, right) => left.start - right.start || left.end - right.end)
+  const content: string[] = []
+  const markers: HtmlMarkerExpectation[] = []
+  let cursor = 0
+  for (const change of htmlChanges) {
+    if (change.start < cursor) return undefined
+    content.push(after.content.slice(cursor, change.start), change.content)
+    markers.push(...change.markers)
+    cursor = change.end
+  }
+  content.push(after.content.slice(cursor))
+  const replacement = content.join('')
+  if (
+    markers.length === 0 ||
+    markers.length > MARKDOWN_RENDERED_DIFF_MAX_MARKERS ||
+    replacement.length > MARKDOWN_RENDERED_DIFF_MAX_CHARS ||
+    !hasValidInjectedHtmlFragmentMarkers(replacement, after.structure, markers, tags)
+  ) {
+    return undefined
+  }
+  return replacement
+}
+
 const toStableInlineMarkdownReplacement = (
   segments: DiffSegment[],
   tags: MarkdownChangeTags
@@ -1094,6 +1555,14 @@ const toInlineMarkdownReplacement = (
   if (markdownReplacement !== undefined) {
     return { content: markdownReplacement, semanticSafety: 'markdown' }
   }
+  const renderedMarkdownReplacement = toRenderedInlineMarkdownReplacement(displaySegments, tags)
+  if (renderedMarkdownReplacement !== undefined) {
+    return {
+      content: renderedMarkdownReplacement,
+      semanticSafety: 'markdown',
+      requiresSourceFallback: true
+    }
+  }
 
   const beforeList = before.match(MARKDOWN_LIST_ITEM_PREFIX)
   const afterList = after.match(MARKDOWN_LIST_ITEM_PREFIX)
@@ -1116,6 +1585,34 @@ const toInlineMarkdownReplacement = (
   return replacement === undefined
     ? undefined
     : { content: replacement.content, semanticSafety: 'simple' }
+}
+
+const isRenderedInlineMarkdownCandidate = (
+  removed: DiffLine,
+  added: DiffLine,
+  tags: MarkdownChangeTags
+): boolean => {
+  const inlineSegments = toInlineTextReplacement(removed, added)
+  if (
+    inlineSegments === undefined ||
+    inlineSegments.some((segment) => segment.kind !== 'context' && /[\r\n]/u.test(segment.text))
+  ) {
+    return false
+  }
+  const displaySegments = withoutTrailingContextLineEnding(inlineSegments)
+  const beforeSource = displaySegments
+    .filter((segment) => segment.kind !== 'added')
+    .map((segment) => segment.text)
+    .join('')
+  const afterSource = displaySegments
+    .filter((segment) => segment.kind !== 'removed')
+    .map((segment) => segment.text)
+    .join('')
+  const markerTags = new Set([tags.added, tags.removed])
+  return (
+    renderedInlineMarkdown(beforeSource, markerTags) !== undefined &&
+    renderedInlineMarkdown(afterSource, markerTags) !== undefined
+  )
 }
 
 const appendTextSegment = (segments: DiffSegment[], segment: DiffSegment): void => {
@@ -1214,6 +1711,7 @@ type InlineMarkdownChange = {
   content: string
   endIndex: number
   semanticSafety: InlineMarkdownReplacement['semanticSafety']
+  requiresSourceFallback?: boolean
 }
 
 const toStandaloneMarkdownChange = (
@@ -1261,17 +1759,25 @@ const inlineMarkdownPairs = (
   indexes: Set<number>
   stableHtmlIndexes: Set<number>
   stableMarkdownIndexes: Set<number>
+  forcedRawRanges: DiffRange[]
 } => {
   const pairs = new Map<number, InlineMarkdownChange>()
   const indexes = new Set<number>()
   const stableHtmlIndexes = new Set<number>()
   const stableMarkdownIndexes = new Set<number>()
+  const forcedRawRanges: DiffRange[] = []
   for (let index = 0; index < lines.length - 1; index += 1) {
     const removed = lines[index]
     const added = lines[index + 1]
     if (removed?.kind !== 'removed' || added?.kind !== 'added') continue
     const replacement = toInlineMarkdownReplacement(removed, added, tags)
-    if (replacement === undefined) continue
+    if (replacement === undefined) {
+      if (isRenderedInlineMarkdownCandidate(removed, added, tags)) {
+        forcedRawRanges.push({ start: index, end: index + 1 })
+        index += 1
+      }
+      continue
+    }
     pairs.set(index, { ...replacement, endIndex: index + 1 })
     indexes.add(index)
     indexes.add(index + 1)
@@ -1298,7 +1804,7 @@ const inlineMarkdownPairs = (
     pairs.set(index, { content, endIndex: index, semanticSafety: 'simple' })
     indexes.add(index)
   }
-  return { pairs, indexes, stableHtmlIndexes, stableMarkdownIndexes }
+  return { pairs, indexes, stableHtmlIndexes, stableMarkdownIndexes, forcedRawRanges }
 }
 
 const markdownSourceContent = (lines: ManagedFileVersionDiffResult['lines']): string =>
@@ -1605,6 +2111,7 @@ const toMarkdownRenderBlocks = (
       ...beforeSemanticRanges,
       ...afterSemanticRanges,
       ...containerRanges,
+      ...inline.forcedRawRanges,
       ...nonInlineParagraphRanges(result.lines, inline.pairs),
       ...complexChangedRanges
     ],
@@ -1628,6 +2135,7 @@ const toMarkdownRenderBlocks = (
   let pendingStart = 0
   let pendingEnd = 0
   let pendingMixed = false
+  let pendingRequiresSourceFallback = false
   const flushPending = (): void => {
     while (pendingLines.at(-1) === '') pendingLines.pop()
     if (pendingLines.length > 0) {
@@ -1638,7 +2146,9 @@ const toMarkdownRenderBlocks = (
         kind: 'markdown',
         changeKind: pendingMixed ? 'mixed' : 'context',
         content: joinLineTexts(pendingLines).content,
-        ...(exactSegments?.some((segment) => segment.text.includes('\r'))
+        ...(exactSegments &&
+        (pendingRequiresSourceFallback ||
+          exactSegments.some((segment) => segment.text.includes('\r')))
           ? { fallbackSegments: exactSegments }
           : {}),
         startIndex: pendingStart
@@ -1646,12 +2156,20 @@ const toMarkdownRenderBlocks = (
     }
     pendingLines = []
     pendingMixed = false
+    pendingRequiresSourceFallback = false
   }
-  const appendPending = (content: string, index: number, mixed = false, endIndex = index): void => {
+  const appendPending = (
+    content: string,
+    index: number,
+    mixed = false,
+    endIndex = index,
+    requiresSourceFallback = false
+  ): void => {
     if (pendingLines.length === 0) pendingStart = index
     pendingLines.push(content)
     pendingEnd = endIndex
     pendingMixed ||= mixed
+    pendingRequiresSourceFallback ||= requiresSourceFallback
   }
 
   let rangeIndex = 0
@@ -1711,7 +2229,7 @@ const toMarkdownRenderBlocks = (
 
     const pair = inline.pairs.get(index)
     if (pair) {
-      appendPending(pair.content, index, true, pair.endIndex)
+      appendPending(pair.content, index, true, pair.endIndex, pair.requiresSourceFallback)
       index = pair.endIndex
       continue
     }

@@ -222,9 +222,13 @@ const alignChangedLines = (beforeLines, afterLines) => {
         longestAnchor = Math.max(longestAnchor, length)
       }
       const shortestLine = Math.min([...before.line.text].length, [...after.line.text].length)
+      const isSameBlankLine =
+        before.line.text.trim().length === 0 &&
+        before.line.text === after.line.text &&
+        before.line.ending === after.line.ending
       return {
         anchors,
-        related: shortestLine > 0 && commonCharacters * 2 >= shortestLine,
+        related: isSameBlankLine || (shortestLine > 0 && commonCharacters * 2 >= shortestLine),
         connectsCrossLine: longestAnchor >= CROSS_LINE_CONTINUATION_MIN_CHARACTERS
       }
     })
@@ -420,42 +424,129 @@ const pushLine = (line) => {
   outputBytes += nextBytes
   return true
 }
-for (let index = 0; index < changes.length; index += 1) {
-  const change = changes[index]
-  const next = changes[index + 1]
-  if (change.removed && next?.added) {
-    const beforeLines = splitChangedLines(change.value)
-    const afterLines = splitChangedLines(next.value)
-    for (const aligned of alignChangedLines(beforeLines, afterLines)) {
-      if (aligned.kind === 'paired') {
-        const remainingMs = aligned.deadline - Date.now()
-        const exactSegments =
-          aligned.segments ??
-          (remainingMs > 0
-            ? segmentsForPair(aligned.before, aligned.after, {
-                maxEditLength: LINE_ALIGNMENT_MAX_EDIT_LENGTH,
-                timeout: remainingMs
-              })
-            : undefined)
-        const segments = exactSegments ?? segmentsForReplacement(aligned.before, aligned.after)
-        if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: segments.removed })) return
-        if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: segments.added })) return
-      } else if (aligned.kind === 'replacement') {
-        const segments = aligned.segments ?? segmentsForReplacement(aligned.before, aligned.after)
-        if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: segments.removed })) return
-        if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: segments.added })) return
-      } else if (aligned.kind === 'removed') { if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: aligned.segments ?? changedSegments(aligned.before, 'removed') })) return }
-      else if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: aligned.segments ?? changedSegments(aligned.after, 'added') })) return
+const pushAlignedLine = (aligned) => {
+  if (aligned.kind === 'paired') {
+    const beforeText = aligned.before.text + aligned.before.ending
+    const afterText = aligned.after.text + aligned.after.ending
+    if (beforeText === afterText) {
+      return pushLine({
+        kind: 'context',
+        oldLineNumber: oldLine++,
+        newLineNumber: newLine++,
+        segments: [{ kind: 'context', text: beforeText }]
+      })
     }
-    index += 1
-    continue
+    const remainingMs = aligned.deadline - Date.now()
+    const exactSegments =
+      aligned.segments ??
+      (remainingMs > 0
+        ? segmentsForPair(aligned.before, aligned.after, {
+            maxEditLength: LINE_ALIGNMENT_MAX_EDIT_LENGTH,
+            timeout: remainingMs
+          })
+        : undefined)
+    const segments = exactSegments ?? segmentsForReplacement(aligned.before, aligned.after)
+    return (
+      pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: segments.removed }) &&
+      pushLine({ kind: 'added', newLineNumber: newLine++, segments: segments.added })
+    )
   }
+  if (aligned.kind === 'replacement') {
+    const segments = aligned.segments ?? segmentsForReplacement(aligned.before, aligned.after)
+    return (
+      pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: segments.removed }) &&
+      pushLine({ kind: 'added', newLineNumber: newLine++, segments: segments.added })
+    )
+  }
+  if (aligned.kind === 'removed') {
+    return pushLine({
+      kind: 'removed',
+      oldLineNumber: oldLine++,
+      segments: aligned.segments ?? changedSegments(aligned.before, 'removed')
+    })
+  }
+  return pushLine({
+    kind: 'added',
+    newLineNumber: newLine++,
+    segments: aligned.segments ?? changedSegments(aligned.after, 'added')
+  })
+}
+
+let lineGroup = []
+const pushContextEntry = (entry) =>
+  pushLine({
+    kind: 'context',
+    oldLineNumber: oldLine++,
+    newLineNumber: newLine++,
+    segments: [{ kind: 'context', text: entry.line.text + entry.line.ending }]
+  })
+const alignLineGroup = (group) => {
+  const hasChanges = group.some((entry) => entry.kind !== 'context')
+  if (!hasChanges) return group.every(pushContextEntry)
+  const beforeLines = group
+    .filter((entry) => entry.kind !== 'added')
+    .map((entry) => entry.line)
+  const afterLines = group
+    .filter((entry) => entry.kind !== 'removed')
+    .map((entry) => entry.line)
+  const characterCount = [...beforeLines, ...afterLines].reduce(
+    (total, line) => total + line.text.length + line.ending.length,
+    0
+  )
+  if (
+    beforeLines.length + afterLines.length > LINE_ALIGNMENT_MAX_LINES ||
+    characterCount > LINE_ALIGNMENT_MAX_CHARACTERS
+  ) {
+    const middle = (group.length - 1) / 2
+    let splitIndex = -1
+    let splitDistance = Number.POSITIVE_INFINITY
+    for (let index = 0; index < group.length; index += 1) {
+      if (group[index].kind !== 'context') continue
+      const distance = Math.abs(index - middle)
+      if (distance < splitDistance) {
+        splitIndex = index
+        splitDistance = distance
+      }
+    }
+    if (splitIndex >= 0) {
+      return (
+        alignLineGroup(group.slice(0, splitIndex)) &&
+        pushContextEntry(group[splitIndex]) &&
+        alignLineGroup(group.slice(splitIndex + 1))
+      )
+    }
+  }
+  return alignChangedLines(beforeLines, afterLines).every(pushAlignedLine)
+}
+const flushLineGroup = () => {
+  if (lineGroup.length === 0) return true
+  const group = lineGroup
+  lineGroup = []
+  return alignLineGroup(group)
+}
+
+// Blank lines are weak diff anchors: repeated separators can make a newly inserted heading match
+// the preceding paragraph. Re-align changes and their blank separators as one semantic region;
+// unchanged non-blank lines remain hard boundaries and never enter the more expensive alignment.
+for (const change of changes) {
+  const kind = change.removed ? 'removed' : change.added ? 'added' : 'context'
   for (const line of splitChangedLines(change.value)) {
-    if (change.removed) { if (!pushLine({ kind: 'removed', oldLineNumber: oldLine++, segments: changedSegments(line, 'removed') })) return }
-    else if (change.added) { if (!pushLine({ kind: 'added', newLineNumber: newLine++, segments: changedSegments(line, 'added') })) return }
-    else if (!pushLine({ kind: 'context', oldLineNumber: oldLine++, newLineNumber: newLine++, segments: [{ kind: 'context', text: line.text + line.ending }] })) return
+    if (kind === 'context' && line.text.trim().length > 0) {
+      if (!flushLineGroup()) return
+      if (
+        !pushLine({
+          kind: 'context',
+          oldLineNumber: oldLine++,
+          newLineNumber: newLine++,
+          segments: [{ kind: 'context', text: line.text + line.ending }]
+        })
+      ) return
+      continue
+    }
+    lineGroup.push({ kind, line })
   }
 }
+if (!flushLineGroup()) return
 parentPort.postMessage(lines)
 }
 run()

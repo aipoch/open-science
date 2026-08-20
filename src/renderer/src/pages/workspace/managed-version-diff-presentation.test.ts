@@ -925,6 +925,124 @@ describe('managed version diff presentation', () => {
     ])
   })
 
+  it('keeps a formatted shortened paragraph rendered while marking only visible character changes', async () => {
+    const removedTail =
+      ' (e.g. via ccswitch / CC Switch), you may notice that your local agent mode sessions (Cowork) and xcode-mode sessions are isolated per account. Each provider login creates a different account ID under ~/Library/Application Support/Claude/, so the app only shows sessions belonging to the currently logged-in account. Your other sessions appear to vanish, but they are still on disk, just in a different directory'
+    const before = [
+      '### What Is This?',
+      '',
+      "If you switch between Claude's **official subscription** and **third-party API routing** (e.g. via ccswitch / CC Switch), you may notice that your **local agent mode sessions** (Cowork) and xcode-mode sessions are isolated per account. Each provider login creates a different account ID under ~/Library/Application Support/Claude/, so the app only shows sessions belonging to the **currently logged-in account**. Your other sessions appear to vanish, but they are still on disk, just in a different directory.",
+      ''
+    ].join('\n')
+    const after = [
+      '### What Is This?? ?',
+      '',
+      'Wonderful',
+      '',
+      'If you switch between **official subscription** and **third-party API routing**.',
+      ''
+    ].join('\n')
+
+    const blocks = await diffMarkdown(before, after, 'rendered-real-world-shortened-paragraph')
+    const mixedBlocks = blocks.filter((block) => block.changeKind === 'mixed')
+
+    expect(mixedBlocks.length).toBeGreaterThan(0)
+    expect(mixedBlocks.every((block) => block.kind === 'markdown')).toBe(true)
+
+    const content = mixedBlocks
+      .map((block) => (block.kind === 'markdown' ? block.content : ''))
+      .join('\n\n')
+    const changedText = (kind: 'added' | 'removed'): string =>
+      Array.from(
+        content.matchAll(
+          new RegExp(`<managed-diff-${kind}>([\\s\\S]*?)</managed-diff-${kind}>`, 'gu')
+        ),
+        (match) => match[1].replace(/<[^>]+>/gu, '')
+      ).join('')
+
+    expect(content).toContain(`### What Is This?${escapedMarkdownChange('added', '? ?')}`)
+    expect(content).not.toContain('**')
+    expect(content).toContain('<strong>official subscription</strong>')
+    expect(content).toContain('<strong>third-party API routing</strong>')
+    expect(changedText('added')).toBe('? ?Wonderful')
+    expect(changedText('removed')).toBe(`Claude's ${removedTail}`)
+  })
+
+  it.each([
+    {
+      label: 'before',
+      before: 'Removed **same**\n',
+      after: '**same**\n',
+      content: `${escapedMarkdownChange('removed', 'Removed ')}**same**`
+    },
+    {
+      label: 'after',
+      before: '**same** removed\n',
+      after: '**same**\n',
+      content: `**same**${escapedMarkdownChange('removed', ' removed')}`
+    }
+  ])('keeps a deletion $label strong text outside the formatting node', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `rendered-deletion-${fixture.label}-strong`
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: fixture.content,
+        startIndex: 0
+      }
+    ])
+  })
+
+  it('marks a changed combining sequence as one visible character', async () => {
+    const blocks = await diffMarkdown(
+      'Prefix **e\u0301** 👨‍👩‍👧‍👦 and **removed**\n',
+      'Prefix e 👨‍👩‍👧‍👦 and\n',
+      'rendered-grapheme-change'
+    )
+
+    expect(blocks).toEqual([
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `Prefix ${escapedMarkdownChange('removed', 'e\u0301')}${escapedMarkdownChange('added', 'e')} 👨‍👩‍👧‍👦 and${escapedMarkdownChange('removed', ' removed')}`,
+        fallbackSegments: expect.any(Array),
+        startIndex: 0
+      }
+    ])
+  })
+
+  it.each([
+    {
+      label: 'retained text changes formatting',
+      before: '**same** old\n',
+      after: 'same new\n'
+    },
+    {
+      label: 'plain deletion would inherit after formatting',
+      before: '**A** removed **B**\n',
+      after: '**A B**\n'
+    },
+    {
+      label: 'one grapheme crosses formatting nodes',
+      before: 'x\n',
+      after: 'e**\u0301**\n'
+    }
+  ])('falls back when $label', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `rendered-format-safety-${fixture.label}`
+    )
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ kind: 'text', changeKind: 'mixed' })
+  })
+
   it.each([
     { label: 'split', before: 'Hello world\n', after: 'Hello \nworld\n', kind: 'added' as const },
     { label: 'merge', before: 'Hello \nworld\n', after: 'Hello world\n', kind: 'removed' as const }

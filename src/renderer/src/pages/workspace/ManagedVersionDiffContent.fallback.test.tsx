@@ -62,6 +62,50 @@ describe('ManagedVersionDiffContent Markdown recovery', () => {
     expect(fallback?.textContent).not.toContain('managed-diff-removed-')
   })
 
+  it('shows the original Markdown source when a visible-character projection fails to render', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'rendered-markdown-diff-renderer-failure',
+      before: 'Prefix old **stable** and **removed formatting** suffix.\n',
+      after: 'Prefix new **stable** suffix.\n'
+    })
+
+    await act(async () => {
+      root.render(
+        <ManagedVersionDiffContent
+          result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+          format="markdown"
+          name="README.md"
+        />
+      )
+    })
+
+    const fallback = container.querySelector('[data-managed-version-diff-fallback]')
+    const sourceText = Array.from(fallback?.childNodes ?? [])
+      .flatMap((node) =>
+        node instanceof HTMLElement && (node.matches('ins') || node.matches('del'))
+          ? [node.querySelector('[data-managed-diff-content]')?.textContent ?? '']
+          : [node.textContent ?? '']
+      )
+      .join('')
+    const removed = Array.from(
+      fallback?.querySelectorAll('del [data-managed-diff-content]') ?? [],
+      (element) => element.textContent
+    )
+    const added = Array.from(
+      fallback?.querySelectorAll('ins [data-managed-diff-content]') ?? [],
+      (element) => element.textContent
+    )
+
+    expect(sourceText).toBe('Prefix oldnew **stable** and **removed formatting** suffix.\n')
+    expect(removed).toEqual(['old', 'and **removed formatting** '])
+    expect(added).toEqual(['new'])
+    expect(fallback?.textContent).toContain('**stable**')
+    expect(fallback?.textContent).toContain('**removed formatting**')
+    expect(fallback?.textContent).not.toContain('<strong>')
+    expect(fallback?.textContent).not.toContain('managed-diff-added-')
+    expect(fallback?.textContent).not.toContain('managed-diff-removed-')
+  })
+
   it('marks the exact source of a complex added list item in the raw fallback', async () => {
     const addedSource = '**important** [guide](https://example.com)'
     const lines = await new ManagedTextDiffTaskRunner().run({

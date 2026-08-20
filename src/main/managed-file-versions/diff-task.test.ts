@@ -395,6 +395,113 @@ describe('ManagedTextDiffTaskRunner', () => {
     ])
   })
 
+  it('does not anchor a paragraph insertion to the blank line before its matching paragraph', async () => {
+    const beforeParagraph =
+      "If you switch between Claude's official subscription and third-party API routing."
+    const afterParagraph =
+      'If you switch between official subscription and third-party API routing.'
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'blank-line-before-matching-paragraph',
+      before: `## What Is This?\n\n${beforeParagraph}\n\nStable next.\n`,
+      after: `## What Is This?？？\n\n### Wonderful\n\n${afterParagraph}\n\nStable next.\n`
+    })
+    const summary = lines.map((line) => ({
+      kind: line.kind,
+      text: line.segments.map((segment) => segment.text).join(''),
+      changed: line.segments
+        .filter((segment) => segment.kind === line.kind)
+        .map((segment) => segment.text)
+        .join('')
+    }))
+
+    expect(summary).toContainEqual({
+      kind: 'added',
+      text: '### Wonderful\n',
+      changed: '### Wonderful\n'
+    })
+    expect(summary).toContainEqual({
+      kind: 'removed',
+      text: `${beforeParagraph}\n`,
+      changed: "Claude's "
+    })
+    expect(summary).toContainEqual({
+      kind: 'added',
+      text: `${afterParagraph}\n`,
+      changed: ''
+    })
+    expect(summary.findIndex((line) => line.text === '### Wonderful\n')).toBeLessThan(
+      summary.findIndex((line) => line.text === `${afterParagraph}\n`)
+    )
+  })
+
+  it.each([199, 200])(
+    'preserves %i unchanged blank lines around a paragraph replacement',
+    async (blankLineCount) => {
+      const blankLines = '\n'.repeat(blankLineCount)
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `blank-line-alignment-budget-${blankLineCount}`,
+        before: `Paragraph old.\n${blankLines}`,
+        after: `Paragraph new.\n${blankLines}`
+      })
+
+      expect(lines.filter((line) => line.kind === 'context')).toHaveLength(blankLineCount)
+      expect(
+        lines
+          .filter((line) => line.kind === 'context')
+          .every(
+            (line) =>
+              line.segments.length === 1 &&
+              line.segments[0].kind === 'context' &&
+              line.segments[0].text === '\n'
+          )
+      ).toBe(true)
+      expect(
+        lines
+          .filter((line) => line.kind !== 'context')
+          .map((line) => ({
+            kind: line.kind,
+            text: line.segments.map((segment) => segment.text).join(''),
+            changed: line.segments
+              .filter((segment) => segment.kind === line.kind)
+              .map((segment) => segment.text)
+              .join('')
+          }))
+      ).toEqual([
+        { kind: 'removed', text: 'Paragraph old.\n', changed: 'old' },
+        { kind: 'added', text: 'Paragraph new.\n', changed: 'new' }
+      ])
+    }
+  )
+
+  it('preserves a long unchanged whitespace line across a paragraph replacement', async () => {
+    const whitespaceLine = `${' '.repeat(24_990)}\n`
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'whitespace-line-alignment-character-budget',
+      before: `Paragraph old.\n${whitespaceLine}`,
+      after: `Paragraph new.\n${whitespaceLine}`
+    })
+
+    expect(lines.filter((line) => line.kind === 'context')).toEqual([
+      expect.objectContaining({
+        segments: [{ kind: 'context', text: whitespaceLine }]
+      })
+    ])
+    expect(
+      lines
+        .filter((line) => line.kind !== 'context')
+        .map((line) => ({
+          kind: line.kind,
+          changed: line.segments
+            .filter((segment) => segment.kind === line.kind)
+            .map((segment) => segment.text)
+            .join('')
+        }))
+    ).toEqual([
+      { kind: 'removed', changed: 'old' },
+      { kind: 'added', changed: 'new' }
+    ])
+  })
+
   it('keeps a removed line separate from the similar modified line that follows it', async () => {
     const lines = await new ManagedTextDiffTaskRunner().run({
       requestId: 'removed-line-before-modified-line',
