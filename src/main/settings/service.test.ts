@@ -3297,11 +3297,17 @@ describe('SettingsService: official vendors', () => {
       settings: {
         skipWebFetchPreflight: true,
         permissions: { ask: ['WebFetch'] },
-        availableModels: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-pro[1m]'],
+        availableModels: [
+          'deepseek-v4-flash',
+          'deepseek-v4-pro',
+          'deepseek-v4-pro[1m]',
+          'deepseek-v4-flash-vision-exp'
+        ],
         modelOverrides: {
           'deepseek-v4-flash': 'deepseek-v4-flash',
           'deepseek-v4-pro': 'deepseek-v4-pro',
-          'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]'
+          'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+          'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
         }
       }
     })
@@ -3309,11 +3315,17 @@ describe('SettingsService: official vendors', () => {
     await expect(
       readFile(join(getAppClaudeConfigDir(storageRoot), 'settings.json'), 'utf8').then(JSON.parse)
     ).resolves.toMatchObject({
-      availableModels: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-pro[1m]'],
+      availableModels: [
+        'deepseek-v4-flash',
+        'deepseek-v4-pro',
+        'deepseek-v4-pro[1m]',
+        'deepseek-v4-flash-vision-exp'
+      ],
       modelOverrides: {
         'deepseek-v4-flash': 'deepseek-v4-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
-        'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]'
+        'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+        'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
       }
     })
     expect(config.contextWindow).toBe(1_000_000)
@@ -3561,6 +3573,28 @@ describe('SettingsService: image-input capability', () => {
     })
     const deepseek = deepseekSnapshot.providers.find((p) => p.vendorId === 'deepseek')
     expect(deepseek?.supportsImageInput).toBe(false)
+  })
+
+  it('tracks the active model for a vendor with mixed vision support (DeepSeek)', async () => {
+    const service = createService()
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+
+    let view = (
+      await service.setActiveProvider(created.id, 'deepseek-v4-flash-vision-exp')
+    ).providers.find((provider) => provider.id === created.id)
+    expect(view?.supportsImageInput).toBe(true)
+
+    view = (await service.setActiveProvider(created.id, 'deepseek-v4-flash')).providers.find(
+      (provider) => provider.id === created.id
+    )
+    expect(view?.supportsImageInput).toBe(false)
   })
 
   it('tracks the active model for a vendor with mixed vision support (GLM)', async () => {

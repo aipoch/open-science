@@ -53,6 +53,20 @@ describe('provider registry', () => {
     expect(getOfficialVendor('deepseek')?.label).toBe('DeepSeek')
   })
 
+  it('ships DeepSeek V4 with a vision-capable flash experimental model', () => {
+    expect(
+      getOfficialVendor('deepseek')?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
+    ).toEqual([
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
+    ])
+    expect(defaultVendorModel('deepseek')).toBe('deepseek-v4-pro')
+    expect(resolveVendorOpenAiBaseUrl('deepseek')).toBe('https://api.deepseek.com/v1')
+    expect(resolveVendorApiEndpoints('deepseek')).toEqual(['anthropic', 'openai'])
+  })
+
   it('resolves a multi-region vendor by region, defaulting to the first', () => {
     expect(vendorHasRegions('minimax')).toBe(true)
     expect(resolveVendorBaseUrl('minimax', 'china')).toBe('https://api.minimaxi.com/anthropic')
@@ -499,7 +513,8 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('openai', 'gpt-6-turbo')).toBe(true)
     })
 
-    it('returns false for DeepSeek models (no vision support)', () => {
+    it('returns true only for the DeepSeek vision-exp model', () => {
+      expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
       expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-pro')).toBe(false)
       expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-flash')).toBe(false)
     })
@@ -626,6 +641,7 @@ describe('provider registry', () => {
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro[1m]')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(true)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
     })
 
     it('returns false for unknown DeepSeek models', () => {
@@ -670,6 +686,7 @@ describe('provider registry', () => {
       expect(resolveModelContextWindow('xai', 'grok-4.3')).toBe(1_000_000)
       expect(resolveModelContextWindow('xai', 'grok-build-0.1')).toBe(256_000)
       expect(resolveModelContextWindow('deepseek', 'deepseek-v4-flash')).toBe(1_000_000)
+      expect(resolveModelContextWindow('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(1_000_000)
       expect(resolveModelContextWindow('glmcodingplan', 'glm-5.3')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.2')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.1')).toBe(200_000)

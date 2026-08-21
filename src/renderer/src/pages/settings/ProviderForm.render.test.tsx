@@ -279,6 +279,7 @@ describe('ProviderForm field switching', () => {
     // The supported models are shown read-only as reference tags.
     expect(container.textContent).toContain('Supported models')
     expect(container.textContent).toContain('deepseek-v4-pro')
+    expect(container.textContent).toContain('deepseek-v4-flash-vision-exp')
   })
 
   it('shows a region-specific "get a key" link for an official vendor', () => {
