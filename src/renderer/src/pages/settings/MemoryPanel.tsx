@@ -9,7 +9,8 @@ import {
   Pencil,
   Plus,
   Trash2,
-  UserRound
+  UserRound,
+  X
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -26,6 +27,8 @@ import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
+  dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
@@ -104,6 +107,9 @@ const MemoryErrorBanner = ({ message }: { message: string }): React.JSX.Element 
   </div>
 )
 
+const confirmButtonClassName =
+  'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
+
 const ConfirmDialog = ({
   open,
   onOpenChange,
@@ -120,36 +126,56 @@ const ConfirmDialog = ({
   confirmLabel: string
   cancelLabel: string
   onConfirm(): void
-}): React.JSX.Element => (
-  <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[70]!')} />
-      <AlertDialog.Content
-        data-slot="memory-confirm-dialog"
-        className={dialogPanelClassName('z-[70]!', 'max-w-md')}
-      >
-        <div className={dialogHeaderClassName}>
-          <AlertDialog.Title className={dialogTitleClassName}>{title}</AlertDialog.Title>
-        </div>
-        <div className={dialogBodyClassName}>
-          <AlertDialog.Description className="text-sm text-muted-foreground">
-            {description}
-          </AlertDialog.Description>
-        </div>
-        <div className={dialogFooterClassName}>
-          <AlertDialog.Cancel className={dialogCancelButtonClassName}>
-            {cancelLabel}
-          </AlertDialog.Cancel>
-          <AlertDialog.Action asChild>
-            <Button variant="destructive" onClick={onConfirm}>
-              {confirmLabel}
-            </Button>
-          </AlertDialog.Action>
-        </div>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
-)
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  // Memory confirmations sit above Settings while retaining the same compact dialog chrome.
+  return (
+    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
+      <AlertDialog.Portal>
+        <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[70]!')} />
+        <AlertDialog.Content
+          data-slot="memory-confirm-dialog"
+          className={dialogPanelClassName('z-[70]!', 'w-[min(440px,calc(100vw-2rem))] p-0')}
+        >
+          <div className={dialogHeaderClassName}>
+            <div className="min-w-0">
+              <AlertDialog.Title className={dialogTitleClassName}>{title}</AlertDialog.Title>
+            </div>
+            <AlertDialog.Cancel asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                className={dialogCloseButtonClassName}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </AlertDialog.Cancel>
+          </div>
+          <div className={dialogBodyClassName}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              {description}
+            </AlertDialog.Description>
+          </div>
+          <div className={dialogFooterClassName}>
+            <AlertDialog.Cancel asChild>
+              <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                {cancelLabel}
+              </Button>
+            </AlertDialog.Cancel>
+            <AlertDialog.Action asChild>
+              <Button type="button" className={confirmButtonClassName} onClick={onConfirm}>
+                {confirmLabel}
+              </Button>
+            </AlertDialog.Action>
+          </div>
+        </AlertDialog.Content>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  )
+}
 
 const RequiredMark = (): React.JSX.Element => (
   <span aria-hidden="true" className="ml-0.5 text-destructive">
