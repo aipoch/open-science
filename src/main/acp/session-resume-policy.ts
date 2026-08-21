@@ -150,6 +150,13 @@ const authoritativeFailure = (
   reason: AcpSessionResumeAuthoritativeFailureReason
 ): AcpSessionResumeFailureClassification => Object.freeze({ disposition: 'authoritative', reason })
 
+const isCodexResponsesResumeContext = (
+  context: AcpSessionResumeFailureContext | undefined
+): boolean =>
+  context?.currentFrameworkId === 'codex' &&
+  (context.currentModelRoute === 'codex-responses' ||
+    context.currentModelRoute === 'codex-responses-compatibility')
+
 // ARD-04 intentionally adds this pure policy without a production caller. ARD-20 exclusively owns
 // the Runtime cutover once its transaction seams exist; integrating here would violate the serialized
 // hot-file boundary. Session ownership, protocol calls, and replay stay with those transactions.
@@ -270,11 +277,7 @@ class AcpSessionResumePolicy {
     if (service.value !== undefined) return authoritativeFailure('non-session-service-failure')
 
     if (typeof message.value === 'string' && /^unknown error\.?$/i.test(message.value.trim())) {
-      if (
-        context?.currentFrameworkId === 'codex' &&
-        (context.currentModelRoute === 'codex-responses' ||
-          context.currentModelRoute === 'codex-responses-compatibility')
-      ) {
+      if (isCodexResponsesResumeContext(context)) {
         return adoptableFailure('legacy-codex-session-unavailable')
       }
       if (
@@ -302,6 +305,9 @@ class AcpSessionResumePolicy {
     if (!details.readable) return authoritativeFailure('uninspectable-error')
     if (describesUnresumableSession(details.value)) {
       return adoptableFailure('legacy-unresumable-details')
+    }
+    if (data.value === undefined && isCodexResponsesResumeContext(context)) {
+      return adoptableFailure('legacy-codex-session-unavailable')
     }
     return authoritativeFailure('unrelated-internal-error')
   }
