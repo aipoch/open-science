@@ -105,7 +105,10 @@ type DurableDelegateObservation =
 
 type DurableCollectSelector = string | Readonly<{ frameId: string; attemptId: string }>
 
-type DurableCollectOptions = Readonly<{ timeoutSeconds?: number }>
+type DurableCollectOptions = Readonly<{
+  timeoutSeconds?: number
+  returnWhen?: 'all' | 'any'
+}>
 
 type DurableDelegateOutcome =
   | Readonly<{

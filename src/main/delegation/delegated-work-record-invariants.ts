@@ -8,4 +8,12 @@ const sameSession = (left: SessionIdentity, right: SessionIdentity): boolean =>
 const currentAttempt = (child: DurableChild): DurableAttempt =>
   child.attempts[child.attempts.length - 1]
 
-export { currentAttempt, sameSession }
+type DurableSettledAttemptStatus = Exclude<DurableAttempt['status'], 'running'>
+
+const isDelegatedAttemptSettled = (
+  status: DurableAttempt['status']
+): status is DurableSettledAttemptStatus =>
+  status === 'completed' || status === 'cancelled' || status === 'error'
+
+export { currentAttempt, isDelegatedAttemptSettled, sameSession }
+export type { DurableSettledAttemptStatus }

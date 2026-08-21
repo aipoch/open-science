@@ -11,6 +11,7 @@ import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import { DelegateMessageParkedError } from '../delegation/execution-port'
+import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -933,6 +934,86 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[0].sendPrompt).not.toHaveBeenCalled()
   })
 
+  it('reports completed user and application-owned root turns to delegated settlement watching', async () => {
+    const rootTurnEnded = vi.fn(async () => undefined)
+    let settlementLease = 0
+    const rootTurnStarted = vi.fn(async () => `settlement-lease-${++settlementLease}`)
+    const delegatedWork: RootDelegatedWorkControl = {
+      pendingPermissions: () => [],
+      subscribe: () => () => undefined,
+      respondToPermission: async () => false,
+      setPermissionProfile: async () => undefined,
+      stopSession: async () => undefined,
+      stopAll: async () => undefined,
+      deleteSession: async () => undefined,
+      deleteProject: async () => undefined,
+      rootTurnStarted,
+      rootTurnEnded
+    }
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime,
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      delegatedWork
+    )
+    const session = await coordinator.createSession()
+
+    await coordinator.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'delegate in the background',
+      provenanceContext: { promptMessageId: 'root-prompt' }
+    })
+    await coordinator.sendAppContinuation({
+      sessionId: session.sessionId,
+      text: 'application follow-up',
+      provenanceContext: { promptMessageId: 'root-prompt' }
+    })
+    await coordinator.sendApplicationPrompt(
+      {
+        sessionId: session.sessionId,
+        text: 'review correction',
+        provenanceContext: { promptMessageId: 'review-prompt' }
+      },
+      {
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1'
+      }
+    )
+
+    expect(rootTurnEnded).toHaveBeenCalledTimes(3)
+    expect(rootTurnEnded).toHaveBeenNthCalledWith(1, {
+      sessionId: session.sessionId,
+      originatingPromptId: 'root-prompt',
+      clean: true,
+      leaseId: 'settlement-lease-1'
+    })
+    expect(rootTurnEnded).toHaveBeenNthCalledWith(2, {
+      sessionId: session.sessionId,
+      originatingPromptId: 'root-prompt',
+      clean: true,
+      leaseId: 'settlement-lease-2'
+    })
+    expect(rootTurnEnded).toHaveBeenNthCalledWith(3, {
+      sessionId: session.sessionId,
+      originatingPromptId: 'review-prompt',
+      clean: true,
+      leaseId: 'settlement-lease-3'
+    })
+    expect(rootTurnStarted).toHaveBeenCalledTimes(3)
+  })
+
   it('acknowledges prompt ownership release only after the owning runtime publishes drain', async () => {
     const promptResult = createDeferred<{ stopReason: 'end_turn' }>()
     const coordinator = new AcpRuntimeCoordinator(
@@ -978,7 +1059,9 @@ describe('AcpRuntimeCoordinator', () => {
     const session = await coordinator.createSession()
     const original = { sessionId: session.sessionId, text: 'analyse these samples' }
     const pending = coordinator.sendPrompt(original)
-    await Promise.resolve()
+    await vi.waitFor(() =>
+      expect(coordinator.capturePromptForHandoff(session.sessionId)).toBeDefined()
+    )
 
     expect(coordinator.capturePromptForHandoff(session.sessionId)).toMatchObject({
       prompt: expect.objectContaining(original),
@@ -1706,10 +1789,20 @@ describe('AcpRuntimeCoordinator', () => {
       return dispatch()
     })
 
-    const continuation = coordinator.sendAppContinuation({
+    const request = {
       sessionId: session.sessionId,
-      text: 'approved recovery continuation'
-    })
+      text: 'approved recovery continuation',
+      suppressUserMessage: true,
+      provenanceContext: {
+        promptMessageId: 'originating-user-message',
+        originMessageId: 'originating-user-message',
+        rootFrameId: 'root-frame',
+        agentFrameId: 'root-frame',
+        messageAncestry: ['originating-user-message'],
+        runtimeSegmentId: 'settlement-wake-prompt'
+      }
+    }
+    const continuation = coordinator.sendAppContinuation(request)
     await Promise.resolve()
     expect(createdRuntime.sendAppContinuation).not.toHaveBeenCalled()
 
@@ -1717,7 +1810,7 @@ describe('AcpRuntimeCoordinator', () => {
     await continuation
 
     expect(admittedSessionIds).toEqual([session.sessionId])
-    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
+    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledWith(request, 'prompt-attempt-1')
   })
 
   it('does not reacquire dispatch admission for an already admitted continuation', async () => {
