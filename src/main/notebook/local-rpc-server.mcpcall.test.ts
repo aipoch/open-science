@@ -1081,6 +1081,57 @@ describe('computeCall RPC', () => {
     expect(submitJob).toHaveBeenCalledTimes(102)
   })
 
+  it('keeps a successor session cache when an old submit_job later fails', async () => {
+    let rejectOldSubmission!: (error: Error) => void
+    const oldSubmission = new Promise<never>((_resolve, reject) => {
+      rejectOldSubmission = reject
+    })
+    const submitJob = vi.fn().mockImplementation(async () => {
+      if (submitJob.mock.calls.length === 1) return oldSubmission
+      return { job_id: `job-${submitJob.mock.calls.length}`, status: 'queued' }
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const submit = (endpoint: string, token: string, invocationId: string): Promise<Response> =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: invocationId,
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command: 'python analyze.py'
+          }
+        })
+      })
+
+    const oldConnection = await sessionConnection(server)
+    const oldResponse = submit(oldConnection.endpoint, oldConnection.token, 'old-invocation')
+    await vi.waitFor(() => expect(submitJob).toHaveBeenCalledTimes(1))
+    server.releaseSessionCapabilities('s-42')
+
+    const successorConnection = await sessionConnection(server)
+    await expect(
+      (
+        await submit(successorConnection.endpoint, successorConnection.token, 'new-invocation')
+      ).json()
+    ).resolves.toEqual({ result: { job_id: 'job-2', status: 'queued' } })
+
+    rejectOldSubmission(new Error('old submission failed'))
+    expect((await oldResponse).status).toBe(500)
+    await expect(
+      (
+        await submit(successorConnection.endpoint, successorConnection.token, 'new-invocation')
+      ).json()
+    ).resolves.toEqual({ result: { job_id: 'job-2', status: 'queued' } })
+    expect(submitJob).toHaveBeenCalledTimes(2)
+  })
+
   it('serializes submit_job compute call errors', async () => {
     const submitErr = new Error('approval denied') as Error & { computeCallError: unknown }
     submitErr.computeCallError = {

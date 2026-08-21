@@ -2214,7 +2214,10 @@ class NotebookLocalRpcServer {
           } catch (error) {
             if (sessionInvocations.get(invocationId)?.submission === submission) {
               sessionInvocations.delete(invocationId)
-              if (sessionInvocations.size === 0) {
+              if (
+                sessionInvocations.size === 0 &&
+                this.computeSubmissionInvocations.get(sessionId) === sessionInvocations
+              ) {
                 this.computeSubmissionInvocations.delete(sessionId)
               }
             }
