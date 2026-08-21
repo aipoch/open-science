@@ -67,7 +67,7 @@ export const filterWorkspaceHistoryAttachments = (
       )
     : attachments
 
-export const mergeWorkspaceHistoryAttachments = ({
+export const partitionWorkspacePromptAttachments = ({
   historyAttachments = [],
   latestAttachments,
   supportsImageInput,
@@ -77,13 +77,19 @@ export const mergeWorkspaceHistoryAttachments = ({
   latestAttachments: UploadedAttachment[]
   supportsImageInput?: boolean
   supportsImageRelay?: boolean
-}): UploadedAttachment[] => {
-  const filteredLatest = filterWorkspaceHistoryAttachments(
+}): {
+  historyAttachments?: UploadedAttachment[]
+  currentAttachments: UploadedAttachment[]
+} => {
+  const currentAttachments = filterWorkspaceHistoryAttachments(
     latestAttachments,
     supportsImageInput,
     supportsImageRelay
   )
-  const historyLimit = Math.max(0, MAX_COMPOSER_ATTACHMENTS - filteredLatest.length)
-  const latestHistory = historyLimit > 0 ? historyAttachments.slice(-historyLimit) : []
-  return [...latestHistory, ...filteredLatest]
+  const historyLimit = Math.max(0, MAX_COMPOSER_ATTACHMENTS - currentAttachments.length)
+  const retainedHistory = historyLimit > 0 ? historyAttachments.slice(-historyLimit) : []
+  return {
+    ...(retainedHistory.length > 0 ? { historyAttachments: retainedHistory } : {}),
+    currentAttachments
+  }
 }

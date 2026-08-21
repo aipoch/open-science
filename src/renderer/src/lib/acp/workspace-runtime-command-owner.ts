@@ -30,7 +30,7 @@ import {
 } from './workspace-runtime-session-branch-owner'
 import {
   finalizeWorkspaceAttachments,
-  mergeWorkspaceHistoryAttachments
+  partitionWorkspacePromptAttachments
 } from './workspace-runtime-attachment-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
 
@@ -547,26 +547,25 @@ const sendWorkspaceMessage = async (
             : {})
         }
       : undefined
+    const promptMedia =
+      input.truncateFromMessageId && promptAttachments.length > 0
+        ? partitionWorkspacePromptAttachments({
+            historyAttachments: replay?.historyAttachments,
+            latestAttachments: promptAttachments,
+            supportsImageInput: input.supportsImageInput,
+            supportsImageRelay: input.supportsImageRelay
+          })
+        : undefined
     dispatchPrompt(runtime, {
       sessionId,
       messageId: appended.messageId,
       content,
-      attachments: input.truncateFromMessageId ? [] : promptAttachments,
+      attachments: promptMedia?.currentAttachments ?? promptAttachments,
       forcedSkillIds: input.forcedSkillIds,
       referencedArtifacts: input.referencedArtifacts,
-      // Edits reuse Message-owned Versions, which resolve through the project-scoped history path.
-      replay:
-        input.truncateFromMessageId && promptAttachments.length > 0
-          ? {
-              ...replay,
-              historyAttachments: mergeWorkspaceHistoryAttachments({
-                historyAttachments: replay?.historyAttachments,
-                latestAttachments: promptAttachments,
-                supportsImageInput: input.supportsImageInput,
-                supportsImageRelay: input.supportsImageRelay
-              })
-            }
-          : replay,
+      replay: promptMedia
+        ? { ...replay, historyAttachments: promptMedia.historyAttachments }
+        : replay,
       continuation,
       turnIntent: input.turnIntent,
       accepted: () => prepared.acceptPrompt(appended.messageId)

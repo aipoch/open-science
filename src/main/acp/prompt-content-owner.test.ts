@@ -377,6 +377,59 @@ describe('AcpPromptContentOwner', () => {
     expect(finalizeUploads).not.toHaveBeenCalled()
   })
 
+  it('inlines a current Version owned by another Session in the same Project', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const [staged] = await stageUploadFixtures(uploads, {
+      files: [
+        {
+          name: 'measurements.csv',
+          mimeType: 'text/csv',
+          content: Buffer.from('id,value\n1,2\n').toString('base64')
+        }
+      ]
+    })
+    const [sourceOwned] = await uploads.finalizePendingSessionUploads(
+      'source-session',
+      [staged],
+      'default-project'
+    )
+    const currentUpload = {
+      ...sourceOwned,
+      versionId: 'upload-version-source',
+      versionNumber: 1
+    }
+    const finalizeUploads = vi.spyOn(uploads, 'finalizePendingSessionUploads')
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads })
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'target-session',
+      projectId: 'default-project',
+      text: 'analyze the uploaded table',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [currentUpload],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    expect(finalizeUploads).not.toHaveBeenCalled()
+    expect(contentBlocks(result.content)).toEqual([
+      { type: 'text', text: 'analyze the uploaded table' },
+      expect.objectContaining({
+        type: 'resource',
+        resource: expect.objectContaining({ text: 'id,value\n1,2\n' })
+      })
+    ])
+    expect(result.turnInputs?.uploads.map((upload) => upload.versionId)).toEqual([
+      'upload-version-source'
+    ])
+  })
+
   it('owns cumulative image budget per Session and releases it on resetSession and clear', async () => {
     const root = await createRoot()
     const uploads = new UploadRepository(root)

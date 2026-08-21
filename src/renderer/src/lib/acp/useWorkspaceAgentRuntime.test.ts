@@ -6644,7 +6644,7 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[3]).toEqual(['skill-forecast'])
   })
 
-  it('routes a cross-session source Upload Version through history after branching', async () => {
+  it('routes a cross-session source Upload Version as a current attachment after branching', async () => {
     const sourceUpload = {
       id: 'upload-source',
       versionId: 'upload-version-source',
@@ -6700,14 +6700,14 @@ describe('resendEditedWorkspaceMessage', () => {
 
     expect(resent).toBe(true)
     expect(finalizeSession).not.toHaveBeenCalled()
-    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([])
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
       expect.objectContaining({
         id: 'upload-source',
         versionId: 'upload-version-source',
         path: 'upload-version:default-project/source-session/upload-version-source'
       })
     ])
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
 
     const editedSession = useSessionStore.getState().sessions[0]
     expect(editedSession.messages.at(-1)).toMatchObject({
@@ -6778,6 +6778,10 @@ describe('resendEditedWorkspaceMessage', () => {
     ).resolves.toBe(true)
     await flushRuntimeTasks()
 
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]?.map((attachment) => attachment.id)).toEqual([
+      'edited-0',
+      'edited-1'
+    ])
     expect(runtime.sendPrompt.mock.calls[0]?.[6]?.map((attachment) => attachment.id)).toEqual([
       'history-2',
       'history-3',
@@ -6786,9 +6790,7 @@ describe('resendEditedWorkspaceMessage', () => {
       'history-6',
       'history-7',
       'history-8',
-      'history-9',
-      'edited-0',
-      'edited-1'
+      'history-9'
     ])
     const editedSession = useSessionStore.getState().sessions[0]
     expect(editedSession.messages.at(-1)?.uploads).toHaveLength(editedUploads.length)
@@ -6867,10 +6869,10 @@ describe('resendEditedWorkspaceMessage', () => {
     ).resolves.toBe(true)
     await flushRuntimeTasks()
 
-    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([])
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
       expect.objectContaining({ id: 'notes', name: 'notes.txt' })
     ])
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
     expect(useSessionStore.getState().sessions[0].messages.at(-1)?.uploads).toHaveLength(2)
   })
 
@@ -6938,6 +6940,10 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(finalizeSession).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'source-session' })
     )
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
+      expect.objectContaining({ versionId: 'legacy-upload-version-1' })
+    ])
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
 
     const editedSession = useSessionStore.getState().sessions[0]
     const originalRevision = editedSession.conversationGraph?.messages.find(
