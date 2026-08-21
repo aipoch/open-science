@@ -56,6 +56,7 @@ describe('MemoryService', () => {
     await expect(service.searchForAgent({ query: 'concise', limit: 5 })).rejects.toThrow(
       'Memory is turned off.'
     )
+    await expect(service.recallForPrompt('concise')).resolves.toBeUndefined()
     await expect(
       service.rememberForAgent(
         { categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID, content: 'Agent-authored fact.' },
@@ -105,6 +106,48 @@ describe('MemoryService', () => {
     await expect(
       client.$queryRawUnsafe<Array<{ secure_delete: bigint }>>('PRAGMA secure_delete')
     ).resolves.toEqual([{ secure_delete: 1n }])
+  })
+
+  it('orders entries within each category by most recently updated first', async () => {
+    const service = createService()
+    await client.memoryEntry.createMany({
+      data: [
+        {
+          id: 'entry-oldest',
+          categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+          content: 'Oldest memory',
+          contentKey: 'oldest memory',
+          origin: 'user',
+          updatedAt: new Date('2026-01-01T00:00:00.000Z')
+        },
+        {
+          id: 'entry-newest',
+          categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+          content: 'Newest memory',
+          contentKey: 'newest memory',
+          origin: 'user',
+          updatedAt: new Date('2026-03-01T00:00:00.000Z')
+        },
+        {
+          id: 'entry-middle',
+          categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+          content: 'Middle memory',
+          contentKey: 'middle memory',
+          origin: 'user',
+          updatedAt: new Date('2026-02-01T00:00:00.000Z')
+        }
+      ]
+    })
+
+    const aboutYou = (await service.snapshot()).categories.find(
+      ({ id }) => id === ABOUT_YOU_MEMORY_CATEGORY_ID
+    )!
+
+    expect(aboutYou.entries.map(({ id }) => id)).toEqual([
+      'entry-newest',
+      'entry-middle',
+      'entry-oldest'
+    ])
   })
 
   it('enforces the 10 custom category limit under concurrent requests', async () => {
@@ -258,15 +301,59 @@ describe('MemoryService', () => {
     ).resolves.toEqual([expect.objectContaining({ content: 'tailkeyword preference' })])
   })
 
-  it('does not auto-recall unrelated memories through short ASCII words', async () => {
+  it('backfills recent opted-in memories when the request has no lexical match', async () => {
     const service = createService()
-    await service.createEntry({
-      categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
-      content: 'Protein in solution uses room temperature.'
+    const enabledSnapshot = await service.createCategory({
+      name: 'Working preferences',
+      guidance: 'Keep durable working preferences available.',
+      autoRecall: true
+    })
+    const disabledSnapshot = await service.createCategory({
+      name: 'Private archive',
+      guidance: 'Search only when explicitly requested.',
+      autoRecall: false
+    })
+    const enabledCategory = enabledSnapshot.categories.find(
+      (category) => 'name' in category && category.name === 'Working preferences'
+    )!
+    const disabledCategory = disabledSnapshot.categories.find(
+      (category) => 'name' in category && category.name === 'Private archive'
+    )!
+    await client.memoryEntry.createMany({
+      data: [
+        {
+          id: 'about-older',
+          categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+          content: '回答时保持亲切。',
+          contentKey: '回答时保持亲切。',
+          origin: 'user',
+          updatedAt: new Date('2026-01-01T00:00:00.000Z')
+        },
+        {
+          id: 'enabled-recent',
+          categoryId: enabledCategory.id,
+          content: '优先给出直接结论。',
+          contentKey: '优先给出直接结论。',
+          origin: 'user',
+          updatedAt: new Date('2026-02-01T00:00:00.000Z')
+        },
+        {
+          id: 'disabled-newest',
+          categoryId: disabledCategory.id,
+          content: '这条记录只允许显式搜索。',
+          contentKey: '这条记录只允许显式搜索。',
+          origin: 'user',
+          updatedAt: new Date('2026-03-01T00:00:00.000Z')
+        }
+      ]
     })
     await service.setEnabled({ enabled: true })
 
-    await expect(service.recallForPrompt('Analyze settings in R')).resolves.toBeUndefined()
+    const recalled = await service.recallForPrompt('Please continue with the task.')
+    const encodedRecords = recalled?.match(/<memory_records>(.*)<\/memory_records>/u)?.[1]
+    const records = JSON.parse(encodedRecords ?? '[]') as Array<{ id: string }>
+
+    expect(records.map(({ id }) => id)).toEqual(['enabled-recent', 'about-older'])
   })
 
   it('preserves repository relevance order and deduplicates automatic recall content', async () => {

@@ -176,8 +176,9 @@ Clear all should delete every entry and every custom category while preserving t
 category and the global enabled state. Category deletion must disclose the number of entries it will
 delete and require UI confirmation.
 
-Auto-recall must be selective, not "inject every enabled entry": search only auto-recall categories
-against the current user request, cap result count and total characters, deduplicate, and return stable
+Auto-recall must be selective, not "inject every enabled entry": search auto-recall categories
+against the current user request first, then fill unused result slots with the most recently updated
+eligible entries. Cap the merged result count and total characters, deduplicate, and return stable
 entry ids. A category with auto-recall off remains searchable through the agent tool. If the current
 framework cannot carry recalled data at an untrusted/data precedence, omit host auto-injection for
 that framework and rely on explicit search rather than placing memories in a system/developer prompt.

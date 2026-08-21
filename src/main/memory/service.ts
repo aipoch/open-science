@@ -201,16 +201,20 @@ class MemoryService {
     return this.enqueue(async () => {
       if (!(await this.repository.isEnabled()) || !requestText.trim()) return undefined
       const seenContent = new Set<string>()
-      const matches = (
-        await this.search(requestText, MEMORY_SEARCH_CANDIDATE_LIMIT, undefined, true)
-      )
-        .filter((match) => {
-          const key = normalizeSearchText(match.content)
-          if (seenContent.has(key)) return false
+      const matches: MemoryAgentResult[] = []
+      const appendDistinct = (candidates: readonly MemoryAgentResult[]): void => {
+        for (const candidate of candidates) {
+          if (matches.length >= 5) return
+          const key = normalizeSearchText(candidate.content)
+          if (seenContent.has(key)) continue
           seenContent.add(key)
-          return true
-        })
-        .slice(0, 5)
+          matches.push(candidate)
+        }
+      }
+      appendDistinct(await this.search(requestText, MEMORY_SEARCH_CANDIDATE_LIMIT, undefined, true))
+      if (matches.length < 5) {
+        appendDistinct((await this.repository.recentAutoRecallCandidates()).map(toAgentResult))
+      }
       if (matches.length === 0) return undefined
       let remaining = MEMORY_AUTO_RECALL_CONTENT_LIMIT
       const bounded = matches.flatMap((match) => {

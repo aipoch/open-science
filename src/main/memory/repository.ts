@@ -139,7 +139,7 @@ class MemoryRepository {
     const [settings, categories] = await Promise.all([
       client.memorySettings.findUniqueOrThrow({ where: { id: MEMORY_SETTINGS_ID } }),
       client.memoryCategory.findMany({
-        include: { entries: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
+        include: { entries: { orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }] } },
         orderBy: [{ systemKey: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }]
       })
     ])
@@ -304,6 +304,17 @@ class MemoryRepository {
     return this.mutate(async (client) => {
       await client.memoryEntry.deleteMany()
       await client.memoryCategory.deleteMany({ where: { systemKey: null } })
+    })
+  }
+
+  async recentAutoRecallCandidates(): Promise<MemorySearchCandidate[]> {
+    const client = await this.getClient()
+    await this.enableSecureDelete(client)
+    return client.memoryEntry.findMany({
+      where: { category: { autoRecall: true } },
+      include: { category: { select: { id: true, name: true, systemKey: true } } },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      take: MEMORY_SEARCH_CANDIDATE_LIMIT
     })
   }
 

@@ -139,6 +139,31 @@ test('persists editable memory across an application restart', async ({ app }) =
   await expect(settings.getByText('Prefers reproducible and concise experiments.')).toBeVisible()
 })
 
+test('injects recent auto-recall memory into an unrelated Agent turn', async ({ app }) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const aboutYou = snapshot.categories.find(
+      (category) => 'systemKey' in category && category.systemKey === 'about-you'
+    )
+    if (!aboutYou) throw new Error('About you category was not seeded.')
+    await window.api.memory.createEntry({
+      categoryId: aboutYou.id,
+      content: 'Keep every response concise and welcoming.'
+    })
+    await window.api.memory.setEnabled({ enabled: true })
+  })
+
+  await page.getByRole('button', { name: 'New project' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill('Memory recall project')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify automatic memory recall.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText('Automatic memory recall reached the provider.')).toBeVisible()
+})
+
 test('contains long memory lists and layers destructive confirmations above settings', async ({
   app
 }, testInfo) => {
@@ -181,14 +206,15 @@ test('contains long memory lists and layers destructive confirmations above sett
 
   await settings.getByRole('button', { name: 'About you', exact: false }).click()
   const entryList = settings.locator('[data-slot="memory-entry-list"]')
-  await expect(settings.getByText('Overflow note 24')).toBeAttached()
+  const entries = entryList.locator('[data-slot="memory-entry"]')
+  await expect(entries.first()).toContainText('Overflow note 24')
   await expect
     .poll(() => entryList.evaluate((element) => element.scrollHeight > element.clientHeight))
     .toBe(true)
   await entryList.evaluate((element) => {
     element.scrollTop = element.scrollHeight
   })
-  await expect(settings.getByText('Overflow note 24')).toBeVisible()
+  await expect(settings.getByText('Overflow note 01')).toBeVisible()
   await expect
     .poll(() =>
       entryList
@@ -207,6 +233,9 @@ test('contains long memory lists and layers destructive confirmations above sett
   await page.screenshot({ path: testInfo.outputPath('memory-clear-confirmation.png') })
   await clearDialog.getByRole('button', { name: 'Cancel' }).click()
 
+  await entryList.evaluate((element) => {
+    element.scrollTop = 0
+  })
   const lastNote = settings.getByText('Overflow note 24')
   const lastNoteRow = settings
     .locator('[data-slot="memory-entry"]')
