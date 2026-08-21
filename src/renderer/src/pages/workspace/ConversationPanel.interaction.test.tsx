@@ -442,6 +442,7 @@ const createPanelDefaults = (): PanelProps => ({
     },
     actions: {
       selectSpecialist: vi.fn(),
+      retrySpecialistSelection: vi.fn(() => false),
       chooseOtherSpecialist: vi.fn(),
       useMainAgent: vi.fn()
     }
@@ -632,6 +633,80 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   container.remove()
+})
+
+describe('ConversationPanel Specialist reconfigure recovery', () => {
+  const activeSession: ChatSession = {
+    id: 'session-specialist-retry',
+    projectId: 'project-a',
+    title: 'Specialist retry',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+
+  const clickRetry = (): void => {
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    const retryButton = Array.from(banner?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Retry'
+    )
+    act(() => retryButton?.click())
+  }
+
+  const errorView = {
+    sessionId: activeSession.id,
+    specialistName: 'Specialist B',
+    message: 'switch rejected',
+    committed: false
+  }
+
+  it('retries an idle Specialist selection without submitting the draft', () => {
+    const retrySpecialistSelection = vi.fn(() => true)
+    const retryDraftReconfigure = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: errorView } },
+        actions: { retrySpecialistSelection }
+      },
+      conversation: {
+        actions: {
+          submit: { draft: routeDraftSubmit({ reconfigure: retryDraftReconfigure }) }
+        }
+      }
+    })
+
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain('Could not switch to Specialist B')
+    clickRetry()
+
+    expect(retrySpecialistSelection).toHaveBeenCalledOnce()
+    expect(retryDraftReconfigure).not.toHaveBeenCalled()
+  })
+
+  it('keeps send-barrier Retry routed through draft submission', () => {
+    const retrySpecialistSelection = vi.fn(() => false)
+    const retryDraftReconfigure = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: errorView } },
+        actions: { retrySpecialistSelection }
+      },
+      conversation: {
+        actions: {
+          submit: { draft: routeDraftSubmit({ reconfigure: retryDraftReconfigure }) }
+        }
+      }
+    })
+
+    clickRetry()
+
+    expect(retrySpecialistSelection).toHaveBeenCalledOnce()
+    expect(retryDraftReconfigure).toHaveBeenCalledOnce()
+  })
 })
 
 describe('ConversationPanel composer intake', () => {

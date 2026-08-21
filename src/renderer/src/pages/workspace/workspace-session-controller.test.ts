@@ -310,6 +310,93 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.barrierInFlight).toBe(false)
   })
 
+  it('exposes feedback when an idle Session Specialist switch rejects', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const setSessionSpecialist = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('switch rejected'))
+      .mockResolvedValueOnce({ status: 'applied' as const, contextReset: false })
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [
+        specialist('specialist-a', 'Specialist A'),
+        specialist('specialist-b', 'Specialist B')
+      ]
+    })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+
+    expect(hook.result.current.view.specialist.reconfigureError).toMatchObject({
+      specialistName: 'Specialist B',
+      message: 'switch rejected',
+      committed: false
+    })
+    expect(hook.result.current.view.specialist.barrierInFlight).toBe(false)
+
+    await act(async () => {
+      expect(hook.result.current.actions.retrySpecialistSelection()).toBe(true)
+      await Promise.resolve()
+    })
+
+    expect(setSessionSpecialist).toHaveBeenCalledTimes(2)
+    expect(setSessionSpecialist).toHaveBeenLastCalledWith({
+      sessionId: active.id,
+      specialistId: 'specialist-b'
+    })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-b')
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+  })
+
+  it('keeps recovery available when switching back to Main Agent rejects', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const setSessionSpecialist = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('specialist switch rejected'))
+      .mockRejectedValueOnce(new Error('main switch rejected'))
+      .mockResolvedValueOnce({ status: 'applied' as const, contextReset: false })
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [
+        specialist('specialist-a', 'Specialist A'),
+        specialist('specialist-b', 'Specialist B')
+      ]
+    })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+    await act(async () => {
+      hook.result.current.actions.useMainAgent()
+      await Promise.resolve()
+    })
+
+    expect(setSessionSpecialist).toHaveBeenLastCalledWith({
+      sessionId: active.id,
+      specialistId: undefined
+    })
+    expect(hook.result.current.view.specialist.reconfigureError).toMatchObject({
+      specialistName: 'Main Agent',
+      message: 'main switch rejected',
+      committed: false
+    })
+    await act(async () => {
+      expect(hook.result.current.actions.retrySpecialistSelection()).toBe(true)
+      await Promise.resolve()
+    })
+    expect(setSessionSpecialist).toHaveBeenCalledTimes(3)
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+  })
+
   it('coordinates duplicate deletion through the composer transaction boundary', async () => {
     const active = session()
     const deletion = deferred<SessionDeletionResult>()

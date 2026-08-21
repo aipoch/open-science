@@ -31,6 +31,7 @@ import {
   compareHandoffEventOrder,
   pendingSpecialistReconfigureError,
   specialistNameFor,
+  useWorkspaceSpecialistReconfiguration,
   type WorkspaceSpecialistReconfigureError as ReconfigureError
 } from './workspace-specialist-reconfiguration'
 
@@ -108,6 +109,7 @@ type WorkspaceSessionController = {
     openJobList: (sessionId: string) => void
     closeJobList: () => void
     selectSpecialist: (specialistId: string | undefined) => void
+    retrySpecialistSelection: () => boolean
     resetNewConversationSpecialist: () => void
     beginReconfigureRetry: () => boolean
     chooseOtherSpecialist: () => void
@@ -152,21 +154,20 @@ const useWorkspaceSessionController = ({
     (state) => state.markSpecialistSwitchResetRequired
   )
   const enqueueSessionArchive = useArchiveUndoStore((state) => state.enqueueSession)
-
   const [newConversationSpecialistId, setNewConversationSpecialistId] = useState<
     string | undefined
   >(undefined)
   const [pendingSpecialists, setPendingSpecialists] = useState<Record<string, string | undefined>>(
     {}
   )
-  const [reconfigureError, setReconfigureError] = useState<ReconfigureError | null>(null)
+  const reconfiguration = useWorkspaceSpecialistReconfiguration(specialistItems)
+  const { error: reconfigureError, setError: setReconfigureError } = reconfiguration
   const barrierInFlightIds = useSyncExternalStore(
     subscribeWorkspaceSpecialistBarriers,
     getWorkspaceSpecialistBarrierSnapshot,
     getWorkspaceSpecialistBarrierSnapshot
   )
   const specialistItemsRef = useRef(specialistItems)
-
   const [exportError, setExportError] = useState<string | null>(null)
   const [renameDialog, setRenameDialog] = useState<{
     session: ChatSession
@@ -344,6 +345,7 @@ const useWorkspaceSessionController = ({
     }
     const sessionId = activeSession.id
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
+    reconfiguration.clearIdleRetry()
     const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
@@ -367,6 +369,7 @@ const useWorkspaceSessionController = ({
         })
         .catch((error: unknown) => {
           console.warn('setSessionSpecialist failed', error)
+          reconfiguration.recordIdleFailure(sessionId, specialistId, errorMessage(error))
         })
         .finally(() => setBarrier(sessionId, false))
     }
@@ -482,6 +485,7 @@ const useWorkspaceSessionController = ({
   const chooseOtherSpecialist = (): void => {
     if (!activeSession || !reconfigureError) return
     clearPending(activeSession.id)
+    reconfiguration.clearIdleRetry()
     setReconfigureError(null)
   }
 
@@ -490,6 +494,7 @@ const useWorkspaceSessionController = ({
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
     if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
+    reconfiguration.clearIdleRetry()
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
@@ -508,6 +513,7 @@ const useWorkspaceSessionController = ({
       })
       .catch((error: unknown) => {
         console.warn('setSessionSpecialist (none) failed', error)
+        reconfiguration.recordIdleFailure(sessionId, undefined, errorMessage(error))
       })
       .finally(() => setBarrier(sessionId, false))
   }
@@ -531,7 +537,7 @@ const useWorkspaceSessionController = ({
             activeSession.specialistId
           )
     )
-  }, [activeSession, specialistItems])
+  }, [activeSession, setReconfigureError, specialistItems])
 
   useEffect(() => {
     if (typeof window.api?.specialist?.list !== 'function') return
@@ -667,6 +673,8 @@ const useWorkspaceSessionController = ({
       openJobList: (sessionId: string) => setJobListDialog({ open: true, sessionId }),
       closeJobList: () => setJobListDialog((current) => ({ ...current, open: false })),
       selectSpecialist,
+      retrySpecialistSelection: () =>
+        reconfiguration.retryIdle(activeSession?.id, selectSpecialist),
       resetNewConversationSpecialist: () => setNewConversationSpecialistId(undefined),
       beginReconfigureRetry,
       chooseOtherSpecialist,

@@ -241,7 +241,7 @@ type ConversationPanelSpecialist = {
   }
   actions: Pick<
     WorkspaceSessionController['actions'],
-    'selectSpecialist' | 'chooseOtherSpecialist' | 'useMainAgent'
+    'selectSpecialist' | 'retrySpecialistSelection' | 'chooseOtherSpecialist' | 'useMainAgent'
   >
 }
 
@@ -459,8 +459,10 @@ const ConversationPanel = ({
   const onBranchInNewSession = activeSession
     ? (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds, mode: 'branch' })
     : undefined
-  const onReconfigureRetry = (): void =>
+  const onReconfigureRetry = (): void => {
+    if (specialist.actions.retrySpecialistSelection()) return
     submitDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
+  }
 
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
