@@ -69,7 +69,12 @@ describe('toCustomMcpConfig', () => {
       displayName: 'OAuth Server',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
-      oauth: { scopes: ['openid'] },
+      oauth: {
+        scopes: ['openid'],
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client'
+      },
+      oauthClientSecret: 'registered-secret',
       oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } },
       enabled: true
     }
@@ -85,6 +90,9 @@ describe('toCustomMcpConfig', () => {
       headers: undefined,
       oauth: {
         scopes: ['openid'],
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        clientSecret: 'registered-secret',
         state: { tokens: { access_token: 'access', token_type: 'Bearer' } }
       }
     })

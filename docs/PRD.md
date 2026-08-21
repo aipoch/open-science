@@ -110,8 +110,9 @@ This boundary preserves the current surface asymmetry; it is not a parity roadma
   `host.agents` capability remains separate and is not expanded into new Web or CLI management UI.
 - Permission management remains available on Electron and Web. Task/CLI retain only their current
   permission-profile and event subset.
-- Compute management remains available on Electron and local Web. Remote Web continues to reject
-  download/reveal operations, and CLI/Task have no direct Compute management API.
+- Compute Host management remains available on Electron and local Web. Remote Web continues to
+  reject download/reveal operations. CLI/Task may select already-configured Compute Hosts as
+  Session execution targets, but cannot create, edit, probe, authenticate, or delete hosts.
 - Web and Task invoke transport-neutral application commands directly. Electron continues to use
   typed IPC adapters; no Web or Task path captures or synthesizes an Electron sender.
 

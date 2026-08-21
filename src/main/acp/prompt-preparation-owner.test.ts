@@ -208,6 +208,23 @@ describe('AcpPromptPreparationOwner', () => {
     expect(fixture.turn.fail).not.toHaveBeenCalled()
   })
 
+  it('puts the selected Compute execution target into Skill selection and the Turn prefix', async () => {
+    const fixture = setup()
+
+    const handle = await fixture.prepare({ selectedComputeHostIds: ['ssh:cedar-gpu'] })
+
+    expect(handle.status).toBe('ready')
+    expect(fixture.turnSkill.prepareProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectionText: expect.stringContaining('call `host.compute.listHosts()`')
+      })
+    )
+    if (handle.status !== 'ready') throw new Error('expected a ready prompt')
+    expect(handle.promptPrefix).toContain('<open_science_compute_execution_target>')
+    expect(handle.promptPrefix).toContain('Do not run task work in the local Notebook or shell')
+    expect(handle.promptPrefix).not.toContain('ssh:cedar-gpu')
+  })
+
   it('stops a superseded prompt after stalled content preparation and releases its grant', async () => {
     const fixture = setup()
     let resolveContent!: () => void

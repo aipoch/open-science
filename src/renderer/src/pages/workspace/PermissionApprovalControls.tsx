@@ -312,10 +312,6 @@ const PermissionCodeSection = ({
   )
 }
 
-// Per-session env-name lookups, cached so every prompt in the same chat reuses a single read.
-// Keyed by sessionId + kernel kind so a python badge and an R badge never share a stale answer.
-const notebookEnvCache = new Map<string, Promise<string | undefined>>()
-
 // Resolves the environment a session's notebook kernel of the requested kind runs in, best-known
 // first: the matching live kernel, then the latest matching run, and finally the enabled runtime
 // from Settings → Runtimes (what a kernel of that kind started now would bind).
@@ -372,12 +368,7 @@ const useNotebookEnvironment = (
   useEffect(() => {
     if (!lookup || !key || !kernelKind) return
     let cancelled = false
-    let cached = notebookEnvCache.get(key)
-    if (!cached) {
-      cached = lookupNotebookEnvironment(lookup, kernelKind)
-      notebookEnvCache.set(key, cached)
-    }
-    void cached.then((name) => {
+    void lookupNotebookEnvironment(lookup, kernelKind).then((name) => {
       if (!cancelled) setEnvironment({ key, name })
     })
     return () => {

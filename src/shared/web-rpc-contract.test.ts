@@ -74,6 +74,8 @@ describe('Web RPC contract', () => {
       'compute.enabledHostsGet',
       'compute.enabledHostsSet',
       'compute.get',
+      'compute.hostEnabledSet',
+      'compute.hostSelectedSet',
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',

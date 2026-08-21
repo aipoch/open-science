@@ -91,6 +91,7 @@ const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
   'branchSource',
   'delegationPolicy',
   'enabledComputeHosts',
+  'selectedComputeHosts',
   'specialistId',
   'specialistBindingPending'
 ])

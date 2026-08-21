@@ -18,7 +18,6 @@ type ComputeHostDeletionDependencies = Readonly<{
   jobRepository?: ComputeJobRepository
   permissionGrantRegistry?: PermissionGrantRegistry
   hostLifecycle?: ComputeHostLifecycle
-  syncComputeSkillDocument?: () => Promise<void>
 }>
 
 type DeleteComputeHostOptions = Readonly<{ allowPasswordCredentialDeletion: boolean }>
@@ -34,8 +33,7 @@ const deleteComputeHost = async (
     connectionBroker,
     jobRepository,
     permissionGrantRegistry,
-    hostLifecycle,
-    syncComputeSkillDocument
+    hostLifecycle
   } = dependencies
   await jobRepository?.beginProviderDeletion?.(providerId)
   await connectionBroker.beginHostDeletion(providerId)
@@ -72,13 +70,6 @@ const deleteComputeHost = async (
           'compute permission grant projection finalization after host deletion failed',
           errorLogFields(error)
         )
-      }
-      try {
-        await syncComputeSkillDocument?.()
-      } catch (error) {
-        log.warn('compute skill sync after host deletion failed', errorLogFields(error))
-      } finally {
-        hostLifecycle?.requestSkillRuntimeReload?.()
       }
     } finally {
       approvalBroker.completeProviderInvalidation(providerId)

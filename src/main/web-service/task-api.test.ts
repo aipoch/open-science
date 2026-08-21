@@ -4,6 +4,13 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
+import {
+  sessionComputeHostAccess,
+  transitionSessionComputeHostAccess,
+  type SessionComputeHostAccessMutation
+} from '../compute/session-compute-host-access'
+import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import type { TaskAgentPort } from '../tasks/task-runner'
 import { HeadlessTaskApi } from './task-api'
 
@@ -53,7 +60,168 @@ const commandsFrom = (
   invoke: (channel, invocation) => invoke(channel, invocation.callerContext, [...invocation.args])
 })
 
+const createComputePreferenceHarness = (
+  existingSession?: PersistedChatSession
+): {
+  api: HeadlessTaskApi
+  agent: TaskAgentMock
+  durableSessions: Map<string, PersistedChatSession>
+  registry: EnabledComputeHostsRegistry
+  saveSession: MockedFunction<(session: PersistedChatSession) => Promise<void>>
+} => {
+  const durableSessions = new Map<string, PersistedChatSession>()
+  if (existingSession) durableSessions.set(existingSession.id, structuredClone(existingSession))
+
+  const saveSession = vi.fn(async (value: PersistedChatSession) => {
+    durableSessions.set(value.id, structuredClone(value))
+  })
+  const ownerRef: { current?: SessionEnabledComputeHostsOwner } = {}
+  const invoke = vi.fn(async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+    if (channel === 'projects:list') return [project]
+    if (channel === 'sessions:load-all') {
+      return {
+        sessions: [...durableSessions.values()].map((session) => structuredClone(session)),
+        manifest: { version: 1 }
+      }
+    }
+    if (channel === 'sessions:save-session') {
+      const session = args[0] as PersistedChatSession
+      if (!durableSessions.has(session.id)) {
+        return ownerRef.current!.createSession(session, async (candidate) => {
+          await saveSession(candidate)
+          return candidate
+        })
+      }
+      await saveSession(session)
+      return session
+    }
+    throw new Error(`Unexpected Task command: ${channel}`)
+  })
+  const registry = new EnabledComputeHostsRegistry()
+  const owner = new SessionEnabledComputeHostsOwner({
+    registry,
+    hostExists: async (providerId) => ['ssh:kept', 'ssh:alpha', 'ssh:beta'].includes(providerId),
+    listHostIds: async () => ['ssh:kept', 'ssh:alpha', 'ssh:beta'],
+    sessionAuthority: {
+      sessionProjectId: async (sessionId) => durableSessions.get(sessionId)?.projectId,
+      setSessionEnabledComputeHosts: async (projectId, sessionId, providerIds) => {
+        const session = durableSessions.get(sessionId)
+        if (!session || session.projectId !== projectId) {
+          throw new Error(`Session not found: ${sessionId}`)
+        }
+        const committed = { ...session, enabledComputeHosts: [...providerIds] }
+        durableSessions.set(sessionId, structuredClone(committed))
+        return committed
+      },
+      mutateSessionComputeHostAccess: async (
+        projectId: string,
+        sessionId: string,
+        mutation: SessionComputeHostAccessMutation
+      ) => {
+        const session = durableSessions.get(sessionId)
+        if (!session || session.projectId !== projectId) {
+          throw new Error(`Session not found: ${sessionId}`)
+        }
+        const access = transitionSessionComputeHostAccess(
+          sessionComputeHostAccess(session),
+          mutation
+        )
+        const committed = {
+          ...session,
+          enabledComputeHosts: [...access.enabledProviderIds],
+          selectedComputeHosts: [...access.selectedProviderIds]
+        }
+        durableSessions.set(sessionId, structuredClone(committed))
+        return committed
+      },
+      pruneSessionEnabledComputeHosts: async () => ({ sessions: [], previousSelections: [] })
+    },
+    withDataRootWrite: (operation) => operation()
+  })
+  ownerRef.current = owner
+  if (existingSession) owner.project(existingSession)
+
+  const agent = createAgent({
+    createSession: vi.fn(async () => ({ sessionId: 'session-created', cwd: '/workspace' }))
+  })
+  let nextId = 0
+  const api = new HeadlessTaskApi(
+    { commands: commandsFrom(invoke), agent, computePreferences: owner },
+    { createId: () => `task-id-${++nextId}`, now: () => 10 }
+  )
+  return { api, agent, durableSessions, registry, saveSession }
+}
+
 describe('HeadlessTaskApi adapter', () => {
+  it('creates a new Session when persistence and Task share one Compute preference owner', async () => {
+    const durableSessions = new Map<string, PersistedChatSession>()
+    const registry = new EnabledComputeHostsRegistry()
+    let newSessionSaveEntries = 0
+    let durableCommitCalls = 0
+    const ownerRef: { current?: SessionEnabledComputeHostsOwner } = {}
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') {
+          return { sessions: [...durableSessions.values()], manifest: { version: 1 } }
+        }
+        if (channel === 'sessions:save-session') {
+          const session = args[0] as PersistedChatSession
+          if (!durableSessions.has(session.id)) newSessionSaveEntries += 1
+          const durable = durableSessions.has(session.id)
+            ? session
+            : await ownerRef.current!.createSession(session, async (candidate) => {
+                durableCommitCalls += 1
+                durableSessions.set(candidate.id, structuredClone(candidate))
+                return candidate
+              })
+          durableSessions.set(durable.id, structuredClone(durable))
+          return durable
+        }
+        throw new Error(`Unexpected Task command: ${channel}`)
+      }
+    )
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async (providerId) => providerId === 'ssh:alpha',
+      listHostIds: async () => ['ssh:alpha'],
+      sessionAuthority: {
+        sessionProjectId: async (sessionId) => durableSessions.get(sessionId)?.projectId,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('Unexpected existing Session update.')
+        },
+        pruneSessionEnabledComputeHosts: async () => ({ sessions: [], previousSelections: [] })
+      },
+      withDataRootWrite: (operation) => operation()
+    })
+    ownerRef.current = owner
+    const api = new HeadlessTaskApi(
+      {
+        commands: commandsFrom(invoke),
+        agent: createAgent({
+          createSession: vi.fn(async () => ({ sessionId: 'session-created', cwd: '/workspace' }))
+        }),
+        computePreferences: owner
+      },
+      { createId: () => 'task-id', now: () => 10 }
+    )
+
+    const outcome = await api.startRun({
+      project: project.id,
+      prompt: 'Research this.',
+      computeHostIds: ['ssh:alpha']
+    })
+
+    expect(outcome).toMatchObject({ sessionId: 'session-created' })
+    expect(newSessionSaveEntries).toBe(1)
+    expect(durableCommitCalls).toBe(1)
+    expect(durableSessions.get('session-created')?.enabledComputeHosts).toEqual(['ssh:alpha'])
+    expect(durableSessions.get('session-created')?.selectedComputeHosts).toEqual(['ssh:alpha'])
+    expect(registry.getEnabled('session-created')).toEqual(['ssh:alpha'])
+    expect(registry.getSelected('session-created')).toEqual(['ssh:alpha'])
+    await api.dispose()
+  }, 1_000)
+
   it('dispatches façade operations through the narrow Task command view', async () => {
     const commandInvoke = vi.fn(async () => [
       { ...project, agentContext: 'Do not expose this instruction.' }
@@ -78,6 +246,145 @@ describe('HeadlessTaskApi adapter', () => {
       })
     )
   })
+
+  it.each([
+    { label: 'omits an unspecified preference', request: {}, expected: [] },
+    {
+      label: 'commits an explicit empty preference',
+      request: { computeHostIds: [] },
+      expected: []
+    },
+    {
+      label: 'deduplicates a replacement in first-occurrence order',
+      request: { computeHostIds: ['ssh:beta', 'ssh:alpha', 'ssh:beta'] },
+      expected: ['ssh:beta', 'ssh:alpha']
+    }
+  ])(
+    '$label for a new Session through the Compute preference authority',
+    async ({ request, expected }) => {
+      const h = createComputePreferenceHarness()
+
+      const started = await h.api.startRun({
+        project: project.id,
+        prompt: 'Research this.',
+        ...request
+      })
+      const completed = await h.api.waitForRun(started.id)
+
+      expect(started.preferredComputeHostIds).toEqual(expected)
+      expect(completed.preferredComputeHostIds).toEqual(expected)
+      expect(h.durableSessions.get(started.sessionId)?.enabledComputeHosts).toEqual(
+        'computeHostIds' in request ? expected : undefined
+      )
+      expect(h.durableSessions.get(started.sessionId)?.selectedComputeHosts).toEqual(
+        'computeHostIds' in request ? expected : undefined
+      )
+      expect(h.registry.getEnabled(started.sessionId)).toEqual(expected)
+      expect(h.registry.getSelected(started.sessionId)).toEqual(expected)
+      await h.api.dispose()
+    }
+  )
+
+  it.each([
+    {
+      label: 'preserves an omitted preference',
+      request: {},
+      expected: ['ssh:kept'],
+      expectedEnabled: ['ssh:kept', 'ssh:available']
+    },
+    {
+      label: 'clears an explicit empty preference',
+      request: { computeHostIds: [] },
+      expected: [],
+      expectedEnabled: ['ssh:kept', 'ssh:available']
+    },
+    {
+      label: 'replaces and deduplicates in first-occurrence order',
+      request: { computeHostIds: ['ssh:beta', 'ssh:alpha', 'ssh:beta'] },
+      expected: ['ssh:beta', 'ssh:alpha'],
+      expectedEnabled: ['ssh:kept', 'ssh:available', 'ssh:beta', 'ssh:alpha']
+    }
+  ])(
+    '$label for a continued Session through the Compute preference authority',
+    async ({ request, expected, expectedEnabled }) => {
+      const existing: PersistedChatSession = {
+        id: 'session-existing',
+        projectId: project.id,
+        title: 'Existing research',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        enabledComputeHosts: ['ssh:kept', 'ssh:available'],
+        selectedComputeHosts: ['ssh:kept'],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      const h = createComputePreferenceHarness(existing)
+
+      const started = await h.api.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Continue this research.',
+        ...request
+      })
+      const completed = await h.api.waitForRun(started.id)
+
+      expect(h.durableSessions.get(existing.id)?.enabledComputeHosts).toEqual(expectedEnabled)
+      expect(h.durableSessions.get(existing.id)?.selectedComputeHosts).toEqual(expected)
+      expect(h.registry.getEnabled(existing.id)).toEqual(expectedEnabled)
+      expect(h.registry.getSelected(existing.id)).toEqual(expected)
+      expect(started.preferredComputeHostIds).toEqual(expected)
+      expect(completed.preferredComputeHostIds).toEqual(expected)
+      await h.api.dispose()
+    }
+  )
+
+  it.each([
+    {
+      label: 'invalid',
+      providerId: 'local:alpha',
+      message: 'Invalid Compute Host provider id: local:alpha'
+    },
+    {
+      label: 'unknown',
+      providerId: 'ssh:missing',
+      message: 'Compute Host not found: ssh:missing'
+    }
+  ])(
+    'rejects an $label preference atomically before continuing a Session',
+    async ({ providerId, message }) => {
+      const existing: PersistedChatSession = {
+        id: 'session-existing',
+        projectId: project.id,
+        title: 'Existing research',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        enabledComputeHosts: ['ssh:kept'],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      const h = createComputePreferenceHarness(existing)
+      const before = structuredClone(existing)
+
+      await expect(
+        h.api.startRun({
+          project: project.id,
+          sessionId: existing.id,
+          prompt: 'Continue this research.',
+          computeHostIds: [providerId]
+        })
+      ).rejects.toMatchObject({ code: 'invalid_request', message })
+
+      expect(h.durableSessions.get(existing.id)).toEqual(before)
+      expect(h.registry.getEnabled(existing.id)).toEqual(['ssh:kept'])
+      expect(h.registry.getSelected(existing.id)).toEqual(['ssh:kept'])
+      expect(h.saveSession).not.toHaveBeenCalled()
+      expect(h.agent.resumeSession).not.toHaveBeenCalled()
+      expect(h.agent.prompt).not.toHaveBeenCalled()
+      await h.api.dispose()
+    }
+  )
 
   it('reads and responds to a Session Plan through the Task command view', async () => {
     const persisted: PersistedChatSession = {
@@ -136,12 +443,14 @@ describe('HeadlessTaskApi adapter', () => {
     await api.dispose()
   })
   it('exposes Task Run progress through one subscription seam', async () => {
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === 'projects:list') return [project]
-      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
-      throw new Error(`Unexpected Task command: ${channel}`)
-    })
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+        if (channel === 'sessions:save-session') return args[0]
+        throw new Error(`Unexpected Task command: ${channel}`)
+      }
+    )
     const ids = ['message-1', 'run-1', 'assistant-1']
     const agent = createAgent({
       prompt: vi.fn(async (_request, observer) => {
@@ -274,7 +583,7 @@ describe('HeadlessTaskApi adapter', () => {
       void callerContext
       if (channel === 'projects:list') return [project]
       if (channel === 'sessions:load-all') return { sessions: [existing], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'sessions:save-session') return args[0]
       if (channel === 'artifacts:finalize-run') return { ok: true, artifacts: [] }
       throw new Error(`Unexpected RPC channel: ${channel} ${JSON.stringify(args)}`)
     })
@@ -346,7 +655,7 @@ describe('HeadlessTaskApi adapter', () => {
       void callerContext
       if (channel === 'projects:list') return [project]
       if (channel === 'sessions:load-all') return { sessions: [existing], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'sessions:save-session') return args[0]
       throw new Error(`Unexpected RPC channel: ${channel} ${JSON.stringify(args)}`)
     })
     const agent = createAgent({
@@ -386,7 +695,7 @@ describe('HeadlessTaskApi adapter', () => {
       void args
       if (channel === 'projects:list') return [project]
       if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'sessions:save-session') return args[0]
       if (channel === 'preview-resources:release') return undefined
       throw new Error(`Unexpected RPC channel: ${channel}`)
     })
@@ -468,12 +777,14 @@ describe('HeadlessTaskApi adapter', () => {
     const promptGate = new Promise<void>((resolve) => {
       finishPrompt = resolve
     })
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === 'projects:list') return [project]
-      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
-      throw new Error(`Unexpected RPC channel: ${channel}`)
-    })
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+        if (channel === 'sessions:save-session') return args[0]
+        throw new Error(`Unexpected RPC channel: ${channel}`)
+      }
+    )
     const agent = createAgent({
       createSession: vi.fn(async () => ({ sessionId: 'session-cancel-context' })),
       prompt: vi.fn(async () => promptGate),
@@ -491,17 +802,19 @@ describe('HeadlessTaskApi adapter', () => {
 
   it('aborts the Reviewer command when cancellation reaches an automatic review', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === 'projects:list') return [project]
-      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
-      if (channel === 'reviewer:run') return { started: true }
-      if (channel === 'reviewer:get-for-session') {
-        return [{ id: 'review-1', turnMessageId: 'review-agent', lifecycle: 'running' }]
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+        if (channel === 'sessions:save-session') return args[0]
+        if (channel === 'reviewer:run') return { started: true }
+        if (channel === 'reviewer:get-for-session') {
+          return [{ id: 'review-1', turnMessageId: 'review-agent', lifecycle: 'running' }]
+        }
+        if (channel === 'reviewer:abort') return undefined
+        throw new Error(`Unexpected RPC channel: ${channel}`)
       }
-      if (channel === 'reviewer:abort') return undefined
-      throw new Error(`Unexpected RPC channel: ${channel}`)
-    })
+    )
     const agent = createAgent({
       createSession: vi.fn(async () => ({ sessionId: 'session-review-cancel' })),
       prompt: vi.fn(async () => {
@@ -554,12 +867,12 @@ describe('HeadlessTaskApi adapter', () => {
       isAuthorizationCurrent: () => authorizationCurrent
     })
     const invoke = vi.fn(
-      async (channel: string, callerContext: CallerContext): Promise<unknown> => {
+      async (channel: string, callerContext: CallerContext, args: unknown[]): Promise<unknown> => {
         if (channel === 'projects:list') return [project]
         if (channel === 'sessions:load-all') {
           return { sessions: [], manifest: { version: 1 } }
         }
-        if (channel === 'sessions:save-session') return undefined
+        if (channel === 'sessions:save-session') return args[0]
         if (channel === 'reviewer:run') {
           expect(callerContext).toBe(context)
           authorizationCurrent = false
@@ -624,21 +937,23 @@ describe('HeadlessTaskApi adapter', () => {
     const abortGate = new Promise<void>((resolve) => {
       releaseAbort = resolve
     })
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === 'projects:list') return [project]
-      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
-      if (channel === 'reviewer:run') return { started: true }
-      if (channel === 'reviewer:get-for-session') {
-        return [{ id: 'review-1', turnMessageId: 'dispose-agent', lifecycle: 'running' }]
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+        if (channel === 'sessions:save-session') return args[0]
+        if (channel === 'reviewer:run') return { started: true }
+        if (channel === 'reviewer:get-for-session') {
+          return [{ id: 'review-1', turnMessageId: 'dispose-agent', lifecycle: 'running' }]
+        }
+        if (channel === 'reviewer:abort') {
+          markAbortStarted?.()
+          await abortGate
+          return undefined
+        }
+        throw new Error(`Unexpected RPC channel: ${channel}`)
       }
-      if (channel === 'reviewer:abort') {
-        markAbortStarted?.()
-        await abortGate
-        return undefined
-      }
-      throw new Error(`Unexpected RPC channel: ${channel}`)
-    })
+    )
     const agent = createAgent({
       createSession: vi.fn(async () => ({ sessionId: 'session-review-dispose' })),
       prompt: vi.fn(async () => {
@@ -695,12 +1010,14 @@ describe('HeadlessTaskApi adapter', () => {
     const promptGate = new Promise<void>((resolve) => {
       finishPrompt = resolve
     })
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === 'projects:list') return [project]
-      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
-      if (channel === 'sessions:save-session') return undefined
-      throw new Error(`Unexpected RPC channel: ${channel}`)
-    })
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+        if (channel === 'sessions:save-session') return args[0]
+        throw new Error(`Unexpected RPC channel: ${channel}`)
+      }
+    )
     const agent = createAgent({
       createSession: vi.fn(async () => ({ sessionId: 'session-revoked-cancel' })),
       prompt: vi.fn(async () => promptGate),

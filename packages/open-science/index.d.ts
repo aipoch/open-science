@@ -1,7 +1,11 @@
 export type PermissionProfile = 'ask' | 'auto' | 'full'
 export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
-export type RequestOptions = { signal?: AbortSignal; timeoutMs?: number }
+export type RequestOptions = {
+  idempotencyKey?: string
+  signal?: AbortSignal
+  timeoutMs?: number
+}
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunProgressPhase =
   | 'accepted'
@@ -116,6 +120,7 @@ export type Run = {
     outcome?: 'pass' | 'flagged' | null
     errorMessage?: string
   }
+  preferredComputeHostIds: string[]
 }
 
 export type SessionStatus =
@@ -207,6 +212,7 @@ export class OpenScienceClient {
       autoReviewEnabled?: boolean
       specialist?: string
       delegationPolicy?: DelegationPolicy
+      computeHostIds?: string[]
     },
     options?: RequestOptions
   ): Promise<Run>

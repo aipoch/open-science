@@ -1,4 +1,9 @@
 import type { EnvironmentCheckId, EnvironmentCheckItem } from '../../../../shared/settings'
+import type { ArchivedView } from './ArchivedPanel'
+import type { ComputeView } from './ComputePanel'
+import type { ConnectorsView } from './ConnectorsPanel'
+import type { SkillsView } from './SkillsPanel'
+import type { SpecialistsView } from './SpecialistsPanel'
 
 export type SettingsPanelId =
   | 'model'
@@ -16,6 +21,52 @@ export type SettingsPanelId =
   | 'network'
   | 'runtimes'
   | 'remote-control'
+
+export type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; providerId: string }
+
+export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
+
+// A Settings history entry contains only the active panel's state. This sum type prevents unrelated
+// panel views from forming impossible combinations or leaking into every navigation transition.
+export type SettingsRoute = {
+  [Panel in SettingsPanelId]: Panel extends 'skills'
+    ? { panel: Panel; view: SkillsView }
+    : Panel extends 'model'
+      ? { panel: Panel; view: ModelView }
+      : Panel extends 'connectors'
+        ? { panel: Panel; view: ConnectorsView }
+        : Panel extends 'network'
+          ? { panel: Panel; view: NetworkView }
+          : Panel extends 'compute'
+            ? { panel: Panel; view: ComputeView }
+            : Panel extends 'specialists'
+              ? { panel: Panel; view: SpecialistsView }
+              : Panel extends 'archived'
+                ? { panel: Panel; view: ArchivedView }
+                : Panel extends 'tags'
+                  ? { panel: Panel; tagId?: string }
+                  : { panel: Panel }
+}[SettingsPanelId]
+
+export const INITIAL_SETTINGS_ROUTE: SettingsRoute = {
+  panel: 'model',
+  view: { kind: 'list' }
+}
+
+export const settingsPanelRoute = (panel: SettingsPanelId): SettingsRoute => {
+  switch (panel) {
+    case 'skills':
+    case 'model':
+    case 'connectors':
+    case 'network':
+    case 'compute':
+    case 'specialists':
+    case 'archived':
+      return { panel, view: { kind: 'list' } }
+    default:
+      return { panel }
+  }
+}
 
 const AGENT_REPAIR_CHECK_IDS: readonly EnvironmentCheckId[] = ['agent', 'install-network', 'system']
 

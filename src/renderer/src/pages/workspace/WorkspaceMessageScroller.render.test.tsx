@@ -859,7 +859,61 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('>Thinking</span>')
   })
 
-  it('does not render loading after current-run agent text arrives', async () => {
+  it('keeps the loading row after multiple tool rounds while the run is still active', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-1',
+          startedAt: 1710000000100
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-after-first-tool',
+            role: 'agent',
+            content: 'The chart is ready. I will adjust it next.',
+            status: 'streaming',
+            streamId: 'assistant-message-1',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 4,
+            updatedAt: 1710000000400
+          }),
+          createMessage({
+            id: 'reply-after-second-tool',
+            role: 'agent',
+            content: 'The chart looks good. Next I will generate the report.',
+            status: 'streaming',
+            streamId: 'assistant-message-2',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 6,
+            updatedAt: 1710000000600
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'tool-read-1',
+            title: 'Used tool: ToolRead',
+            promptMessageId: 'prompt-1',
+            sortIndex: 3,
+            updatedAt: 1710000000300
+          }),
+          createActivity({
+            id: 'tool-read-2',
+            title: 'Used tool: ToolRead',
+            promptMessageId: 'prompt-1',
+            sortIndex: 5,
+            updatedAt: 1710000000500
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('The chart looks good. Next I will generate the report.')
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('>Thinking</span>')
+  })
+
+  it('continues rendering loading after current-run agent text while the run remains active', async () => {
     const html = await renderScroller(
       createSession({
         activeRun: {
@@ -880,7 +934,8 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).not.toContain('role="status"')
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('>Thinking</span>')
     expect(html).toContain('Answer text')
   })
 
@@ -1047,6 +1102,48 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html.indexOf('data-slot="assistant-message-footer"')).toBeGreaterThan(
       html.indexOf('Here is the final answer.')
     )
+  })
+
+  it('renders completion metadata after a tool that follows the final assistant fragment', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({ id: 'prompt-1', createdAt: 1710000000000, sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Both kernels are ready. I will create the chart now.',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000060000,
+            completedAt: 1710000125000,
+            sortIndex: 3
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'activity-1',
+            promptMessageId: 'prompt-1',
+            sortIndex: 2,
+            createdAt: 1710000030000,
+            updatedAt: 1710000030000
+          }),
+          createActivity({
+            id: 'activity-2',
+            promptMessageId: 'prompt-1',
+            sortIndex: 4,
+            createdAt: 1710000090000,
+            updatedAt: 1710000090000
+          })
+        ]
+      })
+    )
+
+    const finalToolPosition = html.indexOf('data-message-id="activity-group-activity-2"')
+    const footerPosition = html.indexOf('data-slot="assistant-message-footer"')
+
+    expect(finalToolPosition).toBeGreaterThan(-1)
+    expect(footerPosition).toBeGreaterThan(finalToolPosition)
   })
 
   it('hides only the current prompt footer while an ask-user continuation is running', async () => {

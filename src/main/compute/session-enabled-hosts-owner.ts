@@ -1,5 +1,10 @@
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
+import {
+  sessionComputeHostAccess,
+  type SessionComputeHostAccessMutation
+} from './session-compute-host-access'
 
 type SessionEnabledComputeHostsAuthority = Readonly<{
   sessionProjectId(sessionId: string): Promise<string | undefined>
@@ -8,12 +13,18 @@ type SessionEnabledComputeHostsAuthority = Readonly<{
     sessionId: string,
     providerIds: readonly string[]
   ): Promise<PersistedChatSession>
+  mutateSessionComputeHostAccess?(
+    projectId: string,
+    sessionId: string,
+    mutation: SessionComputeHostAccessMutation
+  ): Promise<PersistedChatSession>
   pruneSessionEnabledComputeHosts(validProviderIds: readonly string[]): Promise<{
     sessions: PersistedChatSession[]
     previousSelections: Array<{
       projectId: string
       sessionId: string
       providerIds: string[]
+      selectedProviderIds?: string[]
     }>
   }>
 }>
@@ -28,6 +39,7 @@ type SessionEnabledComputeHostsOwnerOptions = Readonly<{
 
 class SessionEnabledComputeHostsOwner {
   private queue: Promise<unknown> = Promise.resolve()
+  private readonly reservationCounts = new Map<string, number>()
 
   constructor(private readonly options: SessionEnabledComputeHostsOwnerOptions) {}
 
@@ -44,25 +56,84 @@ class SessionEnabledComputeHostsOwner {
     return this.enqueue(() => this.options.withDataRootWrite(operation))
   }
 
-  private async validate(providerIds: readonly string[]): Promise<string[]> {
+  private async validateProviderIds(providerIds: readonly string[]): Promise<string[]> {
     const normalized = [...new Set(providerIds)]
     for (const providerId of normalized) {
       if (!providerId.startsWith('ssh:') || providerId.length <= 4) {
-        throw new Error(`Invalid Compute Host provider id: ${providerId}`)
+        throw new ComputeHostPreferenceValidationError('invalid_provider_id', providerId)
       }
       if (!(await this.options.hostExists(providerId))) {
-        throw new Error(`Compute Host not found: ${providerId}`)
+        throw new ComputeHostPreferenceValidationError('host_not_found', providerId)
       }
     }
     return normalized
   }
 
   get(sessionId: string): string[] {
-    return this.options.registry.get(sessionId)
+    return this.options.registry.getEnabled(sessionId)
+  }
+
+  getSelected(sessionId: string): string[] {
+    return this.options.registry.getSelected(sessionId)
+  }
+
+  async withReservation<Result>(
+    providerIds: readonly string[],
+    operation: (providerIds: string[]) => Promise<Result>
+  ): Promise<Result> {
+    const normalized = await this.enqueueWrite(async () => {
+      const validated = await this.validateProviderIds(providerIds)
+      for (const providerId of validated) {
+        this.reservationCounts.set(providerId, (this.reservationCounts.get(providerId) ?? 0) + 1)
+      }
+      return validated
+    })
+    try {
+      return await operation(normalized)
+    } finally {
+      for (const providerId of normalized) {
+        const next = (this.reservationCounts.get(providerId) ?? 1) - 1
+        if (next > 0) this.reservationCounts.set(providerId, next)
+        else this.reservationCounts.delete(providerId)
+      }
+    }
   }
 
   project(session: PersistedChatSession): void {
-    this.options.registry.set(session.id, session.enabledComputeHosts ?? [])
+    this.options.registry.setAccess(session.id, sessionComputeHostAccess(session))
+  }
+
+  private async mutateDurableAccess(
+    projectId: string,
+    sessionId: string,
+    mutation: SessionComputeHostAccessMutation
+  ): Promise<PersistedChatSession> {
+    if (this.options.sessionAuthority.mutateSessionComputeHostAccess) {
+      return this.options.sessionAuthority.mutateSessionComputeHostAccess(
+        projectId,
+        sessionId,
+        mutation
+      )
+    }
+    if (mutation.kind === 'select-explicit') {
+      return this.options.sessionAuthority.setSessionEnabledComputeHosts(
+        projectId,
+        sessionId,
+        mutation.providerIds
+      )
+    }
+    if (mutation.kind === 'replace-access') {
+      const enabled = mutation.access.enabledProviderIds
+      const selected = mutation.access.selectedProviderIds
+      if (enabled.length === selected.length && enabled.every((id) => selected.includes(id))) {
+        return this.options.sessionAuthority.setSessionEnabledComputeHosts(
+          projectId,
+          sessionId,
+          enabled
+        )
+      }
+    }
+    throw new Error('Session Compute Host access authority is unavailable.')
   }
 
   clear(sessionIds: readonly string[]): Promise<void> {
@@ -76,6 +147,9 @@ class SessionEnabledComputeHostsOwner {
     afterPrune?: () => Promise<void>
   ): Promise<PersistedChatSession[]> {
     return this.enqueueWrite(async () => {
+      if ((this.reservationCounts.get(providerId) ?? 0) > 0) {
+        throw new Error(`Compute Host is reserved by a Session being created: ${providerId}`)
+      }
       const validProviderIds = (await this.options.listHostIds()).filter(
         (candidate) => candidate !== providerId
       )
@@ -89,17 +163,17 @@ class SessionEnabledComputeHostsOwner {
           const restoredSessions: PersistedChatSession[] = []
           for (const selection of repair.previousSelections) {
             restoredSessions.push(
-              await this.options.sessionAuthority.setSessionEnabledComputeHosts(
-                selection.projectId,
-                selection.sessionId,
-                selection.providerIds
-              )
+              await this.mutateDurableAccess(selection.projectId, selection.sessionId, {
+                kind: 'replace-access',
+                access: {
+                  enabledProviderIds: selection.providerIds,
+                  selectedProviderIds: selection.selectedProviderIds ?? selection.providerIds
+                }
+              })
             )
           }
-          this.options.registry.reconcile(
-            restoredSessions.map(
-              (session) => [session.id, session.enabledComputeHosts ?? []] as const
-            ),
+          this.options.registry.reconcileAccess(
+            restoredSessions.map((session) => [session.id, sessionComputeHostAccess(session)]),
             false
           )
         } catch (rollbackError) {
@@ -110,8 +184,8 @@ class SessionEnabledComputeHostsOwner {
         }
         throw error
       }
-      this.options.registry.reconcile(
-        repair.sessions.map((session) => [session.id, session.enabledComputeHosts ?? []] as const),
+      this.options.registry.reconcileAccess(
+        repair.sessions.map((session) => [session.id, sessionComputeHostAccess(session)]),
         true
       )
       return repair.sessions
@@ -130,26 +204,35 @@ class SessionEnabledComputeHostsOwner {
         return [...sessions]
       }
       const validProviderIdSet = new Set(validProviderIds)
-      const hasMissingHost = sessions.some((session) =>
-        session.enabledComputeHosts?.some((providerId) => !validProviderIdSet.has(providerId))
-      )
+      const hasMissingHost = sessions.some((session) => {
+        const access = sessionComputeHostAccess(session)
+        return [...access.enabledProviderIds, ...access.selectedProviderIds].some(
+          (providerId) => !validProviderIdSet.has(providerId)
+        )
+      })
       const authoritativeSessions =
         isComplete && hasMissingHost
           ? (await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds))
               .sessions
-          : sessions.map((session) => ({
-              ...session,
-              enabledComputeHosts: session.enabledComputeHosts?.filter((providerId) =>
+          : sessions
+      this.options.registry.reconcileAccess(
+        authoritativeSessions.map((session) => {
+          const access = sessionComputeHostAccess(session)
+          return [
+            session.id,
+            {
+              enabledProviderIds: access.enabledProviderIds.filter((providerId) =>
+                validProviderIdSet.has(providerId)
+              ),
+              selectedProviderIds: access.selectedProviderIds.filter((providerId) =>
                 validProviderIdSet.has(providerId)
               )
-            }))
-      this.options.registry.reconcile(
-        authoritativeSessions.map(
-          (session) => [session.id, session.enabledComputeHosts ?? []] as const
-        ),
+            }
+          ] as const
+        }),
         isComplete
       )
-      return isComplete ? authoritativeSessions : [...sessions]
+      return [...authoritativeSessions]
     })
   }
 
@@ -158,11 +241,24 @@ class SessionEnabledComputeHostsOwner {
     commit: (session: PersistedChatSession) => Promise<PersistedChatSession>
   ): Promise<PersistedChatSession> {
     return this.enqueueWrite(async () => {
-      const enabledComputeHosts = await this.validate(session.enabledComputeHosts ?? [])
+      const enabledComputeHosts = await this.validateProviderIds(session.enabledComputeHosts ?? [])
+      const selectedComputeHosts = await this.validateProviderIds(
+        session.selectedComputeHosts ?? enabledComputeHosts
+      )
+      const enabledComputeHostSet = new Set(enabledComputeHosts)
+      const invalidSelection = selectedComputeHosts.find(
+        (providerId) => !enabledComputeHostSet.has(providerId)
+      )
+      if (invalidSelection) {
+        throw new Error(`Selected Compute Host is not enabled: ${invalidSelection}`)
+      }
       const durableSession = await commit({
         ...session,
         ...(session.enabledComputeHosts || enabledComputeHosts.length > 0
           ? { enabledComputeHosts }
+          : {}),
+        ...(session.selectedComputeHosts !== undefined || enabledComputeHosts.length > 0
+          ? { selectedComputeHosts }
           : {})
       })
       this.project(durableSession)
@@ -171,16 +267,56 @@ class SessionEnabledComputeHostsOwner {
   }
 
   set(sessionId: string, providerIds: readonly string[]): Promise<PersistedChatSession> {
+    return this.selectExplicit(sessionId, providerIds)
+  }
+
+  setHostEnabled(
+    sessionId: string,
+    providerId: string,
+    enabled: boolean
+  ): Promise<PersistedChatSession> {
     return this.enqueueWrite(async () => {
-      const normalized = await this.validate(providerIds)
+      if (enabled) await this.validateProviderIds([providerId])
       const projectId = await this.options.sessionAuthority.sessionProjectId(sessionId)
       if (!projectId) throw new Error(`Session not found: ${sessionId}`)
+      const session = await this.mutateDurableAccess(projectId, sessionId, {
+        kind: 'set-host-enabled',
+        providerId,
+        enabled
+      })
+      this.project(session)
+      return session
+    })
+  }
 
-      const session = await this.options.sessionAuthority.setSessionEnabledComputeHosts(
-        projectId,
-        sessionId,
-        normalized
-      )
+  setHostSelected(
+    sessionId: string,
+    providerId: string,
+    selected: boolean
+  ): Promise<PersistedChatSession> {
+    return this.enqueueWrite(async () => {
+      if (selected) await this.validateProviderIds([providerId])
+      const projectId = await this.options.sessionAuthority.sessionProjectId(sessionId)
+      if (!projectId) throw new Error(`Session not found: ${sessionId}`)
+      const session = await this.mutateDurableAccess(projectId, sessionId, {
+        kind: 'set-host-selected',
+        providerId,
+        selected
+      })
+      this.project(session)
+      return session
+    })
+  }
+
+  selectExplicit(sessionId: string, providerIds: readonly string[]): Promise<PersistedChatSession> {
+    return this.enqueueWrite(async () => {
+      const normalized = await this.validateProviderIds(providerIds)
+      const projectId = await this.options.sessionAuthority.sessionProjectId(sessionId)
+      if (!projectId) throw new Error(`Session not found: ${sessionId}`)
+      const session = await this.mutateDurableAccess(projectId, sessionId, {
+        kind: 'select-explicit',
+        providerIds: normalized
+      })
       this.project(session)
       return session
     })

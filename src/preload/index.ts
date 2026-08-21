@@ -630,7 +630,11 @@ const api: OpenScienceAPI = {
     enabledHostsGet: (sessionId) =>
       electronRendererContracts.invoke('compute.enabledHostsGet', sessionId),
     enabledHostsSet: (sessionId, providerIds) =>
-      electronRendererContracts.invoke('compute.enabledHostsSet', sessionId, providerIds)
+      electronRendererContracts.invoke('compute.enabledHostsSet', sessionId, providerIds),
+    hostEnabledSet: (sessionId, providerId, enabled) =>
+      electronRendererContracts.invoke('compute.hostEnabledSet', sessionId, providerId, enabled),
+    hostSelectedSet: (sessionId, providerId, selected) =>
+      electronRendererContracts.invoke('compute.hostSelectedSet', sessionId, providerId, selected)
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

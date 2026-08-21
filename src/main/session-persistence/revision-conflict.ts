@@ -35,6 +35,7 @@ export const rebaseSafeSessionFields = (
         rebased.autoReviewEnabled = submitted.autoReviewEnabled
         break
       case 'enabledComputeHosts':
+      case 'selectedComputeHosts':
         // Retained in the wire-compatible enum, but this field is now changed only by its command.
         break
       case 'pinned':

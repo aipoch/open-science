@@ -822,6 +822,16 @@ export interface OpenScienceAPI {
     // Per-session enabled Compute Hosts. Main owns durable Session JSON and projects the runtime cache.
     enabledHostsGet(sessionId: string): Promise<string[]>
     enabledHostsSet(sessionId: string, providerIds: string[]): Promise<PersistedChatSession>
+    hostEnabledSet(
+      sessionId: string,
+      providerId: string,
+      enabled: boolean
+    ): Promise<PersistedChatSession>
+    hostSelectedSet(
+      sessionId: string,
+      providerId: string,
+      selected: boolean
+    ): Promise<PersistedChatSession>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

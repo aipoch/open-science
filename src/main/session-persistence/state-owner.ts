@@ -16,6 +16,7 @@ import {
   type SessionRuntimeContextPatch
 } from '../../shared/session-persistence'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
+import { sessionComputeHostAccessPolicy } from '../compute/session-compute-host-access'
 import { diagnosticErrorFields, type Logger } from '../logger'
 import {
   rebaseSafeSessionFields,
@@ -442,16 +443,20 @@ class SessionPersistenceStateOwner {
   async setEnabledComputeHosts(
     projectId: string,
     sessionId: string,
-    providerIds: readonly string[]
+    providerIdsOrMutation: Parameters<typeof sessionComputeHostAccessPolicy.resolveUpdate>[1]
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(projectId, sessionId, 'mutate')
     const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
     if (loaded.status !== 'found') {
       throw new Error(`Cannot update enabled Compute Hosts for a ${loaded.status} Session.`)
     }
+    const access = sessionComputeHostAccessPolicy.resolveUpdate(
+      loaded.session,
+      providerIdsOrMutation
+    )
     const durableSession: PersistedChatSession = {
       ...loaded.session,
-      enabledComputeHosts: [...providerIds],
+      ...sessionComputeHostAccessPolicy.persisted(access),
       updatedAt: Math.max(loaded.session.updatedAt + 1, Date.now())
     }
     const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
@@ -470,16 +475,16 @@ class SessionPersistenceStateOwner {
     }> = []
     try {
       for (const session of sessions) {
-        const current = session.enabledComputeHosts ?? []
-        const enabledComputeHosts = current.filter((providerId) => validProviderIds.has(providerId))
-        if (enabledComputeHosts.length === current.length) {
+        const access = sessionComputeHostAccessPolicy.prune(session, validProviderIds)
+        if (!access) {
           durableSessions.push(session)
           continue
         }
         this.options.assertMutable(session.projectId, session.id, 'mutate')
         const durableSession: PersistedChatSession = {
           ...session,
-          enabledComputeHosts,
+          enabledComputeHosts: [...access.enabledProviderIds],
+          selectedComputeHosts: [...access.selectedProviderIds],
           updatedAt: Math.max(session.updatedAt + 1, Date.now())
         }
         const rollback = { session, rollbackRevision: sessionRevision(session) }
@@ -612,6 +617,9 @@ class SessionPersistenceStateOwner {
         ? {
             enabledComputeHosts: authority.enabledComputeHosts
               ? [...authority.enabledComputeHosts]
+              : undefined,
+            selectedComputeHosts: authority.selectedComputeHosts
+              ? [...authority.selectedComputeHosts]
               : undefined
           }
         : {}),
@@ -620,6 +628,7 @@ class SessionPersistenceStateOwner {
         authority?.runtimeContext ||
         mainOwnedStatus ||
         authority?.enabledComputeHosts !== undefined ||
+        authority?.selectedComputeHosts !== undefined ||
         authority?.specialistBindingPending !== undefined ||
         specialistBindingChanged ||
         delegationPolicyChanged

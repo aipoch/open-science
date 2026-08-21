@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildReviewerPrompt } from './orchestrator'
+import { INITIAL_REVIEW_CHECKABILITY_GUIDANCE } from './rubric'
 import type { ReviewCheck, TurnScope } from '../../shared/reviewer'
 
 const scope: TurnScope = {
@@ -16,7 +17,7 @@ const scope: TurnScope = {
 
 describe('buildReviewerPrompt — isolated evidence access', () => {
   it('advertises only MCP evidence tools and carries no Bash/Python bootstrap or bearer secret', () => {
-    const prompt = buildReviewerPrompt(scope)
+    const prompt = buildReviewerPrompt(scope, 'initial')
 
     expect(prompt).toContain('read_turn')
     expect(prompt).toContain('query_execution_log')
@@ -40,17 +41,26 @@ describe('buildReviewerPrompt — isolated evidence access', () => {
         reflagCount: 0
       }
     ]
-    const prompt = buildReviewerPrompt(scope, tracked)
+    const prompt = buildReviewerPrompt(scope, 'tracked', tracked)
 
     expect(prompt).toContain('sourceFindingId')
     expect(prompt).toContain('finding-stable-1')
     expect(prompt).toContain('exactly once')
+    expect(prompt).not.toMatch(/tracked\s+tracked/u)
   })
 
-  it('requires an explicit pass instead of accepting an empty submission', () => {
-    const prompt = buildReviewerPrompt(scope)
+  it('distinguishes pure greetings from mixed messages with checkable claims', () => {
+    const prompt = buildReviewerPrompt(scope, 'initial')
 
-    expect(prompt).toContain('at least one explicit pass check')
-    expect(prompt).toContain('an empty array is invalid')
+    expect(prompt).toContain(INITIAL_REVIEW_CHECKABILITY_GUIDANCE)
+    expect(prompt).toMatch(/do not create a pass check merely because you read the turn/i)
+  })
+
+  it('keeps tracked mode strict even when the tracked check set is empty', () => {
+    const prompt = buildReviewerPrompt(scope, 'tracked', [])
+
+    expect(prompt).toContain('tracked re-review')
+    expect(prompt).toContain('non-empty checks array')
+    expect(prompt).not.toContain(INITIAL_REVIEW_CHECKABILITY_GUIDANCE)
   })
 })

@@ -15,6 +15,16 @@
 //   - yaml: repl + read_file → here: dedicated reviewer MCP tools whose handlers validate every id
 //     against the immutable turn scope.
 
+export const INITIAL_REVIEW_CHECKABILITY_GUIDANCE = [
+  'An initial review may submit an empty checks array only when there are no checkable claims.',
+  'Pure greetings, thanks, simple acknowledgements, clarification questions, unexecuted next steps,',
+  'and purely subjective expressions have no checkable claims only when the same turn contains no',
+  'objective claim, completed action claim, or deliverable. A polite reply to those messages is not',
+  'itself a checkable claim. If any objective claim, completed action claim, or deliverable is also',
+  'present, continue substantive review (for example: "Hi, I ran the tests and they pass", "I saved',
+  'the file, thanks", or "The upload failed; can you resend it?").'
+].join(' ')
+
 export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   '<reviewer_instructions>',
 
@@ -238,10 +248,19 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   '      - artifactVersionId: Optional — include when the check relates to a specific artifact.',
   'Before submitting, call read_turn. For an activity locator, also query that exact execution log.',
   'For artifactVersionId, first read that exact Artifact Version with read_artifact.',
+  'After read_turn, decide whether the turn contains checkable claims. Checkable claims include',
+  'claimed actions (executed, tested, verified, saved, created, or modified work); factual values,',
+  'entities, directions, source contents, or conclusions traceable in scope; Artifact Versions or',
+  'objective deliverables; and specific external identifiers such as DOI, PMID, or accession.',
+  INITIAL_REVIEW_CHECKABILITY_GUIDANCE,
+  'Reading the turn is a protocol prerequisite, not substantive verification. Do not create a pass',
+  'check merely to prove you read the turn or that the agent replied. If uncertain whether an',
+  'objective claim exists, continue the review and submit checks.',
+  'A tracked re-review can never use an empty checks array: disposition every tracked check.',
   'Record pass checks CONSOLIDATED: one per area you verified, never one per value traced. A',
   'system-info report whose fields all match its tool output is ONE pass check ("traced all reported',
   'metrics to the host output; all match"), not one card per metric.',
-  'If you find no issues, still submit a few consolidated pass checks describing what you verified.',
-  'An empty checks array is invalid and never means pass.',
+  'Whenever you perform substantive verification, record it in consolidated pass checks; do not',
+  'omit completed verification merely to reduce the number of checks.',
   '</reviewer_instructions>'
 ].join('\n')

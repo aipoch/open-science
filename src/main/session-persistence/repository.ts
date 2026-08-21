@@ -468,7 +468,11 @@ class SessionRepository {
       if (diagnostic.status === 'unreadable') {
         throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
       }
-      if (diagnostic.status === 'missing') return
+      const revisionKey = `${safeProjectId}:${safeSessionId}`
+      if (diagnostic.status === 'missing') {
+        this.sessionRevisions.delete(revisionKey)
+        return
+      }
 
       // The valid primary proves matching quarantines are superseded authority covered by this
       // explicit Session deletion. Remove every backup first so any failure leaves that proof in
@@ -494,6 +498,7 @@ class SessionRepository {
         force: true,
         recursive: false
       })
+      this.sessionRevisions.delete(revisionKey)
     })
   }
 

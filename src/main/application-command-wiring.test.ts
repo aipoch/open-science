@@ -232,12 +232,20 @@ describe('production application command wiring', () => {
     expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
     expect(indexSource).toContain('applicationCommands,')
     expect(startup).toContain('applicationCommands,')
+    expect(startup).toContain('taskControls, computePreferences }')
+    expect(compact(ipcSource)).toContain(
+      "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
+    )
+    expect(compact(ipcSource)).toContain('computePreferences: sessionEnabledComputeHostsOwner')
+    expect(compact(ipcSource)).toContain(
+      'resolveComputeExecutionTargetIds: (sessionId) => hostsRegistry.getSelected(sessionId)'
+    )
     const webServiceSource = readSource('src/main/web-service/index.ts')
     expect(webServiceSource).toContain(
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
-    expect(webServiceSource).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls }'
+    expect(compact(webServiceSource)).toContain(
+      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')

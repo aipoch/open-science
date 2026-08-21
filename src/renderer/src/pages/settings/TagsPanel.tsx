@@ -268,7 +268,7 @@ const TagsPanel = ({
     setFormError(undefined)
     try {
       if (editing === 'new') await createTag(draft)
-      else await updateTag({ id: editing.id, ...draft })
+      else await updateTag({ id: editing.id, expectedUpdatedAt: editing.updatedAt, ...draft })
       setEditing(undefined)
     } catch {
       setFormError(t('Could not save Tag.'))

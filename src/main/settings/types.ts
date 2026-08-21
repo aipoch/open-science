@@ -88,6 +88,7 @@ export type StoredCustomMcpOAuthConfig = {
   clientMetadataUrl?: string
   authorizationServerUrl?: string
   scopes?: string[]
+  clientId?: string
 }
 
 // The OAuth state is serialized into one encrypted safeStorage value. `oauthState` is a transient
@@ -119,7 +120,12 @@ export type StoredCustomMcpServer = {
   headers?: Record<string, string>
   headerRefs?: Record<string, string>
   oauth?: StoredCustomMcpOAuthConfig
+  // The pre-registered client secret follows the same safeStorage-ref convention as env/headers.
+  oauthClientSecretRef?: string
   oauthRef?: string
+  // Main-process-only projections populated by ConnectorSettingsModule. Neither field is persisted
+  // to settings.json or sent to the renderer.
+  oauthClientSecret?: string
   oauthState?: StoredCustomMcpOAuthState
   enabled: boolean
   // Timestamp of the user's explicit add-time trust confirmation (see plan §3.5).

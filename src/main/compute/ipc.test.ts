@@ -160,7 +160,6 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       {
         vault: {
           encrypt: vi.fn(() => Buffer.from('ciphertext')),
@@ -253,7 +252,6 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       { prune } as unknown as PermissionGrantRegistry,
-      undefined,
       { pruneSessionEnabledHosts },
       {
         vault: {
@@ -327,7 +325,6 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       { finalizeOwnerDeletion: finalizeGrantCleanup } as unknown as PermissionGrantRegistry,
-      undefined,
       { pruneSessionEnabledHosts },
       {
         vault: {
@@ -441,7 +438,6 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       { finalizeOwnerDeletion: vi.fn(async () => undefined) } as unknown as PermissionGrantRegistry,
-      undefined,
       {
         pruneSessionEnabledHosts: async (_providerId, commit) => {
           await commit?.()
@@ -531,7 +527,6 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       { finalizeOwnerDeletion: finalizeGrantCleanup } as unknown as PermissionGrantRegistry,
-      undefined,
       {
         pruneSessionEnabledHosts: async (_providerId, commit) => commit?.()
       },
@@ -641,43 +636,6 @@ describe('compute handlers', () => {
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
   })
 
-  it('refreshes mutable Compute Skills and requests a runtime reload after host create and delete', async () => {
-    const create = vi.fn(() => Promise.resolve(sampleHost()))
-    const del = vi.fn(() => Promise.resolve())
-    const syncComputeSkill = vi.fn(() => Promise.resolve())
-    const requestSkillRuntimeReload = vi.fn()
-    const handlers = createComputeHandlers(
-      mockRepository({
-        get: vi.fn(() => Promise.resolve(null)),
-        create,
-        delete: del
-      }),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      syncComputeSkill,
-      {
-        pruneSessionEnabledHosts: vi.fn((_providerId, afterPrune) =>
-          afterPrune ? afterPrune() : Promise.resolve()
-        ),
-        requestSkillRuntimeReload
-      }
-    )
-
-    await handlers.create({ sshAlias: 'biowulf' })
-    await handlers.delete('ssh:biowulf')
-
-    expect(syncComputeSkill).toHaveBeenCalledTimes(2)
-    expect(requestSkillRuntimeReload).toHaveBeenCalledTimes(2)
-  })
-
   it('sshConfigAliases uses the injected alias lister', async () => {
     const lister = vi.fn(() => Promise.resolve(['biowulf', 'lab-gpu']))
     const handlers = createComputeHandlers(mockRepository({}), lister)
@@ -706,10 +664,8 @@ describe('compute handlers', () => {
         errorTail: 'Connection failed'
       }
     }
-  ])('refreshes Compute Skills after a persisted $name probe result', async ({ probeResult }) => {
+  ])('returns a persisted $name probe result', async ({ probeResult }) => {
     const probe = vi.fn(() => Promise.resolve(probeResult))
-    const syncComputeSkill = vi.fn(() => Promise.resolve())
-    const requestSkillRuntimeReload = vi.fn()
     const handlers = createComputeHandlers(
       mockRepository({}),
       undefined,
@@ -722,23 +678,17 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       undefined,
-      syncComputeSkill,
       {
-        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve()),
-        requestSkillRuntimeReload
+        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve())
       }
     )
 
     await expect(handlers.probe('ssh:biowulf')).resolves.toEqual(probeResult)
     expect(probe).toHaveBeenCalledWith('ssh:biowulf')
-    expect(syncComputeSkill).toHaveBeenCalledOnce()
-    expect(requestSkillRuntimeReload).toHaveBeenCalledOnce()
   })
 
-  it('keeps Skill state unchanged when probe rejects before a persisted result', async () => {
+  it('propagates probe rejection before a result is persisted', async () => {
     const probe = vi.fn(() => Promise.reject(new Error('No compute host found')))
-    const syncComputeSkill = vi.fn(() => Promise.resolve())
-    const requestSkillRuntimeReload = vi.fn()
     const handlers = createComputeHandlers(
       mockRepository({}),
       undefined,
@@ -751,52 +701,12 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       undefined,
-      syncComputeSkill,
       {
-        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve()),
-        requestSkillRuntimeReload
+        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve())
       }
     )
 
     await expect(handlers.probe('ssh:missing')).rejects.toThrow('No compute host found')
-    expect(syncComputeSkill).not.toHaveBeenCalled()
-    expect(requestSkillRuntimeReload).not.toHaveBeenCalled()
-  })
-
-  it('returns a committed probe result when mutable Skill sync fails', async () => {
-    const probeResult = {
-      ok: true,
-      probedAt: '2026-01-01T00:00:00Z',
-      exitCode: 0,
-      errorTail: null,
-      cpus: 64,
-      detectedScheduler: 'slurm' as const
-    }
-    const probe = vi.fn(() => Promise.resolve(probeResult))
-    const syncComputeSkill = vi.fn(() => Promise.reject(new Error('projection unavailable')))
-    const requestSkillRuntimeReload = vi.fn()
-    const handlers = createComputeHandlers(
-      mockRepository({}),
-      undefined,
-      mockService({ probe }),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      syncComputeSkill,
-      {
-        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve()),
-        requestSkillRuntimeReload
-      }
-    )
-
-    const result = await handlers.probe('ssh:biowulf')
-    expect(result.ok).toBe(true)
-    expect(requestSkillRuntimeReload).toHaveBeenCalledOnce()
   })
 
   it('listDir delegates to the injected ComputeService', async () => {
@@ -1034,7 +944,6 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       {
         connectionBroker: {
           acquire: vi.fn(),
@@ -1085,7 +994,6 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { pruneSessionEnabledHosts }
     )
 
@@ -1105,7 +1013,6 @@ describe('host delete guard', () => {
     )
     const handlers = createComputeHandlers(
       mockRepository({ delete: del }),
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -1143,7 +1050,6 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       permissionGrantRegistry,
-      undefined,
       { pruneSessionEnabledHosts }
     )
 
@@ -1179,7 +1085,6 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       permissionGrantRegistry,
-      undefined,
       undefined,
       {
         connectionBroker: {
@@ -1220,7 +1125,6 @@ describe('host delete guard', () => {
     )
     const handlers = createComputeHandlers(
       mockRepository({ delete: del }),
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -1289,7 +1193,6 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       permissionGrantRegistry,
-      undefined,
       { pruneSessionEnabledHosts }
     )
 
@@ -2095,6 +1998,12 @@ const installComputeModule = (
     get: (sessionId) => module.enabledComputeHostsRegistry.get(sessionId),
     set: async () => {
       throw new Error('Enabled Compute Hosts owner is not configured for this test.')
+    },
+    setHostEnabled: async () => {
+      throw new Error('Compute Host access owner is not configured for this test.')
+    },
+    setHostSelected: async () => {
+      throw new Error('Compute Host access owner is not configured for this test.')
     }
   }
 ): void => {
@@ -2152,7 +2061,9 @@ describe('installComputeIpcHandlers', () => {
       'compute:jobs:pending-notification',
       'compute:jobs:mark-consumed',
       'compute:enabled-hosts:get',
-      'compute:enabled-hosts:set'
+      'compute:enabled-hosts:set',
+      'compute:host-enabled:set',
+      'compute:host-selected:set'
     ]
     for (const channel of expected) {
       expect(handlers.has(channel)).toBe(true)
@@ -2239,6 +2150,7 @@ describe('installComputeIpcHandlers', () => {
       messages: [],
       filesRevision: 1,
       enabledComputeHosts: ['ssh:biowulf'],
+      selectedComputeHosts: ['ssh:biowulf'],
       createdAt: 1,
       updatedAt: 2
     }
@@ -2247,7 +2159,9 @@ describe('installComputeIpcHandlers', () => {
       set: vi.fn(async () => {
         module.enabledComputeHostsRegistry.set(session.id, session.enabledComputeHosts ?? [])
         return session
-      })
+      }),
+      setHostEnabled: vi.fn(async () => session),
+      setHostSelected: vi.fn(async () => session)
     }
     const lifecycle = vi.fn()
     const removeLifecycle = addRendererBroadcastSink(lifecycle)
@@ -2258,10 +2172,14 @@ describe('installComputeIpcHandlers', () => {
 
     const result = await invokeHandler('compute:enabled-hosts:set', 'sess-fresh', ['ssh:biowulf'])
     const afterSet = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
+    await invokeHandler('compute:host-enabled:set', 'sess-fresh', 'ssh:biowulf', true)
+    await invokeHandler('compute:host-selected:set', 'sess-fresh', 'ssh:biowulf', true)
 
     expect(enabledHosts.set).toHaveBeenCalledWith('sess-fresh', ['ssh:biowulf'])
     expect(result).toEqual(session)
     expect(afterSet).toEqual(['ssh:biowulf'])
+    expect(enabledHosts.setHostEnabled).toHaveBeenCalledWith('sess-fresh', 'ssh:biowulf', true)
+    expect(enabledHosts.setHostSelected).toHaveBeenCalledWith('sess-fresh', 'ssh:biowulf', true)
     expect(lifecycle).toHaveBeenCalledWith('session:updated', {
       session,
       originClientId: 'electron:7'

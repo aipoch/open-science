@@ -165,16 +165,21 @@ export const createSettingsConnectorsSlice = ({
   }
 
   return {
-    loadConnectors: () => {
+    loadConnectors: async () => {
+      // Keep subscription and command lookup inside this async action so a missing Settings
+      // surface rejects the returned promise instead of throwing synchronously into callers.
       subscribeToRuntimeChanges()
-      if (getState().connectorsLoaded) return Promise.resolve()
-      if (catalogLoadRequest) return catalogLoadRequest
+      if (getState().connectorsLoaded) return
+      if (catalogLoadRequest) {
+        await catalogLoadRequest
+        return
+      }
       const request = reconcile(() => getCommands().listConnectors()).then(() => undefined)
       const trackedRequest = request.finally(() => {
         if (catalogLoadRequest === trackedRequest) catalogLoadRequest = undefined
       })
       catalogLoadRequest = trackedRequest
-      return trackedRequest
+      await trackedRequest
     },
     setConnectorEnabled: async (id, enabled) => {
       const key = connectorEnabledKey(id)

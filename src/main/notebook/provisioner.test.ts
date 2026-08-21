@@ -77,6 +77,7 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
       writeFileSync(bin, 'x')
       created.push(argv[1])
     },
+    maintainCache: async () => undefined,
     verify: async (): Promise<void> => undefined,
     now: () => 't-now',
     ...overrides
@@ -84,6 +85,52 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
 }
 
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
+  it('maintains the package cache under the materialize journal after fetching the runtime', async () => {
+    const root = makeRoot()
+    const cachePath = join(root, 'pkgs')
+    const order: string[] = []
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
+    let operationId = ''
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        platform: 'linux',
+        // macOS may canonicalize the legacy lock key (/var -> /private/var) while preserving this path.
+        cache: { path: cachePath, lockKey: 'selected-cache-key' },
+        fetchBundle: async () => {
+          order.push('fetch')
+          return { lockPath: join(root, 'python.lock') }
+        },
+        maintainCache: async (cache, onBeforeSpawn, onChild) => {
+          expect(cache.path).toBe(cachePath)
+          onBeforeSpawn()
+          onChild(process.pid)
+          await vi.waitFor(async () => {
+            const [record] = await journal.pending()
+            operationId = record.operationId
+            expect(record).toMatchObject({ childPid: process.pid })
+          })
+          order.push('clean')
+        },
+        runArgv: async (argv) => {
+          expect(readOperationChild(root, operationId)).toBeUndefined()
+          const [record] = await journal.pending()
+          expect(record).not.toHaveProperty('childPid')
+          expect(record).not.toHaveProperty('childStartedAt')
+          expect(record).not.toHaveProperty('childStartToken')
+          order.push('create')
+          const prefix = argv[argv.findIndex((a) => a === '--prefix' || a === '-p') + 1]
+          const bin = pythonBin(prefix)
+          mkdirSync(join(bin, '..'), { recursive: true })
+          writeFileSync(bin, 'x')
+        }
+      })
+    )
+
+    await provisioner.provisionPython(() => undefined)
+
+    expect(order).toEqual(['fetch', 'clean', 'create'])
+  })
+
   it('materializes python, stamps the marker, and emits monotonic progress ending at 1', async () => {
     const root = makeRoot()
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
@@ -287,6 +334,37 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     await vi.waitFor(() => expect(seenSignal).toBeDefined())
     provisioner.cancel()
     await expect(run).rejects.toThrow(/cancelled/i)
+  })
+
+  it('cancel() aborts in-flight cache maintenance before create', async () => {
+    const root = makeRoot()
+    const cachePath = join(root, 'pkgs')
+    let seenSignal: AbortSignal | undefined
+    let releaseMaintenance: (() => void) | undefined
+    const deps = makeDeps(root, {
+      platform: 'linux',
+      cache: { path: cachePath, lockKey: 'selected-cache-key' },
+      maintainCache: (_cache, _onBeforeSpawn, _onChild, signal?: AbortSignal) => {
+        seenSignal = signal
+        return new Promise<void>((resolve, reject) => {
+          releaseMaintenance = resolve
+          signal?.addEventListener('abort', () => reject(signal.reason))
+        })
+      },
+      runArgv: async (_argv, signal) => {
+        if (signal?.aborted) throw signal.reason
+      }
+    })
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+    const run = provisioner.provisionPython(() => {})
+    await vi.waitFor(() => expect(releaseMaintenance).toBeDefined())
+
+    provisioner.cancel()
+    if (!seenSignal) releaseMaintenance?.()
+
+    await expect(run).rejects.toThrow(/cancelled/i)
+    expect(seenSignal).toBeDefined()
+    expect(seenSignal?.aborted).toBe(true)
   })
 
   it('cancel(runningLang) aborts that run', async () => {
@@ -1253,6 +1331,7 @@ const makeNamedEnvDeps = (
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
     },
+    maintainCache: async () => undefined,
     verify: async () => undefined,
     ...overrides
   }
@@ -1260,6 +1339,41 @@ const makeNamedEnvDeps = (
 }
 
 describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
+  it('maintains the cache before the online create', async () => {
+    const root = makeRoot()
+    const order: string[] = []
+    const { deps } = makeNamedEnvDeps(root, {
+      maintainCache: async () => void order.push('clean'),
+      runArgv: async (argv) => {
+        order.push('create')
+        const prefix = argv[argv.indexOf('--prefix') + 1]
+        const bin = pythonBin(prefix)
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+      }
+    })
+
+    await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+
+    expect(order).toEqual(['clean', 'create'])
+  })
+
+  it('does not start a named create when the cleanup worker cannot be confirmed stopped', async () => {
+    const root = makeRoot()
+    const runArgv = vi.fn(async () => undefined)
+    const { deps } = makeNamedEnvDeps(root, {
+      maintainCache: async () => {
+        throw new Error(`${CHILD_UNCONFIRMED}: cleanup worker may still be running`)
+      },
+      runArgv
+    })
+
+    await expect(
+      new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+    ).rejects.toThrow(CHILD_UNCONFIRMED)
+    expect(runArgv).not.toHaveBeenCalled()
+  })
+
   it('builds the create argv from the base floor + user packages (deduped), targeting envs/<name>', async () => {
     const root = makeRoot()
     const { deps, argvs } = makeNamedEnvDeps(root)
@@ -1646,7 +1760,9 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
     const prefix = envPrefix(root, DEFAULT_PY_ENV)
     mkdirSync(join(prefix, 'conda-meta'), { recursive: true }) // conda-meta but no python bin
     let condaMetaAtCreate: boolean | undefined
+    const maintainCache = vi.fn(async () => undefined)
     const deps = makeDeps(root, {
+      maintainCache,
       runArgv: async (argv) => {
         const p = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
         condaMetaAtCreate = existsSync(join(p, 'conda-meta'))
@@ -1658,6 +1774,7 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
     await new DefaultRuntimeProvisioner(deps).restoreRelocatedEnvs(() => {})
     expect(condaMetaAtCreate).toBe(false) // the wedged prefix was cleared before create
     expect(existsSync(pythonBin(prefix))).toBe(true) // rebuilt
+    expect(maintainCache).not.toHaveBeenCalled() // the copied cache is the offline restore source
   })
 
   it('keeps a valid prefix AND its lock when the ready-marker write fails (no destructive rebuild)', async () => {

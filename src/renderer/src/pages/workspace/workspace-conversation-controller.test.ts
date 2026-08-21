@@ -688,7 +688,8 @@ describe('workspace conversation controller', () => {
       activeSession: undefined,
       currentDraftKey: 'new:project-a',
       newConversationAutoReviewEnabled: true,
-      newConversationEnabledComputeHosts: ['ssh:lab']
+      newConversationEnabledComputeHosts: ['ssh:lab', 'ssh:available'],
+      newConversationSelectedComputeHosts: ['ssh:lab']
     })
     input.composer.lifecycle.captureSend = vi.fn(() => ({
       draftKey: 'new:project-a',
@@ -707,7 +708,10 @@ describe('workspace conversation controller', () => {
 
     expect(input.setAutoReviewEnabled).toHaveBeenCalledWith('pending-session', true)
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ enabledComputeHosts: ['ssh:lab'] })
+      expect.objectContaining({
+        enabledComputeHosts: ['ssh:lab', 'ssh:available'],
+        selectedComputeHosts: ['ssh:lab']
+      })
     )
     expect(input.session.actions.resetNewConversationSpecialist).toHaveBeenCalledOnce()
   })

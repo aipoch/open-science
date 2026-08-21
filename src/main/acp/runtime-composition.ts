@@ -155,6 +155,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   spawnAgent?: () => ChildProcessWithoutNullStreams
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
+  resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
 }
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
@@ -193,7 +194,8 @@ const createAcpRuntime = ({
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
-  imageInputCompatibility
+  imageInputCompatibility,
+  resolveComputeExecutionTargetIds
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -495,7 +497,8 @@ const createAcpRuntime = ({
               }
             }
           : undefined,
-        resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository)
+        resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository),
+        ...(resolveComputeExecutionTargetIds ? { resolveComputeExecutionTargetIds } : {})
       }
       const baseOwners = composeAcpRuntimeBaseOwners(runtimeOptions)
       return new AcpRuntime(

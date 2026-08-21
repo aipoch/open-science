@@ -81,6 +81,7 @@ type WorkspaceConversationControllerOptions = {
   hasPendingPermissionRequest: (sessionId: string) => boolean
   newConversationAutoReviewEnabled: boolean
   newConversationEnabledComputeHosts: string[]
+  newConversationSelectedComputeHosts?: string[]
   composer: ConversationComposer
   session: ConversationSession
   runtime: WorkspaceConversationRuntime
@@ -290,6 +291,7 @@ const useWorkspaceConversationController = (
       const wasNewConversation = !activeSession
       const autoReviewEnabled = current.newConversationAutoReviewEnabled
       const computeHosts = current.newConversationEnabledComputeHosts
+      const selectedComputeHosts = current.newConversationSelectedComputeHosts ?? []
       const { draftSpecialistId, hasPendingSwitch, pendingSpecialistId } =
         session.lifecycle.captureSendIntent(branchInNewSession)
 
@@ -311,7 +313,10 @@ const useWorkspaceConversationController = (
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
             specialistId: draftSpecialistId,
             ...(wasNewConversation && computeHosts.length > 0
-              ? { enabledComputeHosts: computeHosts }
+              ? {
+                  enabledComputeHosts: computeHosts,
+                  selectedComputeHosts
+                }
               : {})
           })
           .catch((error: unknown) => {

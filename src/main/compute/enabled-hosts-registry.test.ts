@@ -3,6 +3,18 @@ import { describe, expect, it } from 'vitest'
 import { EnabledComputeHostsRegistry, attachEnabledComputeHosts } from './enabled-hosts-registry'
 
 describe('EnabledComputeHostsRegistry', () => {
+  it('projects enabled and selected Session access independently', () => {
+    const registry = new EnabledComputeHostsRegistry()
+
+    registry.setAccess('session-1', {
+      enabledProviderIds: ['ssh:available', 'ssh:selected'],
+      selectedProviderIds: ['ssh:selected']
+    })
+
+    expect(registry.getEnabled('session-1')).toEqual(['ssh:available', 'ssh:selected'])
+    expect(registry.getSelected('session-1')).toEqual(['ssh:selected'])
+  })
+
   it('returns an empty array for an unknown session', () => {
     const registry = new EnabledComputeHostsRegistry()
 
@@ -118,11 +130,18 @@ describe('attachEnabledComputeHosts', () => {
   it('exposes getEnabledComputeHosts backed by the registry', () => {
     const service = new FakeComputeService()
     const registry = new EnabledComputeHostsRegistry()
-    registry.set('session-1', ['ssh:cluster-1'])
+    registry.setAccess('session-1', {
+      enabledProviderIds: ['ssh:available', 'ssh:cluster-1'],
+      selectedProviderIds: ['ssh:cluster-1']
+    })
 
     const augmented = attachEnabledComputeHosts(service, registry)
 
-    expect(augmented.getEnabledComputeHosts('session-1')).toEqual(['ssh:cluster-1'])
+    expect(augmented.getEnabledComputeHosts('session-1')).toEqual([
+      'ssh:available',
+      'ssh:cluster-1'
+    ])
+    expect(augmented.getSelectedComputeHosts('session-1')).toEqual(['ssh:cluster-1'])
     expect(augmented.getEnabledComputeHosts('unknown')).toEqual([])
   })
 

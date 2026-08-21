@@ -3,6 +3,7 @@ import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
@@ -53,8 +54,16 @@ type TaskProjectPort = {
 
 type TaskSessionPort = {
   list(): Promise<PersistedChatSession[]>
-  save(session: PersistedChatSession): Promise<void>
+  save(session: PersistedChatSession): Promise<PersistedChatSession>
   setDelegationPolicy(projectId: string, sessionId: string, policy: DelegationPolicy): Promise<void>
+}
+
+type TaskComputePreferencePort = {
+  withReservation<Result>(
+    providerIds: readonly string[],
+    operation: (providerIds: string[]) => Promise<Result>
+  ): Promise<Result>
+  set(sessionId: string, providerIds: readonly string[]): Promise<PersistedChatSession>
 }
 
 type TaskPreviewResourcePort = {
@@ -154,6 +163,7 @@ type TaskRunnerDependencies = {
   runtimeEvents: TaskRuntimeEventPort
   specialists: TaskSpecialistPort
   reviewer: TaskReviewerPort
+  computePreferences: TaskComputePreferencePort
   createId: () => string
   now: () => number
 }
@@ -219,7 +229,8 @@ const cloneRun = (run: MutableTaskRun): TaskRun => ({
   error: run.error,
   artifacts: [...run.artifacts],
   attention: run.attention,
-  review: run.review
+  review: run.review,
+  preferredComputeHostIds: [...run.preferredComputeHostIds]
 })
 
 const createTitle = (prompt: string): string => {
@@ -618,11 +629,20 @@ class TaskRunner {
     ) {
       throw new TaskRunnerError('invalid_request', 'Delegation policy must be allow or deny.')
     }
+    if (
+      request.computeHostIds !== undefined &&
+      (!Array.isArray(request.computeHostIds) ||
+        request.computeHostIds.some(
+          (providerId) => typeof providerId !== 'string' || !providerId.trim()
+        ))
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Compute Host ids must be non-empty strings.')
+    }
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : ''
     if (!prompt) throw new TaskRunnerError('invalid_request', 'Prompt is required.')
     const cwd =
       request.cwd === undefined ? undefined : await canonicalizeTaskWorkingDirectory(request.cwd)
-    const normalizedRequest: StartTaskRunRequest = cwd === undefined ? request : { ...request, cwd }
+    let normalizedRequest: StartTaskRunRequest = cwd === undefined ? request : { ...request, cwd }
 
     const project = await this.resolveProject(request.project)
     const sessions = await this.dependencies.sessions.list()
@@ -661,14 +681,33 @@ class TaskRunner {
     if (existing) this.reserveSession(existing.id, runId)
     let prepared: Awaited<ReturnType<TaskRunner['prepareSession']>>
     try {
-      const prepare = (): ReturnType<TaskRunner['prepareSession']> =>
-        this.prepareSession(project, existing, normalizedRequest, prompt, userMessageId)
-      prepared = existing
-        ? await this.dependencies.agent.withSessionAvailable(project.id, existing.id, prepare)
-        : await prepare()
+      const prepare = (
+        requestForPreparation = normalizedRequest
+      ): ReturnType<TaskRunner['prepareSession']> =>
+        this.prepareSession(project, existing, requestForPreparation, prompt, userMessageId)
+      if (existing) {
+        prepared = await this.dependencies.agent.withSessionAvailable(
+          project.id,
+          existing.id,
+          prepare
+        )
+      } else if (request.computeHostIds !== undefined) {
+        prepared = await this.dependencies.computePreferences.withReservation(
+          request.computeHostIds,
+          async (computeHostIds) => {
+            normalizedRequest = { ...normalizedRequest, computeHostIds }
+            return prepare(normalizedRequest)
+          }
+        )
+      } else {
+        prepared = await prepare()
+      }
       this.reserveSession(prepared.session.id, runId)
     } catch (error) {
       if (existing) this.releaseSession(existing.id, runId)
+      if (error instanceof ComputeHostPreferenceValidationError) {
+        throw new TaskRunnerError('invalid_request', error.message)
+      }
       throw error
     }
     const session = prepared.session
@@ -680,6 +719,9 @@ class TaskRunner {
       status: 'running' as const,
       startedAt: this.dependencies.now(),
       artifacts: [],
+      preferredComputeHostIds: [
+        ...(session.selectedComputeHosts ?? session.enabledComputeHosts ?? [])
+      ],
       events: [],
       promptMessageId: session.activeRun!.promptMessageId,
       progressPhase: 'accepted' as const,
@@ -807,6 +849,9 @@ class TaskRunner {
     const autoReviewEnabled = request.autoReviewEnabled ?? existing?.autoReviewEnabled ?? false
     const delegationPolicy: DelegationPolicy =
       request.delegationPolicy ?? existing?.delegationPolicy ?? 'allow'
+    if (existing && request.computeHostIds !== undefined) {
+      existing = await this.dependencies.computePreferences.set(existing.id, request.computeHostIds)
+    }
     let sessionInfo: TaskAgentSession
 
     if (existing) {
@@ -879,6 +924,12 @@ class TaskRunner {
           agentBackendId: sessionInfo.backendId,
           providerSessionId: sessionInfo.providerSessionId,
           providerContinuityToken: sessionInfo.providerContinuityToken,
+          ...(request.computeHostIds !== undefined
+            ? {
+                enabledComputeHosts: request.computeHostIds,
+                selectedComputeHosts: request.computeHostIds
+              }
+            : {}),
           messages: [userMessage],
           activeRun: { promptMessageId: userMessageId, startedAt: now },
           createdAt: now,
@@ -899,13 +950,13 @@ class TaskRunner {
       delete session.resumeRecovery
     }
 
-    await this.dependencies.sessions.save(session)
+    const committedSession = await this.dependencies.sessions.save(session)
     const previousHistoryPreamble = existing
       ? createHistoryPreamble(selectTaskHistoryMessages(existing))
       : undefined
     const contextReset = Boolean(sessionInfo.contextReset || existing?.pendingHistoryReplay)
     return {
-      session,
+      session: committedSession,
       historyPreamble: contextReset ? previousHistoryPreamble : undefined,
       contextReset,
       resumeFallback:
@@ -1308,6 +1359,7 @@ export type {
   TaskAgentResumeSessionRequest,
   TaskAgentSession,
   TaskArtifactPort,
+  TaskComputePreferencePort,
   TaskProjectPort,
   TaskPreviewResourcePort,
   TaskRunnerDependencies,

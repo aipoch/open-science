@@ -1249,7 +1249,10 @@ export type CustomServerView = {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    clientId?: string
     hasTokens: boolean
+    // Optional for compatibility with snapshots from an older main process during development.
+    hasClientSecret?: boolean
   }
 }
 
@@ -1284,6 +1287,8 @@ export type AddCustomServerRequest = {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    clientId?: string
+    clientSecret?: string
   } | null
 }
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
@@ -1307,11 +1312,13 @@ export type ConnectorTemplateDefinition = {
   requiredSecrets?: {
     environment?: string[]
     headers?: string[]
+    oauthClientSecret?: boolean
   }
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    clientId?: string
   }
 }
 
@@ -1361,6 +1368,9 @@ export type UpdateCustomServerRequest = {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    clientId?: string
+    // Omitted keeps the stored secret; null explicitly removes it.
+    clientSecret?: string | null
   } | null
 }
 

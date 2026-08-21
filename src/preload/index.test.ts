@@ -290,6 +290,8 @@ describe('preload bridge — public surface inventory', () => {
       'compute.enabledHostsGet',
       'compute.enabledHostsSet',
       'compute.get',
+      'compute.hostEnabledSet',
+      'compute.hostSelectedSet',
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',

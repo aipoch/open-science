@@ -1153,36 +1153,44 @@ describe('settings store: refreshProviderModels', () => {
 })
 
 describe('settings store: openSettingsToSkill', () => {
-  it('opens the dialog on a skill; consume and close both clear the pending id', () => {
+  it('opens the dialog on a skill; consume and close both clear the pending intent', () => {
     useSettingsStore.getState().openSettingsToSkill('x')
     expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSkillId).toBe('x')
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'skills',
+      view: { kind: 'detail', id: 'x' }
+    })
 
-    useSettingsStore.getState().consumePendingSkill()
-    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+    const requestId = useSettingsStore.getState().pendingSettingsIntent!.requestId
+    useSettingsStore.getState().consumePendingSettingsIntent(requestId)
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
 
-    // Closing after a fresh open-to-skill clears the pending id so a later open starts fresh.
+    // Closing after a fresh open-to-skill clears the intent so a later open starts fresh.
     useSettingsStore.getState().openSettingsToSkill('y')
     useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
-    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
   })
 })
 
 describe('settings store: openSettingsToSpecialist', () => {
-  it('opens the dialog on a specialist; consume and close both clear the pending id', () => {
+  it('opens the dialog on a specialist; consume and close both clear the pending intent', () => {
     useSettingsStore.getState().openSettingsToSpecialist('spc-1')
     expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSpecialistId).toBe('spc-1')
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'specialists',
+      view: { kind: 'edit', id: 'spc-1' }
+    })
 
-    useSettingsStore.getState().consumePendingSpecialist()
-    expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()
+    const requestId = useSettingsStore.getState().pendingSettingsIntent!.requestId
+    useSettingsStore.getState().consumePendingSettingsIntent(requestId)
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
 
-    // Closing after a fresh open-to-specialist clears the pending id so a later open starts fresh.
+    // Closing after a fresh open-to-specialist clears the intent so a later open starts fresh.
     useSettingsStore.getState().openSettingsToSpecialist('spc-2')
     useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
-    expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
   })
 })
 
@@ -1190,23 +1198,26 @@ describe('settings store: openSettingsToPanel', () => {
   it('opens the requested panel and clears an unconsumed target on close', () => {
     useSettingsStore.getState().openSettingsToPanel('storage')
     expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSettingsPanel).toBe('storage')
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({ panel: 'storage' })
 
     useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
-    expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
   })
 
   it('routes Compute through the panel target and consumes it exactly once', () => {
     useSettingsStore.getState().openSettingsToSkill('stale-skill')
     useSettingsStore.getState().openSettingsToCompute()
 
-    expect(useSettingsStore.getState().pendingSettingsPanel).toBe('compute')
-    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'compute',
+      view: { kind: 'list' }
+    })
 
-    useSettingsStore.getState().consumePendingSettingsPanel()
+    const requestId = useSettingsStore.getState().pendingSettingsIntent!.requestId
+    useSettingsStore.getState().consumePendingSettingsIntent(requestId)
     useSettingsStore.getState().openSettings()
-    expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
+    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
   })
 })
 

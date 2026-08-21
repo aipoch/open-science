@@ -9,6 +9,22 @@
 // Phase 1 never reads it for behavior.
 export type ComputeHostShape = 'direct_ssh' | 'scheduler_cluster' | 'bridge_runner'
 
+export type ComputeHostPreferenceValidationErrorCode = 'invalid_provider_id' | 'host_not_found'
+
+export class ComputeHostPreferenceValidationError extends Error {
+  constructor(
+    readonly code: ComputeHostPreferenceValidationErrorCode,
+    readonly providerId: string
+  ) {
+    super(
+      code === 'invalid_provider_id'
+        ? `Invalid Compute Host provider id: ${providerId}`
+        : `Compute Host not found: ${providerId}`
+    )
+    this.name = 'ComputeHostPreferenceValidationError'
+  }
+}
+
 // Optional connection overrides layered on top of ~/.ssh/config (never credentials/keys). Stored as a
 // JSON string in the DB column; parsed to this shape at the repository boundary.
 export type SshOverrides = {
@@ -67,6 +83,14 @@ export type ProbeResult = {
   detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
 }
 
+// Complete details read at the compute-owner boundary. Renderer IPC deliberately projects only
+// doc + isSkeleton, while agent RPC separately serializes probeResult to its public wire shape.
+export type ComputeHostDetails = {
+  doc: string
+  isSkeleton: boolean
+  probeResult: ProbeResult | undefined
+}
+
 // Who last wrote the details doc — the user (UI edit) or the agent (compute_details, later issue).
 export type DetailsAuthor = 'user' | 'agent'
 
@@ -91,6 +115,76 @@ export type ComputeHost = {
   createdAt: number
   updatedAt: number
 }
+
+// Compact Agent-facing discovery result. Large knowledge documents, detailed probe data,
+// credentials, and renderer-only fields stay behind the dedicated details operation.
+export type ComputeHostSummary = {
+  provider_id: string
+  display_name: string
+  shape: ComputeHostShape
+  status: 'connected' | 'probe_failed' | 'not_probed'
+}
+
+// Canonical Agent-facing catalog entry. Disabled hosts are omitted entirely; an enabled host is
+// either an explicit execution target or an available fallback candidate for this Session.
+export type AgentComputeHostSummary = ComputeHostSummary & {
+  role: 'selected' | 'available'
+}
+
+export const COMPUTE_HOST_UNAVAILABLE_ERROR_CODE = 'host_unavailable' as const
+
+// Deliberately does not distinguish a missing host from one hidden from the calling Session.
+export class ComputeHostUnavailableError extends Error {
+  readonly code = COMPUTE_HOST_UNAVAILABLE_ERROR_CODE
+
+  constructor() {
+    super('Compute Host is unavailable for this Session.')
+    this.name = 'ComputeHostUnavailableError'
+  }
+}
+
+export type ComputeProbeSnapshot = {
+  ok: boolean
+  probed_at: string
+  exit_code: number | null
+  error_tail: string | null
+  os?: string
+  cpus?: number
+  mem_mib?: number
+  gpus?: ProbeGpu[]
+  detected_scheduler?: ProbeResult['detectedScheduler']
+}
+
+export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
+  provider_id: host.providerId,
+  display_name: host.displayName,
+  shape: host.shape,
+  status:
+    host.probeResult === undefined
+      ? 'not_probed'
+      : host.probeResult.ok
+        ? 'connected'
+        : 'probe_failed'
+})
+
+export const computeProbeSnapshot = (
+  probeResult: ProbeResult | undefined
+): ComputeProbeSnapshot | null =>
+  probeResult
+    ? {
+        ok: probeResult.ok,
+        probed_at: probeResult.probedAt,
+        exit_code: probeResult.exitCode,
+        error_tail: probeResult.errorTail,
+        ...(probeResult.os !== undefined ? { os: probeResult.os } : {}),
+        ...(probeResult.cpus !== undefined ? { cpus: probeResult.cpus } : {}),
+        ...(probeResult.memMib !== undefined ? { mem_mib: probeResult.memMib } : {}),
+        ...(probeResult.gpus !== undefined ? { gpus: probeResult.gpus } : {}),
+        ...(probeResult.detectedScheduler !== undefined
+          ? { detected_scheduler: probeResult.detectedScheduler }
+          : {})
+      }
+    : null
 
 // Add-form payload. displayName defaults to the alias; detailsDoc seeds the notes (author = user).
 export type CreateComputeHostRequest = {

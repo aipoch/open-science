@@ -94,9 +94,68 @@ describe('TagRepository', () => {
         id: tag.id,
         name: expandingName,
         iconKey: 'tag',
-        colorKey: 'blue'
+        colorKey: 'blue',
+        expectedUpdatedAt: tag.updatedAt
       })
     ).rejects.toThrow('Tag name is too long.')
+  })
+
+  it('rejects an update from a stale Tag snapshot without overwriting the winner', async () => {
+    await repository.create({ name: 'Research', iconKey: 'tag', colorKey: 'blue' })
+    const staleTag = (await repository.snapshot(0)).tags.find(
+      (candidate) => 'name' in candidate && candidate.name === 'Research'
+    )!
+
+    repository = new TagRepository(
+      async () => client,
+      () => staleTag.updatedAt
+    )
+    await repository.update({
+      id: staleTag.id,
+      name: 'Current research',
+      iconKey: 'book-open',
+      colorKey: 'green',
+      expectedUpdatedAt: staleTag.updatedAt
+    })
+
+    await expect(
+      repository.update({
+        id: staleTag.id,
+        name: 'Research',
+        iconKey: 'star',
+        colorKey: 'amber',
+        expectedUpdatedAt: staleTag.updatedAt
+      })
+    ).rejects.toThrow('Tag changed since it was loaded.')
+    const currentTag = (await repository.snapshot(1)).tags.find(
+      (candidate) => candidate.id === staleTag.id
+    )!
+    expect(currentTag).toEqual(
+      expect.objectContaining({
+        id: staleTag.id,
+        name: 'Current research',
+        iconKey: 'book-open',
+        colorKey: 'green',
+        updatedAt: staleTag.updatedAt + 1
+      })
+    )
+  })
+
+  it('rejects an out-of-range update timestamp with a domain error', async () => {
+    await repository.create({ name: 'Research', iconKey: 'tag', colorKey: 'blue' })
+    const tag = (await repository.snapshot(0)).tags.find(
+      (candidate) => 'name' in candidate && candidate.name === 'Research'
+    )!
+
+    await expect(
+      repository.update({
+        id: tag.id,
+        name: 'Updated research',
+        iconKey: 'book-open',
+        colorKey: 'green',
+        expectedUpdatedAt: 8_640_000_000_000_001
+      })
+    ).rejects.toThrow('Tag update timestamp is invalid.')
   })
 
   it('stores many-to-many assignments and cascades custom Tag deletion', async () => {

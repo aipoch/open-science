@@ -48,6 +48,8 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.enabledHostsGet': 'compute:enabled-hosts:get',
   'compute.enabledHostsSet': 'compute:enabled-hosts:set',
   'compute.get': 'compute:get',
+  'compute.hostEnabledSet': 'compute:host-enabled:set',
+  'compute.hostSelectedSet': 'compute:host-selected:set',
   'compute.jobsList': 'compute:jobs:list',
   'compute.jobsMarkConsumed': 'compute:jobs:mark-consumed',
   'compute.jobsPendingNotification': 'compute:jobs:pending-notification',

@@ -82,6 +82,7 @@ describe('OpenScienceClient', () => {
             cwd: '/workspace/research',
             status: 'running',
             startedAt: 1,
+            preferredComputeHostIds: ['ssh:authority'],
             artifacts: []
           }
         })
@@ -121,13 +122,17 @@ describe('OpenScienceClient', () => {
       sleep: vi.fn().mockResolvedValue(undefined)
     })
 
-    const started = await client.startRun({
-      project: 'project-1',
-      prompt: 'Research this.',
-      cwd: '/workspace/research',
-      permissionProfile: 'auto',
-      skillIds: ['literature-review']
-    })
+    const started = await client.startRun(
+      {
+        project: 'project-1',
+        prompt: 'Research this.',
+        cwd: '/workspace/research',
+        permissionProfile: 'auto',
+        skillIds: ['literature-review'],
+        computeHostIds: ['ssh:alpha', 'ssh:beta']
+      },
+      { idempotencyKey: 'start-run-1' }
+    )
     const completed = await client.waitForRun(started.id)
 
     expect(completed).toMatchObject({
@@ -140,13 +145,17 @@ describe('OpenScienceClient', () => {
       'http://127.0.0.1:44100/api/v1/runs',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ authorization: 'Bearer secret-token' }),
+        headers: expect.objectContaining({
+          authorization: 'Bearer secret-token',
+          'idempotency-key': 'start-run-1'
+        }),
         body: JSON.stringify({
           project: 'project-1',
           prompt: 'Research this.',
           cwd: '/workspace/research',
           permissionProfile: 'auto',
-          skillIds: ['literature-review']
+          skillIds: ['literature-review'],
+          computeHostIds: ['ssh:alpha', 'ssh:beta']
         })
       })
     )

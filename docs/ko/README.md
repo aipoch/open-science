@@ -21,7 +21,7 @@ Open Science는 과학자와 연구자를 위한 오픈 소스이자 로컬 우�
 
 Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[Open Science v0.18.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 8월)_. Open Science v0.18.0은 즐겨찾기와 드래그 정렬을 갖춘 리소스 간 카탈로그 태그, 재설계된 스킬 관리, 캐시 즉시 로딩·기능 아이콘·외관 빠른 편집을 갖춘 더 빠른 스페셜리스트 마켓플레이스를 도입합니다. 컴퓨팅 호스트는 OS 암호화 자격 증명을 사용하는 SSH 비밀번호 인증을 지원하며, 한국어 현지화와 다국어 README 및 기여 가이드로 접근성을 넓혔습니다. 이 릴리스는 마켓플레이스와 커넥터 로딩, 런타임 이벤트 스트리밍, 보호된 삭제, 온보딩 원자적 저장, 시작·세션·컴퓨팅·업데이트 복구도 개선합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[Open Science v0.18.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 8월)_. Open Science v0.18.1은 세션 범위 컴퓨팅 호스트 탐색과 실행 대상 선택(CLI 지원 포함), 앱 시작 시 재설계된 오류 알림 구성 요소, 프로젝트와 작업 맥락을 갖춘 개선된 메시지 센터 알림, 긴 사용자 메시지 접기, 빈 초기 리뷰 검사, 프랑스어 현지화, 가져온 스킬 그룹 메뉴, 앱 업데이트와 프로젝트 에이전트 컨텍스트 CLI 명령을 도입합니다. 이와 함께 패널 캐싱과 런타임 프로브 재사용으로 설정 및 시작 속도를 높이고, 동시 발생하는 메시지와 분기 변경을 조정하며, 커넥터 아티팩트 출처를 기록하고, 로컬 HTTP 경계를 강화하며, 업데이터 복구 안내를 제공합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="생성된 아티팩트가 포함된 에이전트 세션을 보여 주는 Open Science 오픈 소스 AI 연구 워크벤치 데스크톱 앱" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

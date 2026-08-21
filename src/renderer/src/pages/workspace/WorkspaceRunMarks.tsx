@@ -8,7 +8,7 @@ import { type CSSProperties, useCallback, useLayoutEffect, useMemo, useRef, useS
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
-import type { GroupedConversationItem } from './workspace-tool-activity-groups'
+import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 import {
   createRunMarks,
   findMessageTarget,
@@ -19,7 +19,7 @@ import {
 } from './workspace-run-marks'
 
 type WorkspaceRunMarksProps = {
-  items: readonly GroupedConversationItem[]
+  items: readonly WorkspaceConversationTimelineItem[]
   viewport: HTMLDivElement | null
 }
 

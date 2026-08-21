@@ -18,6 +18,7 @@ import {
   planStartupAction,
   type ProductionProvisionerDeps
 } from './provisioner'
+import { selectMicromambaCache } from './micromamba-cache'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-start-'))
 const touchBin = (path: string): void => {
@@ -162,6 +163,7 @@ describe('createProductionProvisioner', () => {
         }
       },
       {
+        maintainCache: async () => undefined,
         fetchBundle: async () => {
           events.push('fetch')
           throw new Error('stop after observing fetch')
@@ -224,6 +226,7 @@ describe('createProductionProvisioner', () => {
       {
         runner: { initialPath: primary, resolve: async () => compatibility },
         fetchBundle: async () => ({ lockPath }),
+        maintainCache: async () => undefined,
         runArgv,
         verify: async () => undefined
       }
@@ -249,6 +252,7 @@ describe('createProductionProvisioner', () => {
       },
       {
         runner: { initialPath: mmPath, resolve: async () => mmPath },
+        maintainCache: async () => undefined,
         runArgv,
         verify: async () => undefined
       }
@@ -260,5 +264,54 @@ describe('createProductionProvisioner', () => {
 
     expect(resolveChannel).toHaveBeenCalledOnce()
     expect(runArgv.mock.calls[0]?.[0]).toContain('https://fast-mirror.invalid/conda-forge')
+  })
+
+  it('binds the default cache-maintenance adapter to the selected app cache', async () => {
+    const root = makeRoot()
+    const primary = join(root, 'bin', micromambaBinName)
+    const compatibility = join(root, 'bin', `compat-${micromambaBinName}`)
+    touchBin(primary)
+    touchBin(compatibility)
+    const runCacheMaintenance = vi.fn<
+      NonNullable<ProductionProvisionerDeps['runCacheMaintenance']>
+    >(async () => undefined)
+    const runArgv = vi.fn<NonNullable<ProductionProvisionerDeps['runArgv']>>(async () => undefined)
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: 'conda-forge',
+        micromamba: { env: { OPEN_SCIENCE_MICROMAMBA_BIN: primary } }
+      },
+      {
+        runner: { initialPath: primary, resolve: async () => compatibility },
+        fetchBundle: async () => ({ lockPath: join(root, 'python.lock') }),
+        runCacheMaintenance,
+        runArgv,
+        verify: async () => undefined
+      }
+    )
+
+    await provisioner.provisionPython(() => undefined)
+
+    expect(runCacheMaintenance).toHaveBeenCalled()
+    const selectedCacheCall = runCacheMaintenance.mock.calls.find(
+      ([, env]) => env?.CONDA_PKGS_DIRS === selectMicromambaCache(root).path
+    )
+    expect(selectedCacheCall?.[0]).toEqual([
+      compatibility,
+      '--no-rc',
+      'clean',
+      '--packages',
+      '--yes'
+    ])
+    expect(selectedCacheCall?.[1]).toMatchObject({
+      MAMBA_ROOT_PREFIX: root,
+      CONDA_PKGS_DIRS: selectMicromambaCache(root).path
+    })
+    for (const call of runCacheMaintenance.mock.calls) {
+      expect(call[2]).toBeInstanceOf(AbortSignal)
+      expect(call[3]).toEqual(expect.any(Function))
+      expect(call[4]).toEqual(expect.any(Function))
+    }
   })
 })

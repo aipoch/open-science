@@ -3203,9 +3203,23 @@ function computeError(raw) {
 // host.compute namespace. Public methods and input keys are camelCase; the adapter immediately maps
 // them to the existing snake_case computeCall RPC contract.
 const hostCompute = {
-  // Enumerate registered compute hosts for discovery. No approval, no session context.
+  // Legacy full-object discovery. The server filters this to hosts enabled for this Session.
   async list() {
     return computeRpc({ op: 'list' })
+  },
+
+  // Canonical compact Session catalog. Each enabled host has role selected or available.
+  async listHosts() {
+    return computeRpc({ op: 'list_hosts', session_id: COMPUTE_SESSION_ID })
+  },
+
+  // Compatibility discovery methods. Disabled registered hosts remain hidden.
+  async listRegistered() {
+    return computeRpc({ op: 'list_registered' })
+  },
+
+  async listPreferred() {
+    return computeRpc({ op: 'list_preferred', session_id: COMPUTE_SESSION_ID })
   },
 
   // Returns session-enabled compute hosts (≠ list() which returns all registered hosts).
@@ -3310,17 +3324,19 @@ const hostCompute = {
         })
       },
 
-      // Attaches to an existing job by job_id. .status() reads from DB only (no SSH).
+      // Attaches this provider handle to an existing job by job_id. Server-side reads verify that
+      // the job belongs to this provider and the trusted Session before returning data.
+      // .status() reads from DB only (no SSH).
       // .result() returns the full JobResult (spec §11.4): scans the local harvest directory,
       // returns workspace-relative file paths, never triggers harvest or SSH (design §9).
       attachJob(jobId) {
         return {
           job_id: jobId,
           async status() {
-            return computeRpc({ op: 'job_status', job_id: jobId })
+            return computeRpc({ op: 'job_status', provider_id: providerId, job_id: jobId })
           },
           async result() {
-            return computeRpc({ op: 'job_result', job_id: jobId })
+            return computeRpc({ op: 'job_result', provider_id: providerId, job_id: jobId })
           }
         }
       },

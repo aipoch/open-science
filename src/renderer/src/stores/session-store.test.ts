@@ -1978,7 +1978,8 @@ describe('session store', () => {
     const result = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',
       cwd: '/workspace/project',
-      enabledComputeHosts: ['ssh:lab']
+      enabledComputeHosts: ['ssh:lab', 'ssh:available'],
+      selectedComputeHosts: ['ssh:lab']
     })
 
     expect(result?.sessionId).toMatch(/^pending-session-/)
@@ -1988,7 +1989,8 @@ describe('session store', () => {
         id: result?.sessionId,
         isPending: true,
         cwd: '/workspace/project',
-        enabledComputeHosts: ['ssh:lab'],
+        enabledComputeHosts: ['ssh:lab', 'ssh:available'],
+        selectedComputeHosts: ['ssh:lab'],
         title: 'Help me inspect this notebook',
         status: 'running',
         activeRun: {
@@ -4724,8 +4726,10 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
+      'src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
+      'src/renderer/src/pages/workspace/workspace-conversation-timeline.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.ts',
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
@@ -6112,7 +6116,7 @@ describe('truncateSessionFromMessage', () => {
     })
   })
 
-  it('projects enabled Compute Host authority without replacing newer local state', () => {
+  it('projects Compute Host access authority without replacing newer local state', () => {
     seedSession()
     const source = useSessionStore.getState().sessions[0]
     useSessionStore.getState().renameSession('session-1', 'Newer local title')
@@ -6121,15 +6125,17 @@ describe('truncateSessionFromMessage', () => {
       source,
       session: {
         ...toPersistedSession(source),
-        enabledComputeHosts: ['ssh:lab'],
+        enabledComputeHosts: ['ssh:lab', 'ssh:available'],
+        selectedComputeHosts: ['ssh:lab'],
         updatedAt: source.updatedAt + 1
       },
-      mode: 'enabled-compute-hosts-authority'
+      mode: 'compute-host-access-authority'
     })
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       title: 'Newer local title',
-      enabledComputeHosts: ['ssh:lab']
+      enabledComputeHosts: ['ssh:lab', 'ssh:available'],
+      selectedComputeHosts: ['ssh:lab']
     })
   })
 })

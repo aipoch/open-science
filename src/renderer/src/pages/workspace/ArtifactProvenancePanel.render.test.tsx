@@ -1110,6 +1110,41 @@ describe('ArtifactProvenancePanel', () => {
     expect(reviewerCardSpy).toHaveBeenCalledWith(expect.objectContaining({ defaultExpanded: true }))
   })
 
+  it('projects a pass Review with zero checks without inventing Review Check evidence', async () => {
+    const baseProjection = provenance().review
+    if (baseProjection.state !== 'available') throw new Error('Expected available review fixture.')
+    const emptyPassAssessment = { ...review, checks: [], submittedChecks: [] }
+    getVersionReview.mockResolvedValue({
+      review: {
+        state: 'available',
+        value: {
+          ...baseProjection.value,
+          selectedVersionAssessment: emptyPassAssessment,
+          currentDirectAssessment: emptyPassAssessment,
+          latestChainReview: emptyPassAssessment,
+          selectedVersionChecks: [],
+          turnLevelChecks: []
+        }
+      }
+    })
+
+    await clickTab('Review')
+    await flush()
+
+    expect(reviewerCardSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        review: expect.objectContaining({
+          outcome: 'pass',
+          checks: [],
+          submittedChecks: []
+        })
+      })
+    )
+    expect(container.querySelector('[data-testid="reviewer-card"]')?.textContent).not.toContain(
+      'The curve matches the executed code'
+    )
+  })
+
   it('renders the Reviewer-owned selected Version projection without mutating frozen history', async () => {
     const selectedTrackedSource = {
       ...check,

@@ -1,20 +1,20 @@
-import type { SettingsPanelId } from '../pages/settings/settings-navigation'
 import type { ComputeAuthenticationErrorCode } from '../../../shared/compute'
+import {
+  settingsPanelRoute,
+  type SettingsPanelId,
+  type SettingsRoute
+} from '../pages/settings/settings-navigation'
 
-export type ComputeAuthenticationTarget = Readonly<{
-  providerId: string
-  errorCode: ComputeAuthenticationErrorCode
+export type SettingsNavigationIntent = Readonly<{
   requestId: number
+  route: SettingsRoute
 }>
 
-let computeAuthenticationRequestId = 0
+let settingsNavigationRequestId = 0
 
 export type SettingsNavigationState = {
   isSettingsOpen: boolean
-  pendingSettingsPanel?: SettingsPanelId
-  pendingSkillId?: string
-  pendingSpecialistId?: string
-  pendingComputeAuthentication?: ComputeAuthenticationTarget
+  pendingSettingsIntent?: SettingsNavigationIntent
 }
 
 export type SettingsNavigationActions = {
@@ -24,95 +24,80 @@ export type SettingsNavigationActions = {
   openSettingsToSkill: (skillId: string) => void
   openSettingsToSpecialist: (specialistId: string) => void
   openSettingsToCompute: () => void
+  openSettingsToComputeHost: (providerId: string) => void
   openSettingsToComputeAuthentication: (
     providerId: string,
     errorCode: ComputeAuthenticationErrorCode
   ) => void
-  consumePendingSettingsPanel: () => void
-  consumePendingSkill: () => void
-  consumePendingSpecialist: () => void
-  consumePendingComputeAuthentication: () => void
+  consumePendingSettingsIntent: (requestId: number) => void
 }
 
 type SettingsNavigationSliceOptions = {
+  getState: () => SettingsNavigationState
   setState: (patch: Partial<SettingsNavigationState>) => void
 }
 
 export const createInitialSettingsNavigationState = (): SettingsNavigationState => ({
   isSettingsOpen: false,
-  pendingSettingsPanel: undefined,
-  pendingSkillId: undefined,
-  pendingSpecialistId: undefined,
-  pendingComputeAuthentication: undefined
+  pendingSettingsIntent: undefined
 })
 
-// Owns only the global dialog visibility and one-shot external landing targets. SettingsPage keeps
-// its local breadcrumb/history stack and consumes these targets through the compatibility store.
+// Owns global dialog visibility and a one-shot landing intent. Caller-facing actions remain stable;
+// route construction, mutual exclusion, and repeated-intent identity stay behind this module's seam.
 export const createSettingsNavigationSlice = ({
+  getState,
   setState
-}: SettingsNavigationSliceOptions): SettingsNavigationActions => ({
-  openSettings: () => setState({ isSettingsOpen: true }),
-
-  openSettingsToPanel: (panel) =>
+}: SettingsNavigationSliceOptions): SettingsNavigationActions => {
+  const openTo = (route: SettingsRoute): void =>
     setState({
       isSettingsOpen: true,
-      pendingSettingsPanel: panel,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined,
-      pendingComputeAuthentication: undefined
-    }),
+      pendingSettingsIntent: { requestId: ++settingsNavigationRequestId, route }
+    })
 
-  closeSettings: () =>
-    setState({
-      isSettingsOpen: false,
-      pendingSettingsPanel: undefined,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined,
-      pendingComputeAuthentication: undefined
-    }),
+  return {
+    openSettings: () => setState({ isSettingsOpen: true }),
 
-  openSettingsToSkill: (skillId) =>
-    setState({
-      isSettingsOpen: true,
-      pendingSettingsPanel: undefined,
-      pendingSkillId: skillId,
-      pendingSpecialistId: undefined,
-      pendingComputeAuthentication: undefined
-    }),
+    openSettingsToPanel: (panel) => openTo(settingsPanelRoute(panel)),
 
-  openSettingsToSpecialist: (specialistId) =>
-    setState({
-      isSettingsOpen: true,
-      pendingSettingsPanel: undefined,
-      pendingSkillId: undefined,
-      pendingSpecialistId: specialistId,
-      pendingComputeAuthentication: undefined
-    }),
+    closeSettings: () =>
+      setState({
+        isSettingsOpen: false,
+        pendingSettingsIntent: undefined
+      }),
 
-  openSettingsToCompute: () =>
-    setState({
-      isSettingsOpen: true,
-      pendingSettingsPanel: 'compute',
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined,
-      pendingComputeAuthentication: undefined
-    }),
+    openSettingsToSkill: (skillId) =>
+      openTo({ panel: 'skills', view: { kind: 'detail', id: skillId } }),
 
-  openSettingsToComputeAuthentication: (providerId, errorCode) =>
-    setState({
-      isSettingsOpen: true,
-      pendingSettingsPanel: undefined,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined,
-      pendingComputeAuthentication: {
-        providerId,
-        errorCode,
-        requestId: ++computeAuthenticationRequestId
-      }
-    }),
+    openSettingsToSpecialist: (specialistId) =>
+      openTo({ panel: 'specialists', view: { kind: 'edit', id: specialistId } }),
 
-  consumePendingSettingsPanel: () => setState({ pendingSettingsPanel: undefined }),
-  consumePendingSkill: () => setState({ pendingSkillId: undefined }),
-  consumePendingSpecialist: () => setState({ pendingSpecialistId: undefined }),
-  consumePendingComputeAuthentication: () => setState({ pendingComputeAuthentication: undefined })
-})
+    openSettingsToCompute: () => openTo({ panel: 'compute', view: { kind: 'list' } }),
+
+    openSettingsToComputeHost: (providerId) =>
+      openTo({ panel: 'compute', view: { kind: 'detail', providerId } }),
+
+    openSettingsToComputeAuthentication: (providerId, errorCode) => {
+      const requestId = ++settingsNavigationRequestId
+      setState({
+        isSettingsOpen: true,
+        pendingSettingsIntent: {
+          requestId,
+          route: {
+            panel: 'compute',
+            view: {
+              kind: 'detail',
+              providerId,
+              authenticationFocus: errorCode,
+              authenticationRequestId: requestId
+            }
+          }
+        }
+      })
+    },
+
+    consumePendingSettingsIntent: (requestId) => {
+      if (getState().pendingSettingsIntent?.requestId !== requestId) return
+      setState({ pendingSettingsIntent: undefined })
+    }
+  }
+}

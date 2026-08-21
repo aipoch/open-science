@@ -1,12 +1,14 @@
 import { BrowserWindow, app, dialog, type OpenDialogOptions } from 'electron'
-import { zipSync } from 'fflate'
+import { Zip, ZipDeflate } from 'fflate'
 
 import { ipcMainHandle } from './ipc-handler-registry'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { open, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, open, rm, writeFile, type FileHandle } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 
 import type {
   SaveBlobFileRequest,
@@ -43,6 +45,7 @@ type RegisterFileSaveHandlersOptions = {
     request: { projectId: string; fileId: string; versionId?: string }
   ) => Promise<ManagedFileVersionHandle>
   openProjectArtifactFile?: (sourcePath: string) => Promise<ProjectArtifactFileHandle>
+  createProjectArtifactTemporaryRoot?: () => Promise<string>
   projectArtifactExportLimits?: ProjectArtifactExportLimits
   translate?: NativeTranslator
 }
@@ -61,20 +64,43 @@ type ProjectArtifactExportLimits = {
   maxTotalBytes: number
 }
 
-// Structural subset of fs FileHandle: the size check and the read must observe one open file.
+// Structural subset of fs FileHandle: the size check and stream must observe one open file.
 type ProjectArtifactFileHandle = {
-  stat: () => Promise<{ isFile: () => boolean; size: number }>
-  readFile: () => Promise<Uint8Array>
+  stat: () => Promise<{ isFile: () => boolean; size: number; dev: number; ino: number }>
+  createReadStream: (options: {
+    autoClose: false
+    highWaterMark: number
+  }) => AsyncIterable<Uint8Array>
   close: () => Promise<void>
 }
 
-// Project exports buffer every file plus one zipSync output in main-process memory; cap the
-// per-file and cumulative bytes so a batch of multi-GB uploads cannot exhaust the process.
 const PROJECT_ARTIFACT_EXPORT_LIMITS: ProjectArtifactExportLimits = {
   maxFiles: 5000,
   maxFileBytes: 1024 ** 3,
   maxTotalBytes: 2 * 1024 ** 3
 }
+
+const PROJECT_ARTIFACT_STREAM_CHUNK_BYTES = 64 * 1024
+
+type ProjectArtifactExportCandidateBase = {
+  file: SaveProjectArtifactsRequest['files'][number]
+  entryName: string
+}
+
+type ProjectArtifactExportCandidate = ProjectArtifactExportCandidateBase &
+  (
+    | {
+        kind: 'managed-version'
+        source: ManagedFileVersionHandle
+      }
+    | {
+        kind: 'path'
+        sourcePath: string
+        device: number
+        inode: number
+        integrity?: { expectedSize: number; expectedChecksum: string }
+      }
+  )
 
 type ManagedFileHandle = {
   copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
@@ -247,8 +273,205 @@ const getManagedFileIntegrity = (
   }
 }
 
-const checksumBytes = (bytes: Uint8Array): string =>
-  createHash('sha256').update(bytes).digest('hex')
+const checksumProjectArtifactFile = async (
+  source: ProjectArtifactFileHandle
+): Promise<{ size: number; checksum: string }> => {
+  const checksum = createHash('sha256')
+  let size = 0
+  const stream = source.createReadStream({
+    autoClose: false,
+    highWaterMark: PROJECT_ARTIFACT_STREAM_CHUNK_BYTES
+  })
+  for await (const chunk of stream) {
+    size += chunk.byteLength
+    checksum.update(chunk)
+  }
+  return { size, checksum: checksum.digest('hex') }
+}
+
+const appendArchiveChunk = async (handle: FileHandle, chunk: Uint8Array): Promise<void> => {
+  let offset = 0
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset, null)
+    if (bytesWritten === 0) throw new Error('Failed to make progress writing Project Artifact ZIP.')
+    offset += bytesWritten
+  }
+}
+
+const writeProjectArtifactArchive = async (options: {
+  destinationPath: string
+  candidates: ProjectArtifactExportCandidate[]
+  failures: SaveProjectArtifactFailure[]
+  limits: ProjectArtifactExportLimits
+  openPathSource: (sourcePath: string) => Promise<ProjectArtifactFileHandle>
+  createTemporaryRoot: () => Promise<string>
+}): Promise<boolean> => {
+  let temporaryRoot: string | undefined
+  let archiveHandle: FileHandle | undefined
+  let archiveHandleClosed = false
+  let zip: Zip | undefined
+  const pendingManagedSources = new Set(
+    options.candidates.flatMap((candidate) =>
+      candidate.kind === 'managed-version' ? [candidate.source] : []
+    )
+  )
+
+  try {
+    temporaryRoot = await options.createTemporaryRoot()
+    const temporaryArchivePath = join(temporaryRoot, 'project-artifacts.zip')
+    archiveHandle = await open(temporaryArchivePath, 'wx', 0o600)
+    let archiveFailure: Error | undefined
+    let pendingArchiveWrite = Promise.resolve()
+    let streamedEntries = 0
+    let streamedBytes = 0
+
+    zip = new Zip((error, chunk) => {
+      if (error) {
+        archiveFailure ??= error
+        return
+      }
+      if (!chunk) return
+      pendingArchiveWrite = pendingArchiveWrite
+        .then(() => (archiveFailure ? undefined : appendArchiveChunk(archiveHandle!, chunk)))
+        .catch((writeError) => {
+          archiveFailure = writeError instanceof Error ? writeError : new Error(String(writeError))
+        })
+    })
+
+    const throwIfArchiveFailed = (): void => {
+      if (archiveFailure) throw archiveFailure
+    }
+
+    for (const candidate of options.candidates) {
+      let closeSource: (() => Promise<void>) | undefined
+      let entryStarted = false
+      try {
+        let sourceSize: number
+        let chunks: AsyncIterable<Uint8Array>
+        let verifySource: () => Promise<void>
+
+        if (candidate.kind === 'managed-version') {
+          const managedSource = candidate.source
+          sourceSize = managedSource.size
+          closeSource = () => managedSource.close()
+          chunks = (async function* (): AsyncGenerator<Uint8Array> {
+            for (let begin = 0; begin < managedSource.size;) {
+              const end = Math.min(begin + PROJECT_ARTIFACT_STREAM_CHUNK_BYTES, managedSource.size)
+              const chunk = new Uint8Array(await managedSource.readRange(begin, end))
+              if (chunk.byteLength !== end - begin) {
+                throw new Error('Project export source changed while streaming.')
+              }
+              begin = end
+              yield chunk
+            }
+          })()
+          verifySource = () => managedSource.verifyUnchanged()
+        } else {
+          const pathSource = await options.openPathSource(candidate.sourcePath)
+          closeSource = () => pathSource.close()
+          const metadata = await pathSource.stat()
+          if (!metadata.isFile()) {
+            throw new Error('Project export source is not a regular file.')
+          }
+          if (metadata.dev !== candidate.device || metadata.ino !== candidate.inode) {
+            throw new Error('Project export source changed after validation.')
+          }
+          if (candidate.integrity && metadata.size !== candidate.integrity.expectedSize) {
+            throw new Error('Project export source does not match the managed Version record.')
+          }
+          sourceSize = metadata.size
+          chunks = pathSource.createReadStream({
+            autoClose: false,
+            highWaterMark: PROJECT_ARTIFACT_STREAM_CHUNK_BYTES
+          })
+          verifySource = async () => undefined
+        }
+
+        if (sourceSize > options.limits.maxFileBytes) {
+          throw new Error('Project export file exceeds the per-file size limit.')
+        }
+        if (streamedBytes + sourceSize > options.limits.maxTotalBytes) {
+          throw new Error('Project export exceeds the total size limit.')
+        }
+
+        const zipEntry = new ZipDeflate(candidate.entryName, { level: 6 })
+        zip.add(zipEntry)
+        entryStarted = true
+        let entryBytes = 0
+        const checksum =
+          candidate.kind === 'path' && candidate.integrity ? createHash('sha256') : undefined
+        for await (const chunk of chunks) {
+          entryBytes += chunk.byteLength
+          if (entryBytes > options.limits.maxFileBytes) {
+            throw new Error('Project export file exceeds the per-file size limit.')
+          }
+          if (streamedBytes + entryBytes > options.limits.maxTotalBytes) {
+            throw new Error('Project export exceeds the total size limit.')
+          }
+
+          checksum?.update(chunk)
+          zipEntry.push(chunk, false)
+          await pendingArchiveWrite
+          throwIfArchiveFailed()
+          // Bound each synchronous compression slice and explicitly let Electron service IPC,
+          // window, and lifecycle events between source chunks.
+          await yieldToEventLoop()
+        }
+        if (
+          candidate.kind === 'path' &&
+          candidate.integrity &&
+          (entryBytes !== candidate.integrity.expectedSize ||
+            checksum?.digest('hex') !== candidate.integrity.expectedChecksum)
+        ) {
+          throw new Error('Project export source does not match the managed Version record.')
+        }
+        await verifySource()
+        zipEntry.push(new Uint8Array(0), true)
+        await pendingArchiveWrite
+        throwIfArchiveFailed()
+        streamedBytes += entryBytes
+        streamedEntries += 1
+      } catch (error) {
+        if (entryStarted) throw error
+        options.failures.push({
+          ...candidate.file,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      } finally {
+        await closeSource?.()
+        if (candidate.kind === 'managed-version') {
+          pendingManagedSources.delete(candidate.source)
+        }
+      }
+    }
+
+    if (streamedEntries === 0) {
+      zip.terminate()
+      return false
+    }
+
+    zip.end()
+    await pendingArchiveWrite
+    throwIfArchiveFailed()
+    await archiveHandle.close()
+    archiveHandleClosed = true
+    await copyFile(temporaryArchivePath, options.destinationPath)
+    return true
+  } catch (error) {
+    zip?.terminate()
+    throw error
+  } finally {
+    if (archiveHandle && !archiveHandleClosed) {
+      await archiveHandle.close().catch(() => undefined)
+    }
+    await Promise.all(
+      [...pendingManagedSources].map((source) => source.close().catch(() => undefined))
+    )
+    if (temporaryRoot) {
+      await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+}
 
 const isAlreadyExistsError = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && error.code === 'EEXIST'
@@ -602,20 +825,28 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       assertSaveProjectArtifactsRequest(request)
 
       const limits = options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS
-      // Null-prototype map: entry names are renderer-controlled, so a suggestedName like
-      // '__proto__' must become a real own key instead of polluting the prototype chain.
-      const zipEntries: Record<string, Uint8Array> = Object.create(null)
+      const candidates: ProjectArtifactExportCandidate[] = []
       const takenNames = new Set<string>()
       const failures: SaveProjectArtifactFailure[] = []
       let totalBytes = 0
       for (const file of request.files) {
         let exportFile: { close: () => Promise<void> } | undefined
+        let retainedManagedVersion = false
         try {
           if (takenNames.size >= limits.maxFiles) {
             throw new Error('Project export exceeds the file-count limit.')
           }
           let sourcePath = file.path
-          let bytes: Uint8Array | undefined
+          let managedVersion: ManagedFileVersionHandle | undefined
+          let pathSize: number | undefined
+          let pathCandidate:
+            | {
+                sourcePath: string
+                device: number
+                inode: number
+                integrity?: { expectedSize: number; expectedChecksum: string }
+              }
+            | undefined
           let pathIntegrity: { expectedSize: number; expectedChecksum: string } | undefined
           let usePathFallback = !file.fileId || !options.openManagedFileVersion
 
@@ -623,7 +854,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
             // Omitting versionId intentionally resolves the current DB head at export time. An
             // explicit versionId remains an exact historical-version request.
             try {
-              const managedVersion = await options.openManagedFileVersion(file.source, {
+              managedVersion = await options.openManagedFileVersion(file.source, {
                 projectId: request.projectId,
                 fileId: file.fileId,
                 ...(file.versionId ? { versionId: file.versionId } : {})
@@ -638,11 +869,6 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
               if (totalBytes + managedVersion.size > limits.maxTotalBytes) {
                 throw new Error('Project export exceeds the total size limit.')
               }
-              bytes =
-                managedVersion.size === 0
-                  ? new Uint8Array()
-                  : new Uint8Array(await managedVersion.readRange(0, managedVersion.size))
-              await managedVersion.verifyUnchanged()
             } catch (error) {
               // Native anchored reads are unavailable on Windows and unsupported installations.
               // Only that capability error may use the existing validated path flow; integrity and
@@ -650,6 +876,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
               if (file.versionId || !hasErrorCode(error, 'NATIVE_WRITE_REQUIRED')) throw error
               await exportFile?.close().catch(() => undefined)
               exportFile = undefined
+              managedVersion = undefined
               usePathFallback = true
             }
           }
@@ -691,16 +918,23 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
             if (totalBytes + metadata.size > limits.maxTotalBytes) {
               throw new Error('Project export exceeds the total size limit.')
             }
-            bytes = new Uint8Array(await legacyExportFile.readFile())
-            if (
-              pathIntegrity &&
-              (bytes.byteLength !== pathIntegrity.expectedSize ||
-                checksumBytes(bytes) !== pathIntegrity.expectedChecksum)
-            ) {
-              throw new Error('Project export source does not match the managed Version record.')
+            if (pathIntegrity) {
+              const observed = await checksumProjectArtifactFile(legacyExportFile)
+              if (
+                observed.size !== pathIntegrity.expectedSize ||
+                observed.checksum !== pathIntegrity.expectedChecksum
+              ) {
+                throw new Error('Project export source does not match the managed Version record.')
+              }
             }
+            pathCandidate = {
+              sourcePath,
+              device: metadata.dev,
+              inode: metadata.ino,
+              ...(pathIntegrity ? { integrity: pathIntegrity } : {})
+            }
+            pathSize = metadata.size
           }
-          if (!bytes) throw new Error('Project export source could not be read.')
           // Entries are grouped by origin under constant directory prefixes; the file name part
           // is sanitized before prefixing and collision suffixes apply within each category.
           const categoryDirectory = file.source === 'upload' ? 'uploads' : 'generated'
@@ -708,27 +942,28 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
             takenNames,
             `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName, sourcePath)}`
           )
-          // Re-check the bytes actually read: the source may have grown between stat and read.
-          if (bytes.byteLength > limits.maxFileBytes) {
-            throw new Error('Project export file exceeds the per-file size limit.')
+          if (managedVersion) {
+            candidates.push({ kind: 'managed-version', file, entryName, source: managedVersion })
+            retainedManagedVersion = true
+            totalBytes += managedVersion.size
+          } else if (pathCandidate) {
+            candidates.push({ kind: 'path', file, entryName, ...pathCandidate })
+            totalBytes += pathSize!
+          } else {
+            throw new Error('Project export source could not be opened.')
           }
-          if (totalBytes + bytes.byteLength > limits.maxTotalBytes) {
-            throw new Error('Project export exceeds the total size limit.')
-          }
-          zipEntries[entryName] = bytes
           // Claim checks are case-insensitive; the entry itself keeps its original casing.
           takenNames.add(entryName.toLowerCase())
-          totalBytes += bytes.byteLength
         } catch (error) {
           failures.push({
             ...file,
             message: error instanceof Error ? error.message : String(error)
           })
         } finally {
-          await exportFile?.close()
+          if (!retainedManagedVersion) await exportFile?.close()
         }
       }
-      if (takenNames.size === 0) {
+      if (candidates.length === 0) {
         return { saved: true, ...(failures.length > 0 ? { failures } : {}) }
       }
 
@@ -746,14 +981,48 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           }
         ]
       }
-      const { canceled, filePath } = parentWindow
-        ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-        : await dialog.showSaveDialog(dialogOptions)
-      if (canceled || !filePath) return { saved: false }
+      let dialogResult: Awaited<ReturnType<typeof dialog.showSaveDialog>>
+      try {
+        dialogResult = parentWindow
+          ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+          : await dialog.showSaveDialog(dialogOptions)
+      } catch (error) {
+        await Promise.all(
+          candidates.flatMap((candidate) =>
+            candidate.kind === 'managed-version'
+              ? [candidate.source.close().catch(() => undefined)]
+              : []
+          )
+        )
+        throw error
+      }
+      const { canceled, filePath } = dialogResult
+      if (canceled || !filePath) {
+        await Promise.all(
+          candidates.flatMap((candidate) =>
+            candidate.kind === 'managed-version'
+              ? [candidate.source.close().catch(() => undefined)]
+              : []
+          )
+        )
+        return { saved: false }
+      }
 
-      // Compress only after the user confirms the destination so a canceled dialog costs nothing.
-      await writeFile(filePath, zipSync(zipEntries, { level: 6 }))
-      return { saved: true, filePath, ...(failures.length > 0 ? { failures } : {}) }
+      const wroteArchive = await writeProjectArtifactArchive({
+        destinationPath: filePath,
+        candidates,
+        failures,
+        limits,
+        openPathSource: options.openProjectArtifactFile ?? openProjectArtifactFile,
+        createTemporaryRoot:
+          options.createProjectArtifactTemporaryRoot ??
+          (() => mkdtemp(join(tmpdir(), 'open-science-project-export-')))
+      })
+      return {
+        saved: true,
+        ...(wroteArchive ? { filePath } : {}),
+        ...(failures.length > 0 ? { failures } : {})
+      }
     }
   )
 }

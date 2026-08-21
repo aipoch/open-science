@@ -195,6 +195,9 @@ const composeAcpRuntimePromptOwners = (
         session.contextUsagePolicy.resolve(sessionId).estimateInput,
       selectedContextWindow: (sessionId) =>
         session.contextUsagePolicy.resolve(sessionId).selectedWindow,
+      ...(options.resolveComputeExecutionTargetIds
+        ? { resolveComputeExecutionTargetIds: options.resolveComputeExecutionTargetIds }
+        : {}),
       emitSkillActivities,
       onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
       onProviderPromptAccepted: callbacks.onProviderPromptAccepted,

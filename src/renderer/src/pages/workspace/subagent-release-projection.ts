@@ -45,6 +45,7 @@ type SubagentFrameProjection = Readonly<{
 
 type InlineParentMessageProjection = Readonly<{
   messageId: string
+  promptMessageId?: string
   sourceFrameId: string
   sourceName: string
   kind: DelegatedMessageCommand['kind']
@@ -197,6 +198,7 @@ const projectInlineParentMessages = (
 
     projectedByMessageId.set(command.messageId, {
       messageId: command.messageId,
+      promptMessageId: command.rootOriginMessageId,
       sourceFrameId: source.id,
       sourceName: inlineSourceNameForFrame(source),
       kind: command.kind,

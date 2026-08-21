@@ -61,7 +61,7 @@ import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-mess
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { createComputeIpcModule } from './compute/ipc'
 import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
-import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
+import { AgentComputeService } from './compute/agent-compute-service'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
@@ -350,6 +350,7 @@ export type ApplicationRuntimeInterfaces = {
   settingsService: WindowSettingsCapabilities
   taskAgent: TaskAgentPort
   taskControls: TaskControlPorts
+  computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
@@ -1374,8 +1375,6 @@ const createApplicationModules = async (
     permissionGrantRegistry,
     settingsRepository,
     {
-      requestSkillRuntimeReload: () =>
-        void runtimeRef.current?.requestSkillsReloadForFramework('claude-code'),
       pruneSessionEnabledHosts: async (providerId, afterPrune) => {
         if (!sessionEnabledComputeHostsOwnerRef.current) {
           throw new Error('Session enabled Compute Host ownership is not initialized.')
@@ -1465,9 +1464,9 @@ const createApplicationModules = async (
       }
     }
   )
-  // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
-  // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
-  const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
+  // The Notebook RPC receives only this Session-admitted facade, never the unrestricted service
+  // used by Settings and internal runtimes.
+  const agentComputeService = new AgentComputeService(computeService, hostsRegistry)
   // host.agents control-plane SDK (issue 02/05): read Specialist/catalog surface plus the durable
   // immediate-handoff lifecycle. The catalog adapter delegates to the authoritative
   // SettingsService + ProfileService; switch() reuses the SAME SessionBindingService and durable
@@ -1817,7 +1816,7 @@ const createApplicationModules = async (
     new NotebookLocalRpcServer(notebookLocalRpc, {
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
       connectorService,
-      computeService: computeServiceWithRegistry,
+      computeService: agentComputeService,
       skillImporter: conversationSkillImporter,
       planService: {
         call: (input) => {
@@ -2086,7 +2085,8 @@ const createApplicationModules = async (
       sessionPersistenceCoordinator,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
-      imageInputCompatibility
+      imageInputCompatibility,
+      resolveComputeExecutionTargetIds: (sessionId) => hostsRegistry.getSelected(sessionId)
     },
     (options) => {
       const runtime = createAcpRuntime(options)
@@ -3172,6 +3172,7 @@ const createApplicationModules = async (
         resolve: (reference) => profileService.resolveRunnableByReference(reference)
       }
     },
+    computePreferences: sessionEnabledComputeHostsOwner,
     sessionDeletionCapability: sessionPersistenceCoordinator,
     archiveCapability: archiveCoordinator,
     detectActiveSessions: () =>
