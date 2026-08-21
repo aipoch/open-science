@@ -212,12 +212,8 @@ const ConversationExportDialogContent = ({
               >
                 {(
                   [
-                    [
-                      'entire',
-                      t('Entire conversation'),
-                      t('Include every message in this branch.')
-                    ],
-                    ['selected', t('Selected messages'), t('Choose only the messages you need.')]
+                    ['entire', t('Entire conversation'), t('Include the entire branch.')],
+                    ['selected', t('Selected'), t('Choose only what you need.')]
                   ] as const
                 ).map(([value, label, description]) => (
                   <RadioGroup.Item
@@ -247,10 +243,10 @@ const ConversationExportDialogContent = ({
                       id="conversation-export-turns"
                       className="text-sm font-medium text-text-000"
                     >
-                      {t('Messages')}
+                      {t('Conversation')}
                     </h2>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      {t('{{selected}} of {{total}} messages selected', {
+                      {t('{{selected}} of {{total}} selected', {
                         selected: selectedPromptIds.size,
                         total: turns.length
                       })}
@@ -270,14 +266,14 @@ const ConversationExportDialogContent = ({
                         )}
                       </Checkbox.Indicator>
                     </span>
-                    {t('All messages')}
+                    {t('Select all')}
                   </Checkbox.Root>
                 </div>
 
                 <div
                   className="grid min-w-0 gap-2"
                   role="group"
-                  aria-label={t('Messages to export')}
+                  aria-label={t('Content to export')}
                 >
                   {turns.map((turn) => {
                     const selected = selectedPromptIds.has(turn.promptMessageId)
@@ -338,14 +334,12 @@ const ConversationExportDialogContent = ({
                   {t('Wait for the conversation to finish before exporting it.')}
                 </p>
               ) : noSelection ? (
-                <p className="text-muted-foreground">{t('Select at least one message.')}</p>
+                <p className="text-muted-foreground">{t('Select content to export.')}</p>
               ) : (
                 <p className="text-muted-foreground">
                   {scope === 'entire'
-                    ? t('All {{total}} messages will be exported.', { total: turns.length })
-                    : t('{{selected}} selected messages will be exported.', {
-                        selected: selectedPromptIds.size
-                      })}
+                    ? t('The entire conversation will be exported.')
+                    : t('Only selected content will be exported.')}
                 </p>
               )}
             </div>

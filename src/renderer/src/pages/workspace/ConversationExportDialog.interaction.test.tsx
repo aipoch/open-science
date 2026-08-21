@@ -114,7 +114,7 @@ describe('ConversationExportDialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('starts selected messages empty, preserves selection after cancel, and submits in order', async () => {
+  it('starts selected content empty, preserves selection after cancel, and submits in order', async () => {
     const session = createSession()
     const onClose = vi.fn()
     const onExport = vi
@@ -132,16 +132,16 @@ describe('ConversationExportDialog', () => {
       )
     })
 
-    act(() => findControl('radio', 'Selected messages')?.click())
+    act(() => findControl('radio', 'Selected')?.click())
     const confirm = document.body.querySelector<HTMLButtonElement>(
       '[data-testid="conversation-export-confirm"]'
     )
-    expect(document.body.textContent).toContain('0 of 2 messages selected')
+    expect(document.body.textContent).toContain('0 of 2 selected')
     expect(confirm?.disabled).toBe(true)
 
     act(() => findControl('checkbox', 'Summarize the limitations')?.click())
     act(() => findControl('checkbox', 'Compare the papers')?.click())
-    expect(findControl('checkbox', 'All messages')?.getAttribute('aria-checked')).toBe('true')
+    expect(findControl('checkbox', 'Select all')?.getAttribute('aria-checked')).toBe('true')
     act(() => findControl('radio', 'Markdown')?.click())
     expect(confirm?.textContent).toContain('Export Markdown')
 
@@ -150,7 +150,7 @@ describe('ConversationExportDialog', () => {
       await Promise.resolve()
     })
     expect(onClose).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('2 of 2 messages selected')
+    expect(document.body.textContent).toContain('2 of 2 selected')
     expect(onExport).toHaveBeenLastCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -187,11 +187,11 @@ describe('ConversationExportDialog', () => {
       )
     })
 
-    act(() => findControl('radio', 'Selected messages')?.click())
+    act(() => findControl('radio', 'Selected')?.click())
 
     const scrollSurface = document.body.querySelector('.overflow-y-auto')
     const messageGroup = document.body.querySelector(
-      '[role="group"][aria-label="Messages to export"]'
+      '[role="group"][aria-label="Content to export"]'
     )
     const messageOption = findControl('checkbox', longPrompt)
     const promptPreview = [...document.body.querySelectorAll('span')].find(
