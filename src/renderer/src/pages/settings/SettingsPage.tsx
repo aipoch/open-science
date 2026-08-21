@@ -440,10 +440,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // Consume only the request applied above. A newer intent that arrives before this effect runs must
   // remain pending for the next render.
   useEffect(() => {
-    if (pendingSettingsIntent !== undefined) {
+    if (open && pendingSettingsIntent !== undefined) {
       consumePendingSettingsIntent(pendingSettingsIntent.requestId)
     }
-  }, [consumePendingSettingsIntent, pendingSettingsIntent])
+  }, [consumePendingSettingsIntent, open, pendingSettingsIntent])
 
   const currentRoute = history[historyIndex]
   const activePanel = currentRoute.panel

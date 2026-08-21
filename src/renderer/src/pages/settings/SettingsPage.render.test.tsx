@@ -2829,6 +2829,23 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('keeps an external intent pending until Settings is visible', async () => {
+    useSettingsStore.getState().openSettingsToSkill('alpha')
+
+    await act(async () => {
+      root.render(<SettingsPage open={false} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
+    )
+  })
+
   it('opens directly on a requested settings panel and consumes the target', async () => {
     useSettingsStore.getState().openSettingsToPanel('storage')
 
