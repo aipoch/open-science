@@ -64,13 +64,9 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
     const contextWindow = container.querySelector<HTMLInputElement>('[aria-label="Context window"]')
     expect(contextWindow?.placeholder).toBe('200000')
-    expect(contextWindow?.step).toBe('1')
-    expect(contextWindow?.getAttribute('list')).toBe('provider-context-window-presets')
-    expect(
-      Array.from(
-        container.querySelectorAll<HTMLOptionElement>('#provider-context-window-presets option')
-      ).map((option) => option.value)
-    ).toEqual(['32000', '64000', '128000', '200000', '256000', '1000000'])
+    expect(contextWindow?.getAttribute('role')).toBe('combobox')
+    expect(contextWindow?.getAttribute('aria-autocomplete')).toBe('none')
+    expect(contextWindow?.getAttribute('list')).toBeNull()
     expect(container.querySelector('[aria-label="Maximum input tokens"]')).toBeNull()
     expect(container.querySelector('[aria-label="Maximum output tokens"]')).toBeNull()
 
@@ -80,8 +76,16 @@ describe('ProviderForm field switching', () => {
         ?.click()
     })
 
-    expect(container.querySelector('[aria-label="Maximum input tokens"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Maximum output tokens"]')).not.toBeNull()
+    expect(
+      container
+        .querySelector<HTMLInputElement>('[aria-label="Maximum input tokens"]')
+        ?.getAttribute('role')
+    ).toBe('combobox')
+    expect(
+      container
+        .querySelector<HTMLInputElement>('[aria-label="Maximum output tokens"]')
+        ?.getAttribute('role')
+    ).toBe('combobox')
     // The auth style selector was removed; custom always uses a bearer token.
     expect(container.querySelector('[aria-label="Auth style"]')).toBeNull()
   })
@@ -102,6 +106,57 @@ describe('ProviderForm field switching', () => {
     expect(
       container.querySelector<HTMLInputElement>('[aria-label="Maximum input tokens"]')?.value
     ).toBe('272000')
+  })
+
+  it('offers tailored presets for context, input, and output limits while keeping each editable', () => {
+    render(createEmptyProviderFormValue({ type: 'custom' }))
+
+    act(() => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Advanced settings')
+        ?.click()
+    })
+
+    const suggestionsFor = (label: string): string[] => {
+      const input = container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+      act(() => {
+        input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      })
+      const listboxId = input?.getAttribute('aria-controls')
+      const listbox = listboxId ? document.getElementById(listboxId) : null
+      const suggestions = Array.from(listbox?.querySelectorAll('[role="option"]') ?? []).map(
+        (option) => option.textContent ?? ''
+      )
+      act(() => {
+        input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      return suggestions
+    }
+
+    expect(suggestionsFor('Context window')).toEqual([
+      '32,000',
+      '64,000',
+      '128,000',
+      '200,000',
+      '256,000',
+      '1,000,000'
+    ])
+    expect(suggestionsFor('Maximum input tokens')).toEqual([
+      '32,000',
+      '64,000',
+      '128,000',
+      '200,000',
+      '256,000',
+      '1,000,000'
+    ])
+    expect(suggestionsFor('Maximum output tokens')).toEqual([
+      '4,000',
+      '8,000',
+      '16,000',
+      '32,000',
+      '64,000',
+      '128,000'
+    ])
   })
 
   it('shows OpenAI as an official provider with a model catalog', () => {

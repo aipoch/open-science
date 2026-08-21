@@ -5,6 +5,7 @@ import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { FieldHelp } from '@/components/FieldHelp'
+import { EditableNumberCombobox } from '@/components/ui/editable-number-combobox'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -72,6 +73,10 @@ const fieldErrorClassName = 'text-xs text-destructive'
 const CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS = [
   32_000, 64_000, 128_000, 200_000, 256_000, 1_000_000
 ] as const
+const CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS = CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS
+const CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS = [
+  4_000, 8_000, 16_000, 32_000, 64_000, 128_000
+] as const
 
 // API format labels name the wire protocol and its literal path, so they read the same in every
 // locale and stay out of the catalog — translating `Messages API (/v1/messages)` would make it harder
@@ -122,7 +127,7 @@ const ProviderForm = ({
   showClaudeIsolated = false,
   defaultCustomApiEndpoint = 'anthropic'
 }: ProviderFormProps): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
@@ -568,26 +573,20 @@ const ProviderForm = ({
               </label>
               <FieldHelp content={t('Total tokens shared by the request and response.')} />
             </div>
-            <Input
+            <EditableNumberCombobox
               id="provider-context-window"
-              aria-label={t('Context window')}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              step={1}
-              list="provider-context-window-presets"
+              ariaLabel={t('Context window')}
               value={value.contextWindow}
+              presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
+              locale={i18n.language}
               disabled={disabled}
               placeholder="200000"
-              onChange={(event) => onChange({ contextWindow: event.target.value })}
+              status={errors.contextWindow ? 'error' : 'idle'}
+              describedBy={errors.contextWindow ? 'provider-context-window-error' : undefined}
+              onValueChange={(contextWindow) => onChange({ contextWindow })}
             />
-            <datalist id="provider-context-window-presets">
-              {CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS.map((limit) => (
-                <option key={limit} value={limit} />
-              ))}
-            </datalist>
             {errors.contextWindow ? (
-              <p className={fieldErrorClassName} role="alert">
+              <p id="provider-context-window-error" className={fieldErrorClassName} role="alert">
                 {t(errors.contextWindow)}
               </p>
             ) : null}
@@ -619,19 +618,25 @@ const ProviderForm = ({
                     </label>
                     <FieldHelp content={t('Optional provider-reported input cap.')} />
                   </div>
-                  <Input
+                  <EditableNumberCombobox
                     id="provider-max-input-tokens"
-                    aria-label={t('Maximum input tokens')}
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    step={1}
+                    ariaLabel={t('Maximum input tokens')}
                     value={value.maxInputTokens}
+                    presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
+                    locale={i18n.language}
                     disabled={disabled}
-                    onChange={(event) => onChange({ maxInputTokens: event.target.value })}
+                    status={errors.maxInputTokens ? 'error' : 'idle'}
+                    describedBy={
+                      errors.maxInputTokens ? 'provider-max-input-tokens-error' : undefined
+                    }
+                    onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
                   />
                   {errors.maxInputTokens ? (
-                    <p className={fieldErrorClassName} role="alert">
+                    <p
+                      id="provider-max-input-tokens-error"
+                      className={fieldErrorClassName}
+                      role="alert"
+                    >
                       {t(errors.maxInputTokens)}
                     </p>
                   ) : null}
@@ -644,19 +649,25 @@ const ProviderForm = ({
                     </label>
                     <FieldHelp content={t('Optional provider-reported output cap.')} />
                   </div>
-                  <Input
+                  <EditableNumberCombobox
                     id="provider-max-output-tokens"
-                    aria-label={t('Maximum output tokens')}
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    step={1}
+                    ariaLabel={t('Maximum output tokens')}
                     value={value.maxOutputTokens}
+                    presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
+                    locale={i18n.language}
                     disabled={disabled}
-                    onChange={(event) => onChange({ maxOutputTokens: event.target.value })}
+                    status={errors.maxOutputTokens ? 'error' : 'idle'}
+                    describedBy={
+                      errors.maxOutputTokens ? 'provider-max-output-tokens-error' : undefined
+                    }
+                    onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
                   />
                   {errors.maxOutputTokens ? (
-                    <p className={fieldErrorClassName} role="alert">
+                    <p
+                      id="provider-max-output-tokens-error"
+                      className={fieldErrorClassName}
+                      role="alert"
+                    >
                       {t(errors.maxOutputTokens)}
                     </p>
                   ) : null}
