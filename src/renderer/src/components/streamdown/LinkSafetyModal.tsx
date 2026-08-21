@@ -1,4 +1,4 @@
-import type { LinkSafetyModalProps } from 'streamdown'
+import type { LinkSafetyModalProps as StreamdownLinkSafetyModalProps } from 'streamdown'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { Check, Copy, ExternalLink, X } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
@@ -13,11 +13,18 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 
+type LinkSafetyModalProps = StreamdownLinkSafetyModalProps & {
+  confirmLabel?: string
+  description?: string
+}
+
 const LinkSafetyModal = ({
   url,
   isOpen,
   onClose,
-  onConfirm
+  onConfirm,
+  confirmLabel,
+  description
 }: LinkSafetyModalProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
@@ -150,7 +157,7 @@ const LinkSafetyModal = ({
 
           <div className="sd-link-safety-body">
             <p className="sd-link-safety-description">
-              {t('You are about to visit an external website.')}
+              {description ?? t('You are about to visit an external website.')}
             </p>
 
             <div
@@ -182,7 +189,7 @@ const LinkSafetyModal = ({
                 }}
               >
                 <ExternalLink className="size-3.5" aria-hidden />
-                {t('Open link')}
+                {confirmLabel ?? t('Open link')}
               </button>
             </div>
           </div>

@@ -3,6 +3,11 @@ import { act, type PropsWithChildren } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
+
 const streamdownHarness = vi.hoisted(() => ({
   shouldThrow: true,
   disallowedElements: undefined as readonly string[] | undefined,
@@ -50,6 +55,7 @@ describe('AgentMarkdown renderer recovery', () => {
   let root: Root
 
   beforeEach(() => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     streamdownHarness.shouldThrow = true
     streamdownHarness.disallowedElements = undefined
     streamdownHarness.components = undefined
@@ -360,5 +366,140 @@ describe('AgentMarkdown renderer recovery', () => {
     })
 
     expect(open).toHaveBeenCalledWith('https://example.com/paper', '_blank', 'noreferrer')
+  })
+
+  it('renders a numeric HTTPS link as a citation marker and opens a reusable source preview', async () => {
+    await act(async () => {
+      root.render(
+        <SessionMessageLink
+          href="https://example.com/paper#results"
+          title="Genome study"
+          className="size-8 bg-primary/10 text-primary underline hover:underline focus:underline active:underline"
+        >
+          1
+        </SessionMessageLink>
+      )
+    })
+
+    const citation = container.querySelector<HTMLAnchorElement>('[data-citation-marker]')
+    expect(citation?.tagName).toBe('A')
+    expect(citation?.getAttribute('href')).toBe('https://example.com/paper#results')
+    expect(citation?.getAttribute('role')).toBe('doc-noteref')
+    expect(citation?.getAttribute('aria-label')).toBe('Source 1: Genome study')
+    expect(citation?.className).toContain('rounded-full')
+    expect(citation?.className).toContain('bg-primary')
+    expect(citation?.className).toContain('text-white')
+    expect(citation?.className).not.toContain('bg-primary/10')
+    expect(citation?.className).not.toContain('text-primary')
+    expect(citation?.className).toContain('size-[1em]')
+    expect(citation?.className).not.toContain('size-5')
+    const citationClasses = citation?.className.split(/\s+/) ?? []
+    expect(citationClasses).not.toContain('size-8')
+    expect(citationClasses).toEqual(
+      expect.arrayContaining([
+        'no-underline',
+        'hover:no-underline',
+        'focus:no-underline',
+        'active:no-underline'
+      ])
+    )
+    expect(citationClasses).not.toEqual(
+      expect.arrayContaining([
+        'underline',
+        'hover:underline',
+        'focus:underline',
+        'active:underline'
+      ])
+    )
+    expect(citation?.querySelector<HTMLElement>('[data-citation-number]')?.style.fontSize).toBe(
+      '0.625em'
+    )
+
+    await act(async () => {
+      citation?.click()
+    })
+
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    const dialog = document.body.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Open external link?"]'
+    )
+    expect(dialog).not.toBeNull()
+    expect(dialog?.textContent).toContain('You are about to preview an external website.')
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    const openPreview = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Open source preview')
+    await act(async () => {
+      openPreview?.click()
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      panelState: 'open',
+      activeItemId: 'source:https://example.com/paper#results',
+      items: [
+        expect.objectContaining({
+          id: 'source:https://example.com/paper#results',
+          type: 'source',
+          citationNumber: '1',
+          title: 'Genome study',
+          url: 'https://example.com/paper#results'
+        })
+      ]
+    })
+  })
+
+  it('shrinks longer citation numbers to fit the fixed circular marker', async () => {
+    const renderedScales: number[] = []
+
+    for (const citationNumber of ['1', '12', '123', '1234', '12345']) {
+      await act(async () => {
+        root.render(
+          <SessionMessageLink href={`https://example.com/source-${citationNumber}`}>
+            {citationNumber}
+          </SessionMessageLink>
+        )
+      })
+
+      const number = container.querySelector<HTMLElement>('[data-citation-number]')
+      const scale = Number.parseFloat(number?.style.fontSize ?? '')
+      renderedScales.push(scale)
+      expect(scale).toBeGreaterThan(0)
+      expect(scale * citationNumber.length).toBeLessThanOrEqual(1.35)
+    }
+
+    expect(renderedScales).toEqual([0.625, 0.625, 0.45, 0.3375, 0.27])
+  })
+
+  it('keeps a numeric non-HTTPS link on the external-link safety path', async () => {
+    await act(async () => {
+      root.render(<SessionMessageLink href="http://example.com/paper">1</SessionMessageLink>)
+    })
+
+    expect(container.querySelector('[data-citation-marker]')).toBeNull()
+    expect(container.querySelector('[data-session-message-link]')).not.toBeNull()
+  })
+
+  it('routes middle-click citation activation through the safety confirmation', async () => {
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://example.com/paper" title="Genome study">
+          1
+        </SessionMessageLink>
+      )
+    })
+
+    const citation = container.querySelector<HTMLAnchorElement>('[data-citation-marker]')
+    const auxClick = new MouseEvent('auxclick', { bubbles: true, button: 1, cancelable: true })
+    await act(async () => {
+      citation?.dispatchEvent(auxClick)
+    })
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+
+    expect(auxClick.defaultPrevented).toBe(true)
+    expect(
+      document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
+    ).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 })

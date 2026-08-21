@@ -70,7 +70,13 @@ export type PreviewToolItem = PreviewItemBase & {
   selectedAgentFrameId?: string
 }
 
-export type PreviewItem = PreviewFileItem | PreviewToolItem
+export type PreviewSourceItem = PreviewItemBase & {
+  type: 'source'
+  citationNumber: string
+  url: string
+}
+
+export type PreviewItem = PreviewFileItem | PreviewToolItem | PreviewSourceItem
 
 type StoredPreviewItem = PreviewItem & {
   createdAt: number
@@ -143,7 +149,9 @@ const createEmptyPreviewSlice = (): PreviewSlice => ({
 // Preview capabilities are project-scoped. Persisted tabs created before project scope was stored
 // are repaired from the owning workbench slice, and callers cannot accidentally omit that scope.
 const withProjectScope = (item: PreviewItem, projectId: string | undefined): PreviewItem =>
-  item.type === 'file' && !item.projectId && projectId ? { ...item, projectId } : item
+  (item.type === 'file' || item.type === 'source') && !item.projectId && projectId
+    ? { ...item, projectId }
+    : item
 
 // Normalizes incoming preview items so callers never persist or manage timestamps themselves.
 const createStoredPreviewItem = (

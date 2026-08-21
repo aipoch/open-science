@@ -107,11 +107,16 @@ const schedulePreviewSave = previewSaveScheduler.schedule
 const flushPreviewPersistence = previewSaveScheduler.flush
 
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
-// Subagents selection. Other tool tabs remain runtime-only and re-appear from their existing owners.
+// Subagents selection. Other tool tabs and external source URLs remain runtime-only.
+const getPersistedActiveItemId = (state: PreviewStoreState): string | undefined =>
+  state.items.find((item) => item.id === state.activeItemId)?.type === 'source'
+    ? undefined
+    : state.activeItemId
+
 const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewState => ({
   version: PREVIEW_STATE_VERSION,
   panelState: state.panelState,
-  activeItemId: state.activeItemId,
+  activeItemId: getPersistedActiveItemId(state),
   ...(() => {
     const item = state.items.find(
       (candidate) => candidate.type === 'tool' && candidate.toolKind === 'subagents'

@@ -3426,5 +3426,12 @@
   "This imported Connector requires a client secret entered locally.": "Ce connecteur importé nécessite un secret client saisi localement.",
   "Authorization server URL is required for a pre-registered client.": "L’URL du serveur d’autorisation est requise pour un client préenregistré.",
   "Client ID is required when a client secret is configured.": "L’ID client est requis lorsqu’un secret client est configuré.",
-  "Client metadata URL cannot be combined with a pre-registered client.": "L’URL des métadonnées client ne peut pas être combinée avec un client préenregistré."
+  "Client metadata URL cannot be combined with a pre-registered client.": "L’URL des métadonnées client ne peut pas être combinée avec un client préenregistré.",
+  "Source {{number}}: {{title}}": "Source {{number}} : {{title}}",
+  "Source preview: {{title}}": "Aperçu de la source : {{title}}",
+  "Citation-{{number}}": "Citation-{{number}}",
+  "Open source in browser": "Ouvrir la source dans le navigateur",
+  "Only HTTPS sources can be previewed": "Seules les sources HTTPS peuvent être prévisualisées",
+  "Open source preview": "Ouvrir l’aperçu de la source",
+  "You are about to preview an external website.": "Vous êtes sur le point de prévisualiser un site web externe."
 }

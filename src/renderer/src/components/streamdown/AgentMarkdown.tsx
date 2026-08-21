@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import {
   Component,
+  Children,
   memo,
   useMemo,
   useState,
@@ -23,6 +24,9 @@ import { StreamingBlock } from './StreamingBlock'
 import { createAgentMarkdownNormalizer } from './normalize-agent-markdown'
 import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
+import { createSourcePreviewItem } from '@/lib/source-preview'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type AgentMarkdownProps = {
   content: string
@@ -55,6 +59,14 @@ const getSessionLinkFaviconUrl = (href: string | undefined): string | undefined 
   }
 }
 
+const getCitationNumber = (children: ReactNode): string | undefined => {
+  const parts = Children.toArray(children)
+  if (!parts.every((part) => typeof part === 'string' || typeof part === 'number')) return undefined
+
+  const label = parts.join('').trim()
+  return /^\d+$/u.test(label) ? label : undefined
+}
+
 const SessionLinkFavicon = ({ src }: { src: string }): React.JSX.Element => {
   const [state, setState] = useState<FaviconState>('loading')
 
@@ -83,16 +95,93 @@ const SessionMessageLink = ({
   children,
   className,
   href,
+  title,
   'data-incomplete': dataIncomplete
 }: SessionMessageLinkProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
+  const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const faviconUrl = getSessionLinkFaviconUrl(href)
+  const citationNumber = getCitationNumber(children)
+  const sourceItem =
+    href && citationNumber
+      ? createSourcePreviewItem({
+          href,
+          citationNumber,
+          title: typeof title === 'string' ? title : undefined
+        })
+      : undefined
+
+  if (citationNumber && sourceItem) {
+    const accessibleLabel = t('Source {{number}}: {{title}}', {
+      number: citationNumber,
+      title: sourceItem.title
+    })
+    const hostname = new URL(sourceItem.url).hostname
+    const citationNumberFontScale = Math.min(0.625, 1.35 / citationNumber.length)
+
+    return (
+      <>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                href={sourceItem.url}
+                role="doc-noteref"
+                aria-label={accessibleLabel}
+                data-citation-marker=""
+                data-incomplete={dataIncomplete}
+                className={cn(
+                  'mx-0.5 inline-flex shrink-0 align-text-bottom items-center justify-center rounded-full font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                  className,
+                  'size-[1em] bg-primary text-white no-underline hover:bg-primary/90 hover:no-underline focus:no-underline active:no-underline'
+                )}
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+                onClick={(event) => {
+                  event.preventDefault()
+                  setIsOpen(true)
+                }}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return
+                  event.preventDefault()
+                  setIsOpen(true)
+                }}
+              >
+                <span
+                  data-citation-number=""
+                  className="leading-none tabular-nums"
+                  style={{ fontSize: `${citationNumberFontScale}em` }}
+                >
+                  {citationNumber}
+                </span>
+              </a>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <span className="block font-medium">{accessibleLabel}</span>
+              <span className="block opacity-75">{hostname}</span>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <LinkSafetyModal
+          url={sourceItem.url}
+          isOpen={isOpen}
+          onClose={() => setIsOpen(false)}
+          onConfirm={() => upsertAndActivateItem(sourceItem)}
+          description={t('You are about to preview an external website.')}
+          confirmLabel={t('Open source preview')}
+        />
+      </>
+    )
+  }
 
   return (
     <>
       <button
         type="button"
         className={className}
+        title={title}
         data-incomplete={dataIncomplete}
         data-session-message-link=""
         data-streamdown="link"

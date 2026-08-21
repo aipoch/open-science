@@ -7,6 +7,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore,
   type PreviewFileItem,
+  type PreviewSourceItem,
   type PreviewToolItem
 } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -53,6 +54,15 @@ const createToolItem = (overrides: Partial<PreviewToolItem>): PreviewToolItem =>
   type: 'tool',
   toolKind: 'notebook',
   ...overrides
+})
+
+const createSourceItem = (): PreviewSourceItem => ({
+  id: 'source:https://example.com/paper',
+  sessionId: '__sources__',
+  title: 'Genome study',
+  type: 'source',
+  citationNumber: '1',
+  url: 'https://example.com/paper'
 })
 
 describe('PreviewPanel', () => {
@@ -184,6 +194,35 @@ describe('PreviewPanel', () => {
 
     const activeContent = container.querySelector('[data-testid="file-content"]')
     expect(activeContent?.textContent).toBe('file:image:artifact:file-1.png:/workspace/file-1.png')
+  })
+
+  it('renders an HTTPS source in an isolated iframe tab and releases it when inactive', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+    usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
+
+    await renderPanel()
+
+    const sourceTab = container.querySelector('[role="tab"][title="Citation-1"]')
+    const sourceHeader = container.querySelector('header')
+    const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    expect(sourceTab?.querySelector('[data-source-preview-tab-icon]')).not.toBeNull()
+    expect(sourceTab?.textContent).toContain('Citation-1')
+    expect(sourceTab?.textContent).not.toContain('Genome study')
+    expect(sourceHeader?.textContent).toContain('Genome study')
+    expect(sourceHeader?.textContent).toContain('https://example.com/paper')
+    expect(sourceHeader?.textContent).not.toContain('Cited URL:')
+    expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
+    expect(iframe?.getAttribute('sandbox')).toBe('allow-same-origin allow-scripts')
+    expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(iframe?.getAttribute('title')).toBe('Source preview: Genome study')
+    expect(container.querySelector('[aria-label="Open source in browser"]')).not.toBeNull()
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('item-1')
+    })
+
+    expect(container.querySelector('[data-source-preview-frame]')).toBeNull()
+    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
   })
 
   it('wraps an active file in a compact card with middle-ellipsis title and header actions', async () => {
