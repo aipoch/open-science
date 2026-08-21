@@ -1104,6 +1104,48 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
   })
 
+  it('renders completion metadata after a tool that follows the final assistant fragment', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({ id: 'prompt-1', createdAt: 1710000000000, sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Both kernels are ready. I will create the chart now.',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000060000,
+            completedAt: 1710000125000,
+            sortIndex: 3
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'activity-1',
+            promptMessageId: 'prompt-1',
+            sortIndex: 2,
+            createdAt: 1710000030000,
+            updatedAt: 1710000030000
+          }),
+          createActivity({
+            id: 'activity-2',
+            promptMessageId: 'prompt-1',
+            sortIndex: 4,
+            createdAt: 1710000090000,
+            updatedAt: 1710000090000
+          })
+        ]
+      })
+    )
+
+    const finalToolPosition = html.indexOf('data-message-id="activity-group-activity-2"')
+    const footerPosition = html.indexOf('data-slot="assistant-message-footer"')
+
+    expect(finalToolPosition).toBeGreaterThan(-1)
+    expect(footerPosition).toBeGreaterThan(finalToolPosition)
+  })
+
   it('hides only the current prompt footer while an ask-user continuation is running', async () => {
     const html = await renderScroller(
       createSession({

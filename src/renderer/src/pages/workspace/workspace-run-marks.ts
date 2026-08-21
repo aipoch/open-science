@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/stores/session-store'
 
 import { isHiddenControlMessage, isHumanUserMessage } from '../../../../shared/session-persistence'
-import type { GroupedConversationItem } from './workspace-tool-activity-groups'
+import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 
 type RunMark = {
   id: string
@@ -25,7 +25,7 @@ const normalizePreviewText = (
 
 // One Run Mark belongs to one visible human prompt. Agent preview ownership is explicit: older
 // messages without responseToMessageId never gain a guessed association from timeline adjacency.
-const createRunMarks = (items: readonly GroupedConversationItem[]): RunMark[] => {
+const createRunMarks = (items: readonly WorkspaceConversationTimelineItem[]): RunMark[] => {
   const messages = items.flatMap((item) =>
     item.type === 'message' && !isHiddenControlMessage(item.message) ? [item.message] : []
   )

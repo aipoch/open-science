@@ -77,6 +77,13 @@ type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
 type MessageRuntimeIdentity = Partial<
   Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
 >
+type WorkspaceAssistantTurnCompletionProps = {
+  message: ChatMessage
+  turnStartedAt?: number
+  runtimeIdentity?: MessageRuntimeIdentity
+  canBranchInNewSession?: boolean
+  onBranchInNewSession?: (messageId: string) => void
+}
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -464,6 +471,100 @@ const UserMessageActionTooltip = ({
     <TooltipContent>{label}</TooltipContent>
   </Tooltip>
 )
+
+// The terminal surface belongs to the whole Agent turn, not to the Message fragment that happens
+// to carry its usage metadata. Timeline consumers can therefore place it after later owned work.
+const WorkspaceAssistantTurnCompletion = ({
+  message,
+  turnStartedAt,
+  runtimeIdentity,
+  canBranchInNewSession = false,
+  onBranchInNewSession
+}: WorkspaceAssistantTurnCompletionProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
+  const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
+  const timestamp =
+    message.status === 'complete'
+      ? message.completedAt
+      : message.status === 'error'
+        ? message.failedAt
+        : undefined
+  const terminalDate = toMessageDate(timestamp)
+  const turnStartedDate = toMessageDate(turnStartedAt)
+  const terminalLabel = message.status === 'error' ? t('Failed') : t('Completed')
+  const [copied, setCopied] = useState(false)
+  const copyResetTimeoutRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
+    },
+    []
+  )
+
+  const handleCopyMessage = (): void => {
+    void navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true)
+      if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
+      copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  if (!terminalDate && !(timestamp !== undefined && showTurnUsage)) return null
+
+  return (
+    <div
+      data-slot="assistant-message-footer"
+      className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
+    >
+      {message.status === 'complete' && onBranchInNewSession ? (
+        <TooltipProvider delayDuration={200}>
+          <div data-slot="assistant-message-actions" className="flex items-center gap-0.5">
+            <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
+              <button
+                type="button"
+                className={userMessageActionButtonClassName}
+                aria-label={copied ? t('Copied') : t('Copy message')}
+                onClick={handleCopyMessage}
+              >
+                {copied ? (
+                  <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                ) : (
+                  <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                )}
+              </button>
+            </UserMessageActionTooltip>
+            <UserMessageActionTooltip label={t('Branch in new session')}>
+              <button
+                type="button"
+                className={userMessageActionButtonClassName}
+                aria-label={t('Branch in new session')}
+                disabled={!canBranchInNewSession}
+                onClick={() => onBranchInNewSession(message.id)}
+              >
+                <GitBranch className="size-3.5" strokeWidth={2} aria-hidden="true" />
+              </button>
+            </UserMessageActionTooltip>
+          </div>
+        </TooltipProvider>
+      ) : null}
+      {terminalDate ? <MessageTimestamp label={terminalLabel} date={terminalDate} /> : null}
+      {terminalDate && turnStartedDate ? (
+        <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
+          <span aria-label={t('Elapsed run time')}>
+            {t('Elapsed {{duration}}', {
+              duration: formatElapsedDuration(terminalDate.getTime() - turnStartedDate.getTime())
+            })}
+          </span>
+        </span>
+      ) : null}
+      {showTurnUsage ? (
+        <TurnTokenUsage usage={message.turnUsage} runtimeIdentity={runtimeIdentity} />
+      ) : null}
+    </div>
+  )
+}
 // Inline editing replaces the bubble with a bordered multi-line editor card aligned to the right.
 const editCardClassName =
   'flex w-[85%] max-w-[56rem] flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2 shadow-card'
@@ -1047,18 +1148,7 @@ const WorkspaceMessageItemImpl = ({
   }, [isAssistantPresenting, message.id, onPresentationChange, presentsAssistantMessage])
 
   const uploads = message.uploads ?? []
-  const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
-  const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
-  const terminalTimestamp =
-    message.status === 'complete'
-      ? message.completedAt
-      : message.status === 'error'
-        ? message.failedAt
-        : undefined
   const sentDate = toMessageDate(message.createdAt)
-  const terminalDate = toMessageDate(terminalTimestamp)
-  const turnStartedDate = toMessageDate(turnStartedAt)
-  const terminalLabel = message.status === 'error' ? t('Failed') : t('Completed')
   const showRevisionNavigation =
     showUserActions && isHumanUser && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
@@ -1364,65 +1454,14 @@ const WorkspaceMessageItemImpl = ({
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
-            {showAssistantFooter &&
-            !isAssistantPresenting &&
-            (terminalDate || (terminalTimestamp !== undefined && showTurnUsage)) ? (
-              <div
-                data-slot="assistant-message-footer"
-                className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
-              >
-                {message.status === 'complete' && onBranchInNewSession ? (
-                  <TooltipProvider delayDuration={200}>
-                    <div
-                      data-slot="assistant-message-actions"
-                      className="flex items-center gap-0.5"
-                    >
-                      <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
-                        <button
-                          type="button"
-                          className={userMessageActionButtonClassName}
-                          aria-label={copied ? t('Copied') : t('Copy message')}
-                          onClick={handleCopyMessage}
-                        >
-                          {copied ? (
-                            <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                          ) : (
-                            <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                          )}
-                        </button>
-                      </UserMessageActionTooltip>
-                      <UserMessageActionTooltip label={t('Branch in new session')}>
-                        <button
-                          type="button"
-                          className={userMessageActionButtonClassName}
-                          aria-label={t('Branch in new session')}
-                          disabled={!canBranchInNewSession}
-                          onClick={() => onBranchInNewSession(message.id)}
-                        >
-                          <GitBranch className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        </button>
-                      </UserMessageActionTooltip>
-                    </div>
-                  </TooltipProvider>
-                ) : null}
-                {terminalDate ? (
-                  <MessageTimestamp label={terminalLabel} date={terminalDate} />
-                ) : null}
-                {terminalDate && turnStartedDate ? (
-                  <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
-                    <span aria-label={t('Elapsed run time')}>
-                      {t('Elapsed {{duration}}', {
-                        duration: formatElapsedDuration(
-                          terminalDate.getTime() - turnStartedDate.getTime()
-                        )
-                      })}
-                    </span>
-                  </span>
-                ) : null}
-                {showTurnUsage ? (
-                  <TurnTokenUsage usage={message.turnUsage} runtimeIdentity={runtimeIdentity} />
-                ) : null}
-              </div>
+            {showAssistantFooter && !isAssistantPresenting ? (
+              <WorkspaceAssistantTurnCompletion
+                message={message}
+                turnStartedAt={turnStartedAt}
+                runtimeIdentity={runtimeIdentity}
+                canBranchInNewSession={canBranchInNewSession}
+                onBranchInNewSession={onBranchInNewSession}
+              />
             ) : null}
           </div>
         )}
@@ -1511,5 +1550,5 @@ const areWorkspaceMessageItemPropsEqual = (
 const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
 WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'
 
-export { MessageArtifactList, WorkspaceMessageItem }
+export { MessageArtifactList, WorkspaceAssistantTurnCompletion, WorkspaceMessageItem }
 export type { ArtifactMentionPart }

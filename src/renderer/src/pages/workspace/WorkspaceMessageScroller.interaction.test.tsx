@@ -1363,6 +1363,70 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).not.toBe(0)
   })
 
+  it('renders a terminal Review after later tool activity and Turn completion metadata', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    useReviewStore.getState().handleReviewUpdate({
+      review: {
+        id: 'review-1',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'reply-1',
+        scope: { turnMessageId: 'reply-1', blocks: [], artifactVersionIds: [] },
+        lifecycle: 'complete',
+        outcome: 'pass',
+        model: 'test-model',
+        reviewerLog: [],
+        createdAt: 500,
+        updatedAt: 500,
+        checks: []
+      }
+    })
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1', createdAt: 100, updatedAt: 100, sortIndex: 1 }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'I will finish the remaining work.',
+          responseToMessageId: 'prompt-1',
+          createdAt: 200,
+          completedAt: 400,
+          updatedAt: 400,
+          sortIndex: 2
+        })
+      ],
+      activities: [
+        createActivity({
+          id: 'tool-late',
+          status: 'completed',
+          promptMessageId: 'prompt-1',
+          createdAt: 300,
+          updatedAt: 300,
+          sortIndex: 3
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    const toolRow = container.querySelector('[data-message-id="activity-group-tool-late"]')!
+    const completion = container.querySelector('[data-message-id="turn-completion-reply-1"]')!
+    const review = container.querySelector('[data-message-id="review-reply-1"]')!
+
+    expect(toolRow.compareDocumentPosition(completion) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+      0
+    )
+    expect(completion.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+      0
+    )
+  })
+
   it('renders one initial and three fix-loop Review Runs at their four distinct scope anchors', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const answerIds = ['answer-initial', 'answer-fix-1', 'answer-fix-2', 'answer-fix-3']
@@ -2378,12 +2442,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     // The projected child Version renders once, on the terminal root fragment only.
     const cards = container.querySelectorAll('[aria-label="Preview generated file child.md"]')
     expect(cards).toHaveLength(1)
-    const footerSurface = container.querySelector(
-      '[data-slot="assistant-message-footer"]'
-    )?.parentElement
-    expect(
-      footerSurface?.querySelector('[aria-label="Preview generated file child.md"]')
-    ).not.toBeNull()
+    expect(cards[0].closest('[data-message-id]')?.getAttribute('data-message-id')).toBe(
+      'root-answer-2'
+    )
   })
 
   it('aggregates projected child Versions from parallel delegates onto the terminal root message', async () => {

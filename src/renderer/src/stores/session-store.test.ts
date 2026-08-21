@@ -4729,6 +4729,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
+      'src/renderer/src/pages/workspace/workspace-conversation-timeline.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.ts',
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',

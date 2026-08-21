@@ -49,9 +49,8 @@ import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
-import { WorkspaceMessageItem } from './WorkspaceMessageItem'
-import { createConversationItems } from './workspace-conversation-items'
-import { groupConversationItems } from './workspace-tool-activity-groups'
+import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 type ProvenanceTab = 'code' | 'execution' | 'messages' | 'environment' | 'review'
@@ -353,8 +352,11 @@ const ProvenanceMessagesTimeline = ({
       createdAt: snapshot.items[0]?.createdAt ?? 0,
       updatedAt: snapshot.items.at(-1)?.createdAt ?? 0
     }
-    return groupConversationItems(createConversationItems(session), snapshot.activityGroups)
+    return createWorkspaceConversationTimeline(session)
   }, [projectId, sessionId, snapshot, t])
+  const messageCreatedAtById = new Map(
+    snapshot.items.map((message) => [message.id, message.createdAt])
+  )
 
   return (
     <MessageScrollerProvider
@@ -380,8 +382,32 @@ const ProvenanceMessagesTimeline = ({
                       onPreviewMentionArtifact={ignoreMentionPreview}
                       artifacts={[]}
                       showUserActions={false}
+                      showAssistantFooter={conversationItem.message.role !== 'agent'}
                       contentPaddingClassName="px-0 md:px-0"
                     />
+                  )
+                }
+
+                if (conversationItem.type === 'turn-completion') {
+                  return (
+                    <MessageScrollerItem
+                      key={conversationItem.id}
+                      messageId={conversationItem.id}
+                      className="min-w-0"
+                    >
+                      <div className="pb-1">
+                        <WorkspaceAssistantTurnCompletion
+                          message={conversationItem.message}
+                          turnStartedAt={
+                            conversationItem.message.responseToMessageId
+                              ? messageCreatedAtById.get(
+                                  conversationItem.message.responseToMessageId
+                                )
+                              : undefined
+                          }
+                        />
+                      </div>
+                    </MessageScrollerItem>
                   )
                 }
 
