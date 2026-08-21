@@ -179,7 +179,8 @@ export const saveIpynbAll = async (
       type: 'question',
       title: translate('Overwrite existing notebooks?'),
       message: translate('{{count}} notebooks already exist in the chosen directory.', {
-        count: conflicts.length
+        count: conflicts.length,
+        defaultValue_one: '{{count}} notebook already exists in the chosen directory.'
       }),
       detail: listing,
       buttons: [translate('Overwrite'), translate('Cancel')],

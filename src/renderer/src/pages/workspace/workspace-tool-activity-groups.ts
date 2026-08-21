@@ -7,8 +7,8 @@ import { hasWebSearchContentEvidence } from './workspace-web-search-details'
 import { getToolExecutionPhase, isNotebookExecutionActivity } from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import i18next from 'i18next'
 import type { TFunction } from 'i18next'
+import { i18next } from '@/i18n'
 
 type ConversationActivityGroupItem = {
   id: string

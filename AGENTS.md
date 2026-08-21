@@ -4,16 +4,23 @@
 
 The renderer ships six translated locales: **fr** (French), **zh-Hans** (Simplified Chinese),
 **zh-Hant** (Traditional Chinese), **ja** (Japanese), **ko** (Korean), and **ru** (Russian). Every
-user-visible string added to the renderer must have a corresponding entry in all catalog files:
+user-visible string added to the renderer must have a corresponding entry in the `renderer`
+namespace for all translated locales unless the same meaning is intentionally shared with Electron
+main through the `common` namespace:
 
 ```
-src/renderer/src/locales/zh-Hans.json
-src/renderer/src/locales/zh-Hant.json
-src/renderer/src/locales/ja.json
-src/renderer/src/locales/ko.json
-src/renderer/src/locales/fr.json
-src/renderer/src/locales/ru.json
+src/shared/i18n/locales/zh-Hans.json
+src/shared/i18n/locales/zh-Hant.json
+src/shared/i18n/locales/ja.json
+src/shared/i18n/locales/ko.json
+src/shared/i18n/locales/fr.json
+src/shared/i18n/locales/ru.json
 ```
+
+Each locale file has exactly three top-level namespace objects: `common`, `native`, and `renderer`.
+`common` is loaded by main and renderer, `native` only by main, and `renderer` only by the React
+adapter. Put a key in `common` only when its UI meaning and reviewed translation are the same in both
+processes; an identical English key is not enough.
 
 The guard suite in `src/renderer/src/i18n/resources.test.ts` runs on every `npm test` and **will
 fail the PR** if any of the following are violated.
@@ -46,27 +53,19 @@ Use a descriptive name like `<docsLink>`, `<guideAnchor>`.
 
 ### Catalog entry format
 
-Add one key to each catalog. The key is the exact English string (or the base English string with
-an i18next suffix appended). Entries are plain JSON strings at the top level — no nesting.
+Add one key to the appropriate namespace in each locale file. The key is the exact English string
+(or the base English string with an i18next suffix appended). Entries are plain JSON strings and
+remain flat inside each namespace; the three namespace objects are the only nesting.
 
 ```jsonc
 // zh-Hans.json
-"Data folder not found": "未找到数据文件夹",
-
-// zh-Hant.json
-"Data folder not found": "找不到資料夾",
-
-// fr.json
-"Data folder not found": "Dossier de données introuvable"
-
-// ja.json
-"Data folder not found": "データフォルダーが見つかりません",
-
-// ko.json
-"Data folder not found": "데이터 폴더를 찾을 수 없습니다",
-
-// ru.json
-"Data folder not found": "Папка данных не найдена"
+{
+  "common": {},
+  "native": {},
+  "renderer": {
+    "Data folder not found": "未找到数据文件夹"
+  }
+}
 ```
 
 Each catalog must be updated independently. **Every translated locale falls back directly to

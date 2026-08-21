@@ -170,11 +170,12 @@ Utilisez l'un de ces préfixes de type standard :
 - Le lint est imposé par ESLint ; exécutez `npm run lint`.
 - Entourez les chaînes visibles par l'utilisateur avec la fonction de
   traduction `t()` de `react-i18next`. Ajoutez les traductions correspondantes
-  dans `src/renderer/src/locales/fr.json` (français),
-  `src/renderer/src/locales/ja.json` (japonais),
-  `src/renderer/src/locales/ko.json` (coréen),
-  `src/renderer/src/locales/zh-Hans.json` (chinois simplifié) et
-  `src/renderer/src/locales/zh-Hant.json` (chinois traditionnel). Utilisez le
+  dans l'espace de noms `renderer` de `src/shared/i18n/locales/fr.json`
+  (français), `src/shared/i18n/locales/ja.json` (japonais),
+  `src/shared/i18n/locales/ko.json` (coréen),
+  `src/shared/i18n/locales/ru.json` (russe),
+  `src/shared/i18n/locales/zh-Hans.json` (chinois simplifié) et
+  `src/shared/i18n/locales/zh-Hant.json` (chinois traditionnel). Utilisez le
   texte anglais comme clé de traduction. Conservez les commentaires de code et
   la documentation en anglais.
 
