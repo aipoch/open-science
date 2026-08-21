@@ -157,7 +157,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
         type: 'custom',
         baseUrl: 'https://gw.example/v1',
         model: 'deepseek-v4-pro',
-        contextWindow: 128_000,
+        inputLimit: 128_000,
         key: 'k'
       },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
@@ -169,7 +169,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(content.model).toBe('anthropic/deepseek-v4-pro')
     expect(content.provider.anthropic.options.baseURL).toBe('https://gw.example/v1')
     expect(content.provider.anthropic.models).toEqual({
-      'deepseek-v4-pro': { limit: { context: 128_000, output: 32_000 } }
+      'deepseek-v4-pro': { limit: { input: 128_000 } }
     })
     // Permission policy is still pinned.
     expect(content.permission['*']).toBe('ask')
@@ -193,13 +193,13 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(content.provider.anthropic.options.baseURL).toBe('https://gateway.example/v1')
   })
 
-  it('caps the required output limit at a custom context window smaller than 32k', () => {
+  it('does not invent an output limit for a custom model', () => {
     const config = opencodeFramework.prepareModelConfig(
       {
         type: 'custom',
         baseUrl: 'https://gateway.example',
         model: 'small-context-model',
-        contextWindow: 16_000,
+        inputLimit: 16_000,
         key: 'k'
       },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
@@ -207,8 +207,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
 
     const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(content.provider.anthropic.models['small-context-model'].limit).toEqual({
-      context: 16_000,
-      output: 16_000
+      input: 16_000
     })
   })
 
@@ -412,13 +411,13 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const expectedModels = {
       'deepseek-v4-pro': {
         options: { reasoningEffort: 'high', thinking: { type: 'enabled' } },
-        limit: { context: 128_000, output: 32_000 }
+        limit: { context: 128_000 }
       },
       'deepseek-v3.2': {
         attachment: true,
         modalities: { input: ['text', 'image'] },
         options: { reasoningEffort: 'low', thinking: { type: 'enabled' } },
-        limit: { context: 64_000, output: 32_000 }
+        limit: { context: 64_000 }
       }
     }
 
@@ -482,7 +481,7 @@ describe('buildOpencodeConfig', () => {
         baseUrl: 'https://gw.example/v1',
         model: 'deepseek-v4-pro',
         key: 'sk-secret',
-        contextWindow: 128_000
+        inputLimit: 128_000
       })
     )
 
@@ -490,7 +489,7 @@ describe('buildOpencodeConfig', () => {
     // instead of ignoring it and falling back to its own default.
     expect(config.model).toBe('anthropic/deepseek-v4-pro')
     expect(config.provider.anthropic.models).toEqual({
-      'deepseek-v4-pro': { limit: { context: 128_000, output: 32_000 } }
+      'deepseek-v4-pro': { limit: { input: 128_000 } }
     })
     // The key is referenced via opencode env interpolation, never emitted as a plaintext literal.
     expect(config.provider.anthropic.options).toEqual({
@@ -511,6 +510,34 @@ describe('buildOpencodeConfig', () => {
     expect(JSON.parse(serialized).provider.anthropic.options.apiKey).toBe(
       '{env:OPENCODE_APP_API_KEY}'
     )
+  })
+
+  it('replaces stale app-generated model limits without preserving an output cap', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig(
+        {
+          type: 'custom',
+          baseUrl: 'https://gw.example/v1',
+          model: 'deepseek-v4-pro',
+          inputLimit: 64_000
+        },
+        {
+          provider: {
+            anthropic: {
+              models: {
+                'deepseek-v4-pro': {
+                  limit: { context: 128_000, output: 32_000 }
+                }
+              }
+            }
+          }
+        }
+      )
+    )
+
+    expect(config.provider.anthropic.models['deepseek-v4-pro'].limit).toEqual({
+      input: 64_000
+    })
   })
 
   it('omits apiKey entirely when the provider carries no key', () => {

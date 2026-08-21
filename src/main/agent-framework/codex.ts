@@ -159,13 +159,15 @@ const buildCodexModelOptions = (input: {
 const buildCodexConfig = (provider: {
   baseUrl?: string
   model?: string
+  inputLimit?: number
   contextWindow?: number
   key?: string
   reasoningEffort?: ModelReasoningEffort
 }): Record<string, unknown> => {
   const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl)
+  const configuredContextWindow = provider.inputLimit ?? provider.contextWindow
   const contextWindow =
-    provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : undefined
+    configuredContextWindow && configuredContextWindow > 0 ? configuredContextWindow : undefined
 
   return {
     ...buildCodexModelOptions(provider),
@@ -198,6 +200,7 @@ type CodexNativeModelCatalogInput = {
   baseUrl?: string
   openaiBaseUrl?: string
   nativeVersion?: string
+  inputLimit?: number
   contextWindow?: number
   supportsImageInput?: boolean
   reasoningEffort?: ModelReasoningEffort
@@ -222,8 +225,9 @@ const buildCodexNativeModelCatalogEntry = (provider: CodexNativeModelCatalogInpu
     bundledModelIds?.includes(model ?? '') === true
   if (!model || hasTrustedBundledMetadata) return undefined
 
+  const configuredContextWindow = provider.inputLimit ?? provider.contextWindow
   const contextWindow =
-    provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : 272_000
+    configuredContextWindow && configuredContextWindow > 0 ? configuredContextWindow : 272_000
   const supportedReasoningEfforts = [...new Set(provider.reasoningEfforts ?? [])]
   const defaultReasoningEffort =
     provider.reasoningEffort && supportedReasoningEfforts.includes(provider.reasoningEffort)
@@ -492,6 +496,7 @@ export const createCodexFramework = ({
       ...buildCodexConfig({
         ...provider,
         model: codexModel,
+        inputLimit: provider.inputLimit,
         contextWindow: provider.contextWindow,
         baseUrl: responsesBaseUrl,
         key: useLocalResponsesEndpoint ? undefined : provider.key,

@@ -25,7 +25,7 @@ export type ProviderFormValue = {
   baseUrl: string
   model: string
   // Kept as text so an empty optional numeric input remains distinct from the 200k runtime default.
-  contextWindow: string
+  inputLimit: string
   // Which chat API a custom gateway speaks; drives which agent frameworks can use it. Defaults to
   // 'anthropic'. A custom provider serves exactly one endpoint (official providers take theirs from
   // the registry); it is stored as the single-entry apiEndpoints array.
@@ -54,7 +54,7 @@ export const createEmptyProviderFormValue = (
   name: '',
   baseUrl: '',
   model: '',
-  contextWindow: '',
+  inputLimit: '',
   apiEndpoint: 'anthropic',
   providerFormTouched: false,
   supportsImageInput: false,
@@ -114,11 +114,11 @@ export type ProviderFormErrorKey =
   | 'Base URL is required.'
   | 'Model is required.'
   | 'API key is required.'
-  | 'Context window must be a positive whole number of tokens.'
+  | 'Input limit must be a positive whole number of tokens.'
 
 export type ProviderFormErrors = {
   baseUrl?: ProviderFormErrorKey
-  contextWindow?: ProviderFormErrorKey
+  inputLimit?: ProviderFormErrorKey
   key?: ProviderFormErrorKey
   model?: ProviderFormErrorKey
 }
@@ -134,10 +134,10 @@ export const getProviderFormErrors = (
   if (value.type === 'custom') {
     if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
     if (!value.model.trim()) errors.model = 'Model is required.'
-    if (value.contextWindow.trim()) {
-      const contextWindow = Number(value.contextWindow)
-      if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
-        errors.contextWindow = 'Context window must be a positive whole number of tokens.'
+    if (value.inputLimit.trim()) {
+      const inputLimit = Number(value.inputLimit)
+      if (!Number.isSafeInteger(inputLimit) || inputLimit <= 0) {
+        errors.inputLimit = 'Input limit must be a positive whole number of tokens.'
       }
     }
     if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
@@ -243,7 +243,7 @@ export const providerKindPatch = (
       apiEndpoint: 'responses',
       baseUrl: '',
       model: '',
-      contextWindow: '',
+      inputLimit: '',
       key: '',
       vendorId: undefined,
       region: undefined
@@ -258,7 +258,7 @@ export const providerKindPatch = (
       apiEndpoint: 'anthropic',
       baseUrl: '',
       model: '',
-      contextWindow: '',
+      inputLimit: '',
       key: '',
       vendorId: undefined,
       region: undefined
@@ -276,7 +276,7 @@ export const providerKindPatch = (
       vendorId,
       region: vendor?.regions?.[0]?.id,
       model: '',
-      contextWindow: ''
+      inputLimit: ''
     }
   }
 
@@ -286,7 +286,7 @@ export const providerKindPatch = (
     vendorId: undefined,
     region: undefined,
     model: '',
-    contextWindow: ''
+    inputLimit: ''
   }
 }
 

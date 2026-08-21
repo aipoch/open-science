@@ -648,7 +648,7 @@ describe('BackendRoutePlanner model-change projection', () => {
       provider: {
         apiEndpoints: ['openai'],
         vendorId: 'deepseek',
-        contextWindow: 128_000,
+        inputLimit: 128_000,
         reasoningEffortTransport: 'deepseek'
       }
     })

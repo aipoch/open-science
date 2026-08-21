@@ -134,10 +134,12 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const provider: StoredProvider = { id, type, name }
   const baseUrl = asString(value.baseUrl)
   const model = asString(value.model)
-  const rawContextWindow = asNumber(value.contextWindow)
-  const contextWindow =
-    rawContextWindow !== undefined && Number.isSafeInteger(rawContextWindow) && rawContextWindow > 0
-      ? rawContextWindow
+  // `contextWindow` was the pre-input-limit name for this custom-provider setting. Read it once as a
+  // fallback, then project only `inputLimit` so the next repository write completes the migration.
+  const rawInputLimit = asNumber(value.inputLimit) ?? asNumber(value.contextWindow)
+  const inputLimit =
+    rawInputLimit !== undefined && Number.isSafeInteger(rawInputLimit) && rawInputLimit > 0
+      ? rawInputLimit
       : undefined
   const supportsImageInput = asBoolean(value.supportsImageInput)
   const reasoningEffortPreset = isReasoningEffortPresetSetting(value.reasoningEffortPreset)
@@ -181,7 +183,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
 
   if (baseUrl) provider.baseUrl = baseUrl
   if (model) provider.model = model
-  if (contextWindow !== undefined) provider.contextWindow = contextWindow
+  if (inputLimit !== undefined && type === 'custom') provider.inputLimit = inputLimit
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (reasoningEffortPreset !== undefined && type === 'custom') {
     provider.reasoningEffortPreset = reasoningEffortPreset

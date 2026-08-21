@@ -7,7 +7,7 @@ import {
   isOfficialVendorId,
   isVendorModelMultimodal,
   isVendorModelResponsesSupported,
-  resolveCustomModelContextWindow,
+  resolveCustomModelInputLimit,
   resolveModelContextWindow,
   resolveVendorApiEndpoints,
   resolveVendorApiKeyUrl,
@@ -694,10 +694,10 @@ describe('provider registry', () => {
     })
   })
 
-  describe('resolveCustomModelContextWindow', () => {
+  describe('resolveCustomModelInputLimit', () => {
     it('uses the configured size and falls back to 200k when the user leaves it blank', () => {
-      expect(resolveCustomModelContextWindow(64_000)).toBe(64_000)
-      expect(resolveCustomModelContextWindow(undefined)).toBe(200_000)
+      expect(resolveCustomModelInputLimit(64_000)).toBe(64_000)
+      expect(resolveCustomModelInputLimit(undefined)).toBe(200_000)
     })
   })
 })

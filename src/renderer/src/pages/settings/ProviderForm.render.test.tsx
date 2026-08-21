@@ -62,9 +62,15 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Base URL"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="API key"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
+    const inputLimit = container.querySelector<HTMLInputElement>('[aria-label="Input limit"]')
+    expect(inputLimit?.placeholder).toBe('200000')
+    expect(inputLimit?.step).toBe('1')
+    expect(inputLimit?.getAttribute('list')).toBe('provider-input-limit-presets')
     expect(
-      container.querySelector<HTMLInputElement>('[aria-label="Context window"]')?.placeholder
-    ).toBe('200000')
+      Array.from(
+        container.querySelectorAll<HTMLOptionElement>('#provider-input-limit-presets option')
+      ).map((option) => option.value)
+    ).toEqual(['32000', '64000', '128000', '200000', '256000', '1000000'])
     // The auth style selector was removed; custom always uses a bearer token.
     expect(container.querySelector('[aria-label="Auth style"]')).toBeNull()
   })
@@ -83,7 +89,7 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
     expect(container.querySelector('[aria-label="API format"]')).toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Context window"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Input limit"]')).toBeNull()
     expect(container.textContent).toContain('gpt-5.6-sol')
     expect(container.querySelector<HTMLAnchorElement>('a')?.href).toBe(
       'https://platform.openai.com/api-keys'

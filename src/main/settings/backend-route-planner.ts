@@ -254,6 +254,7 @@ class BackendRoutePlanner {
       input.frameworkId === 'codex' && isCodexSubscriptionProvider(input.target.provider.type)
         ? CODEX_ISOLATED_PROVIDER_ID
         : input.target.providerId
+    const contextWindow = input.target.provider.inputLimit ?? input.target.provider.contextWindow
     return Object.freeze({
       frameworkId: input.frameworkId,
       backendId: `${input.frameworkId}:${backendProviderId}`,
@@ -273,9 +274,7 @@ class BackendRoutePlanner {
         ? { anthropicBridgeTargetId: claudeTargetId(input.target.providerId, model) }
         : {}),
       ...(providerTransportTargetId ? { providerTransportTargetId } : {}),
-      ...(input.target.provider.contextWindow
-        ? { contextWindow: input.target.provider.contextWindow }
-        : {}),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(route === 'codex-bridge' || route === 'codex-responses-compatibility'
         ? {
             bridge: Object.freeze({

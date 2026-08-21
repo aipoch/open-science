@@ -61,7 +61,7 @@ export const resolveSessionHistoryReplayDescriptor = (
           provider.vendorId,
           session.agentModel ?? provider.model ?? provider.models[0]
         )
-      : provider?.contextWindow
+      : provider?.inputLimit
   }
 }
 

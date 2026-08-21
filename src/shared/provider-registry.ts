@@ -923,7 +923,7 @@ export const isVendorModelResponsesSupported = (
 
 // Custom model ids are opaque: guessing from their name is less reliable than a stable documented
 // default. Users can override this on the provider; an omitted value intentionally means 200k.
-export const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 200_000
+export const DEFAULT_CUSTOM_MODEL_INPUT_LIMIT = 200_000
 
 // Live model-list endpoints expose ids but generally omit context limits. Unknown refreshed ids use a
 // stable conservative fallback until their exact metadata is added to the bundled catalog.
@@ -952,7 +952,7 @@ export const resolveModelContextWindow = (
   return DEFAULT_OFFICIAL_MODEL_CONTEXT_WINDOW
 }
 
-// Resolves a custom provider's user-configured window. Model ids are deliberately not inspected:
+// Resolves a custom provider's user-configured input limit. Model ids are deliberately not inspected:
 // gateway aliases frequently contain vendor-like names without sharing the upstream model's limits.
-export const resolveCustomModelContextWindow = (configured?: number): number =>
-  configured ?? DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW
+export const resolveCustomModelInputLimit = (configured?: number): number =>
+  configured ?? DEFAULT_CUSTOM_MODEL_INPUT_LIMIT

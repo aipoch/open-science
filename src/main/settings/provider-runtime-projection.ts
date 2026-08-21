@@ -12,7 +12,7 @@ import {
   isModelBridgeSupported,
   isVendorModelMultimodal,
   isVendorModelResponsesSupported,
-  resolveCustomModelContextWindow,
+  resolveCustomModelInputLimit,
   resolveModelContextWindow,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
@@ -94,7 +94,7 @@ class ProviderRuntimeProjectionOwner {
       apiEndpoints: this.resolveProviderApiEndpoints(provider, activeModel),
       baseUrl: provider.baseUrl,
       model: provider.model,
-      contextWindow: provider.contextWindow,
+      inputLimit: provider.inputLimit,
       supportsImageInput: this.providerSupportsImageInput(provider, activeModel),
       reasoningEffortPreset:
         provider.type === 'custom' ? provider.reasoningEffortPreset : undefined,
@@ -210,17 +210,17 @@ class ProviderRuntimeProjectionOwner {
     }
 
     const model = modelOverride ?? provider.model
-    const contextWindow =
-      provider.type === 'custom'
-        ? resolveCustomModelContextWindow(provider.contextWindow)
-        : isClaudeSubscriptionProvider(provider.type)
-          ? resolveModelContextWindow('anthropic', model)
-          : undefined
+    const inputLimit =
+      provider.type === 'custom' ? resolveCustomModelInputLimit(provider.inputLimit) : undefined
+    const contextWindow = isClaudeSubscriptionProvider(provider.type)
+      ? resolveModelContextWindow('anthropic', model)
+      : undefined
     return {
       type: provider.type,
       ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
       baseUrl: provider.baseUrl,
       model,
+      ...(inputLimit === undefined ? {} : { inputLimit }),
       ...(contextWindow === undefined ? {} : { contextWindow }),
       key,
       apiEndpoints: this.resolveProviderApiEndpoints(provider, model),

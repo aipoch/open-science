@@ -24,7 +24,7 @@ import {
   defaultVendorModel,
   isOfficialVendorId,
   isVendorModelResponsesSupported,
-  resolveCustomModelContextWindow,
+  resolveCustomModelInputLimit,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
@@ -200,22 +200,17 @@ class ProviderAccountsModule {
     } else if (request.type === 'custom') {
       const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
       const model = request.model?.trim() || existing?.model
-      const contextWindow =
-        request.contextWindow === null
-          ? undefined
-          : (request.contextWindow ?? existing?.contextWindow)
+      const inputLimit =
+        request.inputLimit === null ? undefined : (request.inputLimit ?? existing?.inputLimit)
       if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
       if (!model) throw new Error('Model is required for a custom provider.')
       if (!carryKey()) throw new Error('API key is required for a custom provider.')
-      if (
-        contextWindow !== undefined &&
-        (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)
-      ) {
-        throw new Error('Context window must be a positive whole number of tokens.')
+      if (inputLimit !== undefined && (!Number.isSafeInteger(inputLimit) || inputLimit <= 0)) {
+        throw new Error('Input limit must be a positive whole number of tokens.')
       }
       provider.baseUrl = baseUrl
       provider.model = model
-      if (contextWindow !== undefined) provider.contextWindow = contextWindow
+      if (inputLimit !== undefined) provider.inputLimit = inputLimit
       provider.supportsImageInput =
         request.supportsImageInput ?? existing?.supportsImageInput ?? false
       provider.reasoningEffortPreset =
@@ -509,7 +504,7 @@ class ProviderAccountsModule {
       baseUrl: draft.baseUrl,
       model: draft.model,
       ...(draft.type === 'custom'
-        ? { contextWindow: resolveCustomModelContextWindow(draft.contextWindow ?? undefined) }
+        ? { inputLimit: resolveCustomModelInputLimit(draft.inputLimit ?? undefined) }
         : {}),
       key: draft.key,
       apiEndpoints: draft.apiEndpoints ?? ['anthropic'],

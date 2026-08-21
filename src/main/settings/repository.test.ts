@@ -723,16 +723,18 @@ describe('settings repository', () => {
     expect(settings.claude).toEqual({ resolvedPath: '/bin/claude' })
   })
 
-  it('keeps only a positive whole-number custom context window', () => {
+  it('keeps only a positive whole-number custom input limit and migrates the legacy field', () => {
     const base = { id: 'p1', type: 'custom', name: 'Gateway' }
 
     expect(
-      sanitizeSettings({ providers: [{ ...base, contextWindow: 64_000 }] }).providers[0]
-        .contextWindow
+      sanitizeSettings({ providers: [{ ...base, inputLimit: 64_000 }] }).providers[0].inputLimit
     ).toBe(64_000)
-    for (const contextWindow of [0, -1, 1.5, Number.NaN, '200000']) {
+    expect(
+      sanitizeSettings({ providers: [{ ...base, contextWindow: 128_000 }] }).providers[0].inputLimit
+    ).toBe(128_000)
+    for (const inputLimit of [0, -1, 1.5, Number.NaN, '200000']) {
       expect(
-        sanitizeSettings({ providers: [{ ...base, contextWindow }] }).providers[0].contextWindow
+        sanitizeSettings({ providers: [{ ...base, inputLimit }] }).providers[0].inputLimit
       ).toBeUndefined()
     }
   })

@@ -67,6 +67,9 @@ type ProviderFormProps = {
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const fieldErrorClassName = 'text-xs text-destructive'
+const CUSTOM_PROVIDER_INPUT_LIMIT_PRESETS = [
+  32_000, 64_000, 128_000, 200_000, 256_000, 1_000_000
+] as const
 
 // API format labels name the wire protocol and its literal path, so they read the same in every
 // locale and stay out of the catalog — translating `Messages API (/v1/messages)` would make it harder
@@ -552,24 +555,30 @@ const ProviderForm = ({
           </div>
 
           <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-context-window">
-              {t('Context window')}
+            <label className={fieldLabelClassName} htmlFor="provider-input-limit">
+              {t('Input limit')}
             </label>
             <Input
-              id="provider-context-window"
-              aria-label={t('Context window')}
+              id="provider-input-limit"
+              aria-label={t('Input limit')}
               type="number"
               inputMode="numeric"
               min={1}
-              step={1000}
-              value={value.contextWindow}
+              step={1}
+              list="provider-input-limit-presets"
+              value={value.inputLimit}
               disabled={disabled}
               placeholder="200000"
-              onChange={(event) => onChange({ contextWindow: event.target.value })}
+              onChange={(event) => onChange({ inputLimit: event.target.value })}
             />
-            {errors.contextWindow ? (
+            <datalist id="provider-input-limit-presets">
+              {CUSTOM_PROVIDER_INPUT_LIMIT_PRESETS.map((limit) => (
+                <option key={limit} value={limit} />
+              ))}
+            </datalist>
+            {errors.inputLimit ? (
               <p className={fieldErrorClassName} role="alert">
-                {t(errors.contextWindow)}
+                {t(errors.inputLimit)}
               </p>
             ) : null}
           </div>

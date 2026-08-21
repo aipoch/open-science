@@ -81,21 +81,6 @@ const opencodeApiKeyEnv = (provider: ResolvedProvider): string =>
     ? `${OPENCODE_API_KEY_ENV}_${provider.agentProviderId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}`
     : OPENCODE_API_KEY_ENV
 
-// opencode's model `limit` block requires BOTH `context` and `output` (its config schema rejects a
-// limit that carries only one — "Missing key ...limit.output" and the ACP connection closes). We set
-// context from the provider catalog (the whole point: it makes opencode emit usage_update); opencode
-// uses these limits for context accounting, so a best-effort output cap is fine here. Tunable.
-const OPENCODE_DEFAULT_OUTPUT_LIMIT = 32_000
-
-const opencodeOutputLimit = (contextWindow: number, configured?: unknown): number => {
-  const requested =
-    typeof configured === 'number' && Number.isFinite(configured) && configured > 0
-      ? configured
-      : OPENCODE_DEFAULT_OUTPUT_LIMIT
-
-  return Math.min(requested, contextWindow)
-}
-
 // The app's permission policy for opencode: every side-effecting/MCP tool must ASK the ACP client (the
 // app's broker then enforces the selected profile); safe read-only tools and OpenCode's native skill
 // loader run silently (parity with other Agent frameworks). The `*` catch-all covers unlisted tools
@@ -241,10 +226,11 @@ const buildOpencodeModelConfig = (
   reasoningEffort: ModelReasoningEffort | undefined,
   baseModel: Record<string, unknown> = {}
 ): Record<string, unknown> => {
-  const baseLimit = asRecord(baseModel.limit)
+  const baseModelWithoutLimit = { ...baseModel }
+  delete baseModelWithoutLimit.limit
   const modelCapabilities = buildModelCapabilities(provider, reasoningEffort)
   return {
-    ...baseModel,
+    ...baseModelWithoutLimit,
     ...modelCapabilities,
     ...(modelCapabilities.options
       ? {
@@ -254,13 +240,12 @@ const buildOpencodeModelConfig = (
           }
         }
       : {}),
-    ...(provider.contextWindow === undefined
+    ...(provider.inputLimit === undefined && provider.contextWindow === undefined
       ? {}
       : {
           limit: {
-            ...baseLimit,
-            context: provider.contextWindow,
-            output: opencodeOutputLimit(provider.contextWindow, baseLimit.output)
+            ...(provider.inputLimit === undefined ? {} : { input: provider.inputLimit }),
+            ...(provider.contextWindow === undefined ? {} : { context: provider.contextWindow })
           }
         })
   }
@@ -391,7 +376,9 @@ export { buildOpencodeConfig }
 export const opencodeFramework: AgentFramework = {
   id: 'opencode',
   displayName: 'OpenCode',
-  contextCompaction: { kind: 'native-command', command: '/compact', triggerAtPercent: 90 },
+  // OpenCode owns automatic compaction using its resolved model limits. Keep the native command for
+  // manual compaction, but do not race it with a second host-owned percentage threshold.
+  contextCompaction: { kind: 'native-command', command: '/compact' },
   // opencode discovers skills natively at <configDir>/skills/<name>/SKILL.md (same layout as Claude),
   // loaded on-demand via its skill tool; the app materializes the enabled set into the isolated config.
   supportsSkills: true,

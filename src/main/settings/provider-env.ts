@@ -29,8 +29,11 @@ export type ResolvedProvider = {
   // when the chosen endpoint is openai; falls back to baseUrl when absent.
   openaiBaseUrl?: string
   model?: string
-  // Context limit for the selected model. Framework adapters that register custom model ids (notably
-  // OpenCode) must include this metadata or the framework cannot report context usage over ACP.
+  // Maximum input accepted by a user-configured model. Framework adapters translate this into
+  // their native input-limit setting without inventing an output cap.
+  inputLimit?: number
+  // Catalog context window for official and subscription models. User-defined custom providers use
+  // inputLimit instead.
   contextWindow?: number
   key?: string
   // Which chat APIs the endpoint speaks; opencode uses this to pick anthropic vs openai-compatible.

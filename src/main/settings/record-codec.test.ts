@@ -29,7 +29,7 @@ describe('settings record codec', () => {
         baseUrl: 'https://example.test/v1',
         model: 'model-1',
         apiEndpoints: ['responses', 'responses', 'unknown'],
-        contextWindow: 128_000,
+        inputLimit: 128_000,
         keyRef: 'encrypted:key',
         keyMask: 'sk-…abcd',
         apiKey: 'plaintext-must-not-survive',
@@ -42,7 +42,7 @@ describe('settings record codec', () => {
       baseUrl: 'https://example.test/v1',
       model: 'model-1',
       apiEndpoints: ['responses'],
-      contextWindow: 128_000,
+      inputLimit: 128_000,
       keyRef: 'encrypted:key',
       keyMask: 'sk-…abcd'
     })

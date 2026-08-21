@@ -171,7 +171,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
             activeProvider.vendorId,
             activeModel ?? activeProvider.model ?? activeProvider.models[0]
           )
-        : activeProvider?.contextWindow
+        : activeProvider?.inputLimit
     }),
     [activeModel, activeProvider, agentFramework, agentFrameworkId]
   )

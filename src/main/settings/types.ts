@@ -53,8 +53,8 @@ export type StoredProvider = {
   apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
-  // Optional custom-model override. Absence is meaningful and resolves to the shared 200k default.
-  contextWindow?: number
+  // Optional custom-model input limit. Absence is meaningful and resolves to the shared 200k default.
+  inputLimit?: number
   supportsImageInput?: boolean
   // Custom-model effort capability. Absence resolves to the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting

@@ -82,7 +82,7 @@ describe('getProviderFormErrors', () => {
     expect(hasProviderFormErrors(errors)).toBe(false)
   })
 
-  it('allows a blank context window and rejects non-positive or fractional values', () => {
+  it('allows a blank input limit and rejects non-positive or fractional values', () => {
     const complete = {
       type: 'custom' as const,
       baseUrl: 'https://g',
@@ -91,17 +91,17 @@ describe('getProviderFormErrors', () => {
     }
 
     expect(
-      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '' }))
-        .contextWindow
+      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, inputLimit: '' }))
+        .inputLimit
     ).toBeUndefined()
     expect(
-      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '0' }))
-        .contextWindow
-    ).toBe('Context window must be a positive whole number of tokens.')
+      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, inputLimit: '0' }))
+        .inputLimit
+    ).toBe('Input limit must be a positive whole number of tokens.')
     expect(
-      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '1.5' }))
-        .contextWindow
-    ).toBe('Context window must be a positive whole number of tokens.')
+      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, inputLimit: '1.5' }))
+        .inputLimit
+    ).toBe('Input limit must be a positive whole number of tokens.')
   })
 })
 
@@ -160,7 +160,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'minimax',
       region: 'global',
       model: '',
-      contextWindow: ''
+      inputLimit: ''
     })
   })
 
@@ -171,7 +171,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'openai',
       region: undefined,
       model: '',
-      contextWindow: ''
+      inputLimit: ''
     })
     expect(
       selectedKindKey(createEmptyProviderFormValue({ type: 'official', vendorId: 'openai' }))
@@ -185,7 +185,7 @@ describe('provider-kind helpers', () => {
       vendorId: undefined,
       region: undefined,
       model: '',
-      contextWindow: ''
+      inputLimit: ''
     })
   })
 
