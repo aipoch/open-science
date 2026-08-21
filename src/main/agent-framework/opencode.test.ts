@@ -169,7 +169,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(content.model).toBe('anthropic/deepseek-v4-pro')
     expect(content.provider.anthropic.options.baseURL).toBe('https://gw.example/v1')
     expect(content.provider.anthropic.models).toEqual({
-      'deepseek-v4-pro': { limit: { input: 128_000 } }
+      'deepseek-v4-pro': { limit: { context: 128_000, input: 128_000 } }
     })
     // Permission policy is still pinned.
     expect(content.permission['*']).toBe('ask')
@@ -207,6 +207,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
 
     const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(content.provider.anthropic.models['small-context-model'].limit).toEqual({
+      context: 16_000,
       input: 16_000
     })
   })
@@ -489,7 +490,7 @@ describe('buildOpencodeConfig', () => {
     // instead of ignoring it and falling back to its own default.
     expect(config.model).toBe('anthropic/deepseek-v4-pro')
     expect(config.provider.anthropic.models).toEqual({
-      'deepseek-v4-pro': { limit: { input: 128_000 } }
+      'deepseek-v4-pro': { limit: { context: 128_000, input: 128_000 } }
     })
     // The key is referenced via opencode env interpolation, never emitted as a plaintext literal.
     expect(config.provider.anthropic.options).toEqual({
@@ -536,6 +537,7 @@ describe('buildOpencodeConfig', () => {
     )
 
     expect(config.provider.anthropic.models['deepseek-v4-pro'].limit).toEqual({
+      context: 64_000,
       input: 64_000
     })
   })

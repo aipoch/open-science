@@ -1206,6 +1206,7 @@ describe('SettingsService: providers', () => {
     const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     const agentProviderId = opencodeTransportProviderId(view.id, 'm')
+    expect(content.provider[agentProviderId].models.m.limit.context).toBe(64_000)
     expect(content.provider[agentProviderId].models.m.limit.input).toBe(64_000)
   })
 
@@ -1234,6 +1235,7 @@ describe('SettingsService: providers', () => {
     const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     const agentProviderId = opencodeTransportProviderId(view.id, 'm')
+    expect(content.provider[agentProviderId].models.m.limit.context).toBe(200_000)
     expect(content.provider[agentProviderId].models.m.limit.input).toBe(200_000)
   })
 

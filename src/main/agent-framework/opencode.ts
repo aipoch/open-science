@@ -229,6 +229,7 @@ const buildOpencodeModelConfig = (
   const baseModelWithoutLimit = { ...baseModel }
   delete baseModelWithoutLimit.limit
   const modelCapabilities = buildModelCapabilities(provider, reasoningEffort)
+  const contextWindow = provider.inputLimit ?? provider.contextWindow
   return {
     ...baseModelWithoutLimit,
     ...modelCapabilities,
@@ -240,12 +241,15 @@ const buildOpencodeModelConfig = (
           }
         }
       : {}),
-    ...(provider.inputLimit === undefined && provider.contextWindow === undefined
+    ...(contextWindow === undefined
       ? {}
       : {
           limit: {
-            ...(provider.inputLimit === undefined ? {} : { input: provider.inputLimit }),
-            ...(provider.contextWindow === undefined ? {} : { context: provider.contextWindow })
+            // OpenCode's native overflow guard requires a nonzero context even when its usable
+            // threshold comes from input. Mirror the input limit here without declaring output;
+            // OpenCode keeps ownership of its output reservation and automatic compaction.
+            context: contextWindow,
+            ...(provider.inputLimit === undefined ? {} : { input: provider.inputLimit })
           }
         })
   }
