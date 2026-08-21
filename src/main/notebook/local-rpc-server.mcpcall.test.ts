@@ -958,6 +958,39 @@ describe('computeCall RPC', () => {
     expect(submitJob).toHaveBeenCalledTimes(1)
   })
 
+  it('rejects a reused submit_job invocation with a different request', async () => {
+    const submitJob = vi.fn().mockResolvedValue({ job_id: 'job-1', status: 'queued' })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const submit = (command: string): Promise<Response> =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: 'invocation-1',
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command
+          }
+        })
+      })
+
+    expect((await submit('python analyze.py')).status).toBe(200)
+    const conflict = await submit('python different.py')
+
+    expect(conflict.status).toBe(409)
+    await expect(conflict.json()).resolves.toEqual({
+      error: 'invocation_id was already used with a different submit_job request.'
+    })
+    expect(submitJob).toHaveBeenCalledTimes(1)
+  })
+
   it('serializes submit_job compute call errors', async () => {
     const submitErr = new Error('approval denied') as Error & { computeCallError: unknown }
     submitErr.computeCallError = {

@@ -509,7 +509,10 @@ class NotebookLocalRpcServer {
     Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization | 'ambiguous'>
   >()
   private readonly consumedExecutionToolCalls = new Map<string, Set<string>>()
-  private readonly computeSubmissionInvocations = new Map<string, Map<string, Promise<unknown>>>()
+  private readonly computeSubmissionInvocations = new Map<
+    string,
+    Map<string, { fingerprint: string; submission: Promise<unknown> }>
+  >()
 
   constructor(
     private readonly service: NotebookLocalRpcCapability,
@@ -2169,8 +2172,17 @@ class NotebookLocalRpcServer {
           }
 
           const sessionInvocations = this.computeSubmissionInvocations.get(sessionId) ?? new Map()
+          const fingerprint = JSON.stringify([providerId, intent, command, options])
           const existing = sessionInvocations.get(invocationId)
-          if (existing) return await existing
+          if (existing) {
+            if (existing.fingerprint !== fingerprint) {
+              throw new RpcHttpError(
+                409,
+                'invocation_id was already used with a different submit_job request.'
+              )
+            }
+            return await existing.submission
+          }
 
           const submission = this.computeService.submitJob(
             context,
@@ -2179,12 +2191,12 @@ class NotebookLocalRpcServer {
             command,
             options
           )
-          sessionInvocations.set(invocationId, submission)
+          sessionInvocations.set(invocationId, { fingerprint, submission })
           this.computeSubmissionInvocations.set(sessionId, sessionInvocations)
           try {
             return await submission
           } catch (error) {
-            if (sessionInvocations.get(invocationId) === submission) {
+            if (sessionInvocations.get(invocationId)?.submission === submission) {
               sessionInvocations.delete(invocationId)
               if (sessionInvocations.size === 0) {
                 this.computeSubmissionInvocations.delete(sessionId)
