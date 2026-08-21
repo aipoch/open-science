@@ -1,4 +1,3 @@
-import i18next from 'i18next'
 import { describe, expect, it } from 'vitest'
 
 import type { ChatMessage, ToolActivity } from '@/stores/session-store'
@@ -15,6 +14,7 @@ import {
   groupConversationItems,
   isSearchActivity
 } from './workspace-tool-activity-groups'
+import { i18next } from '@/i18n'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   id: 'tool-1',
