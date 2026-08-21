@@ -2704,8 +2704,7 @@ const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessio
 // token-isolation reasons documented on host.mcp above.
 async function computeRpc(params) {
   if (!RPC_ENDPOINT) throw new Error('host.compute is unavailable: connector RPC endpoint not set')
-  const isRetryableSubmit =
-    params?.op === 'submit_job' && typeof params.invocation_id === 'string'
+  const isRetryableSubmit = params?.op === 'submit_job' && typeof params.invocation_id === 'string'
   const request = async () => {
     const res = await capturedRpcFetch(RPC_ENDPOINT, {
       method: 'POST',
