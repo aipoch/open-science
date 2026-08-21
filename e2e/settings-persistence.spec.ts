@@ -21,6 +21,19 @@ const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
   expect(clippedButtons).toEqual([])
 }
 
+const expectMemoryConfirmDialogChrome = async (
+  dialog: Locator,
+  confirmLabel: string
+): Promise<void> => {
+  await expect(dialog).toHaveCSS('width', '440px')
+  await expect(dialog).toHaveCSS('padding', '0px')
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: confirmLabel })).toHaveCSS(
+    'color',
+    'rgb(255, 255, 255)'
+  )
+}
+
 test('persists the selected theme after closing settings and relaunching', async ({ app }) => {
   let page = await app.completeOnboarding()
 
@@ -186,6 +199,14 @@ test('contains long memory lists and layers destructive confirmations above sett
     .toBe('0px')
   await page.screenshot({ path: testInfo.outputPath('memory-long-list.png') })
 
+  await settings.getByRole('button', { name: 'Clear all' }).click()
+  const clearDialog = page.getByRole('alertdialog', { name: 'Clear all memory?' })
+  await expect(clearDialog).toBeVisible()
+  await expect(clearDialog).toHaveCSS('z-index', '70')
+  await expectMemoryConfirmDialogChrome(clearDialog, 'Clear all')
+  await page.screenshot({ path: testInfo.outputPath('memory-clear-confirmation.png') })
+  await clearDialog.getByRole('button', { name: 'Cancel' }).click()
+
   const lastNote = settings.getByText('Overflow note 24')
   const lastNoteRow = settings
     .locator('[data-slot="memory-entry"]')
@@ -196,6 +217,7 @@ test('contains long memory lists and layers destructive confirmations above sett
   const noteDialog = page.getByRole('alertdialog', { name: 'Delete note?' })
   await expect(noteDialog).toBeVisible()
   await expect(noteDialog).toHaveCSS('z-index', '70')
+  await expectMemoryConfirmDialogChrome(noteDialog, 'Delete note')
   await page.screenshot({ path: testInfo.outputPath('memory-note-confirmation.png') })
   await noteDialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(lastNote).toBeVisible()
@@ -206,6 +228,7 @@ test('contains long memory lists and layers destructive confirmations above sett
   const categoryDialog = page.getByRole('alertdialog', { name: 'Delete category?' })
   await expect(categoryDialog).toBeVisible()
   await expect(categoryDialog).toHaveCSS('z-index', '70')
+  await expectMemoryConfirmDialogChrome(categoryDialog, 'Delete category')
   await page.screenshot({ path: testInfo.outputPath('memory-category-confirmation.png') })
   await categoryDialog.getByRole('button', { name: 'Cancel' }).click()
 })

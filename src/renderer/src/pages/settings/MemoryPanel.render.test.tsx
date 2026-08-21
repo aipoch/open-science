@@ -225,6 +225,40 @@ describe('MemoryPanel', () => {
     expect(deleteEntry).toHaveBeenCalledWith({ id: 'entry-a', expectedRevision: 1 })
   })
 
+  it('dismisses note deletion from the dialog header without deleting', async () => {
+    const deleteEntry = vi.fn().mockResolvedValue(undefined)
+    useMemoryStore.setState({
+      categories: [
+        {
+          ...useMemoryStore.getState().categories[0]!,
+          entries: [
+            {
+              id: 'entry-a',
+              content: 'Keep this after closing',
+              origin: 'user',
+              revision: 1,
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        }
+      ],
+      deleteEntry
+    })
+    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+
+    fireEvent.click(container.querySelector('button[aria-label="Delete note"]')!)
+
+    const close = document.body.querySelector<HTMLButtonElement>(
+      '[role="alertdialog"] button[aria-label="Close"]'
+    )
+    expect(close).not.toBeNull()
+    fireEvent.click(close!)
+
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(deleteEntry).not.toHaveBeenCalled()
+  })
+
   it('renders category confirmation above the parent settings dialog layer', async () => {
     useMemoryStore.setState({
       categories: [
