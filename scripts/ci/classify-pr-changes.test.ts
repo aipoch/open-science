@@ -351,9 +351,9 @@ describe('pull request change classification', () => {
 
   it.each([
     ['renderer view', 'src/renderer/src/components/Button.tsx'],
-    ['renderer locale catalog', 'src/renderer/src/locales/ja.json'],
-    ['Korean locale catalog', 'src/renderer/src/locales/ko.json'],
-    ['French locale catalog', 'src/renderer/src/locales/fr.json'],
+    ['renderer locale catalog', 'src/shared/i18n/locales/ja.json'],
+    ['Korean locale catalog', 'src/shared/i18n/locales/ko.json'],
+    ['French locale catalog', 'src/shared/i18n/locales/fr.json'],
     ['shared contract', 'src/shared/acp.ts'],
     ['main runtime', 'src/main/notebook/runtime-service.ts']
   ])('selects the i18n catalog lane for a scanned %s change', (_label, path) => {
@@ -362,6 +362,18 @@ describe('pull request change classification', () => {
     expect(plan.lanes).toContain('i18n')
     expect(plan.bundles).toContain('static')
   })
+
+  it.each(['fr', 'ja', 'ko', 'ru', 'zh-Hans', 'zh-Hant'])(
+    'runs the build and functional Electron journey for a shared %s catalog change',
+    (locale) => {
+      const plan = classifyChanges([
+        { path: `src/shared/i18n/locales/${locale}.json`, status: 'modified' }
+      ])
+
+      expect(plan.lanes).toEqual(expect.arrayContaining(['i18n', 'build', 'e2e_functional_macos']))
+      expect(plan.bundles).toEqual(expect.arrayContaining(['static', 'macos_e2e']))
+    }
+  )
 
   it.each([
     ['documentation', 'README.md'],

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ChatMessage, ToolActivity } from '@/stores/session-store'
-import ko from '../../locales/ko.json'
+import { renderer as ko } from '../../../../shared/i18n/locales/ko.json'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ConversationItem } from './workspace-conversation-items'
 import {

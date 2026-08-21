@@ -17,15 +17,15 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-import { commonCatalogs } from '../../../shared/i18n/common-resources'
+import fr from '../../../shared/i18n/locales/fr.json'
+import ja from '../../../shared/i18n/locales/ja.json'
+import ko from '../../../shared/i18n/locales/ko.json'
+import ru from '../../../shared/i18n/locales/ru.json'
+import zhHans from '../../../shared/i18n/locales/zh-Hans.json'
+import zhHant from '../../../shared/i18n/locales/zh-Hant.json'
+import { LOCALES } from '../../../shared/locale'
 import { createNativeI18n } from '../../../main/locale/main-process-messages'
 import { nativeCatalogs, nativeResources } from '../../../main/locale/resources'
-import fr from '../locales/fr.json'
-import ja from '../locales/ja.json'
-import ko from '../locales/ko.json'
-import ru from '../locales/ru.json'
-import zhHans from '../locales/zh-Hans.json'
-import zhHant from '../locales/zh-Hant.json'
 import {
   englishSourceFallbackPostProcessor,
   hasValidTagStructure,
@@ -35,21 +35,36 @@ import {
 import { initI18n } from './index'
 
 type Catalog = Record<string, string>
+type TranslatedLocale = Exclude<(typeof LOCALES)[number], 'en'>
 
-const sourceCatalogs = {
-  fr: { ...commonCatalogs.fr, ...fr },
-  ja: { ...commonCatalogs.ja, ...ja },
-  ko: { ...commonCatalogs.ko, ...ko },
-  ru: { ...commonCatalogs.ru, ...ru },
-  'zh-Hans': { ...commonCatalogs['zh-Hans'], ...zhHans },
-  'zh-Hant': { ...commonCatalogs['zh-Hant'], ...zhHant }
+const commonCatalogs = {
+  fr: fr.common,
+  ja: ja.common,
+  ko: ko.common,
+  ru: ru.common,
+  'zh-Hans': zhHans.common,
+  'zh-Hant': zhHant.common
 } as const
 
-const rendererCatalogs = { fr, ja, ko, ru, 'zh-Hans': zhHans, 'zh-Hant': zhHant } as const
+const sourceCatalogs = {
+  fr: { ...fr.common, ...fr.renderer },
+  ja: { ...ja.common, ...ja.renderer },
+  ko: { ...ko.common, ...ko.renderer },
+  ru: { ...ru.common, ...ru.renderer },
+  'zh-Hans': { ...zhHans.common, ...zhHans.renderer },
+  'zh-Hant': { ...zhHant.common, ...zhHant.renderer }
+} as const satisfies Record<TranslatedLocale, Catalog>
 
-type TranslatedLocale = keyof typeof sourceCatalogs
+const rendererCatalogs = {
+  fr: fr.renderer,
+  ja: ja.renderer,
+  ko: ko.renderer,
+  ru: ru.renderer,
+  'zh-Hans': zhHans.renderer,
+  'zh-Hant': zhHant.renderer
+} as const
 
-const TRANSLATED = Object.keys(sourceCatalogs) as TranslatedLocale[]
+const TRANSLATED = LOCALES.filter((locale): locale is TranslatedLocale => locale !== 'en')
 
 const catalog = (locale: TranslatedLocale): Catalog => sourceCatalogs[locale] as Catalog
 
@@ -61,10 +76,45 @@ const allCatalogEntries = (locale: TranslatedLocale): Array<[string, string]> =>
 ]
 
 const rawCatalog = (locale: TranslatedLocale): string =>
-  readFileSync(join(__dirname, '..', 'locales', `${locale}.json`), 'utf8')
+  readFileSync(
+    join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', `${locale}.json`),
+    'utf8'
+  )
 
-const rawCatalogKeys = (source: string): string[] =>
-  [...source.matchAll(/^\s*"((?:[^"\\]|\\.)+)"\s*:/gm)].map((match) => JSON.parse(`"${match[1]}"`))
+type CatalogNamespace = 'common' | 'native' | 'renderer'
+
+const rawCatalogObject = (source: string): ts.ObjectLiteralExpression | undefined => {
+  const sourceFile = ts.parseJsonText('locale.json', source)
+  const statement = sourceFile.statements[0]
+  if (!statement || !ts.isExpressionStatement(statement)) return undefined
+  return ts.isObjectLiteralExpression(statement.expression) ? statement.expression : undefined
+}
+
+const rawObjectKeys = (object: ts.ObjectLiteralExpression): string[] =>
+  object.properties.flatMap((property) =>
+    ts.isPropertyAssignment(property) && ts.isStringLiteralLike(property.name)
+      ? [property.name.text]
+      : []
+  )
+
+const rawTopLevelKeys = (source: string): string[] => {
+  const object = rawCatalogObject(source)
+  return object ? rawObjectKeys(object) : []
+}
+
+const rawCatalogKeys = (source: string, namespace: CatalogNamespace): string[] => {
+  const object = rawCatalogObject(source)
+  if (!object) return []
+
+  return object.properties.flatMap((property) =>
+    ts.isPropertyAssignment(property) &&
+    ts.isStringLiteralLike(property.name) &&
+    property.name.text === namespace &&
+    ts.isObjectLiteralExpression(property.initializer)
+      ? rawObjectKeys(property.initializer)
+      : []
+  )
+}
 
 // {{name}} interpolation placeholders and <tag> markers consumed by the Trans component. Both must
 // survive translation: a dropped placeholder renders a blank where a value belongs, and a dropped tag
@@ -102,6 +152,30 @@ const withoutPluralCategory = (key: string): string => {
 const COUNTED_KEYS_WITHOUT_MARKER = ['probed just now'] as const
 
 describe('supported catalog registration', () => {
+  it('preserves duplicate top-level namespace keys for the structure guard to reject', () => {
+    expect(rawTopLevelKeys('{"common": {}, "native": {}, "native": {}, "renderer": {}}')).toEqual([
+      'common',
+      'native',
+      'native',
+      'renderer'
+    ])
+  })
+
+  it('keeps one authoritative shared JSON file per translated locale', () => {
+    const sharedLocalesRoot = join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales')
+    const entries = readdirSync(sharedLocalesRoot, { withFileTypes: true })
+
+    expect(entries.map((entry) => entry.name).sort()).toEqual(
+      TRANSLATED.map((locale) => `${locale}.json`).sort()
+    )
+    expect(entries.every((entry) => entry.isFile())).toBe(true)
+    expect(existsSync(join(__dirname, '..', 'locales'))).toBe(false)
+
+    for (const locale of TRANSLATED) {
+      expect(rawTopLevelKeys(rawCatalog(locale))).toEqual(['common', 'native', 'renderer'])
+    }
+  })
+
   it('ships only common and renderer namespaces for every translated locale', () => {
     expect(Object.keys(resources).sort()).toEqual([...TRANSLATED].sort())
     expect(
@@ -127,7 +201,9 @@ describe('supported catalog registration', () => {
 
 describe('runtime catalog fallback', () => {
   it('ships and registers the Russian catalog', () => {
-    expect(existsSync(join(__dirname, '..', 'locales', 'ru.json'))).toBe(true)
+    expect(
+      existsSync(join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', 'ru.json'))
+    ).toBe(true)
     expect('ru' in resources).toBe(true)
   })
 
@@ -228,12 +304,12 @@ describe('runtime catalog fallback', () => {
 })
 
 describe.each(TRANSLATED)('%s catalog', (locale) => {
-  it('has no duplicate raw JSON keys', () => {
-    const seen = new Set<string>()
-    const duplicates = rawCatalogKeys(rawCatalog(locale)).filter((key) => {
-      if (seen.has(key)) return true
-      seen.add(key)
-      return false
+  it('has no duplicate raw JSON keys within a namespace', () => {
+    const duplicates = (['common', 'native', 'renderer'] as const).flatMap((namespace) => {
+      const seen = new Set<string>()
+      return rawCatalogKeys(rawCatalog(locale), namespace)
+        .filter((key) => (seen.has(key) ? true : !seen.add(key)))
+        .map((key) => `${namespace}: ${key}`)
     })
 
     expect(duplicates).toEqual([])
@@ -367,32 +443,6 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
     expect([...invalid, ...missing]).toEqual([])
   })
 
-  it('has no duplicate raw common or native JSON keys', () => {
-    const rawKeys = (namespace: 'common' | 'native'): string[] =>
-      rawCatalogKeys(
-        readFileSync(
-          join(
-            __dirname,
-            '..',
-            '..',
-            '..',
-            'shared',
-            'i18n',
-            'locales',
-            locale,
-            `${namespace}.json`
-          ),
-          'utf8'
-        )
-      )
-    const duplicates = (keys: string[]): string[] => {
-      const seen = new Set<string>()
-      return keys.filter((key) => (seen.has(key) ? true : !seen.add(key)))
-    }
-
-    expect([...duplicates(rawKeys('common')), ...duplicates(rawKeys('native'))]).toEqual([])
-  })
-
   it('localizes mandatory generic product nouns', () => {
     const expected = {
       fr: {
@@ -462,7 +512,7 @@ describe('process catalog boundaries', () => {
 
   it('keeps the native Quit command separate from the renderer noun', () => {
     expect(nativeCatalogs.ru.Quit).toBe('Выйти')
-    expect(ru.Quit).toBe('Выход')
+    expect(rendererCatalogs.ru.Quit).toBe('Выход')
   })
 
   it('does not expose renderer-only copy through main resources', () => {
