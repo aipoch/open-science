@@ -1149,7 +1149,9 @@ const WorkspaceMessageScrollerImpl = ({
                   }
                   if (item.message.role === 'agent') {
                     const nextConversationItem = conversationItems[itemIndex + 1]
-                    const hasFollowingLiveActivity =
+                    // Completed activity rows remain visible too. Any following activity row means
+                    // this message is not replacing the trailing loading row and needs no reserve.
+                    const hasFollowingActivityRow =
                       nextConversationItem?.type === 'activity' ||
                       nextConversationItem?.type === 'activity-group'
                     messageItemProps.onPresentationChange = handleMessagePresentationChange
@@ -1159,7 +1161,7 @@ const WorkspaceMessageScrollerImpl = ({
                       presentationScopeRemainedVisible &&
                       !visibleMessageSnapshot.messageIds.has(item.message.id)
                     messageItemProps.reserveLoadingRowHeight =
-                      !hasFollowingLiveActivity &&
+                      !hasFollowingActivityRow &&
                       !isResumingSession &&
                       agentLoadingPhase === 'hidden'
                   }
