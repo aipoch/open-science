@@ -5438,6 +5438,153 @@ describe('SessionPersistenceCoordinator', () => {
     expect(computeJobs.abortSessionJobDeletion).toHaveBeenCalledWith('project-1', 'session-1')
   })
 
+  it('logs the privacy-safe phase when Session authority deletion fails', async () => {
+    const log = createTestLogger()
+    const coordinator = createDeletionDiagnosticCoordinator(log, {
+      repository: {
+        deleteSession: vi
+          .fn()
+          .mockRejectedValue(
+            new Error('database locked at C:\\Users\\example\\private-study\\open-science.db')
+          )
+      }
+    })
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'database locked'
+    )
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-persistence-deletion',
+        operationId: expect.any(String),
+        phase: 'delete-authority',
+        failurePhase: 'delete-authority',
+        outcome: 'failed',
+        errorCategory: 'error',
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.error.mock.calls)
+    expect(diagnosticPayload).not.toContain('database locked')
+    expect(diagnosticPayload).not.toContain('private-study')
+    expect(diagnosticPayload).not.toContain('open-science.db')
+  })
+
+  it('distinguishes Session deletion participant failure phases', async () => {
+    const failure = (): Promise<never> => Promise.reject(new Error('participant unavailable'))
+    const session = createSession()
+    const computeJobs = (overrides: {
+      prepareSessionJobDeletion?: () => Promise<void>
+      commitSessionJobDeletion?: () => Promise<void>
+    }): NonNullable<ConstructorParameters<typeof SessionPersistenceCoordinator>[8]> => ({
+      prepareSessionJobDeletion: vi.fn(
+        overrides.prepareSessionJobDeletion ?? (async () => undefined)
+      ),
+      commitSessionJobDeletion: vi.fn(
+        overrides.commitSessionJobDeletion ?? (async () => undefined)
+      ),
+      prepareProjectJobDeletion: vi.fn(async () => undefined),
+      commitProjectJobDeletion: vi.fn(async () => undefined)
+    })
+    const cases: Array<{ phase: string; overrides: DeletionDiagnosticOverrides }> = [
+      {
+        phase: 'prepare-compute-cleanup',
+        overrides: { computeJobs: computeJobs({ prepareSessionJobDeletion: failure }) }
+      },
+      {
+        phase: 'load-authority',
+        overrides: { repository: { loadSessionWithDiagnostics: vi.fn(failure) } }
+      },
+      {
+        phase: 'prepare-upload-cleanup',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          uploads: { upgradeLegacySessionUploads: vi.fn(failure) }
+        }
+      },
+      {
+        phase: 'prepare-provenance',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          provenance: { prepareSessionDeletion: vi.fn(failure) }
+        }
+      },
+      {
+        phase: 'soft-delete-file-index',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          fileIndex: { softDeleteSession: vi.fn(failure) }
+        }
+      },
+      {
+        phase: 'commit-compute-cleanup',
+        overrides: { computeJobs: computeJobs({ commitSessionJobDeletion: failure }) }
+      },
+      {
+        phase: 'complete-provenance',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          provenance: { completeSessionDeletion: vi.fn(failure) }
+        }
+      }
+    ]
+
+    for (const testCase of cases) {
+      const log = createTestLogger()
+      await expect(
+        createDeletionDiagnosticCoordinator(log, testCase.overrides).deleteSession(
+          'project-1',
+          'session-1'
+        )
+      ).rejects.toThrow('participant unavailable')
+      expect(log.error).toHaveBeenCalledWith(
+        'operation failed',
+        expect.objectContaining({
+          operation: 'session-persistence-deletion',
+          failurePhase: testCase.phase,
+          outcome: 'failed'
+        })
+      )
+    }
+  })
+
+  it('logs the failed recovery phase without losing the original deletion phase', async () => {
+    const session = createSession()
+    const log = createTestLogger()
+    const coordinator = createDeletionDiagnosticCoordinator(log, {
+      repository: {
+        loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session })),
+        deleteSession: vi.fn().mockRejectedValue(new Error('authority unavailable'))
+      },
+      fileIndex: {
+        restoreSession: vi.fn().mockRejectedValue(new Error('file index unavailable'))
+      }
+    })
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'file index unavailable'
+    )
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-persistence-deletion',
+        phase: 'delete-authority',
+        failurePhase: 'delete-authority',
+        recoveryPhase: 'restore-file-index',
+        outcome: 'failed'
+      })
+    )
+  })
+
   it('keeps Session authority deleted when post-authority Compute cleanup fails', async () => {
     const session = createSession()
     const repository = createSessionRepository({
@@ -5627,6 +5774,30 @@ const createProvenancePersistence = (
   abortSessionDeletion: vi.fn().mockResolvedValue(undefined),
   ...overrides
 })
+
+type DeletionDiagnosticOverrides = {
+  repository?: Partial<SessionMutationRepository>
+  fileIndex?: Partial<SessionFileIndex>
+  provenance?: Partial<SessionProvenancePersistence>
+  uploads?: ConstructorParameters<typeof SessionPersistenceCoordinator>[4]
+  computeJobs?: ConstructorParameters<typeof SessionPersistenceCoordinator>[8]
+}
+
+const createDeletionDiagnosticCoordinator = (
+  log: Logger,
+  overrides: DeletionDiagnosticOverrides = {}
+): SessionPersistenceCoordinator =>
+  new SessionPersistenceCoordinator(
+    createSessionRepository(overrides.repository),
+    createFileIndex(overrides.fileIndex),
+    undefined,
+    overrides.provenance ? createProvenancePersistence(overrides.provenance) : undefined,
+    overrides.uploads,
+    undefined,
+    undefined,
+    log,
+    overrides.computeJobs
+  )
 
 const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
   let resolve!: (value: T) => void

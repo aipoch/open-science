@@ -10,6 +10,8 @@ import type {
 } from '../../shared/session-persistence'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
+import type { Logger } from '../logger'
+import { startDiagnosticOperation } from '../diagnostics/operation'
 import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError
@@ -98,6 +100,7 @@ type SessionPersistenceDeletionOwnerOptions = {
   provenance?: SessionDeletionProvenance
   uploads?: SessionDeletionUploads
   computeJobs?: ComputeJobDeletionParticipant
+  log: Logger
   assertArchiveMutable(projectId: string, sessionId: string): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
   notifySessionsDeleted(sessionIds: string[]): Promise<void>
@@ -129,6 +132,7 @@ class SessionPersistenceDeletionOwner {
   private readonly provenance: SessionDeletionProvenance | undefined
   private readonly uploads: SessionDeletionUploads | undefined
   private readonly computeJobs: ComputeJobDeletionParticipant | undefined
+  private readonly log: Logger
   private readonly assertArchiveMutable: (projectId: string, sessionId: string) => void
   private readonly notifyFilesChanged: (event: ProjectFilesChangedEvent) => void
   private readonly notifySessionsDeleted: (sessionIds: string[]) => Promise<void>
@@ -140,6 +144,7 @@ class SessionPersistenceDeletionOwner {
     this.provenance = options.provenance
     this.uploads = options.uploads
     this.computeJobs = options.computeJobs
+    this.log = options.log
     this.assertArchiveMutable = options.assertArchiveMutable
     this.notifyFilesChanged = options.notifyFilesChanged
     this.notifySessionsDeleted = options.notifySessionsDeleted
@@ -365,6 +370,10 @@ class SessionPersistenceDeletionOwner {
     projectId: string,
     sessionId: string
   ): Promise<SessionDeletionReceipt['kind']> {
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'session-persistence-deletion'
+    })
+    let failurePhase = 'load-authority'
     let token: ManagedFileSoftDeleteToken | undefined
     let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
     let jsonDeleted = false
@@ -373,36 +382,61 @@ class SessionPersistenceDeletionOwner {
 
     try {
       if (this.computeJobs) {
+        failurePhase = 'prepare-compute-cleanup'
+        operation.phase(failurePhase)
         await this.computeJobs.prepareSessionJobDeletion(projectId, sessionId)
         computeJobsPrepared = true
       }
+      failurePhase = 'load-authority'
+      operation.phase(failurePhase)
       const loadedSession = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
       if (loadedSession.status === 'unreadable') {
         throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
       }
       session = loadedSession.status === 'found' ? loadedSession.session : undefined
-      if (session && this.uploads)
+      if (session && this.uploads) {
+        failurePhase = 'prepare-upload-cleanup'
+        operation.phase(failurePhase)
         session = await this.prepareSessionUploadsForTerminalDelete(session)
+      }
       if (session && this.provenance) {
+        failurePhase = 'prepare-provenance'
+        operation.phase(failurePhase)
         receipt = await this.provenance.prepareSessionDeletion(session)
       }
       if (receipt.kind === 'ordinary') {
+        failurePhase = 'soft-delete-file-index'
+        operation.phase(failurePhase)
         token = await this.fileIndex.softDeleteSession(projectId, sessionId)
       }
+      failurePhase = 'delete-authority'
+      operation.phase(failurePhase)
       await this.repository.deleteSession(projectId, sessionId)
       jsonDeleted = true
       if (this.computeJobs) {
+        failurePhase = 'commit-compute-cleanup'
+        operation.phase(failurePhase)
         await this.computeJobs.commitSessionJobDeletion(projectId, sessionId)
       }
+      failurePhase = 'complete-provenance'
+      operation.phase(failurePhase)
       await this.provenance?.completeSessionDeletion(receipt)
     } catch (error) {
+      let recoveryPhase: string | undefined
       try {
         if (!jsonDeleted) {
           try {
-            if (receipt.kind === 'retained') await this.provenance?.abortSessionDeletion(receipt)
-            if (token) await this.fileIndex.restoreSession(projectId, sessionId, token)
+            if (receipt.kind === 'retained') {
+              recoveryPhase = 'abort-provenance'
+              await this.provenance?.abortSessionDeletion(receipt)
+            }
+            if (token) {
+              recoveryPhase = 'restore-file-index'
+              await this.fileIndex.restoreSession(projectId, sessionId, token)
+            }
           } finally {
             if (computeJobsPrepared) {
+              recoveryPhase = 'abort-compute-cleanup'
               await this.computeJobs?.abortSessionJobDeletion?.(projectId, sessionId)
             }
           }
@@ -411,11 +445,14 @@ class SessionPersistenceDeletionOwner {
         }
       } catch (restoreError) {
         this.fileIndex.markReconciliationIncomplete()
+        operation.fail(restoreError, { failurePhase, recoveryPhase })
         throw restoreError
       }
+      operation.fail(error, { failurePhase })
       throw error
     }
 
+    operation.complete({ receiptKind: receipt.kind })
     return receipt.kind
   }
 

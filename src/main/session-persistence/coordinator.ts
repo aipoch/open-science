@@ -243,6 +243,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       provenance,
       uploads,
       computeJobs,
+      log,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {
           throw new Error('Cannot archive a Session whose project has been deleted.')
@@ -983,7 +984,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     }
   }
 }
-
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
 
 export { SessionPersistenceCoordinator, SessionRuntimeContextRevisionConflictError }

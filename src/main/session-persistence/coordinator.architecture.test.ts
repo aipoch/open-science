@@ -570,6 +570,7 @@ describe('Session persistence coordinator architecture', () => {
         'assertArchiveMutable',
         'computeJobs',
         'fileIndex',
+        'log',
         'notifyFilesChanged',
         'notifySessionsDeleted',
         'provenance',
