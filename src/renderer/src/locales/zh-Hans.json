@@ -3154,5 +3154,12 @@
   "This imported Connector requires a client secret entered locally.": "此导入的连接器需要在本地输入客户端密钥。",
   "Authorization server URL is required for a pre-registered client.": "预注册客户端必须提供授权服务器 URL。",
   "Client ID is required when a client secret is configured.": "配置客户端密钥时必须提供客户端 ID。",
-  "Client metadata URL cannot be combined with a pre-registered client.": "客户端元数据 URL 不能与预注册客户端同时使用。"
+  "Client metadata URL cannot be combined with a pre-registered client.": "客户端元数据 URL 不能与预注册客户端同时使用。",
+  "Source {{number}}: {{title}}": "来源 {{number}}：{{title}}",
+  "Source preview: {{title}}": "来源预览：{{title}}",
+  "Cited URL: {{hostname}}": "引用网址：{{hostname}}",
+  "Open source in browser": "在浏览器中打开来源",
+  "Only HTTPS sources can be previewed": "仅支持预览 HTTPS 来源",
+  "Open source preview": "打开来源预览",
+  "You are about to preview an external website.": "你即将预览一个外部网站。"
 }

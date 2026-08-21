@@ -4,15 +4,17 @@ import {
   dialog,
   ipcMain,
   shell,
+  webFrameMain,
   WebContentsView,
   type BrowserWindowConstructorOptions,
-  type IpcMainEvent
+  type IpcMainEvent,
+  type WebFrameMain
 } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import iconPng from '../../resources/icon.png?asset'
 import iconWindows from '../../resources/icon-light.ico?asset'
-import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigation-policy'
+import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navigation-policy'
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger } from './logger'
@@ -87,11 +89,67 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     }
     return { action: 'deny' }
   })
-  window.webContents.on('will-frame-navigate', (details) => {
-    if (!isAllowedFrameNavigation(details.url, details.isMainFrame, window.webContents.getURL())) {
+  // Remote source pages share the main window Session but never need device, media, location, or
+  // storage permissions. Keep trusted main-frame behavior intact and fail every subframe closed.
+  window.webContents.session.setPermissionRequestHandler(
+    (_webContents, _permission, callback, details) => callback(details.isMainFrame)
+  )
+  window.webContents.session.setPermissionCheckHandler(
+    (_webContents, _permission, _requestingOrigin, details) => details.isMainFrame
+  )
+  const isAllowedFrameNavigation = createFrameNavigationGuard(window.webContents.mainFrame)
+  type FrameNavigationDetails = {
+    url: string
+    isMainFrame: boolean
+    frame: unknown
+    processId?: number
+    routingId?: number
+    preventDefault: () => void
+  }
+  const resolveNavigationFrame = (
+    details: FrameNavigationDetails,
+    fallbackProcessId?: number,
+    fallbackRoutingId?: number
+  ): WebFrameMain | null => {
+    if (
+      details.frame &&
+      typeof details.frame !== 'string' &&
+      typeof (details.frame as WebFrameMain).frameTreeNodeId === 'number'
+    ) {
+      return details.frame as WebFrameMain
+    }
+
+    const processId = details.processId ?? fallbackProcessId
+    const routingId = details.routingId ?? fallbackRoutingId
+    if (processId === undefined || routingId === undefined) return null
+
+    return webFrameMain.fromId(processId, routingId) ?? null
+  }
+  const enforceFrameNavigationPolicy = (
+    details: FrameNavigationDetails,
+    frame: WebFrameMain | null
+  ): void => {
+    if (
+      !isAllowedFrameNavigation(
+        details.url,
+        details.isMainFrame,
+        window.webContents.getURL(),
+        frame
+      )
+    ) {
       details.preventDefault()
     }
+  }
+  window.webContents.on('will-frame-navigate', (details) => {
+    enforceFrameNavigationPolicy(details, resolveNavigationFrame(details))
   })
+  window.webContents.on(
+    'will-redirect',
+    (details, _url, _isInPlace, _isMainFrame, frameProcessId, frameRoutingId) => {
+      const frame = resolveNavigationFrame(details, frameProcessId, frameRoutingId)
+      enforceFrameNavigationPolicy(details, frame)
+    }
+  )
 
   return window
 }

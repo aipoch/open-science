@@ -3154,5 +3154,12 @@
   "This imported Connector requires a client secret entered locally.": "このインポートされたコネクタには、ローカルで入力するクライアントシークレットが必要です。",
   "Authorization server URL is required for a pre-registered client.": "事前登録済みクライアントには認可サーバー URL が必要です。",
   "Client ID is required when a client secret is configured.": "クライアントシークレットを設定する場合はクライアント ID が必要です。",
-  "Client metadata URL cannot be combined with a pre-registered client.": "クライアントメタデータ URL を事前登録済みクライアントと併用することはできません。"
+  "Client metadata URL cannot be combined with a pre-registered client.": "クライアントメタデータ URL を事前登録済みクライアントと併用することはできません。",
+  "Source {{number}}: {{title}}": "出典 {{number}}：{{title}}",
+  "Source preview: {{title}}": "出典のプレビュー：{{title}}",
+  "Cited URL: {{hostname}}": "引用 URL: {{hostname}}",
+  "Open source in browser": "ブラウザーで出典を開く",
+  "Only HTTPS sources can be previewed": "HTTPS の出典のみプレビューできます",
+  "Open source preview": "出典のプレビューを開く",
+  "You are about to preview an external website.": "外部ウェブサイトをプレビューしようとしています。"
 }

@@ -3152,5 +3152,12 @@
   "This imported Connector requires a client secret entered locally.": "가져온 커넥터에는 로컬에서 입력한 클라이언트 시크릿이 필요합니다.",
   "Authorization server URL is required for a pre-registered client.": "사전 등록된 클라이언트에는 인증 서버 URL이 필요합니다.",
   "Client ID is required when a client secret is configured.": "클라이언트 시크릿을 구성할 때 클라이언트 ID가 필요합니다.",
-  "Client metadata URL cannot be combined with a pre-registered client.": "클라이언트 메타데이터 URL은 사전 등록된 클라이언트와 함께 사용할 수 없습니다."
+  "Client metadata URL cannot be combined with a pre-registered client.": "클라이언트 메타데이터 URL은 사전 등록된 클라이언트와 함께 사용할 수 없습니다.",
+  "Source {{number}}: {{title}}": "출처 {{number}}: {{title}}",
+  "Source preview: {{title}}": "출처 미리보기: {{title}}",
+  "Cited URL: {{hostname}}": "인용 URL: {{hostname}}",
+  "Open source in browser": "브라우저에서 출처 열기",
+  "Only HTTPS sources can be previewed": "HTTPS 출처만 미리 볼 수 있습니다",
+  "Open source preview": "출처 미리보기 열기",
+  "You are about to preview an external website.": "외부 웹사이트 미리보기를 열려고 합니다."
 }

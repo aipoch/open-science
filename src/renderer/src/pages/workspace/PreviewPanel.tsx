@@ -1,4 +1,4 @@
-import { BookOpen, File, FolderOpen, X } from 'lucide-react'
+import { BookOpen, File, FolderOpen, Globe2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import type {
   PreviewFileItem,
   PreviewItem,
+  PreviewSourceItem,
   PreviewToolItem
 } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
@@ -16,6 +17,7 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PreviewFileSurface } from './PreviewFileSurface'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import { SourceWebPreview } from './previews/SourceWebPreview'
 import { PreviewToolContent } from './previews/PreviewToolContent'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
@@ -54,6 +56,8 @@ const PreviewActiveContent = ({
   if (item.type === 'tool') {
     return <PreviewToolContent item={item} restoredPlanResponder={restoredPlanResponder} />
   }
+
+  if (item.type === 'source') return <SourceWebPreview item={item} />
 
   return <PreviewFileContent item={item} />
 }
@@ -139,6 +143,12 @@ const PreviewTab = ({
       >
         {tab.type === 'file' ? (
           <File className="size-3.5 shrink-0" aria-hidden="true" />
+        ) : tab.type === 'source' ? (
+          <Globe2
+            data-source-preview-tab-icon=""
+            className="size-3.5 shrink-0"
+            aria-hidden="true"
+          />
         ) : tab.toolKind === 'files' ? (
           <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
         ) : tab.toolKind === 'notebook' ? (
@@ -490,6 +500,18 @@ const PreviewToolPanel = ({
   )
 }
 
+const PreviewSourcePanel = ({ item }: { item: PreviewSourceItem }): React.JSX.Element => (
+  <section
+    role="tabpanel"
+    id={getPreviewPanelId(item.id)}
+    aria-labelledby={getPreviewTabId(item.id)}
+    tabIndex={0}
+    className="size-full min-h-0 overflow-hidden"
+  >
+    <SourceWebPreview item={item} />
+  </section>
+)
+
 // Shared workbench surface. Desktop wraps it in a resizable panel; mobile presents the exact same
 // tabs and active content inside a bottom sheet.
 const PreviewPanelSurface = ({
@@ -556,6 +578,20 @@ const PreviewPanelSurface = ({
                 item={item}
                 isActive={isActivePanel}
                 restoredPlanResponder={restoredPlanResponder}
+              />
+            )
+          }
+
+          if (item.type === 'source') {
+            return isActivePanel ? (
+              <PreviewSourcePanel key={item.id} item={item} />
+            ) : (
+              <section
+                key={item.id}
+                role="tabpanel"
+                id={getPreviewPanelId(item.id)}
+                aria-labelledby={getPreviewTabId(item.id)}
+                hidden
               />
             )
           }

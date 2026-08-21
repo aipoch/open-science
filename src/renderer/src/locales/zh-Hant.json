@@ -3154,5 +3154,12 @@
   "This imported Connector requires a client secret entered locally.": "此匯入的連接器需要在本機輸入用戶端密鑰。",
   "Authorization server URL is required for a pre-registered client.": "預先註冊的用戶端必須提供授權伺服器 URL。",
   "Client ID is required when a client secret is configured.": "設定用戶端密鑰時必須提供用戶端 ID。",
-  "Client metadata URL cannot be combined with a pre-registered client.": "用戶端中繼資料 URL 不能與預先註冊的用戶端同時使用。"
+  "Client metadata URL cannot be combined with a pre-registered client.": "用戶端中繼資料 URL 不能與預先註冊的用戶端同時使用。",
+  "Source {{number}}: {{title}}": "來源 {{number}}：{{title}}",
+  "Source preview: {{title}}": "來源預覽：{{title}}",
+  "Cited URL: {{hostname}}": "引用網址：{{hostname}}",
+  "Open source in browser": "在瀏覽器中開啟來源",
+  "Only HTTPS sources can be previewed": "僅支援預覽 HTTPS 來源",
+  "Open source preview": "開啟來源預覽",
+  "You are about to preview an external website.": "你即將預覽一個外部網站。"
 }
