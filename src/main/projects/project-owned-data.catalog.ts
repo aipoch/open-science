@@ -258,7 +258,8 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       'ArtifactLineage',
       'UploadFile',
       'ArtifactMessageSnapshot',
-      'ArtifactVersionInput'
+      'ArtifactVersionInput',
+      'ManagedFileVersionWriteOperation'
     ],
     prismaModels: [
       {
@@ -312,6 +313,10 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
             onDelete: 'Restrict'
           }
         ]
+      },
+      {
+        name: 'ManagedFileVersionWriteOperation',
+        ownerFields: [requiredOwner('projectId')]
       }
     ],
     policy: {
