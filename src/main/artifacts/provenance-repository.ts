@@ -183,7 +183,7 @@ class ArtifactProvenanceRepository {
     })
     this.finalizationRecovery = new ArtifactProvenanceFinalizationRecovery({
       getClient: options.getClient,
-      compatibilityRepository: options.compatibilityRepository,
+      compatibilityRepository: this.compatibilityRepository,
       messageFinalizer: this.messageFinalizer
     })
     this.stagingRecovery = new ArtifactProvenanceStagingRecovery({

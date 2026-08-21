@@ -3350,7 +3350,7 @@ describe('artifact provenance repository', () => {
     ).resolves.toHaveLength(2)
   })
 
-  it('replays the compatibility-marker crash window only with durable Branch ownership', async () => {
+  it('replays the default compatibility repository crash window only with durable Branch ownership', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-marker-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -3358,8 +3358,7 @@ describe('artifact provenance repository', () => {
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
-      getClient: () => Promise.resolve(client),
-      compatibilityRepository
+      getClient: () => Promise.resolve(client)
     })
     const prompt = {
       id: 'prompt-1',
@@ -3432,6 +3431,12 @@ describe('artifact provenance repository', () => {
       messageId: 'message-1',
       provenanceContext: context
     })
+    await expect(
+      new ArtifactRepository(storageRoot).findRunFinalizationMarker(
+        request.projectId,
+        request.artifactRunId
+      )
+    ).resolves.toMatchObject({ messageId: 'message-1' })
 
     const session: PersistedChatSession = {
       id: 'session-1',
