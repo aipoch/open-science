@@ -19,7 +19,6 @@ const log = createLogger('compute')
 
 type ComputeHostLifecycle = Readonly<{
   pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
-  requestSkillRuntimeReload?: () => void
 }>
 
 type AuthenticationRuntimeOptions = Readonly<{

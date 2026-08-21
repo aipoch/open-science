@@ -3,7 +3,10 @@
 // if the rubric drifts back toward the paraphrase or loses load-bearing disciplines.
 
 import { describe, it, expect } from 'vitest'
-import { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } from './rubric'
+import {
+  INITIAL_REVIEW_CHECKABILITY_GUIDANCE,
+  REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
+} from './rubric'
 
 const rubric = REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
 
@@ -135,6 +138,14 @@ describe('REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND — yaml-grounded disciplines', (
     it('keeps pass checks visible but consolidated (no one-card-per-value)', () => {
       expect(rubric).toMatch(/consolidated pass checks|one per area you verified/i)
       expect(rubric).toMatch(/never one per value|not one card per metric/i)
+    })
+
+    it('allows an empty initial submission only when the turn has no checkable claims', () => {
+      expect(rubric).toMatch(/no checkable claims/i)
+      expect(rubric).toMatch(/empty checks array/i)
+      expect(rubric).toMatch(/if uncertain[\s\S]*continue the review/i)
+      expect(rubric).toContain(INITIAL_REVIEW_CHECKABILITY_GUIDANCE)
+      expect(rubric).toMatch(/do not create a pass\s+check merely to prove you read the turn/i)
     })
 
     it('explicitly excludes summary field', () => {

@@ -2,6 +2,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import {
+  computeProbeSnapshot,
+  type AgentComputeHostSummary,
+  type ComputeHost,
+  type ComputeHostDetails
+} from '../../shared/compute'
 import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
 import type { NotebookRpcConnection } from './mcp-server'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
@@ -102,27 +108,37 @@ type NotebookLocalRpcServerOptions = {
   }
   computeService?: {
     callCommand(
+      context: { sessionId: string; projectId: string },
       providerId: string,
       cmd: string,
       intent: string,
       loginShell?: boolean,
-      timeoutSeconds?: number,
-      context?: { sessionId: string; projectId: string }
+      timeoutSeconds?: number
     ): Promise<unknown>
-    list(): Promise<unknown>
-    getDetails(providerId: string): Promise<unknown>
-    appendDetails(providerId: string, args: { text: string; author: string }): Promise<void>
-    replaceDetails(
+    list(sessionId: string): Promise<ComputeHost[]>
+    listHosts(sessionId: string): Promise<AgentComputeHostSummary[]>
+    listRegistered(sessionId: string): Promise<AgentComputeHostSummary[]>
+    listPreferred(sessionId: string): Promise<AgentComputeHostSummary[]>
+    listCompute(sessionId: string): string[]
+    getDetails(sessionId: string, providerId: string): Promise<ComputeHostDetails>
+    appendDetails(
+      sessionId: string,
       providerId: string,
-      args: { text: string; oldText: string; author: string }
+      args: { text: string; author: 'agent' }
+    ): Promise<void>
+    replaceDetails(
+      sessionId: string,
+      providerId: string,
+      args: { text: string; oldText: string; author: 'agent' }
     ): Promise<void>
     download(
+      context: { sessionId: string; projectId: string },
       providerId: string,
       remotePath: string,
-      dest: { kind: 'session-cache' },
-      context?: { sessionId: string; projectId: string }
+      dest: { kind: 'session-cache' }
     ): Promise<unknown>
     submitJob(
+      context: { sessionId: string; projectId: string },
       providerId: string,
       intent: string,
       command: string,
@@ -134,13 +150,18 @@ type NotebookLocalRpcServerOptions = {
         harvestConfig?: string
         timeoutSeconds?: number
         workspaceCwd?: string
-      },
-      context: { sessionId: string; projectId: string }
+      }
     ): Promise<unknown>
-    getJobStatus(jobId: string): Promise<unknown>
-    getJobResult(jobId: string): Promise<unknown>
-    // Returns the provider ids of compute hosts enabled for the given session (issue 06).
-    getEnabledComputeHosts(sessionId: string): string[]
+    getJobStatus(
+      context: { sessionId: string; projectId: string },
+      providerId: string,
+      jobId: string
+    ): Promise<unknown>
+    getJobResult(
+      context: { sessionId: string; projectId: string },
+      providerId: string,
+      jobId: string
+    ): Promise<unknown>
     // Session-level concurrency control (Phase 3c, issue 05).
     setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void>
     getSessionConcurrencyStatus(sessionId: string): Promise<{
@@ -2020,6 +2041,7 @@ class NotebookLocalRpcServer {
       const op = typeof params.op === 'string' ? params.op : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
+      const context = { sessionId, projectId }
       if (op === 'call_command') {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const cmd = typeof params.cmd === 'string' ? params.cmd : ''
@@ -2027,15 +2049,14 @@ class NotebookLocalRpcServer {
         const loginShell = typeof params.login_shell === 'boolean' ? params.login_shell : true
         const timeoutSeconds =
           typeof params.timeout_seconds === 'number' ? params.timeout_seconds : undefined
-        const context = sessionId && projectId ? { sessionId, projectId } : undefined
         try {
           return await this.computeService.callCommand(
+            context,
             providerId,
             cmd,
             intent,
             loginShell,
-            timeoutSeconds,
-            context
+            timeoutSeconds
           )
         } catch (err) {
           // Re-throw compute call errors as structured error objects so the Python shim can
@@ -2051,7 +2072,22 @@ class NotebookLocalRpcServer {
 
       // op='list' — returns all registered compute hosts for agent discovery (design.md §5).
       if (op === 'list') {
-        return this.computeService.list()
+        return this.computeService.list(sessionId)
+      }
+
+      // Canonical Agent discovery is Session-scoped. Disabled hosts are absent, while the role on
+      // each enabled host communicates execution targeting without exposing persistence fields.
+      if (op === 'list_hosts') {
+        return this.computeService.listHosts(sessionId)
+      }
+
+      // Compatibility names remain available but are projected through the same admission facade.
+      if (op === 'list_registered') {
+        return this.computeService.listRegistered(sessionId)
+      }
+
+      if (op === 'list_preferred') {
+        return this.computeService.listPreferred(sessionId)
       }
 
       // op='details' — agent-facing read/append/replace for host knowledge docs (design.md §5).
@@ -2060,17 +2096,28 @@ class NotebookLocalRpcServer {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const mode = typeof params.mode === 'string' ? params.mode : 'read'
         if (mode === 'read') {
-          return this.computeService.getDetails(providerId)
+          const { probeResult, ...details } = await this.computeService.getDetails(
+            sessionId,
+            providerId
+          )
+          return { ...details, probe: computeProbeSnapshot(probeResult) }
         }
         if (mode === 'append') {
           const text = typeof params.text === 'string' ? params.text : ''
-          await this.computeService.appendDetails(providerId, { text, author: 'agent' })
+          await this.computeService.appendDetails(sessionId, providerId, {
+            text,
+            author: 'agent'
+          })
           return { ok: true }
         }
         if (mode === 'replace') {
           const text = typeof params.text === 'string' ? params.text : ''
           const oldText = typeof params.old_text === 'string' ? params.old_text : ''
-          await this.computeService.replaceDetails(providerId, { text, oldText, author: 'agent' })
+          await this.computeService.replaceDetails(sessionId, providerId, {
+            text,
+            oldText,
+            author: 'agent'
+          })
           return { ok: true }
         }
         throw new Error(`Unknown details mode: ${mode}`)
@@ -2081,13 +2128,9 @@ class NotebookLocalRpcServer {
       if (op === 'download') {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const remotePath = typeof params.remote_path === 'string' ? params.remote_path : ''
-        const context = sessionId && projectId ? { sessionId, projectId } : undefined
-        return this.computeService.download(
-          providerId,
-          remotePath,
-          { kind: 'session-cache' },
-          context
-        )
+        return this.computeService.download(context, providerId, remotePath, {
+          kind: 'session-cache'
+        })
       }
 
       // op='submit_job' — non-blocking job submission (design.md §3a).
@@ -2111,10 +2154,7 @@ class NotebookLocalRpcServer {
           workspaceCwd: typeof params.workspace_cwd === 'string' ? params.workspace_cwd : undefined
         }
         try {
-          return await this.computeService.submitJob(providerId, intent, command, options, {
-            sessionId,
-            projectId
-          })
+          return await this.computeService.submitJob(context, providerId, intent, command, options)
         } catch (err) {
           // Re-throw compute call errors as structured error objects so the JS shim can parse them.
           if (err instanceof Error && 'computeCallError' in err) {
@@ -2128,15 +2168,17 @@ class NotebookLocalRpcServer {
 
       // op='job_status' — non-blocking read from DB (no SSH) (design.md §3a).
       if (op === 'job_status') {
+        const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const jobId = typeof params.job_id === 'string' ? params.job_id : ''
-        return this.computeService.getJobStatus(jobId)
+        return this.computeService.getJobStatus(context, providerId, jobId)
       }
 
       // op='job_result' — full JobResult (spec §11.4, design §9). Non-blocking query: reads DB
       // row + scans the local harvest directory. No SSH, no harvest trigger (issue 04).
       if (op === 'job_result') {
+        const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const jobId = typeof params.job_id === 'string' ? params.job_id : ''
-        return this.computeService.getJobResult(jobId)
+        return this.computeService.getJobResult(context, providerId, jobId)
       }
 
       // op='list_compute' — returns session-enabled hosts (design.md §15.1, issue 06).
@@ -2144,7 +2186,7 @@ class NotebookLocalRpcServer {
       // this conversation via the ComputeHostSelector. Session id comes from COMPUTE_SESSION_ID in
       // the repl spawn env (same passthrough used by submit_job / call_command).
       if (op === 'list_compute') {
-        return this.computeService.getEnabledComputeHosts(sessionId)
+        return this.computeService.listCompute(sessionId)
       }
 
       // op='set_concurrency_limit' — set session-level concurrency limit (Phase 3c, issue 05).

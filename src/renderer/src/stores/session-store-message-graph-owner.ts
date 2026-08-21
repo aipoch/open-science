@@ -216,7 +216,8 @@ export const createSessionMessageGraphOwner = <
     agentModel,
     isPending,
     specialistId,
-    enabledComputeHosts
+    enabledComputeHosts,
+    selectedComputeHosts
   }) => {
     const trimmedContent = content.trim()
     const normalizedAgentBackendId = agentBackendId?.trim() || undefined
@@ -305,7 +306,12 @@ export const createSessionMessageGraphOwner = <
         agentBackendId: normalizedAgentBackendId,
         agentModel: normalizedAgentModel,
         ...(specialistId ? { specialistId } : {}),
-        ...(enabledComputeHosts?.length ? { enabledComputeHosts: [...enabledComputeHosts] } : {}),
+        ...(enabledComputeHosts?.length
+          ? {
+              enabledComputeHosts: [...enabledComputeHosts],
+              selectedComputeHosts: [...(selectedComputeHosts ?? [])]
+            }
+          : {}),
         messages: [userMessage],
         activeRun,
         createdAt: now,
@@ -402,6 +408,9 @@ export const createSessionMessageGraphOwner = <
         : {}),
       ...(source.enabledComputeHosts
         ? { enabledComputeHosts: [...source.enabledComputeHosts] }
+        : {}),
+      ...(source.selectedComputeHosts
+        ? { selectedComputeHosts: [...source.selectedComputeHosts] }
         : {}),
       ...(nextSpecialistId ? { specialistId: nextSpecialistId } : {}),
       messages,

@@ -164,8 +164,8 @@ gate('repl kernel host.compute', () => {
         project_id: 'proj-x',
         workspace_cwd: process.cwd()
       },
-      { op: 'job_status', job_id: 'job-1' },
-      { op: 'job_result', job_id: 'job-1' },
+      { op: 'job_status', provider_id: 'ssh:x', job_id: 'job-1' },
+      { op: 'job_result', provider_id: 'ssh:x', job_id: 'job-1' },
       { op: 'set_concurrency_limit', session_id: 'session-7', limit: 2 }
     ])
   })

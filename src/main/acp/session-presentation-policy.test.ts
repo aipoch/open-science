@@ -23,6 +23,13 @@ const LARGE_DATA_FILE_APPEND = [
   '</open_science_large_file_instructions>'
 ].join('\n')
 
+const REMOTE_COMPUTE_AWARENESS_APPEND = [
+  '<open_science_remote_compute_awareness>',
+  'Before starting GPU, high-memory, parallel, batch, model-inference, bioinformatics, or potentially long-running scientific work locally, consider Remote Compute.',
+  'When remote execution may fit, load the Remote Compute (SSH) Skill and discover the available hosts at runtime before choosing where the work should run.',
+  '</open_science_remote_compute_awareness>'
+].join('\n')
+
 const ARTIFACT_FILE_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
@@ -51,6 +58,7 @@ describe('ACP Session presentation policy', () => {
     expect(appends).toEqual([
       TURN_CONTINUITY_APPEND,
       LARGE_DATA_FILE_APPEND,
+      REMOTE_COMPUTE_AWARENESS_APPEND,
       ARTIFACT_FILE_APPEND,
       NOTEBOOK_SYSTEM_PROMPT_APPEND,
       SKILL_IMPORT_SYSTEM_PROMPT_APPEND
@@ -65,8 +73,44 @@ describe('ACP Session presentation policy', () => {
       skillImport: false
     })
 
-    expect(appends).toEqual([TURN_CONTINUITY_APPEND, LARGE_DATA_FILE_APPEND])
+    expect(appends).toEqual([
+      TURN_CONTINUITY_APPEND,
+      LARGE_DATA_FILE_APPEND,
+      REMOTE_COMPUTE_AWARENESS_APPEND
+    ])
     expect(appends.join('\n\n')).not.toContain('<open_science_skill_privacy_instructions>')
+  })
+
+  it('presents the same static Remote Compute awareness without dynamic host data', () => {
+    const withoutTools = policy.applicationSystemPromptAppends({
+      artifacts: false,
+      notebook: false,
+      skillImport: false
+    })
+    const withTools = policy.applicationSystemPromptAppends({
+      artifacts: true,
+      notebook: true,
+      skillImport: true
+    })
+
+    expect(withoutTools).toContain(REMOTE_COMPUTE_AWARENESS_APPEND)
+    expect(withTools).toContain(REMOTE_COMPUTE_AWARENESS_APPEND)
+    expect(REMOTE_COMPUTE_AWARENESS_APPEND).not.toMatch(/ssh:|provider.?id|connected|not_probed/i)
+  })
+
+  it('turns a non-empty Compute selection into a fixed remote execution directive', () => {
+    expect(policy.computeExecutionTargetReminder([])).toBeUndefined()
+
+    const oneTarget = policy.computeExecutionTargetReminder(['ssh:cedar'])
+    const twoTargets = policy.computeExecutionTargetReminder(['ssh:cedar', 'ssh:summit'])
+
+    expect(oneTarget).toBe(twoTargets)
+    expect(oneTarget).toContain('execution-target pool')
+    expect(oneTarget).toContain('host.compute.listHosts()')
+    expect(oneTarget).toContain('one or more catalog entries')
+    expect(oneTarget).toContain('Do not run task work in the local Notebook or shell')
+    expect(oneTarget).toContain('do not silently fall back')
+    expect(oneTarget).not.toMatch(/ssh:cedar|ssh:summit/)
   })
 
   it('builds immutable Claude Session metadata in exact append order and fails closed on Skills', () => {
@@ -81,6 +125,7 @@ describe('ACP Session presentation policy', () => {
     const exactAppend = [
       TURN_CONTINUITY_APPEND,
       LARGE_DATA_FILE_APPEND,
+      REMOTE_COMPUTE_AWARENESS_APPEND,
       'Backend connector guidance.',
       'Specialist identity.'
     ].join('\n\n')

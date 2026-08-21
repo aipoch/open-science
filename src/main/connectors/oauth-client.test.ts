@@ -73,6 +73,50 @@ describe('OAuthCallbackServer', () => {
 })
 
 describe('PersistentOAuthClientProvider', () => {
+  it('returns pre-registered client information without persisting the secret', async () => {
+    const saveState = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'server-static',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client'
+      },
+      clientSecret: 'registered-secret',
+      saveState
+    })
+
+    await expect(provider.clientInformation()).resolves.toEqual({
+      client_id: 'registered-client',
+      client_secret: 'registered-secret'
+    })
+    expect(saveState).not.toHaveBeenCalled()
+    expect(provider.clientMetadata.token_endpoint_auth_method).toBe('none')
+  })
+
+  it('rejects discovered authorization servers that do not match static client registration', async () => {
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'server-static',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client'
+      }
+    })
+
+    await expect(
+      provider.saveDiscoveryState({
+        authorizationServerUrl: 'https://other-auth.example.test',
+        authorizationServerMetadata: {
+          issuer: 'https://other-auth.example.test',
+          authorization_endpoint: 'https://other-auth.example.test/authorize',
+          token_endpoint: 'https://other-auth.example.test/token',
+          response_types_supported: ['code']
+        }
+      })
+    ).rejects.toThrow('does not match the pre-registered client issuer')
+  })
+
   it('persists client information, tokens, and discovery without exposing them in metadata', async () => {
     const saveState = vi.fn(async () => undefined)
     const provider = new PersistentOAuthClientProvider({

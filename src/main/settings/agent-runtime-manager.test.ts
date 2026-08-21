@@ -640,26 +640,6 @@ describe('AgentRuntimeManager', () => {
     )
   })
 
-  it('synchronizes the Compute host projection after each Skill provisioning path', async () => {
-    const syncComputeSkillDocument = vi.fn().mockResolvedValue(undefined)
-    manager = createManager({ syncComputeSkillDocument })
-    const settings = await repository.getSettings()
-    const agentRoot = join(storageRoot, 'codex')
-
-    await manager.materializeAgentSkills(settings, agentRoot, new Set())
-    const claudeRuntime = await manager.provisionClaudeRuntimeConfig(settings)
-
-    expect(syncComputeSkillDocument).toHaveBeenCalledWith(join(agentRoot, 'skills'), 'app-owned')
-    const stagedClaudeCall = vi.mocked(syncComputeSkillDocument).mock.calls[1]
-    const stagedClaudeSkillsDir = stagedClaudeCall?.[0]
-    expect(stagedClaudeSkillsDir).toContain(
-      join(storageRoot, 'runtime-support', 'agent-skills', 'claude', 'v1', '.staging-')
-    )
-    expect(stagedClaudeSkillsDir).toMatch(/[\\/]skills$/)
-    expect(stagedClaudeCall?.[1]).toBe('agent-facing')
-    expect(claudeRuntime.skillProjection.root).not.toContain('.staging-')
-  })
-
   it('synchronizes provisioned custom Connector docs into isolated agent Skill roots', async () => {
     const customSkillName = 'mcp-xt'
     const sourceDir = join(connectorSkillSourceDir(storageRoot), customSkillName)

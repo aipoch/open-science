@@ -11,9 +11,12 @@ import {
 type TestStore = SettingsNavigationState & SettingsNavigationActions
 
 const createHarness = (): StoreApi<TestStore> =>
-  createStore<TestStore>((set) => ({
+  createStore<TestStore>((set, get) => ({
     ...createInitialSettingsNavigationState(),
-    ...createSettingsNavigationSlice({ setState: (patch) => set(patch) })
+    ...createSettingsNavigationSlice({
+      getState: get,
+      setState: (patch) => set(patch)
+    })
   }))
 
 describe('settings navigation slice', () => {
@@ -23,81 +26,69 @@ describe('settings navigation slice', () => {
     store = createHarness()
   })
 
-  it('opens normally without replacing a pending landing target', () => {
-    store.setState({ pendingSettingsPanel: 'storage' })
+  it('opens normally without replacing a pending landing intent', () => {
+    store.getState().openSettingsToPanel('storage')
+    const intent = store.getState().pendingSettingsIntent
+    store.setState({ isSettingsOpen: false })
 
     store.getState().openSettings()
 
     expect(store.getState()).toMatchObject({
       isSettingsOpen: true,
-      pendingSettingsPanel: 'storage'
+      pendingSettingsIntent: intent
     })
   })
 
   it.each([
-    [
-      'panel',
-      () => store.getState().openSettingsToPanel('storage'),
-      'storage',
-      undefined,
-      undefined
-    ],
+    ['panel', () => store.getState().openSettingsToPanel('storage'), { panel: 'storage' }],
     [
       'Skill',
       () => store.getState().openSettingsToSkill('skill-1'),
-      undefined,
-      'skill-1',
-      undefined
+      { panel: 'skills', view: { kind: 'detail', id: 'skill-1' } }
     ],
     [
       'Specialist',
       () => store.getState().openSettingsToSpecialist('specialist-1'),
-      undefined,
-      undefined,
-      'specialist-1'
+      { panel: 'specialists', view: { kind: 'edit', id: 'specialist-1' } }
     ],
-    ['Compute', () => store.getState().openSettingsToCompute(), 'compute', undefined, undefined]
-  ] as const)(
-    'opens the %s target and clears every competing target',
-    (_label, open, panel, skillId, specialistId) => {
-      store.setState({
-        pendingSettingsPanel: 'agent',
-        pendingSkillId: 'stale-skill',
-        pendingSpecialistId: 'stale-specialist'
-      })
+    [
+      'Compute',
+      () => store.getState().openSettingsToCompute(),
+      { panel: 'compute', view: { kind: 'list' } }
+    ]
+  ] as const)('opens the exact %s route as one intent', (_label, open, route) => {
+    store.getState().openSettingsToSkill('stale-skill')
 
-      open()
+    open()
 
-      expect(store.getState()).toMatchObject({
-        isSettingsOpen: true,
-        pendingSettingsPanel: panel,
-        pendingSkillId: skillId,
-        pendingSpecialistId: specialistId
-      })
-    }
-  )
+    expect(store.getState().isSettingsOpen).toBe(true)
+    expect(store.getState().pendingSettingsIntent?.route).toEqual(route)
+  })
 
-  it('consumes each landing target exactly once without closing the dialog', () => {
-    store.setState({
-      isSettingsOpen: true,
-      pendingSettingsPanel: 'storage',
-      pendingSkillId: 'skill-1',
-      pendingSpecialistId: 'specialist-1'
-    })
+  it('consumes one landing intent without closing the dialog', () => {
+    store.getState().openSettingsToSkill('skill-1')
+    const requestId = store.getState().pendingSettingsIntent!.requestId
 
-    store.getState().consumePendingSettingsPanel()
-    store.getState().consumePendingSkill()
-    store.getState().consumePendingSpecialist()
+    store.getState().consumePendingSettingsIntent(requestId)
 
     expect(store.getState()).toMatchObject({
       isSettingsOpen: true,
-      pendingSettingsPanel: undefined,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined
+      pendingSettingsIntent: undefined
     })
   })
 
-  it('clears stale targets on close so a normal reopen starts fresh', () => {
+  it('does not consume a newer intent when an older effect completes', () => {
+    store.getState().openSettingsToSkill('skill-1')
+    const staleRequestId = store.getState().pendingSettingsIntent!.requestId
+    store.getState().openSettingsToSpecialist('specialist-1')
+    const latestIntent = store.getState().pendingSettingsIntent
+
+    store.getState().consumePendingSettingsIntent(staleRequestId)
+
+    expect(store.getState().pendingSettingsIntent).toEqual(latestIntent)
+  })
+
+  it('clears a stale intent on close so a normal reopen starts fresh', () => {
     store.getState().openSettingsToSpecialist('specialist-1')
 
     store.getState().closeSettings()
@@ -105,31 +96,42 @@ describe('settings navigation slice', () => {
 
     expect(store.getState()).toMatchObject({
       isSettingsOpen: true,
-      pendingSettingsPanel: undefined,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined
+      pendingSettingsIntent: undefined
     })
   })
 
-  it('opens the exact Compute Host authentication recovery target', () => {
+  it('opens the exact Compute Host authentication recovery route', () => {
     store.getState().openSettingsToComputeAuthentication('ssh:biowulf', 'authentication_failed')
 
-    expect(store.getState()).toMatchObject({
-      isSettingsOpen: true,
-      pendingSettingsPanel: undefined,
-      pendingComputeAuthentication: {
+    const intent = store.getState().pendingSettingsIntent!
+    expect(store.getState().isSettingsOpen).toBe(true)
+    expect(intent.route).toEqual({
+      panel: 'compute',
+      view: {
+        kind: 'detail',
         providerId: 'ssh:biowulf',
-        errorCode: 'authentication_failed'
+        authenticationFocus: 'authentication_failed',
+        authenticationRequestId: intent.requestId
       }
     })
-    const targetRequestId = store.getState().pendingComputeAuthentication!.requestId
 
-    store.getState().consumePendingComputeAuthentication()
-    expect(store.getState().pendingComputeAuthentication).toBeUndefined()
+    store.getState().consumePendingSettingsIntent(intent.requestId)
+    expect(store.getState().pendingSettingsIntent).toBeUndefined()
 
     store.getState().openSettingsToComputeAuthentication('ssh:biowulf', 'authentication_failed')
-    expect(store.getState().pendingComputeAuthentication?.requestId).toBeGreaterThan(
-      targetRequestId
-    )
+    expect(store.getState().pendingSettingsIntent?.requestId).toBeGreaterThan(intent.requestId)
+  })
+
+  it('opens the exact Compute Host detail route', () => {
+    store.getState().openSettingsToComputeHost('ssh:biowulf')
+
+    const intent = store.getState().pendingSettingsIntent!
+    expect(intent.route).toEqual({
+      panel: 'compute',
+      view: { kind: 'detail', providerId: 'ssh:biowulf' }
+    })
+
+    store.getState().consumePendingSettingsIntent(intent.requestId)
+    expect(store.getState().pendingSettingsIntent).toBeUndefined()
   })
 })

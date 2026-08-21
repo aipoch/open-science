@@ -24,7 +24,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
-  useSettingsStore.setState({ isSettingsOpen: false, pendingSettingsPanel: undefined })
+  useSettingsStore.setState({ isSettingsOpen: false, pendingSettingsIntent: undefined })
 })
 
 describe('NetworkStatusIndicator', () => {
@@ -75,7 +75,10 @@ describe('NetworkStatusIndicator', () => {
     })
 
     expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSettingsPanel).toBe('network')
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'network',
+      view: { kind: 'list' }
+    })
   })
 
   it('disappears when connectivity recovers', async () => {

@@ -45,7 +45,9 @@ type CustomServerRuntimeProjectionProvider = {
 }
 
 const normalizeOAuthConfig = (
-  oauth: Exclude<AddCustomServerRequest['oauth'], null | undefined>
+  oauth:
+    | Exclude<AddCustomServerRequest['oauth'], null | undefined>
+    | Exclude<UpdateCustomServerRequest['oauth'], null | undefined>
 ): NonNullable<StoredCustomMcpServer['oauth']> => ({
   ...(oauth.clientMetadataUrl?.trim() ? { clientMetadataUrl: oauth.clientMetadataUrl.trim() } : {}),
   ...(oauth.authorizationServerUrl?.trim()
@@ -53,8 +55,24 @@ const normalizeOAuthConfig = (
     : {}),
   ...(oauth.scopes?.length
     ? { scopes: [...new Set(oauth.scopes.map((scope) => scope.trim()).filter(Boolean))] }
-    : {})
+    : {}),
+  ...(oauth.clientId?.trim() ? { clientId: oauth.clientId.trim() } : {})
 })
+
+const validateOAuthRegistration = (
+  oauth: NonNullable<StoredCustomMcpServer['oauth']>,
+  hasClientSecret: boolean
+): void => {
+  if (oauth.clientId && !oauth.authorizationServerUrl) {
+    throw new Error('Authorization server URL is required for a pre-registered client.')
+  }
+  if (oauth.clientId && oauth.clientMetadataUrl) {
+    throw new Error('Client metadata URL cannot be combined with a pre-registered client.')
+  }
+  if (hasClientSecret && !oauth.clientId) {
+    throw new Error('Client ID is required when a client secret is configured.')
+  }
+}
 
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
@@ -160,6 +178,9 @@ class ConnectorSettingsModule {
         headers: secured.headerRefs
           ? this.decryptSecretRecord(secured.headerRefs)
           : secured.headers,
+        ...(secured.oauthClientSecretRef
+          ? { oauthClientSecret: tryDecryptKey(secured.oauthClientSecretRef) }
+          : {}),
         ...(secured.oauthRef ? { oauthState: this.decryptOAuthState(secured.oauthRef) } : {})
       })
     }
@@ -200,7 +221,8 @@ class ConnectorSettingsModule {
       ...(server.headerRefs || server.headers
         ? { headerNames: Object.keys(server.headerRefs ?? server.headers ?? {}) }
         : {}),
-      ...(server.oauth ? { oauth: server.oauth } : {})
+      ...(server.oauth ? { oauth: server.oauth } : {}),
+      ...(server.oauthClientSecretRef ? { hasOAuthClientSecret: true } : {})
     })
   }
 
@@ -295,6 +317,12 @@ class ConnectorSettingsModule {
     if (request.oauth && request.headers && Object.keys(request.headers).length > 0) {
       throw new Error('OAuth and static headers cannot be configured together')
     }
+    const oauth =
+      request.oauth && request.transport !== 'stdio'
+        ? normalizeOAuthConfig(request.oauth)
+        : undefined
+    const clientSecret = request.oauth?.clientSecret?.trim() || undefined
+    if (oauth) validateOAuthRegistration(oauth, Boolean(clientSecret))
     const inferredId = inferResourceId(name)
     const usedIds = new Set([
       ...CONNECTOR_CATALOG.map((connector) => connector.id),
@@ -322,9 +350,8 @@ class ConnectorSettingsModule {
       ...(request.headers && Object.keys(request.headers).length > 0
         ? { headerRefs: this.encryptSecretRecord(request.headers) }
         : {}),
-      ...(request.oauth && request.transport !== 'stdio'
-        ? { oauth: normalizeOAuthConfig(request.oauth) }
-        : {})
+      ...(oauth ? { oauth } : {}),
+      ...(clientSecret ? { oauthClientSecretRef: encryptKey(clientSecret) } : {})
     }
     let server = sanitizeCustomMcpServer(candidate)
 
@@ -410,6 +437,18 @@ class ConnectorSettingsModule {
     if (nextOAuth && request.headers && Object.keys(request.headers).length > 0) {
       throw new Error('OAuth and static headers cannot be configured together')
     }
+    const requestedClientSecret = request.oauth === null ? null : request.oauth?.clientSecret
+    const clientIdChanged = existing.oauth?.clientId !== nextOAuth?.clientId
+    const issuerChanged =
+      existing.oauth?.authorizationServerUrl !== nextOAuth?.authorizationServerUrl
+    const oauthClientSecretRef = !nextOAuth
+      ? undefined
+      : typeof requestedClientSecret === 'string' && requestedClientSecret.trim()
+        ? encryptKey(requestedClientSecret.trim())
+        : requestedClientSecret === null || clientIdChanged || issuerChanged
+          ? undefined
+          : existing.oauthClientSecretRef
+    validateOAuthRegistration(nextOAuth ?? {}, Boolean(oauthClientSecretRef))
     const headerRefs = nextOAuth
       ? undefined
       : request.headers
@@ -421,8 +460,10 @@ class ConnectorSettingsModule {
         ? existing.headers
         : undefined
     const oauthChanged = !isDeepStrictEqual(existing.oauth ?? undefined, nextOAuth ?? undefined)
+    const oauthClientSecretChanged = existing.oauthClientSecretRef !== oauthClientSecretRef
     const oauthCredentialsChanged =
       oauthChanged ||
+      oauthClientSecretChanged ||
       existing.transport !== request.transport ||
       existing.url !== request.url?.trim()
     const merged: StoredCustomMcpServer = {
@@ -441,6 +482,7 @@ class ConnectorSettingsModule {
       ...(headerRefs && Object.keys(headerRefs).length > 0 ? { headerRefs } : {}),
       ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {}),
       ...(nextOAuth && request.transport !== 'stdio' ? { oauth: nextOAuth } : {}),
+      ...(oauthClientSecretRef ? { oauthClientSecretRef } : {}),
       ...(!oauthCredentialsChanged && existing.oauthRef ? { oauthRef: existing.oauthRef } : {})
     }
     const server = sanitizeCustomMcpServer(merged)
@@ -454,7 +496,8 @@ class ConnectorSettingsModule {
       existing.url !== server.url ||
       request.env !== undefined ||
       request.headers !== undefined ||
-      oauthChanged
+      oauthChanged ||
+      oauthClientSecretChanged
 
     const securityChangeGuard = securitySensitiveConfigChanged
       ? await beforeSecuritySensitiveUpdate?.(request.id)
@@ -589,7 +632,9 @@ class ConnectorSettingsModule {
                     ? { authorizationServerUrl: server.oauth.authorizationServerUrl }
                     : {}),
                   ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
-                  hasTokens: Boolean(server.oauthState?.tokens?.access_token)
+                  ...(server.oauth.clientId ? { clientId: server.oauth.clientId } : {}),
+                  hasTokens: Boolean(server.oauthState?.tokens?.access_token),
+                  hasClientSecret: Boolean(server.oauthClientSecretRef)
                 }
               }
             : {}),

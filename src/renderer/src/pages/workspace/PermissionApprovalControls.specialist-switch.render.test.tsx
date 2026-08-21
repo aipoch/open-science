@@ -109,7 +109,10 @@ describe('PermissionApprovalControls specialist switch card', () => {
 
     // The stable profile id (never the renameable public name) reaches the settings dialog.
     expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSpecialistId).toBe('spc-1')
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'specialists',
+      view: { kind: 'edit', id: 'spc-1' }
+    })
   })
 
   it('carries a Configure affordance on the clickable detail block', () => {

@@ -619,7 +619,8 @@ it.runIf(runLiveContract)(
     const reviewerMcp = new ReviewerMcpServer(
       scope,
       submitFindings as SubmitFindingsHandler,
-      evidence
+      evidence,
+      'initial'
     )
     await reviewerMcp.start()
 

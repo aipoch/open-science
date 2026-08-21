@@ -22,7 +22,7 @@ Open Science 是為科學家與研究人員打造的開源、本機優先且與�
 
 Open Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.18.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 8 月）_。Open Science v0.18.0 引入了具收藏夾與拖曳排序的跨資源目錄標籤、重新設計的技能管理，以及支援即時快取瀏覽、能力圖示和外觀快速編輯的更快專家市集。運算主機現已支援使用作業系統加密憑證的 SSH 密碼驗證，韓文本地化與多語言 README 和貢獻指南也擴大了使用範圍。此版本還改善了市集與連接器載入、執行環境事件串流、受保護刪除、引導流程原子持久化，以及啟動、會話、運算和更新的復原能力。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[Open Science v0.18.1 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 8 月）_。Open Science v0.18.1 引入了會話級運算主機探索與執行目標選擇（含 CLI 支援）、應用程式啟動時重新設計的錯誤提示元件、帶專案與任務上下文的改進訊息中心通知、長使用者訊息摺疊、空初始審查檢查、法文本地化、匯入技能分組選單，以及應用程式更新與專案智慧代理上下文的 CLI 命令；同時透過面板快取與執行環境探測複用加快設定與啟動速度、協調並行的訊息與分支變更、記錄連接器產物溯源、強化本機 HTTP 邊界，並提供更新器復原指引。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science 開源 AI 研究工作台桌面應用程式工作區，顯示含有生成產物的智能體會話" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

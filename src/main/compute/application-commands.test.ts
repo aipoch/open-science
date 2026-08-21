@@ -71,7 +71,9 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
   },
   enabledHosts: {
     get: vi.fn(() => ['ssh:cluster']),
-    set: vi.fn(async () => session)
+    set: vi.fn(async () => session),
+    setHostEnabled: vi.fn(async () => session),
+    setHostSelected: vi.fn(async () => session)
   },
   events: { publish: vi.fn() }
 })
@@ -97,7 +99,7 @@ describe('Compute application commands', () => {
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(28)
+    expect(publicComputeChannels).toHaveLength(30)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -218,6 +220,14 @@ describe('Compute application commands', () => {
       computeApplicationCommands.enabledHostsSet,
       invocation(['session-1', ['ssh:cluster']])
     )
+    const hostEnabledResult = await router.dispatcher.invoke(
+      computeApplicationCommands.hostEnabledSet,
+      invocation(['session-1', 'ssh:cluster', true])
+    )
+    const hostSelectedResult = await router.dispatcher.invoke(
+      computeApplicationCommands.hostSelectedSet,
+      invocation(['session-1', 'ssh:cluster', true])
+    )
     await router.dispatcher.invoke(
       computeApplicationCommands.bookmarksGet,
       invocation(['ssh:cluster'])
@@ -254,6 +264,18 @@ describe('Compute application commands', () => {
     expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
     expect(dependencies.enabledHosts.set).toHaveBeenCalledWith('session-1', ['ssh:cluster'])
     expect(enabledHostsResult).toEqual(session)
+    expect(dependencies.enabledHosts.setHostEnabled).toHaveBeenCalledWith(
+      'session-1',
+      'ssh:cluster',
+      true
+    )
+    expect(dependencies.enabledHosts.setHostSelected).toHaveBeenCalledWith(
+      'session-1',
+      'ssh:cluster',
+      true
+    )
+    expect(hostEnabledResult).toEqual(session)
+    expect(hostSelectedResult).toEqual(session)
     expect(dependencies.events.publish).toHaveBeenCalledWith('session:updated', {
       session,
       originClientId: 'main:enabled-compute-hosts'

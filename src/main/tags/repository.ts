@@ -5,6 +5,7 @@ import {
   FAVORITE_TAG_SYSTEM_KEY,
   type ReorderTagsRequest,
   TAG_NAME_MAX_LENGTH,
+  TAG_TIMESTAMP_MAX,
   type CreateTagRequest,
   type SetTagAssignmentRequest,
   type TagColorKey,
@@ -49,7 +50,10 @@ const duplicateNameError = (error: unknown): never => {
 }
 
 class TagRepository {
-  constructor(private readonly getClient: TagClientProvider) {}
+  constructor(
+    private readonly getClient: TagClientProvider,
+    private readonly now: () => number = Date.now
+  ) {}
 
   private async ensureFavorite(client: TagClient): Promise<void> {
     await client.tag.upsert({
@@ -119,16 +123,29 @@ class TagRepository {
     const current = await client.tag.findUnique({ where: { id: request.id } })
     if (!current) throw new Error('Tag not found.')
     if (current.systemKey) throw new Error('System Tags cannot be edited.')
+    if (
+      !Number.isSafeInteger(request.expectedUpdatedAt) ||
+      request.expectedUpdatedAt <= 0 ||
+      request.expectedUpdatedAt >= TAG_TIMESTAMP_MAX
+    ) {
+      throw new Error('Tag update timestamp is invalid.')
+    }
+    const updatedAt = Math.max(this.now(), request.expectedUpdatedAt + 1)
+    if (!Number.isSafeInteger(updatedAt) || updatedAt <= 0 || updatedAt > TAG_TIMESTAMP_MAX) {
+      throw new Error('Tag update timestamp is invalid.')
+    }
     try {
-      await client.tag.update({
-        where: { id: request.id },
+      const result = await client.tag.updateMany({
+        where: { id: request.id, updatedAt: new Date(request.expectedUpdatedAt) },
         data: {
           name,
           nameKey,
           iconKey: request.iconKey,
-          colorKey: request.colorKey
+          colorKey: request.colorKey,
+          updatedAt: new Date(updatedAt)
         }
       })
+      if (result.count === 0) throw new Error('Tag changed since it was loaded.')
     } catch (error) {
       duplicateNameError(error)
     }

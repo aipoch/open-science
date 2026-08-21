@@ -61,9 +61,9 @@ const getAgentThinkingStartedAt = (session: ChatSession | undefined): number | u
   return Math.max(runStartedAt, latestTool?.updatedAt ?? runStartedAt)
 }
 
-// The transient row belongs to the active request, not persisted history. User waits stay visible
-// until answered; otherwise text output owns the transcript while tools and silent gaps use their
-// own indicator phases.
+// The transient row belongs to the active request, not persisted history. User waits and live tools
+// own their distinct phases. Visible Agent output is still partial until the run terminates, so it
+// must not hide the only liveness signal during a silent gap before the next tool or text update.
 const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPhase => {
   if (!session) return 'hidden'
   const actionability = projectSessionActionability(session)
@@ -92,22 +92,7 @@ const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPha
 
   if (promptIndex === -1) return 'hidden'
 
-  const latestVisibleOutput = findLatest(
-    session.messages
-      .slice(promptIndex + 1)
-      .filter(
-        (message) =>
-          message.role === 'agent' &&
-          message.responseToMessageId === promptMessageId &&
-          (message.content.trim().length > 0 || Boolean(message.images?.length))
-      )
-  )
-
-  if (!latestVisibleOutput) return 'thinking'
-
-  const latestTool = findLatest(currentRunTools)
-
-  return latestTool && isLaterThan(latestTool, latestVisibleOutput) ? 'thinking' : 'hidden'
+  return 'thinking'
 }
 
 export { getAgentLoadingPhase, getAgentThinkingStartedAt }

@@ -1497,11 +1497,47 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
   })
 
+  it('applies Session Compute Host access intents atomically', async () => {
+    let durable = createSession({
+      enabledComputeHosts: ['ssh:available', 'ssh:selected'],
+      selectedComputeHosts: ['ssh:selected']
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session, expectedRevision) => {
+        durable = structuredClone({
+          ...session,
+          revision: (expectedRevision ?? session.revision ?? 0) + 1
+        })
+        return durable
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.mutateSessionComputeHostAccess('project-1', 'session-1', {
+      kind: 'set-host-enabled',
+      providerId: 'ssh:selected',
+      enabled: false
+    })
+    await coordinator.mutateSessionComputeHostAccess('project-1', 'session-1', {
+      kind: 'set-host-enabled',
+      providerId: 'ssh:selected',
+      enabled: true
+    })
+
+    expect(durable.enabledComputeHosts).toEqual(['ssh:available', 'ssh:selected'])
+    expect(durable.selectedComputeHosts).toEqual([])
+  })
+
   it('preserves enabled Compute Host authority on an ordinary existing-Session save', async () => {
     const authorityUpdatedAt = Date.now() + 10_000
     let durable = createSession({
       title: 'Before rename',
       enabledComputeHosts: ['ssh:authoritative'],
+      selectedComputeHosts: [],
       updatedAt: authorityUpdatedAt
     })
     const repository = createSessionRepository({
@@ -1519,24 +1555,31 @@ describe('SessionPersistenceCoordinator', () => {
       createSession({
         title: 'Renamed',
         enabledComputeHosts: ['ssh:stale'],
+        selectedComputeHosts: ['ssh:stale'],
         updatedAt: authorityUpdatedAt - 1_000
       })
     )
 
     expect(result).toMatchObject({
       title: 'Renamed',
-      enabledComputeHosts: ['ssh:authoritative']
+      enabledComputeHosts: ['ssh:authoritative'],
+      selectedComputeHosts: []
     })
     expect(durable.enabledComputeHosts).toEqual(['ssh:authoritative'])
+    expect(durable.selectedComputeHosts).toEqual([])
     expect(durable.updatedAt).toBeGreaterThan(authorityUpdatedAt)
   })
 
   it('prunes missing Compute Hosts across a complete durable Session catalog', async () => {
     let sessions = [
-      createSession({ enabledComputeHosts: ['ssh:kept', 'ssh:deleted'] }),
+      createSession({
+        enabledComputeHosts: ['ssh:kept', 'ssh:deleted'],
+        selectedComputeHosts: ['ssh:deleted']
+      }),
       createSession({
         id: 'session-2',
         enabledComputeHosts: ['ssh:kept'],
+        selectedComputeHosts: [],
         updatedAt: 5
       })
     ]
@@ -1560,16 +1603,22 @@ describe('SessionPersistenceCoordinator', () => {
       ['ssh:kept'],
       ['ssh:kept']
     ])
+    expect(result.sessions.map((session) => session.selectedComputeHosts)).toEqual([[], []])
     expect(result.previousSelections).toEqual([
       {
         projectId: 'project-1',
         sessionId: 'session-1',
-        providerIds: ['ssh:kept', 'ssh:deleted']
+        providerIds: ['ssh:kept', 'ssh:deleted'],
+        selectedProviderIds: ['ssh:deleted']
       }
     ])
     expect(saveSession).toHaveBeenCalledTimes(1)
     expect(saveSession).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'session-1', enabledComputeHosts: ['ssh:kept'] })
+      expect.objectContaining({
+        id: 'session-1',
+        enabledComputeHosts: ['ssh:kept'],
+        selectedComputeHosts: []
+      })
     )
   })
 

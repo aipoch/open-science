@@ -147,6 +147,19 @@ describe('settings Skills slice', () => {
     expect(commands.listSkills).toHaveBeenCalledTimes(2)
   })
 
+  it('rejects a missing Settings command surface as a promise', async () => {
+    const { store } = createHarness({
+      ...createCommands(),
+      onSkillCatalogChanged: () => {
+        throw new Error('settings unavailable')
+      }
+    })
+
+    const result = store.getState().loadSkills()
+    expect(result).toBeInstanceOf(Promise)
+    await expect(result).rejects.toThrow('settings unavailable')
+  })
+
   it('optimistically toggles a Skill before reconciling the authoritative catalog', async () => {
     let settle!: (skills: SkillView[]) => void
     vi.mocked(commands.setSkillEnabled).mockReturnValue(

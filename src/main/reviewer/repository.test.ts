@@ -344,7 +344,7 @@ describe('review repository (integration)', () => {
     await expect(repository.getFindingDispositions(validFinding.id)).resolves.toEqual([])
   })
 
-  it('commits tracked dispositions and newly discovered Findings as one scoped submission', async () => {
+  it('commits tracked dispositions and newly discovered Review Checks as one scoped submission', async () => {
     const repository = await createRepository()
     const sourceReview = await repository.createReview({
       projectId: 'project-1',
@@ -363,6 +363,7 @@ describe('review repository (integration)', () => {
     })
 
     const committed = await repository.commitScopedSubmission({
+      mode: 'tracked',
       reviewId: assessmentReview.id,
       checks: [
         {
@@ -381,7 +382,6 @@ describe('review repository (integration)', () => {
         }
       ],
       expectedSourceFindingIds: [sourceFinding.id],
-      outcome: 'flagged',
       reviewerLog: [{ kind: 'message', text: 'reviewed' }]
     })
 
@@ -445,6 +445,7 @@ describe('review repository (integration)', () => {
     })
     await expect(
       repository.commitScopedSubmission({
+        mode: 'tracked',
         reviewId: staleAssessment.id,
         checks: [
           {
@@ -454,10 +455,82 @@ describe('review repository (integration)', () => {
             sourceFindingId: sourceFinding.id
           }
         ],
-        expectedSourceFindingIds: [sourceFinding.id],
-        outcome: 'flagged'
+        expectedSourceFindingIds: [sourceFinding.id]
       })
     ).rejects.toThrow(/Tracked Finding is unavailable/i)
+  })
+
+  it('commits and reloads an explicit empty initial submission as complete/pass', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-empty-initial',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    const reviewerLog = [
+      { kind: 'thought' as const, text: 'The frozen turn has no checkable claims.' },
+      { kind: 'tool' as const, toolName: 'read_turn', title: 'read_turn', status: 'ok' as const }
+    ]
+
+    const committed = await repository.commitScopedSubmission({
+      mode: 'initial',
+      reviewId: review.id,
+      checks: [],
+      expectedSourceFindingIds: [],
+      reviewerLog
+    })
+
+    expect(committed).toMatchObject({
+      lifecycle: 'complete',
+      outcome: 'pass',
+      checks: [],
+      reviewerLog,
+      scope: scope('a1')
+    })
+    expect(await repository.countFindings()).toBe(0)
+
+    await client?.$disconnect()
+    client = createProjectDbClient(storageRoot!)
+    const reopened = new ReviewRepository(() => Promise.resolve(client!), {
+      snapshotStorageRoot: storageRoot
+    })
+    const [reloaded] = await reopened.getReviewsForProjectSession(
+      'project-1',
+      'session-empty-initial'
+    )
+    expect(reloaded).toMatchObject({
+      lifecycle: 'complete',
+      outcome: 'pass',
+      checks: [],
+      reviewerLog,
+      scope: scope('a1')
+    })
+  })
+
+  it('rejects an empty tracked submission even when no tracked checks are supplied', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-empty-tracked',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+
+    await expect(
+      repository.commitScopedSubmission({
+        mode: 'tracked',
+        reviewId: review.id,
+        checks: [],
+        expectedSourceFindingIds: []
+      })
+    ).rejects.toThrow(/tracked/i)
+
+    const [stored] = await repository.getReviewsForProjectSession(
+      'project-1',
+      'session-empty-tracked'
+    )
+    expect(stored).toMatchObject({ lifecycle: 'running', outcome: null, checks: [] })
   })
 
   it('commits more than five historical tracked dispositions in one re-review', async () => {
@@ -490,6 +563,7 @@ describe('review repository (integration)', () => {
     })
 
     const committed = await repository.commitScopedSubmission({
+      mode: 'tracked',
       reviewId: assessmentReview.id,
       checks: source.checks.map((finding, index) => ({
         status: 'pass' as const,
@@ -497,8 +571,7 @@ describe('review repository (integration)', () => {
         evidence: `Verified historical finding ${index + 1}`,
         sourceFindingId: finding.id
       })),
-      expectedSourceFindingIds: source.checks.map((finding) => finding.id),
-      outcome: 'pass'
+      expectedSourceFindingIds: source.checks.map((finding) => finding.id)
     })
 
     expect(committed).toMatchObject({ lifecycle: 'complete', outcome: 'pass' })
@@ -521,6 +594,7 @@ describe('review repository (integration)', () => {
 
     await expect(
       repository.commitScopedSubmission({
+        mode: 'tracked',
         reviewId: assessmentReview.id,
         checks: [
           {
@@ -537,8 +611,7 @@ describe('review repository (integration)', () => {
             sortIndex: 1
           }
         ],
-        expectedSourceFindingIds: ['missing-finding'],
-        outcome: 'flagged'
+        expectedSourceFindingIds: ['missing-finding']
       })
     ).rejects.toThrow(/missing-finding/)
 
@@ -566,6 +639,7 @@ describe('review repository (integration)', () => {
       scope: scope('a1')
     })
     await repository.commitScopedSubmission({
+      mode: 'tracked',
       reviewId: roundTwo.id,
       checks: [
         {
@@ -576,8 +650,7 @@ describe('review repository (integration)', () => {
           sourceFindingId: sourceFinding.id
         }
       ],
-      expectedSourceFindingIds: [sourceFinding.id],
-      outcome: 'flagged'
+      expectedSourceFindingIds: [sourceFinding.id]
     })
 
     const roundThree = await repository.createReview({
@@ -587,6 +660,7 @@ describe('review repository (integration)', () => {
       scope: scope('a1')
     })
     await repository.commitScopedSubmission({
+      mode: 'tracked',
       reviewId: roundThree.id,
       checks: [
         {
@@ -596,8 +670,7 @@ describe('review repository (integration)', () => {
           sourceFindingId: sourceFinding.id
         }
       ],
-      expectedSourceFindingIds: [sourceFinding.id],
-      outcome: 'pass'
+      expectedSourceFindingIds: [sourceFinding.id]
     })
 
     const history = await repository.getReviewsForProjectSession('project-1', 'session-history')
@@ -687,6 +760,7 @@ describe('review repository (integration)', () => {
       scope: scope('a1')
     })
     const submission = {
+      mode: 'tracked' as const,
       reviewId: assessmentReview.id,
       checks: [
         {
@@ -696,8 +770,7 @@ describe('review repository (integration)', () => {
           sourceFindingId: sourceFinding.id
         }
       ],
-      expectedSourceFindingIds: [sourceFinding.id],
-      outcome: 'flagged' as const
+      expectedSourceFindingIds: [sourceFinding.id]
     }
     await repository.commitScopedSubmission(submission)
 
@@ -758,6 +831,7 @@ describe('review repository (integration)', () => {
 
     await expect(
       repository.commitScopedSubmission({
+        mode: 'tracked',
         reviewId: assessmentReview.id,
         checks: [
           {
@@ -767,10 +841,9 @@ describe('review repository (integration)', () => {
             sourceFindingId: source.checks[0]!.id
           }
         ],
-        expectedSourceFindingIds: source.checks.map((check) => check.id),
-        outcome: 'pass'
+        expectedSourceFindingIds: source.checks.map((check) => check.id)
       })
-    ).rejects.toThrow(/exact expected tracked Finding set/i)
+    ).rejects.toThrow(/exact expected tracked Review Check set/i)
 
     const otherTurnReview = await repository.createReview({
       projectId: 'project-1',
@@ -791,6 +864,7 @@ describe('review repository (integration)', () => {
 
     await expect(
       repository.commitScopedSubmission({
+        mode: 'tracked',
         reviewId: crossTurnAssessment.id,
         checks: [
           {
@@ -800,8 +874,7 @@ describe('review repository (integration)', () => {
             sourceFindingId: otherTurn.checks[0]!.id
           }
         ],
-        expectedSourceFindingIds: [otherTurn.checks[0]!.id],
-        outcome: 'pass'
+        expectedSourceFindingIds: [otherTurn.checks[0]!.id]
       })
     ).rejects.toThrow(/another Review turn chain/i)
 
@@ -814,6 +887,7 @@ describe('review repository (integration)', () => {
     })
     await expect(
       repository.commitScopedSubmission({
+        mode: 'tracked',
         reviewId: terminalAssessment.id,
         checks: [
           {
@@ -823,8 +897,7 @@ describe('review repository (integration)', () => {
             sourceFindingId: otherTurn.checks[0]!.id
           }
         ],
-        expectedSourceFindingIds: [otherTurn.checks[0]!.id],
-        outcome: 'pass'
+        expectedSourceFindingIds: [otherTurn.checks[0]!.id]
       })
     ).rejects.toThrow(/Tracked Finding is unavailable/i)
   })

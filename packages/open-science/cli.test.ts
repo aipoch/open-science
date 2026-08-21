@@ -214,6 +214,60 @@ describe('task CLI', () => {
       'codex login accepts no arguments.'
     )
     expect(() => parseCliArgs(['status', '--force'])).toThrow('--force requires codex login.')
+    expect(
+      parseCliArgs([
+        'run',
+        '--compute-host',
+        'ssh:alpha',
+        '--compute-host',
+        'ssh:beta',
+        '--compute-host',
+        'ssh:alpha'
+      ]).options.computeHosts
+    ).toEqual(['ssh:alpha', 'ssh:beta', 'ssh:alpha'])
+    expect(() => parseCliArgs(['run', '--compute-host'])).toThrow(
+      '--compute-host requires a value.'
+    )
+  })
+
+  it('sends Compute hosts only when the repeatable flag is present and prints authority JSON', async () => {
+    const authorityRun = {
+      id: 'run-compute',
+      sessionId: 'session-compute',
+      projectId: 'project-1',
+      status: 'running',
+      preferredComputeHostIds: ['ssh:authority'],
+      artifacts: []
+    }
+    const client = {
+      listProjects,
+      startRun: vi.fn().mockResolvedValue(authorityRun)
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Research this.',
+          session: 'session-1',
+          computeHosts: ['ssh:alpha', 'ssh:beta', 'ssh:alpha'],
+          wait: false,
+          json: true,
+          jsonl: false
+        }
+      },
+      { connect: vi.fn().mockResolvedValue(client), log, stdinIsTTY: true }
+    )
+
+    expect(client.startRun).toHaveBeenCalledWith({
+      project: 'project-1',
+      prompt: 'Research this.',
+      sessionId: 'session-1',
+      computeHostIds: ['ssh:alpha', 'ssh:beta', 'ssh:alpha']
+    })
+    expect(JSON.parse(log.mock.calls[0][0]).preferredComputeHostIds).toEqual(['ssh:authority'])
   })
 
   it('parses application update output and rejects positional arguments', () => {

@@ -59,17 +59,14 @@ import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { EmptyConversationBanner } from './EmptyConversationBanner'
-import { WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
 import type { ArtifactMentionPart } from './WorkspaceMessageItem'
 import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
 import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
-import {
-  createConversationItems,
-  resolveTurnTerminalAgentMessageIds
-} from './workspace-conversation-items'
-import { groupConversationItems } from './workspace-tool-activity-groups'
+import { createConversationItems } from './workspace-conversation-items'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
+import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ComposerDoc } from './composer/composer-doc'
@@ -476,8 +473,8 @@ const WorkspaceMessageScrollerImpl = ({
     [activeSession, handoffEvents]
   )
   const conversationItems = useMemo(
-    () => groupConversationItems(rawConversationItems, activeSession?.activityGroups),
-    [activeSession?.activityGroups, rawConversationItems]
+    () => createWorkspaceConversationTimeline(activeSession, handoffEvents),
+    [activeSession, handoffEvents]
   )
   const notebookRunIdByActivityId = useMemo(
     () =>
@@ -673,29 +670,14 @@ const WorkspaceMessageScrollerImpl = ({
     () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
     [activeSession, rawConversationItems]
   )
-  const openPromptMessageId =
-    activeSession &&
-    (activeSession.activeRun ||
-      activeSession.agentPromptInFlight ||
-      activeSession.status.startsWith('waiting-'))
-      ? (activeSession.activeRun?.promptMessageId ??
-        activeSession.messages.findLast((message) => message.role === 'user')?.id)
-      : undefined
-
-  // Provider stops complete individual Agent messages during Ask-User continuations. Keep the
-  // current logical prompt's footer and terminal announcement hidden until that prompt settles.
+  // Visible and announced completion share the same turn-level timeline authority.
   const assistantFooterMessageIds = useMemo(() => {
-    const messages = activeSession?.messages ?? []
-    const footerIds = resolveTurnTerminalAgentMessageIds(messages)
-    if (!openPromptMessageId) return footerIds
-
-    for (const message of messages) {
-      if (message.role === 'agent' && message.responseToMessageId === openPromptMessageId) {
-        footerIds.delete(message.id)
-      }
-    }
-    return footerIds
-  }, [activeSession?.messages, openPromptMessageId])
+    return new Set(
+      conversationItems.flatMap((item) =>
+        item.type === 'turn-completion' ? [item.message.id] : []
+      )
+    )
+  }, [conversationItems])
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
   const [terminalAnnouncement, setTerminalAnnouncement] = useState<
     TerminalAnnouncement | undefined
@@ -1147,9 +1129,7 @@ const WorkspaceMessageScrollerImpl = ({
                       ? messageCreatedAtById.get(item.message.responseToMessageId)
                       : undefined,
                     runtimeIdentity,
-                    showAssistantFooter:
-                      item.message.role !== 'agent' ||
-                      assistantFooterMessageIds.has(item.message.id),
+                    showAssistantFooter: item.message.role !== 'agent',
                     subsequentTurns: subsequentTurnCountByMessageId.get(item.message.id) ?? 0,
                     revisionNavigation:
                       revisionIndex >= 0 && revisions.length > 1
@@ -1208,7 +1188,58 @@ const WorkspaceMessageScrollerImpl = ({
                       )}
                       {currentSessionId &&
                       item.message.role === 'agent' &&
+                      !assistantFooterMessageIds.has(item.message.id) &&
                       !presentingMessageIds.has(item.message.id) ? (
+                        <WorkspaceMessageReview
+                          projectId={currentProjectId}
+                          sessionId={currentSessionId}
+                          turnMessageId={item.message.id}
+                          activeBranchMessageIds={activeBranchMessageIds}
+                          onGoToTranscript={handleGoToTranscript}
+                          onRerun={handleRerunReview}
+                        />
+                      ) : null}
+                    </Fragment>
+                  )
+                }
+
+                if (item.type === 'turn-completion') {
+                  const graph = activeSession?.conversationGraph
+                  const messageNode = graph?.messages.find(
+                    (message) => message.id === item.message.id
+                  )
+                  const runtimeSegment = messageNode?.runtimeSegmentId
+                    ? graph?.runtimeSegments.find(
+                        (segment) => segment.id === messageNode.runtimeSegmentId
+                      )
+                    : undefined
+                  const synthesizedLegacyRuntime =
+                    runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
+                    !activeSession?.agentFrameworkId
+                  const runtimeIdentity = synthesizedLegacyRuntime
+                    ? legacyRuntimeIdentity
+                    : runtimeSegment
+
+                  return presentingMessageIds.has(item.message.id) ? null : (
+                    <Fragment key={item.id}>
+                      <MessageScrollerItem messageId={item.id} className="min-w-0">
+                        <div className="px-4 pb-1 md:px-6">
+                          <div className="mx-auto w-full max-w-[56rem]">
+                            <WorkspaceAssistantTurnCompletion
+                              message={item.message}
+                              turnStartedAt={
+                                item.message.responseToMessageId
+                                  ? messageCreatedAtById.get(item.message.responseToMessageId)
+                                  : undefined
+                              }
+                              runtimeIdentity={runtimeIdentity}
+                              canBranchInNewSession={canBranchInNewSession}
+                              onBranchInNewSession={onBranchInNewSession}
+                            />
+                          </div>
+                        </div>
+                      </MessageScrollerItem>
+                      {currentSessionId ? (
                         <WorkspaceMessageReview
                           projectId={currentProjectId}
                           sessionId={currentSessionId}

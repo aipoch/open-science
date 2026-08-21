@@ -470,8 +470,10 @@ const createPanelDefaults = (): PanelProps => ({
     canChange: true,
     autoReviewEnabled: true,
     enabledComputeHosts: [],
+    selectedComputeHosts: [],
     toggleAutoReview: vi.fn(),
-    toggleComputeHost: vi.fn()
+    setComputeHostEnabled: vi.fn(),
+    setComputeHostSelected: vi.fn()
   },
   contextWindow: {
     usage: undefined,
@@ -529,9 +531,32 @@ const renderPanel = (props: DeepPartial<PanelProps> = {}): void => {
 }
 
 const getComposerForm = (): HTMLElement => {
-  const form = container.querySelector('form')
+  const form = container.querySelector('[data-testid="ordinary-composer-form"]')
   if (!form) throw new Error('composer form not found')
   return form as HTMLElement
+}
+
+const expectComposerCoveredByBlockingOverlay = (): void => {
+  const form = getComposerForm()
+  expect(form.hidden).toBe(false)
+  expect(form.getAttribute('aria-hidden')).toBe('true')
+  expect(form.hasAttribute('inert')).toBe(true)
+  expect(form.classList.contains('invisible')).toBe(true)
+  expect(form.classList.contains('pointer-events-none')).toBe(true)
+
+  const overlay = container.querySelector('[data-testid="blocking-composer-overlay"]')
+  expect(overlay).not.toBeNull()
+  expect(overlay?.classList.contains('absolute')).toBe(true)
+  expect(overlay?.classList.contains('bottom-0')).toBe(true)
+}
+
+const expectComposerChromeCovered = (selector: string): void => {
+  const element = container.querySelector(selector)
+  expect(element).not.toBeNull()
+  const chrome = element?.closest('[aria-hidden="true"]')
+  expect(chrome?.hasAttribute('inert')).toBe(true)
+  expect(chrome?.classList.contains('invisible')).toBe(true)
+  expect(chrome?.classList.contains('pointer-events-none')).toBe(true)
 }
 
 const getConversationHeader = (): HTMLElement => {
@@ -652,7 +677,7 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    expect(getComposerForm().hidden).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
     expect(document.activeElement).toBe(navigationButton)
   })
 
@@ -987,8 +1012,8 @@ describe('ConversationPanel composer intake', () => {
     expect(scrollSurface.classList.contains('border-border-200')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-sm')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-card-opaque')).toBe(false)
-    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
-    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+    expectComposerChromeCovered('[aria-label="Open notebook"]')
+    expectComposerChromeCovered('[data-testid="remote-job-badge"]')
 
     const optionRows = container.querySelectorAll<HTMLElement>(
       '[data-elicitation-option-row="true"]'
@@ -1091,10 +1116,13 @@ describe('ConversationPanel composer intake', () => {
         .querySelector('[data-testid="composer-card-backdrop"]')
         ?.classList.contains('hidden')
     ).toBe(true)
-    const hiddenComposer = container.querySelector('[role="textbox"]')?.closest('form')
-    expect(hiddenComposer?.hidden).toBe(true)
-    expect(hiddenComposer?.classList.contains('hidden')).toBe(true)
-    expect(container.querySelector('[aria-label="Cancel run"]')?.closest('form')?.hidden).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
+    expect(
+      container
+        .querySelector('[aria-label="Cancel run"]')
+        ?.closest('form')
+        ?.classList.contains('invisible')
+    ).toBe(true)
 
     renderPanel({
       view: {
@@ -1189,9 +1217,9 @@ describe('ConversationPanel composer intake', () => {
     expect(resizeHandle.classList.contains('active:bg-bg-200')).toBe(false)
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
-    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
-    expect(getComposerForm().hidden).toBe(true)
+    expectComposerChromeCovered('[aria-label="Open notebook"]')
+    expectComposerChromeCovered('[data-testid="remote-job-badge"]')
+    expectComposerCoveredByBlockingOverlay()
     expect(
       container
         .querySelector('[data-testid="composer-surface-fade"]')
@@ -1298,7 +1326,7 @@ describe('ConversationPanel composer intake', () => {
       'Scope'
     )
     expect(container.textContent).not.toContain('Plan ready for review')
-    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
 
     renderPanel({
       view: {
@@ -1322,7 +1350,7 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
     expect(container.textContent).toContain('Plan ready for review')
-    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
   })
 
   it('restores a durable pending choice from the persisted activity', async () => {
@@ -2122,7 +2150,7 @@ describe('ConversationPanel composer intake', () => {
     ).toBe(true)
   })
 
-  it('replaces the ordinary composer with an in-flow Side chat panel', () => {
+  it('covers the ordinary composer with an overlay Side chat panel', () => {
     const onCloseSideChat = vi.fn()
     renderPanel({
       sessionTools: {
@@ -2166,8 +2194,8 @@ describe('ConversationPanel composer intake', () => {
     expect(surface?.classList.contains('overflow-hidden')).toBe(true)
     expect(surface?.classList.contains('shadow-none')).toBe(true)
     expect(surface?.classList.contains('shadow-sm')).toBe(false)
-    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
-    expect(getComposerForm().hidden).toBe(true)
+    expectComposerChromeCovered('[aria-label="Open notebook"]')
+    expectComposerCoveredByBlockingOverlay()
     const sideChatPanel = panel as HTMLElement
     const plus = sideChatPanel.querySelector('[data-testid="side-chat-plus-button"]')
     const agentControls = sideChatPanel.querySelector('[data-testid="mock-agent-controls"]')
@@ -2207,7 +2235,7 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    expect(getComposerForm().hidden).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
     expect(document.activeElement).toBe(navigationButton)
   })
 
@@ -2546,7 +2574,7 @@ describe('ConversationPanel composer intake', () => {
     expect(
       container.querySelector('[data-testid="scroller-pending-elicitations"]')?.textContent
     ).toBe('0')
-    expect(getComposerForm().hidden).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
 
     renderPanel({
       view: {
@@ -2963,7 +2991,7 @@ describe('ConversationPanel + menu', () => {
     ).toBe(true)
   })
 
-  it('replaces the composer with a pending Plan card and restores it immediately after approval', async () => {
+  it('covers the composer with a pending Plan card and restores it immediately after approval', async () => {
     renderPanel()
     expect(container.querySelector('[data-testid="menu-view-plan"]')).toBeNull()
 
@@ -3003,7 +3031,8 @@ describe('ConversationPanel + menu', () => {
     })
 
     const pendingEditor = container.querySelector('[role="textbox"]')
-    expect(pendingEditor?.closest('form')?.classList.contains('hidden')).toBe(true)
+    expect(pendingEditor?.closest('form')?.classList.contains('invisible')).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
     expect(container.textContent).toContain('Plan ready for review')
     const planComposer = container.querySelector('[data-testid="plan-composer"]') as HTMLDivElement
     const planScrollSurface = container.querySelector(
@@ -3020,8 +3049,8 @@ describe('ConversationPanel + menu', () => {
         (button) => button.textContent === 'Dismiss'
       )
     ).toBe(false)
-    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
-    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+    expectComposerChromeCovered('[aria-label="Open notebook"]')
+    expectComposerChromeCovered('[data-testid="remote-job-badge"]')
     const pendingPlanCard = [...container.querySelectorAll('article')].find((article) =>
       article.textContent?.includes('Plan ready for review')
     )
@@ -3031,7 +3060,7 @@ describe('ConversationPanel + menu', () => {
       container
         .querySelector('[data-testid="composer-plus-trigger"]')
         ?.closest('form')
-        ?.classList.contains('hidden')
+        ?.classList.contains('invisible')
     ).toBe(true)
 
     planComposer.getBoundingClientRect = () => ({ height: 260 }) as DOMRect
@@ -3205,9 +3234,7 @@ describe('ConversationPanel + menu', () => {
     })
 
     expect(container.textContent).toContain('Plan ready for review')
-    expect(container.querySelector('[role="textbox"]')?.closest('form')?.classList).toContain(
-      'hidden'
-    )
+    expectComposerCoveredByBlockingOverlay()
 
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement
     await act(async () => {

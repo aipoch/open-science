@@ -34,6 +34,9 @@ export function toCustomMcpConfig(server: StoredCustomMcpServer): CustomMcpServe
       ? {
           oauth: {
             ...server.oauth,
+            ...(server.oauth.clientId && server.oauthClientSecret
+              ? { clientSecret: server.oauthClientSecret }
+              : {}),
             ...(server.oauthState ? { state: server.oauthState } : {})
           }
         }

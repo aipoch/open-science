@@ -4,6 +4,7 @@ import { defineApplicationCommandContract, validationCodec } from './application
 
 export const TAG_NAME_MAX_LENGTH = 64
 export const TAG_RESOURCE_ID_MAX_LENGTH = 256
+export const TAG_TIMESTAMP_MAX = 8_640_000_000_000_000
 export const FAVORITE_TAG_SYSTEM_KEY = 'favorite' as const
 export const FAVORITE_TAG_ID = 'tag-favorite' as const
 
@@ -86,7 +87,14 @@ export const createTagRequestSchema = z
   })
   .strict()
 export const updateTagRequestSchema = createTagRequestSchema
-  .extend({ id: z.string().min(1) })
+  .extend({
+    id: z.string().min(1),
+    expectedUpdatedAt: z
+      .number()
+      .int()
+      .positive()
+      .max(TAG_TIMESTAMP_MAX - 1)
+  })
   .strict()
 export const deleteTagRequestSchema = z.object({ id: z.string().min(1) }).strict()
 export const setTagAssignmentRequestSchema = tagResourceRefSchema

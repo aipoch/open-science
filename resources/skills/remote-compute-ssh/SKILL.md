@@ -1,6 +1,6 @@
 ---
 name: remote-compute-ssh
-description: Discover and use SSH compute hosts. Load when you need to run remote commands or submit long-running jobs with automatic harvest and analysis.
+description: Evaluate and use SSH Remote Compute before choosing where to run GPU, high-memory, parallel, batch, model-inference, bioinformatics, or other long-running scientific work; supports short remote commands and asynchronous jobs with automatic harvest and analysis.
 license: Apache-2.0
 ---
 
@@ -13,40 +13,37 @@ every example below with the `repl_execute` tool (JavaScript), the same kernel t
 `host.mcp`. The `python`/`r` data kernels have NO `host.compute` (SSH and approvals stay outside
 the sandbox workspace); calling it from a python/r cell will fail with `host.compute is undefined`.
 
-## Registered hosts
+## Choose an execution location
 
-<!-- open-science:compute-hosts:start -->
+Only Compute Hosts enabled for this Session are visible or callable. Discover them in one catalog;
+each entry has role `selected` or `available`. A non-empty selected pool is an execution instruction:
+run tool-backed task work on one or more selected hosts as the task requires. The pool has no
+priority and does not imply automatic multi-host scheduling. If no host is selected, choose from the
+available entries. Read `details()` only for candidates that need closer evaluation.
 
-Run `await host.compute.list()` to see all registered hosts.
-<!-- open-science:compute-hosts:end -->
-
-Each host entry shows:
-
-- Display name
-- Provider ID (e.g., `ssh:biowulf`, `ssh:192.168.1.100`)
-- Shape (e.g., `direct_ssh`, `slurm`, `pbs`)
-- Connection status
-
-## Session-active host
-
-The user may enable one host for this conversation via the `≡` panel in the composer.
-Always check which host is active before creating a handle:
+Never guess or reuse a provider id absent from the catalog. A user naming a disabled host does not
+make it callable; explain that it must first be enabled for this Session. If no eligible host is
+usable, explain the blocker and ask the user how to proceed.
 
 ```javascript
-// Returns the session-enabled host provider_ids (a string[] subset of all registered hosts).
-// Empty array means the user hasn't chosen a host for this conversation yet.
-const activeHosts = await host.compute.listCompute()
-const c = activeHosts[0] ? host.compute.create(activeHosts[0]) : null
+const hosts = await host.compute.listHosts()
+const selectedHosts = hosts.filter((host) => host.role === 'selected')
+const candidates = selectedHosts.length > 0 ? selectedHosts : hosts
 ```
+
+Each list item is a compact summary with `provider_id`, `display_name`, `shape`, `status`, and `role`
+(`connected`, `probe_failed`, or `not_probed`). Knowledge documents and resource probe snapshots
+are deliberately excluded from discovery results.
 
 ## API reference
 
 ```javascript
-// List ALL registered hosts
-const hosts = await host.compute.list()
+// List this Session's enabled hosts as one role-bearing compact catalog
+const hosts = await host.compute.listHosts()
 
-// List session-enabled hosts (user's active selection for this conversation)
-const activeHosts = await host.compute.listCompute()
+// Compatibility discovery names remain available; both still hide disabled hosts.
+const visibleHosts = await host.compute.listRegistered()
+const selectedHosts = await host.compute.listPreferred()
 
 // Create a handle to a specific host (no network call)
 const c = host.compute.create('ssh:<alias>')
@@ -58,7 +55,8 @@ const result = await c.callCommand('<shell command>', '<one-line intent for the 
 })
 // result → { exit_code, stdout, stderr, truncated }
 
-// Read the host knowledge doc (returns { doc, isSkeleton })
+// Read the host knowledge doc and resource probe snapshot on demand.
+// probe is explicitly null when this host has never been probed.
 const info = await host.compute.details('ssh:<alias>', { mode: 'read' })
 
 // Append a note to the host knowledge doc (agent writes; 32 KB cap enforced)
@@ -88,9 +86,7 @@ Use `submitJob` for long-running computations (minutes to hours). It returns imm
 automatically harvests the outputs and initiates a new analysis turn — **you never poll or block**.
 
 ```javascript
-// List the session's active compute hosts (set via the ≡ host selector)
-const activeHosts = await host.compute.listCompute()
-// returns ['ssh:<alias>', ...] — the provider_ids currently enabled for this session
+// Reuse the `candidates` selected above from the Session catalog.
 
 // Submit a non-blocking job — returns immediately after the user approves
 const c = host.compute.create('ssh:<alias>')

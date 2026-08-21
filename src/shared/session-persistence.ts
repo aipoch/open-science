@@ -510,9 +510,13 @@ export type PersistedChatSession = {
   // to allow. Switching to deny never cancels or hides children that were already admitted.
   delegationPolicy?: DelegationPolicy
   // Per-session enabled compute hosts (providerIds like "ssh:alias"). Stored as an array for JSON
-  // compatibility; semantically a set (single-select for now, multi-select-ready internally).
+  // compatibility; semantically a set independent from the selected execution-target pool.
   // Absent on older sessions — treated as empty (no host enabled).
   enabledComputeHosts?: string[]
+  // Per-session Compute Hosts selected as execution targets. Selection is always a subset of the
+  // enabled hosts. An explicit empty array distinguishes the new Available-only state from legacy
+  // Session files where a missing field means every enabled host was selected.
+  selectedComputeHosts?: string[]
   // Pins the conversation to a dedicated section at the top of the sidebar. Absent (older files) or
   // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
   pinned?: boolean
@@ -570,7 +574,12 @@ export type MaterializedPersistedChatSession = PersistedChatSession & {
 // Renderer-owned preferences that can be replayed onto a newer durable graph after a stale-graph
 // conflict. The field list records intent explicitly, including changes that clear optional values.
 export type SessionConflictRebaseField =
-  'title' | 'permissionProfile' | 'autoReviewEnabled' | 'enabledComputeHosts' | 'pinned'
+  | 'title'
+  | 'permissionProfile'
+  | 'autoReviewEnabled'
+  | 'enabledComputeHosts'
+  | 'selectedComputeHosts'
+  | 'pinned'
 
 export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]
@@ -3351,6 +3360,21 @@ const sanitizeSession = (
         (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
       )
     : []
+  const hasSelectedComputeHosts = Object.prototype.hasOwnProperty.call(
+    session,
+    'selectedComputeHosts'
+  )
+  const selectedComputeHostCandidates = hasSelectedComputeHosts
+    ? Array.isArray(session.selectedComputeHosts)
+      ? session.selectedComputeHosts.filter(
+          (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
+        )
+      : []
+    : enabledComputeHosts
+  const enabledComputeHostSet = new Set(enabledComputeHosts)
+  const selectedComputeHosts = selectedComputeHostCandidates.filter((providerId) =>
+    enabledComputeHostSet.has(providerId)
+  )
 
   if (activeRun) sanitized.activeRun = activeRun
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
@@ -3380,6 +3404,9 @@ const sanitizeSession = (
   if (activities.length > 0) sanitized.activities = activities
   if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
+  if (hasSelectedComputeHosts || enabledComputeHosts.length > 0) {
+    sanitized.selectedComputeHosts = selectedComputeHosts
+  }
   // Specialist ID: accept any non-empty string. The main process validates it against ProfileService
   // at send time; the sanitizer only ensures the value is safe to re-persist.
   const specialistId = asString(session.specialistId)

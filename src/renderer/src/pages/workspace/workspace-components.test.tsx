@@ -11,6 +11,7 @@ const conversationPanelPath = resolve(__dirname, 'ConversationPanel.tsx')
 const permissionApprovalControlsPath = resolve(__dirname, 'PermissionApprovalControls.tsx')
 const appPath = resolve(__dirname, '../../App.tsx')
 const workspaceMessageScrollerPath = resolve(__dirname, 'WorkspaceMessageScroller.tsx')
+const workspaceConversationTimelinePath = resolve(__dirname, 'workspace-conversation-timeline.ts')
 const workspaceActivityGroupPath = resolve(__dirname, 'WorkspaceActivityGroup.tsx')
 const workspaceAgentLoadingRowPath = resolve(__dirname, 'WorkspaceAgentLoadingRow.tsx')
 const workspaceMessageItemPath = resolve(__dirname, 'WorkspaceMessageItem.tsx')
@@ -484,9 +485,15 @@ describe('conversation message scroller integration', () => {
     }
 
     const workspaceMessageScrollerSource = readFileSync(workspaceMessageScrollerPath, 'utf8')
+    const workspaceConversationTimelineSource = readFileSync(
+      workspaceConversationTimelinePath,
+      'utf8'
+    )
 
-    expect(workspaceMessageScrollerSource).toContain('createConversationItems')
-    expect(workspaceMessageScrollerSource).toContain('groupConversationItems')
+    expect(workspaceMessageScrollerSource).toContain('createWorkspaceConversationTimeline')
+    expect(workspaceConversationTimelineSource).toContain('createConversationItems')
+    expect(workspaceConversationTimelineSource).toContain('groupConversationItems')
+    expect(workspaceConversationTimelineSource).toContain("type: 'turn-completion'")
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceActivityGroup')
     expect(workspaceMessageScrollerSource).not.toContain('createActivityDetailsDomId')
     expect(workspaceMessageScrollerSource).not.toContain('formatWebSearchDetails')
@@ -527,9 +534,8 @@ describe('conversation message scroller integration', () => {
     const workspaceMessageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
     const workspaceAgentLoadingRowSource = readFileSync(workspaceAgentLoadingRowPath, 'utf8')
 
-    expect(workspaceMessageScrollerSource).toContain(
-      "import { WorkspaceMessageItem } from './WorkspaceMessageItem'"
-    )
+    expect(workspaceMessageScrollerSource).toContain('WorkspaceAssistantTurnCompletion')
+    expect(workspaceMessageScrollerSource).toContain('WorkspaceMessageItem')
     expect(workspaceMessageScrollerSource).toContain("from './WorkspaceArtifactVisibility'")
     expect(workspaceMessageScrollerSource).not.toContain('projectRootArtifactVisibility')
     expect(workspaceMessageScrollerSource).not.toContain('resolveVersionDescriptors')

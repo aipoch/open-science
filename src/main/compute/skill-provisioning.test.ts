@@ -10,7 +10,7 @@ import type { BundledSkill } from '../skills/registry'
 import { createComputeHandlers } from './ipc'
 import type { ComputeService } from './compute-service'
 import type { ComputeHostRepository } from './repository'
-import { COMPUTE_SKILL_DIRECTORY, syncComputeSkillDoc } from './skill-doc'
+import { COMPUTE_SKILL_DIRECTORY } from './skill-doc'
 
 const roots: string[] = []
 
@@ -46,7 +46,7 @@ const host = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
 })
 
 describe('SSH Compute Skill provisioning lifecycle', () => {
-  it('keeps one canonical Skill with the current hosts through bootstrap, refresh, and host changes', async () => {
+  it('keeps one canonical static Skill through bootstrap, refresh, and host changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'compute-skill-provisioning-'))
     roots.push(root)
     const configDir = join(root, 'config')
@@ -63,10 +63,7 @@ describe('SSH Compute Skill provisioning lifecycle', () => {
         '',
         '## Registered hosts',
         '',
-        '<!-- open-science:compute-hosts:start -->',
-        '',
-        'Run `await host.compute.list()` to see all registered hosts.',
-        '<!-- open-science:compute-hosts:end -->',
+        'Run `await host.compute.listRegistered()` to see all registered hosts.',
         '',
         '## API reference',
         '',
@@ -108,7 +105,6 @@ describe('SSH Compute Skill provisioning lifecycle', () => {
       }
     } as ComputeHostRepository
     const materializer = new ClaudeCodeSkillMaterializer()
-    const sync = (): Promise<void> => syncComputeSkillDoc(skillsDir, hosts)
     const handlers = createComputeHandlers(
       repository,
       undefined,
@@ -120,12 +116,10 @@ describe('SSH Compute Skill provisioning lifecycle', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
-      sync
+      undefined
     )
 
     await materializer.sync(configDir, [bundledSkill])
-    await sync()
 
     expect((await readdir(skillsDir)).filter((entry) => !entry.startsWith('.'))).toEqual([
       COMPUTE_SKILL_DIRECTORY,
@@ -139,21 +133,21 @@ describe('SSH Compute Skill provisioning lifecycle', () => {
     )
     let document = await readFile(join(skillsDir, COMPUTE_SKILL_DIRECTORY, 'SKILL.md'), 'utf8')
     expect(document).toContain('name: remote-compute-ssh')
-    expect(document).toContain('ssh:biowulf')
+    expect(document).not.toContain('ssh:biowulf')
 
     await handlers.create({ sshAlias: 'lab-gpu' })
     await materializer.sync(configDir, [{ ...bundledSkill, updatedAt: 'v2' }])
 
     document = await readFile(join(skillsDir, COMPUTE_SKILL_DIRECTORY, 'SKILL.md'), 'utf8')
-    expect(document).toContain('ssh:biowulf')
-    expect(document).toContain('ssh:lab-gpu')
+    expect(document).not.toContain('ssh:biowulf')
+    expect(document).not.toContain('ssh:lab-gpu')
     expect(document).toContain('Bundled SSH guidance.')
 
     await handlers.delete('ssh:lab-gpu')
     await handlers.delete('ssh:biowulf')
 
     document = await readFile(join(skillsDir, COMPUTE_SKILL_DIRECTORY, 'SKILL.md'), 'utf8')
-    expect(document).toContain('no hosts registered yet')
+    expect(document).toContain('host.compute.listRegistered()')
     expect(document).not.toContain('ssh:lab-gpu')
     expect(document).not.toContain('ssh:biowulf')
   })

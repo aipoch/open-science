@@ -44,12 +44,41 @@ const baseDeps = (root: string, over: Partial<ProvisionerDeps> = {}): Provisione
     const prefix = argv[pIdx + 1]
     touchBin(logicalNameForPrefix(prefix) === DEFAULT_PY_ENV ? pythonBin(prefix) : rBin(prefix))
   },
+  maintainCache: async () => undefined,
   verify: async () => undefined,
   now: () => 't2',
   ...over
 })
 
 describe('upgradeIfNeeded', () => {
+  it('maintains the package cache under the upgrade journal after fetching the offline bundle', async () => {
+    const root = makeRoot()
+    const cachePath = join(root, 'pkgs')
+    touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
+    writeReadyMarker(root, DEFAULT_ENV_VERSION - 1, 't1')
+    const order: string[] = []
+
+    await new DefaultRuntimeProvisioner(
+      baseDeps(root, {
+        platform: 'linux',
+        // macOS may canonicalize the legacy lock key (/var -> /private/var) while preserving this path.
+        cache: { path: cachePath, lockKey: 'selected-cache-key' },
+        fetchBundle: async () => {
+          order.push('fetch')
+          return { lockPath: join(root, 'python.lock') }
+        },
+        maintainCache: async (_cache, onBeforeSpawn, onChild) => {
+          expect(onBeforeSpawn).toEqual(expect.any(Function))
+          expect(onChild).toEqual(expect.any(Function))
+          order.push('clean')
+        },
+        runArgv: async () => void order.push('install')
+      })
+    ).upgradeIfNeeded(() => undefined)
+
+    expect(order).toEqual(['fetch', 'clean', 'install'])
+  })
+
   it('is a no-op when already at the expected version', async () => {
     const root = makeRoot()
     touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))

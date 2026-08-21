@@ -356,19 +356,24 @@ class ReviewRepository {
     })
   }
 
-  // Commits one scoped re-review submission behind a single interface. Tracked sourceFindingId
-  // entries are immutable assessments of existing Findings, never new Finding rows; untracked checks
-  // are newly discovered Findings. Review completion and every materialized disposition commit in the
+  // Commits one scoped Reviewer submission behind a single interface. Explicit initial mode may
+  // submit no checks; tracked mode requires a non-empty submission and exact disposition of its
+  // expected ids. Tracked sourceFindingId entries are immutable
+  // assessments of existing Review Checks, never new Finding rows; untracked checks are newly
+  // discovered Review Checks. Review completion and every materialized disposition commit in the
   // same SQLite transaction, so a malformed item cannot leave a partially applied audit result.
   async commitScopedSubmission(input: {
+    mode: 'initial' | 'tracked'
     reviewId: string
     checks: NewCheck[]
     expectedSourceFindingIds: string[]
-    outcome: ReviewOutcome
     reviewerLog?: ReviewerLogEntry[]
   }): Promise<ReviewWithChecks> {
-    if (input.checks.length === 0) {
-      throw new Error('A completed Review submission requires at least one explicit check.')
+    if (input.mode !== 'initial' && input.mode !== 'tracked') {
+      throw new Error('Review submission mode must be initial or tracked.')
+    }
+    if (input.mode === 'tracked' && input.checks.length === 0) {
+      throw new Error('A tracked Review submission requires at least one Review Check.')
     }
     assertReviewSubmissionWithinLimits(input.checks, input.expectedSourceFindingIds.length)
     const trackedFindingIds = input.checks.flatMap((check) =>
@@ -376,10 +381,10 @@ class ReviewRepository {
     )
     const expectedFindingIds = input.expectedSourceFindingIds
     if (new Set(expectedFindingIds).size !== expectedFindingIds.length) {
-      throw new Error('Expected tracked Finding ids must be unique.')
+      throw new Error('Expected tracked Review Check ids must be unique.')
     }
     if (new Set(trackedFindingIds).size !== trackedFindingIds.length) {
-      throw new Error('A tracked Finding may only be assessed once in a Review submission.')
+      throw new Error('A tracked Review Check may only be assessed once in a Review submission.')
     }
     const expectedSet = new Set(expectedFindingIds)
     const submittedSet = new Set(trackedFindingIds)
@@ -387,8 +392,13 @@ class ReviewRepository {
       expectedSet.size !== submittedSet.size ||
       [...expectedSet].some((findingId) => !submittedSet.has(findingId))
     ) {
-      throw new Error('Review submission must assess the exact expected tracked Finding set.')
+      throw new Error('Review submission must assess the exact expected tracked Review Check set.')
     }
+    const outcome: ReviewOutcome = input.checks.some(
+      (check) => check.status === 'warn' || check.status === 'fail'
+    )
+      ? 'flagged'
+      : 'pass'
 
     const client = await this.getClient()
     const ownership = await client.$transaction(async (tx) => {
@@ -511,7 +521,7 @@ class ReviewRepository {
         where: { id: assessmentReview.id },
         data: {
           lifecycle: 'complete',
-          outcome: input.outcome,
+          outcome,
           errorMessage: null,
           reviewerLog: JSON.stringify(input.reviewerLog ?? [])
         }

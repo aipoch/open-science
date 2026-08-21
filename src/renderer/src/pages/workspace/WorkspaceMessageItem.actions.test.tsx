@@ -14,7 +14,12 @@ import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 
 // Keep the transcript row and markdown surface as thin wrappers so the test never loads Shiki.
 vi.mock('@/components/ui/message-scroller', () => ({
-  MessageScrollerItem: ({ children }: PropsWithChildren): JSX.Element => <div>{children}</div>
+  MessageScrollerItem: ({
+    children,
+    disableContainment
+  }: PropsWithChildren<{ disableContainment?: boolean }>): JSX.Element => (
+    <div data-disable-containment={disableContainment || undefined}>{children}</div>
+  )
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
@@ -134,6 +139,19 @@ const typeIntoEditor = async (editor: HTMLElement, text: string): Promise<void> 
   })
 }
 
+const typeMentionIntoEditor = async (editor: HTMLElement): Promise<void> => {
+  await act(async () => {
+    const mention = document.createTextNode('@')
+    editor.replaceChildren(mention)
+    const range = document.createRange()
+    range.setStart(mention, 1)
+    range.collapse(true)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+  })
+}
+
 beforeEach(() => {
   globalThis.ResizeObserver = class {
     constructor(private readonly callback: ResizeObserverCallback) {}
@@ -152,6 +170,12 @@ beforeEach(() => {
     value: { writeText },
     configurable: true
   })
+  Range.prototype.getBoundingClientRect = () => new DOMRect()
+  ;(window as unknown as { api: unknown }).api = {
+    projectFiles: {
+      listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 })
+    }
+  }
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -161,6 +185,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  delete (window as unknown as { api?: unknown }).api
   notifyResize = undefined
   if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver
   else delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver
@@ -601,6 +626,18 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(editor?.textContent).toBe('Run /forecast now')
     // The structured skill segment comes back as a chip, not flattened text.
     expect(editor?.querySelector('[data-mention-type="skill"]')).not.toBeNull()
+  })
+
+  it('keeps the artifact mention popup outside transcript row containment while editing', async () => {
+    await renderItem(createMessage(), { canEditMessage: true })
+
+    await click(getButton('Edit message'))
+    const editor = getEditor()
+    if (!editor) throw new Error('editor not found')
+    await typeMentionIntoEditor(editor)
+
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull()
+    expect(container.firstElementChild?.getAttribute('data-disable-containment')).toBe('true')
   })
 
   it('cancels editing and restores the bubble without resending', async () => {

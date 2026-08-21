@@ -32,6 +32,7 @@ import {
   TaskRunnerError,
   summarizeSession,
   type TaskAgentPort,
+  type TaskComputePreferencePort,
   type TaskRunnerDependencies
 } from '../tasks/task-runner'
 
@@ -41,6 +42,7 @@ type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
   controls?: TaskControlPorts
+  computePreferences?: TaskComputePreferencePort
 }
 
 type TaskApiDependencies = {
@@ -75,7 +77,7 @@ class HeadlessTaskApi {
           return result.sessions
         },
         save: async (session) => {
-          await this.invoke('sessions:save-session', session)
+          return this.invoke('sessions:save-session', session) as Promise<PersistedChatSession>
         },
         setDelegationPolicy: async (projectId, sessionId, policy) => {
           await this.invoke('sessions:set-delegation-policy', projectId, sessionId, policy)
@@ -128,6 +130,17 @@ class HeadlessTaskApi {
       },
       reviewer: {
         review: (session, turnMessageId, signal) => this.review(session, turnMessageId, signal)
+      },
+      computePreferences: this.ports.computePreferences ?? {
+        withReservation: async (providerIds, operation) => {
+          if (providerIds.length > 0) {
+            throw new Error('Task Compute preference control is unavailable.')
+          }
+          return operation([])
+        },
+        set: async () => {
+          throw new Error('Task Compute preference control is unavailable.')
+        }
       },
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now

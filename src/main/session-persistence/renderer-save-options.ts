@@ -8,6 +8,7 @@ const RENDERER_SESSION_CONFLICT_REBASE_FIELDS = new Set<SessionConflictRebaseFie
   'permissionProfile',
   'autoReviewEnabled',
   'enabledComputeHosts',
+  'selectedComputeHosts',
   'pinned'
 ])
 

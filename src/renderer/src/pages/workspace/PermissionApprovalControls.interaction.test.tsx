@@ -1041,6 +1041,72 @@ describe('PermissionApprovalControls interactions', () => {
     }
   })
 
+  it('refreshes the environment badge for a later permission in the same session', async () => {
+    const firstRequest: AcpPermissionRequest = {
+      requestId: 'req-refresh-env-1',
+      sessionId: 'session-refresh-env',
+      toolCallId: 'tool-refresh-env-1',
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
+      rawInput: { kernelKind: 'python', code: 'print(1)' },
+      options: [{ optionId: 'opt-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    let environment = 'first-python'
+    ;(window as { api?: unknown }).api = {
+      notebook: {
+        state: async () => ({
+          environments: [{ kind: 'python', environment, processKey: `python:${environment}` }],
+          runs: []
+        })
+      }
+    }
+    try {
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[firstRequest]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-refresh-env', workspaceCwd: '' }}
+          />
+        )
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'first-python'
+      )
+
+      environment = 'second-python'
+      act(() => {
+        root.render(
+          <PermissionApprovalControls
+            requests={[
+              {
+                ...firstRequest,
+                requestId: 'req-refresh-env-2',
+                toolCallId: 'tool-refresh-env-2'
+              }
+            ]}
+            onRespond={vi.fn()}
+            notebookLookup={{ sessionId: 'session-refresh-env', workspaceCwd: '' }}
+          />
+        )
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      expect(container.querySelector('[data-testid="permission-env-badge"]')?.textContent).toBe(
+        'second-python'
+      )
+    } finally {
+      delete (window as { api?: unknown }).api
+    }
+  })
+
   it('does not use a live Python environment for an R permission request', async () => {
     const rNotebookRequest: AcpPermissionRequest = {
       requestId: 'req-r-env',

@@ -339,16 +339,61 @@ describe('Connector configuration templates', () => {
       transport: 'streamable_http',
       url: 'https://mcp.example.test/mcp',
       oauth: {
-        clientMetadataUrl: 'https://client.example.test/metadata',
         authorizationServerUrl: 'https://auth.example.test',
-        scopes: ['openid']
-      }
+        scopes: ['openid'],
+        clientId: 'registered-client'
+      },
+      hasOAuthClientSecret: true
     })
 
-    expect(JSON.parse(result.contents!).oauth).toEqual({
-      client_metadata_url: 'https://client.example.test/metadata',
+    const exported = JSON.parse(result.contents!)
+    expect(exported.schema_version).toBe(1)
+    expect(exported.oauth).toEqual({
       authorization_server_url: 'https://auth.example.test',
-      scopes: ['openid']
+      scopes: ['openid'],
+      client_id: 'registered-client'
     })
+    expect(exported.required_secrets).toEqual({ oauth_client_secret: true })
+    expect(exported.oauth).not.toHaveProperty('client_secret')
+
+    expect(parseConnectorTemplate(result.contents!).definition).toMatchObject({
+      schemaVersion: 1,
+      oauth: { clientId: 'registered-client' },
+      requiredSecrets: { oauthClientSecret: true }
+    })
+  })
+
+  it('imports pre-registered OAuth fields as optional schema v1 additions', () => {
+    const extended = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'static-oauth',
+        display_name: 'Static OAuth',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth: {
+          authorization_server_url: 'https://auth.example.test',
+          client_id: 'registered-client'
+        }
+      })
+    )
+    expect(extended).toMatchObject({
+      ready: true,
+      definition: { schemaVersion: 1, oauth: { clientId: 'registered-client' } }
+    })
+
+    const legacy = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'legacy-oauth',
+        display_name: 'Legacy OAuth',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth: { scopes: ['openid'] }
+      })
+    )
+    expect(legacy).toMatchObject({ ready: true, definition: { schemaVersion: 1 } })
   })
 })

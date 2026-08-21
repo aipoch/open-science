@@ -51,6 +51,16 @@ type ComputeBookmarksOwner = Readonly<{
 type ComputeEnabledHostsOwner = Readonly<{
   get(sessionId: string): string[]
   set(sessionId: string, providerIds: readonly string[]): Promise<PersistedChatSession>
+  setHostEnabled(
+    sessionId: string,
+    providerId: string,
+    enabled: boolean
+  ): Promise<PersistedChatSession>
+  setHostSelected(
+    sessionId: string,
+    providerId: string,
+    selected: boolean
+  ): Promise<PersistedChatSession>
 }>
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -196,6 +206,16 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeEnabledHostsOwner, 'set'>,
     OwnerResult<ComputeEnabledHostsOwner, 'set'>
   >('compute:enabled-hosts:set'),
+  hostEnabledSet: defineApplicationCommand<
+    'compute:host-enabled:set',
+    OwnerArgs<ComputeEnabledHostsOwner, 'setHostEnabled'>,
+    OwnerResult<ComputeEnabledHostsOwner, 'setHostEnabled'>
+  >('compute:host-enabled:set'),
+  hostSelectedSet: defineApplicationCommand<
+    'compute:host-selected:set',
+    OwnerArgs<ComputeEnabledHostsOwner, 'setHostSelected'>,
+    OwnerResult<ComputeEnabledHostsOwner, 'setHostSelected'>
+  >('compute:host-selected:set'),
   bookmarksGet: defineApplicationCommand<
     'compute:bookmarks:get',
     OwnerArgs<ComputeBookmarksOwner, 'get'>,
@@ -222,6 +242,8 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.download,
   computeApplicationCommands.enabledHostsGet,
   computeApplicationCommands.enabledHostsSet,
+  computeApplicationCommands.hostEnabledSet,
+  computeApplicationCommands.hostSelectedSet,
   computeApplicationCommands.get,
   computeApplicationCommands.jobsList,
   computeApplicationCommands.jobsMarkConsumed,
@@ -271,6 +293,20 @@ const registerComputeApplicationCommands = (
   dependencies: ComputeApplicationCommandDependencies
 ): ApplicationCommandInstallation => {
   const scope = registrar.createScope()
+  const commitComputeHostAccess = async (
+    operation: () => Promise<PersistedChatSession>
+  ): Promise<PersistedChatSession> => {
+    const session = await operation()
+    try {
+      dependencies.events.publish(LIFECYCLE_CHANNELS.sessionUpdated, {
+        session,
+        originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
+      })
+    } catch {
+      // Lifecycle delivery cannot roll back committed Session authority.
+    }
+    return session
+  }
   try {
     scope.registerGroup(computeApplicationCommandGroup, {
       'compute:list': () => dependencies.compute.list(),
@@ -342,18 +378,16 @@ const registerComputeApplicationCommands = (
       'compute:jobs:mark-consumed': ({ args }) =>
         dependencies.compute.jobsMarkConsumed(args[0], args[1]),
       'compute:enabled-hosts:get': ({ args }) => dependencies.enabledHosts.get(args[0]),
-      'compute:enabled-hosts:set': async ({ args }) => {
-        const session = await dependencies.enabledHosts.set(args[0], args[1])
-        try {
-          dependencies.events.publish(LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
-          })
-        } catch {
-          // Lifecycle delivery cannot roll back committed Session authority.
-        }
-        return session
-      },
+      'compute:enabled-hosts:set': ({ args }) =>
+        commitComputeHostAccess(() => dependencies.enabledHosts.set(args[0], args[1])),
+      'compute:host-enabled:set': ({ args }) =>
+        commitComputeHostAccess(() =>
+          dependencies.enabledHosts.setHostEnabled(args[0], args[1], args[2])
+        ),
+      'compute:host-selected:set': ({ args }) =>
+        commitComputeHostAccess(() =>
+          dependencies.enabledHosts.setHostSelected(args[0], args[1], args[2])
+        ),
       'compute:bookmarks:get': ({ args }) => dependencies.bookmarks.get(args[0]),
       'compute:bookmarks:set': ({ args }) => dependencies.bookmarks.set(args[0], args[1])
     })

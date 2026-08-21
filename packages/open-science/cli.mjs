@@ -37,7 +37,7 @@ Commands:
   project list
   project create <name> [--description <text>] [--agent-context <text> | --agent-context-file <path>]
   project update <id-or-name> [--name <name>] [--description <text>] [--agent-context <text> | --agent-context-file <path> | --clear-agent-context]
-  run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--wait]
+  run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--compute-host <provider-id>] [--wait]
   run status <run-id>
   run cancel <run-id>
   session status <session-id>
@@ -64,6 +64,7 @@ Options:
   --clear-agent-context  Clear a Project's persistent Agent Context
   --approval-profile <profile>  ask, auto, or full (default: ask)
   --skill <id>           Force-load a skill for this run (repeatable)
+  --compute-host <provider-id>  Select a Compute Host execution target (repeatable)
   --plan-first           Require an approved Plan before execution
   --auto-review          Enable automatic review for this Session
   --no-auto-review       Disable automatic review for this Session
@@ -162,6 +163,10 @@ export const parseCliArgs = (argv) => {
       const value = args.shift()
       if (!value) throw new CliUsageError('--skill requires a value.')
       options.skills = [...(options.skills ?? []), value]
+    } else if (arg === '--compute-host') {
+      const value = args.shift()
+      if (!value) throw new CliUsageError('--compute-host requires a value.')
+      options.computeHosts = [...(options.computeHosts ?? []), value]
     } else if (arg === '-h' || arg === '--help') options.help = true
     else if (Object.hasOwn(VALUE_OPTIONS, arg)) {
       const value = args.shift()
@@ -279,7 +284,8 @@ export const parseCliArgs = (argv) => {
     ['--plan-first', options.planFirst],
     ['--auto-review/--no-auto-review', options.autoReviewEnabled !== undefined],
     ['--specialist', options.specialist !== undefined],
-    ['--delegation', options.delegation !== undefined]
+    ['--delegation', options.delegation !== undefined],
+    ['--compute-host', options.computeHosts !== undefined]
   ]
   for (const [label, present] of runOnlyOptions) {
     if (present && (command !== 'run' || subcommand)) {
@@ -1212,7 +1218,8 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
           ? { autoReviewEnabled: options.autoReviewEnabled }
           : {}),
         ...(options.specialist ? { specialist: options.specialist } : {}),
-        ...(options.delegation ? { delegationPolicy: options.delegation } : {})
+        ...(options.delegation ? { delegationPolicy: options.delegation } : {}),
+        ...(options.computeHosts !== undefined ? { computeHostIds: options.computeHosts } : {})
       })
       sessionIdRef.current = started.sessionId
       for (const event of sessionIdRef.pending.splice(0)) {

@@ -2844,7 +2844,7 @@ describe('notebook local RPC server', () => {
     const fakeComputeService = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: true }),
+      getDetails: async () => ({ doc: '', isSkeleton: true, probeResult: undefined }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       download: async () => ({}),
@@ -2852,7 +2852,7 @@ describe('notebook local RPC server', () => {
       getJobStatus: async () => ({}),
       getJobResult: async () => ({}),
       // Returns pre-configured enabled hosts for the session under test.
-      getEnabledComputeHosts: (sessionId: string): string[] => {
+      listCompute: (sessionId: string): string[] => {
         if (sessionId === 'my-session') return ['ssh:cluster-1']
         return []
       },
@@ -2867,7 +2867,7 @@ describe('notebook local RPC server', () => {
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
       token: 'secret-token',
-      computeService: fakeComputeService
+      computeService: fakeComputeService as never
     })
     const connection = await server.issueSessionConnection(
       'my-session',
@@ -2931,14 +2931,14 @@ describe('notebook local RPC server', () => {
     const fakeComputeService = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: true }),
+      getDetails: async () => ({ doc: '', isSkeleton: true, probeResult: undefined }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       download: async () => ({}),
       submitJob: async () => ({}),
       getJobStatus: async () => ({}),
       getJobResult: async () => ({}),
-      getEnabledComputeHosts: () => [],
+      listCompute: () => [],
       setSessionConcurrencyLimit: async (sessionId: string, limit: number) => {
         calls.push({ sessionId, limit })
       },
@@ -2952,7 +2952,7 @@ describe('notebook local RPC server', () => {
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
       token: 'secret-token',
-      computeService: fakeComputeService
+      computeService: fakeComputeService as never
     })
     const connection = await server.issueSessionConnection(
       'my-session',
@@ -2991,14 +2991,14 @@ describe('notebook local RPC server', () => {
     const fakeComputeService = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: true }),
+      getDetails: async () => ({ doc: '', isSkeleton: true, probeResult: undefined }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       download: async () => ({}),
       submitJob: async () => ({}),
       getJobStatus: async () => ({}),
       getJobResult: async () => ({}),
-      getEnabledComputeHosts: () => [],
+      listCompute: () => [],
       setSessionConcurrencyLimit: async () => {},
       getSessionConcurrencyStatus: async (sessionId: string) => ({
         session_limit: sessionId === 'my-session' ? 5 : null,
@@ -3010,7 +3010,7 @@ describe('notebook local RPC server', () => {
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
       token: 'secret-token',
-      computeService: fakeComputeService
+      computeService: fakeComputeService as never
     })
     const connection = await server.issueSessionConnection(
       'my-session',

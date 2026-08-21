@@ -52,6 +52,15 @@ type AcpTurnSkillPresentation = Readonly<{
   codexSkillInputs: readonly AcpCodexSkillInput[]
 }>
 
+const COMPUTE_EXECUTION_TARGET_REMINDER = [
+  '<open_science_compute_execution_target>',
+  'The user selected one or more Compute Hosts as the execution-target pool for this Session.',
+  'If this turn requires command, code, Notebook, job, or other tool-backed execution, load the Remote Compute (SSH) Skill, call `host.compute.listHosts()`, and use one or more catalog entries whose role is `selected` as the task requires.',
+  'The selected pool has no priority and does not imply automatic multi-host scheduling. Do not run task work in the local Notebook or shell, on an available-but-unselected host, or on a provider id absent from the Session catalog. Local tools may be used only for lightweight orchestration, input staging, and result inspection that cannot run through Remote Compute.',
+  'If no selected host is usable, explain the blocker and ask the user how to proceed; do not silently fall back to local execution or another host.',
+  '</open_science_compute_execution_target>'
+].join('\n')
+
 const immutableCopy = <Value>(value: Value): Value => {
   if (Array.isArray(value)) {
     return Object.freeze(value.map((entry) => immutableCopy(entry))) as Value
@@ -95,15 +104,29 @@ const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
   '</open_science_large_file_instructions>'
 ].join('\n')
 
+// Session-stable decision guidance only. Host inventory and Session execution targets are
+// deliberately discovered through host.compute at runtime so this prompt prefix remains cacheable.
+const REMOTE_COMPUTE_AWARENESS_SYSTEM_PROMPT_APPEND = [
+  '<open_science_remote_compute_awareness>',
+  'Before starting GPU, high-memory, parallel, batch, model-inference, bioinformatics, or potentially long-running scientific work locally, consider Remote Compute.',
+  'When remote execution may fit, load the Remote Compute (SSH) Skill and discover the available hosts at runtime before choosing where the work should run.',
+  '</open_science_remote_compute_awareness>'
+].join('\n')
+
 const SPECIALIST_IDENTITY_TAG = '[open-science:specialist-identity]'
 
 // ARD-07 is a P0 pure-addition seam: later serialized Session and prompt leaves own Runtime
 // integration. This policy owns neither Session state nor capabilities supplied by existing owners.
 class AcpSessionPresentationPolicy {
+  computeExecutionTargetReminder(selectedProviderIds: readonly string[]): string | undefined {
+    return selectedProviderIds.length > 0 ? COMPUTE_EXECUTION_TARGET_REMINDER : undefined
+  }
+
   applicationSystemPromptAppends(tooling: AcpSessionToolingAvailability): readonly string[] {
     return Object.freeze([
       TURN_CONTINUITY_SYSTEM_PROMPT_APPEND,
       LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
+      REMOTE_COMPUTE_AWARENESS_SYSTEM_PROMPT_APPEND,
       ...(tooling.artifacts ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(tooling.notebook ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : []),
       ...(tooling.skillImport ? [SKILL_IMPORT_SYSTEM_PROMPT_APPEND] : [])

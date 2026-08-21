@@ -238,8 +238,19 @@ describe('submitFindingsInputSchema — v3 unified checks[] (no reasoning)', () 
       }
     ).properties?.checks
 
-    expect(checksSchema?.minItems).toBe(1)
+    expect(checksSchema?.minItems).toBeUndefined()
     expect(checksSchema?.maxItems).toBeUndefined()
+  })
+
+  it('does not tell initial bridge reviewers to manufacture a pass check', () => {
+    const submitFindingsTool = REVIEWER_BRIDGE_NAMESPACED_TOOLS.find(
+      (tool) => tool.name === 'submit_findings'
+    )
+
+    expect(submitFindingsTool?.description).not.toMatch(
+      /at least one|empty checks array is invalid/i
+    )
+    expect(submitFindingsTool?.description).toMatch(/initial.*no checkable claims.*empty checks/i)
   })
 
   it('accepts checks[] with status pass|warn|fail (no reasoning field)', () => {
@@ -284,9 +295,9 @@ describe('submitFindingsInputSchema — v3 unified checks[] (no reasoning)', () 
     expect(parsed.success).toBe(false)
   })
 
-  it('rejects an empty checks array instead of manufacturing a pass', () => {
+  it('accepts an empty checks array for an initial Review', () => {
     const parsed = submitFindingsInputSchema.safeParse({ checks: [] })
-    expect(parsed.success).toBe(false)
+    expect(parsed.success).toBe(true)
   })
 
   it('rejects unknown status values (inconclusive no longer valid)', () => {
@@ -550,7 +561,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
         clientInfo: { name: 'budget-test', version: '1.0' }
       }
     })
-    const server = new ReviewerMcpServer(scope, onSubmit, evidence, [], {
+    const server = new ReviewerMcpServer(scope, onSubmit, evidence, 'initial', [], {
       requestBytes: Buffer.byteLength(initializeBody)
     })
     const { endpoint, token } = await server.start()
@@ -597,7 +608,12 @@ describe('ReviewerMcpServer HTTP transport', () => {
   })
 
   it('reuses the session transport for the GET SSE stream and still serves tool calls', async () => {
-    const server = new ReviewerMcpServer(scope, async () => undefined, createReviewerEvidence())
+    const server = new ReviewerMcpServer(
+      scope,
+      async () => undefined,
+      createReviewerEvidence(),
+      'initial'
+    )
     const { endpoint, token } = await server.start()
 
     const authHeaders = { authorization: `Bearer ${token}`, accept: MCP_ACCEPT }
@@ -672,6 +688,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
       scope,
       async () => undefined,
       createReviewerEvidence(),
+      'initial',
       [],
       { command: 'unused', entryPath: 'unused', transport: 'pipe' }
     )
@@ -744,7 +761,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
   })
 
   it('rejects a request with an unknown mcp-session-id', async () => {
-    const server = new ReviewerMcpServer(scope, async () => undefined)
+    const server = new ReviewerMcpServer(scope, async () => undefined, undefined, 'initial')
     const { endpoint, token } = await server.start()
 
     try {
@@ -768,7 +785,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
   it('exposes evidence only through the scope-bounded reviewer MCP tools', async () => {
     const evidence = createReviewerEvidence()
     const onSubmit = vi.fn().mockResolvedValue(undefined)
-    const server = new ReviewerMcpServer(scope, onSubmit, evidence)
+    const server = new ReviewerMcpServer(scope, onSubmit, evidence, 'initial')
     const { endpoint, token } = await server.start()
 
     try {
@@ -831,9 +848,54 @@ describe('ReviewerMcpServer HTTP transport', () => {
     }
   })
 
+  it('accepts an explicit empty initial submission only after the frozen turn was read', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), 'initial')
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      const beforeRead = await callTool(endpoint, sessionId, headers, 'submit_findings', {
+        checks: []
+      })
+      expect(beforeRead.result?.isError).toBe(true)
+      expect(beforeRead.result?.content?.[0]?.text).toContain('must read the frozen turn')
+
+      await callTool(endpoint, sessionId, headers, 'read_turn', {})
+      const accepted = await callTool(endpoint, sessionId, headers, 'submit_findings', {
+        checks: []
+      })
+      expect(accepted.result?.isError).not.toBe(true)
+      expect(onSubmit).toHaveBeenCalledOnce()
+      expect(onSubmit).toHaveBeenCalledWith([], scope, {})
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('rejects an empty tracked re-review submission even without tracked ids', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), 'tracked')
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      await callTool(endpoint, sessionId, headers, 'read_turn', {})
+      const rejected = await callTool(endpoint, sessionId, headers, 'submit_findings', {
+        checks: []
+      })
+      expect(rejected.result?.isError).toBe(true)
+      expect(onSubmit).not.toHaveBeenCalled()
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('requires exactly one stable disposition per tracked finding and rejects duplicate submission', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
-    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), ['finding-1'])
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), 'tracked', [
+      'finding-1'
+    ])
     const { endpoint, token } = await server.start()
 
     try {
@@ -961,6 +1023,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
         scope,
         onSubmit,
         createReviewerEvidence(),
+        'tracked',
         trackedFindingIds
       )
       const { endpoint, token } = await server.start()
@@ -992,7 +1055,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
 
   it('drops a model-invented sourceFindingId during an initial review', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
-    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence())
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), 'initial')
     const { endpoint, token } = await server.start()
 
     try {
@@ -1034,7 +1097,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
       if (submissionsStarted === 2) releaseSubmission?.()
       await submissionGate
     })
-    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence())
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), 'initial')
     const { endpoint, token } = await server.start()
 
     try {
@@ -1062,7 +1125,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
       .fn()
       .mockRejectedValueOnce(new Error('persistence failed'))
       .mockResolvedValueOnce(undefined)
-    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence())
+    const server = new ReviewerMcpServer(scope, onSubmit, createReviewerEvidence(), 'initial')
     const { endpoint, token } = await server.start()
 
     try {
@@ -1112,7 +1175,7 @@ describe('ReviewerMcpServer named-pipe proxy', () => {
   it('lists and calls the existing scoped tools through stdio without loopback TCP', async () => {
     const evidence = createReviewerEvidence()
     const onSubmit = vi.fn().mockResolvedValue(undefined)
-    const server = new ReviewerMcpServer(scope, onSubmit, evidence, [], {
+    const server = new ReviewerMcpServer(scope, onSubmit, evidence, 'initial', [], {
       command: 'C:\\Open Science.exe',
       entryPath: 'C:\\app\\main.js',
       transport: 'pipe'

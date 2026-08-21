@@ -3,6 +3,7 @@ import { unzipSync } from 'fflate'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 
 const downloadsPath = join('/Users/example', 'Downloads')
 
@@ -10,6 +11,18 @@ const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>
 const getAppPath = vi.hoisted(() => vi.fn())
 const showSaveDialog = vi.hoisted(() => vi.fn())
 const showOpenDialog = vi.hoisted(() => vi.fn())
+const zipSyncMock = vi.hoisted(() => vi.fn())
+
+vi.mock('fflate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fflate')>()
+  return {
+    ...actual,
+    zipSync: (...args: Parameters<typeof actual.zipSync>) => {
+      zipSyncMock()
+      return actual.zipSync(...args)
+    }
+  }
+})
 
 vi.mock('electron', () => ({
   app: { getPath: getAppPath },
@@ -31,6 +44,7 @@ describe('file save IPC handlers', () => {
     getAppPath.mockReturnValue(downloadsPath)
     showOpenDialog.mockReset()
     showSaveDialog.mockReset()
+    zipSyncMock.mockClear()
   })
 
   it('exports one selected Session Artifact through Save As', async () => {
@@ -644,6 +658,114 @@ describe('file save IPC handlers', () => {
     }
   })
 
+  it('exports Project Artifacts without reading an entire source into memory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-stream-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const bytes = Buffer.from('artifact bytes')
+    const readFileMock = vi.fn().mockResolvedValue(bytes)
+    const openProjectArtifactFile = vi.fn().mockImplementation(async () => ({
+      stat: vi
+        .fn()
+        .mockResolvedValue({ isFile: () => true, size: bytes.byteLength, dev: 1, ino: 1 }),
+      readFile: readFileMock,
+      createReadStream: vi.fn(() => Readable.from([bytes])),
+      close: vi.fn().mockResolvedValue(undefined)
+    }))
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath: vi.fn().mockResolvedValue('/managed/report.csv'),
+      openProjectArtifactFile
+    } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect.soft(readFileMock).not.toHaveBeenCalled()
+      expect(zipSyncMock).not.toHaveBeenCalled()
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe('artifact bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a Project Artifact whose inode changes after validation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-identity-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    await writeFile(destinationPath, 'existing destination')
+    const createReadStream = vi.fn(() => Readable.from([Buffer.from('replacement bytes')]))
+    const closeValidated = vi.fn().mockResolvedValue(undefined)
+    const closeReplacement = vi.fn().mockResolvedValue(undefined)
+    const openProjectArtifactFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 14, dev: 7, ino: 11 }),
+        createReadStream,
+        close: closeValidated
+      })
+      .mockResolvedValueOnce({
+        stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 17, dev: 7, ino: 12 }),
+        createReadStream,
+        close: closeReplacement
+      })
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue('/managed/report.csv')
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath, openProjectArtifactFile } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://report',
+            suggestedName: 'report.csv',
+            message: 'Project export source changed after validation.'
+          }
+        ]
+      })
+      expect(resolveSessionArtifactFilePath).toHaveBeenCalledTimes(1)
+      expect(createReadStream).not.toHaveBeenCalled()
+      expect(closeValidated).toHaveBeenCalledTimes(1)
+      expect(closeReplacement).toHaveBeenCalledTimes(1)
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing destination')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('applies collision suffixes within each source category only', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-categories-'))
     const artifactPathA = join(root, 'managed-a.csv')
@@ -1107,50 +1229,48 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('drops files that outgrow the per-file limit between stat and read', async () => {
+  it('aborts the export when a source outgrows the per-file limit while streaming', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-growth-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    await writeFile(destinationPath, 'existing destination')
     const close = vi.fn().mockResolvedValue(undefined)
-    const readFileMock = vi.fn().mockResolvedValue(Buffer.from('this grew past the limit'))
     const openProjectArtifactFile = vi.fn().mockResolvedValue({
-      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 5 }),
-      readFile: readFileMock,
+      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 5, dev: 1, ino: 1 }),
+      createReadStream: vi.fn(() => Readable.from([Buffer.from('this grew past the limit')])),
       close
     })
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
     registerFileSaveHandlers({
       resolveSessionArtifactFilePath: vi.fn().mockResolvedValue('/managed/report.csv'),
       openProjectArtifactFile,
       projectArtifactExportLimits: { maxFiles: 5000, maxFileBytes: 10, maxTotalBytes: 1024 }
     } as never)
 
-    const result = await handlers.get('file:save-project-artifacts')!(
-      { sender: {} },
-      {
-        projectId: 'project-1',
-        suggestedArchiveName: 'Research',
-        files: [
+    try {
+      await expect(
+        handlers.get('file:save-project-artifacts')!(
+          { sender: {} },
           {
-            source: 'artifact',
-            sessionId: 'session-1',
-            path: 'artifact://report',
-            suggestedName: 'report.csv'
+            projectId: 'project-1',
+            suggestedArchiveName: 'Research',
+            files: [
+              {
+                source: 'artifact',
+                sessionId: 'session-1',
+                path: 'artifact://report',
+                suggestedName: 'report.csv'
+              }
+            ]
           }
-        ]
-      }
-    )
+        )
+      ).rejects.toThrow('Project export file exceeds the per-file size limit.')
 
-    expect(result).toEqual({
-      saved: true,
-      failures: [
-        {
-          source: 'artifact',
-          sessionId: 'session-1',
-          path: 'artifact://report',
-          suggestedName: 'report.csv',
-          message: 'Project export file exceeds the per-file size limit.'
-        }
-      ]
-    })
-    expect(showSaveDialog).not.toHaveBeenCalled()
-    expect(close).toHaveBeenCalledTimes(1)
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing destination')
+      expect(showSaveDialog).toHaveBeenCalledTimes(1)
+      expect(close).toHaveBeenCalledTimes(2)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('reports non-file export sources without reading them', async () => {

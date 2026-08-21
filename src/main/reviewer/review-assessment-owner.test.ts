@@ -26,6 +26,16 @@ const harness = vi.hoisted(() => ({
   stopError: undefined as Error | undefined,
   bridgeScoped: undefined as boolean | undefined
 }))
+const logSpies = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+}))
+
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return { ...actual, createLogger: () => logSpies }
+})
 
 const outsideMutation = (event: string): void => {
   if (harness.inMutation) throw new Error(`${event} ran inside the Session mutation`)
@@ -67,6 +77,7 @@ vi.mock('./mcp-server', () => ({
       _scope: TurnScope,
       submit: (checks: NewCheck[]) => Promise<void>,
       _host: unknown,
+      _mode: 'initial' | 'tracked',
       trackedIds: string[]
     ) {
       outsideMutation(`mcp:create:${trackedIds.join(',')}`)
@@ -257,6 +268,7 @@ describe('review assessment owner', () => {
     harness.disposeError = undefined
     harness.stopError = undefined
     harness.bridgeScoped = undefined
+    vi.clearAllMocks()
   })
 
   it('publishes initial running before onStarted and keeps remote work outside mutations', async () => {
@@ -291,8 +303,64 @@ describe('review assessment owner', () => {
     ])
   })
 
+  it('completes an explicit empty initial assessment and classifies its completion log', async () => {
+    harness.submission = []
+    const reviewRepository = makeRepository()
+
+    const result = await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      mode: 'initial'
+    })
+
+    expect(result.submittedChecks).toEqual([])
+    expect(reviewRepository.commitScopedSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'initial', checks: [], expectedSourceFindingIds: [] })
+    )
+    expect(logSpies.info).toHaveBeenCalledWith('review complete', {
+      reviewId: 'assessment-review',
+      outcome: 'pass',
+      checkCount: 0,
+      model: 'reviewer-model',
+      assessmentKind: 'no_checkable_claims'
+    })
+  })
+
+  it('classifies non-empty initial and tracked assessment completion as assessed', async () => {
+    await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      mode: 'initial'
+    })
+    expect(logSpies.info).toHaveBeenCalledWith(
+      'review complete',
+      expect.objectContaining({ assessmentKind: 'assessed', checkCount: 1 })
+    )
+
+    vi.clearAllMocks()
+    harness.submission = [
+      {
+        status: 'pass',
+        claim: 'Fixed',
+        evidence: 'Verified',
+        sourceFindingId: trackedCheck.id
+      }
+    ]
+    await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      mode: 'tracked',
+      trackedChecks: [trackedCheck]
+    })
+    expect(logSpies.info).toHaveBeenCalledWith(
+      'scoped re-review complete',
+      expect.objectContaining({ assessmentKind: 'assessed', checkCount: 1 })
+    )
+  })
+
   it('reconciles the Review model with the backend pinned by the runtime', async () => {
     const reviewRepository = makeRepository()
+    vi.mocked(reviewRepository.commitScopedSubmission).mockImplementation(async () => ({
+      ...committedAssessmentReview(),
+      model: 'actual-runtime-model'
+    }))
     const updates: ReviewWithChecks[] = []
 
     await runReviewAssessment({
@@ -307,6 +375,10 @@ describe('review assessment owner', () => {
     })
     expect(updates).toContainEqual(
       expect.objectContaining({ lifecycle: 'running', model: 'actual-runtime-model' })
+    )
+    expect(logSpies.info).toHaveBeenCalledWith(
+      'review complete',
+      expect.objectContaining({ model: 'actual-runtime-model' })
     )
   })
 
@@ -424,7 +496,7 @@ describe('review assessment owner', () => {
     )
   })
 
-  it('commits tracked findings atomically before publishing source then assessment', async () => {
+  it('commits tracked Review Checks atomically before publishing source then assessment', async () => {
     harness.submission = [
       {
         status: 'pass',
@@ -447,7 +519,7 @@ describe('review assessment owner', () => {
 
     expect(result.submittedChecks).toEqual(harness.submission)
     expect(reviewRepository.commitScopedSubmission).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedSourceFindingIds: [trackedCheck.id] })
+      expect.objectContaining({ mode: 'tracked', expectedSourceFindingIds: [trackedCheck.id] })
     )
     expect(harness.events).toEqual(
       expect.arrayContaining([

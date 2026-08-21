@@ -191,6 +191,28 @@ open-science run --project <project-id> --cwd ./research --prompt-file ./task.md
 printf '%s\n' "Summarize the evidence" | open-science run --project <project-id> --wait --json
 ```
 
+Use repeatable `--compute-host <provider-id>` options to select Compute Host execution targets for
+the Session:
+
+```bash
+open-science run --project <project-id> --prompt-file ./task.md \
+  --compute-host ssh:cluster-a --compute-host ssh:cluster-b --wait --json
+```
+
+On a new Session, the explicit list enables and selects those hosts. With `--session`, an explicit
+list replaces the selected target pool and enables any newly named hosts without disabling other
+Available hosts. Omitting every `--compute-host` preserves both access and selection. The CLI does
+not provide a clear-selection flag; SDK and Task API callers can explicitly send an empty
+`computeHostIds` array to clear Selected while preserving Enabled hosts. JSON output uses the
+server's compatibility-named
+`preferredComputeHostIds` authority result, not a copy inferred from the command line.
+
+When the selection is non-empty, the agent is instructed to run tool-backed task work on one of
+those hosts and not silently fall back to local execution or another Available Compute Host. Pure answers
+and lightweight orchestration do not require remote execution. Each provider ID must refer to a
+host already configured in Open Science. This option does not create a host, configure SSH or
+credentials, probe a connection, or pin scratch storage.
+
 `--cwd <path>` selects an externally owned working directory for the Session. The CLI resolves a
 relative path from the directory where the command is invoked. Open Science then resolves the real
 path, verifies that it exists, is a directory, and is readable and writable, and persists that

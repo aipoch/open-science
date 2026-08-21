@@ -29,6 +29,8 @@ export type CustomMcpServerConfig = {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    clientId?: string
+    clientSecret?: string
     state?: StoredCustomMcpOAuthState
   }
 }
@@ -380,6 +382,7 @@ export class McpClientManager {
       serverId: config.id,
       redirectUrl,
       config: config.oauth ?? {},
+      clientSecret: config.oauth?.clientSecret,
       state: config.oauth?.state,
       ...(interactive ? { openExternal: this.openExternal } : {}),
       saveState: this.saveOAuthState

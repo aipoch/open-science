@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from './session-enabled-hosts-owner'
@@ -36,6 +37,10 @@ describe('SessionEnabledComputeHostsOwner', () => {
       expect(registry.get('session-1')).toEqual(['ssh:old'])
       return durable
     })
+    const mutateSessionComputeHostAccess = vi.fn(async () => {
+      expect(registry.get('session-1')).toEqual(['ssh:old'])
+      return durable
+    })
     const owner = new SessionEnabledComputeHostsOwner({
       registry,
       hostExists: async (providerId) => providerId === 'ssh:new',
@@ -43,6 +48,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
       sessionAuthority: {
         sessionProjectId: async () => 'project-1',
         setSessionEnabledComputeHosts,
+        mutateSessionComputeHostAccess,
         pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
       withDataRootWrite: passthroughDataRootWrite
@@ -50,9 +56,11 @@ describe('SessionEnabledComputeHostsOwner', () => {
 
     await expect(owner.set('session-1', ['ssh:new'])).resolves.toEqual(durable)
 
-    expect(setSessionEnabledComputeHosts).toHaveBeenCalledWith('project-1', 'session-1', [
-      'ssh:new'
-    ])
+    expect(mutateSessionComputeHostAccess).toHaveBeenCalledWith('project-1', 'session-1', {
+      kind: 'select-explicit',
+      providerIds: ['ssh:new']
+    })
+    expect(setSessionEnabledComputeHosts).not.toHaveBeenCalled()
     expect(owner.get('session-1')).toEqual(['ssh:new'])
   })
 
@@ -147,7 +155,11 @@ describe('SessionEnabledComputeHostsOwner', () => {
 
     await expect(
       owner.createSession(createSession({ enabledComputeHosts: ['ssh:missing'] }), commit)
-    ).rejects.toThrow('Compute Host not found')
+    ).rejects.toMatchObject({
+      name: 'ComputeHostPreferenceValidationError',
+      code: 'host_not_found',
+      providerId: 'ssh:missing'
+    } satisfies Partial<ComputeHostPreferenceValidationError>)
     expect(commit).toHaveBeenCalledTimes(1)
   })
 
@@ -416,27 +428,39 @@ describe('SessionEnabledComputeHostsOwner', () => {
 
   it('restores durable selections and the cache when provider deletion fails', async () => {
     const registry = new EnabledComputeHostsRegistry()
-    registry.set('session-1', ['ssh:cluster', 'ssh:kept'])
-    const repaired = createSession({ enabledComputeHosts: ['ssh:kept'], updatedAt: 3 })
+    registry.setAccess('session-1', {
+      enabledProviderIds: ['ssh:cluster', 'ssh:kept'],
+      selectedProviderIds: ['ssh:cluster']
+    })
+    const repaired = createSession({
+      enabledComputeHosts: ['ssh:kept'],
+      selectedComputeHosts: [],
+      updatedAt: 3
+    })
     const restored = createSession({
       enabledComputeHosts: ['ssh:cluster', 'ssh:kept'],
+      selectedComputeHosts: ['ssh:cluster'],
       updatedAt: 4
     })
-    const setSessionEnabledComputeHosts = vi.fn(async () => restored)
+    const mutateSessionComputeHostAccess = vi.fn(async () => restored)
     const owner = new SessionEnabledComputeHostsOwner({
       registry,
       hostExists: async () => true,
       listHostIds: async () => ['ssh:cluster', 'ssh:kept'],
       sessionAuthority: {
         sessionProjectId: async () => 'project-1',
-        setSessionEnabledComputeHosts,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        mutateSessionComputeHostAccess,
         pruneSessionEnabledComputeHosts: async () => ({
           sessions: [repaired],
           previousSelections: [
             {
               projectId: 'project-1',
               sessionId: 'session-1',
-              providerIds: ['ssh:cluster', 'ssh:kept']
+              providerIds: ['ssh:cluster', 'ssh:kept'],
+              selectedProviderIds: ['ssh:cluster']
             }
           ]
         })
@@ -450,10 +474,41 @@ describe('SessionEnabledComputeHostsOwner', () => {
       })
     ).rejects.toThrow('Host delete failed')
 
-    expect(setSessionEnabledComputeHosts).toHaveBeenCalledWith('project-1', 'session-1', [
-      'ssh:cluster',
-      'ssh:kept'
-    ])
+    expect(mutateSessionComputeHostAccess).toHaveBeenCalledWith('project-1', 'session-1', {
+      kind: 'replace-access',
+      access: {
+        enabledProviderIds: ['ssh:cluster', 'ssh:kept'],
+        selectedProviderIds: ['ssh:cluster']
+      }
+    })
     expect(owner.get('session-1')).toEqual(['ssh:cluster', 'ssh:kept'])
+    expect(owner.getSelected('session-1')).toEqual(['ssh:cluster'])
+  })
+
+  it('prevents provider deletion while a new Session holds a validated access reservation', async () => {
+    const deleteProvider = vi.fn(async () => undefined)
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => ['ssh:cluster'],
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite
+    })
+
+    await owner.withReservation(['ssh:cluster'], async (providerIds) => {
+      expect(providerIds).toEqual(['ssh:cluster'])
+      await expect(owner.pruneProvider('ssh:cluster', deleteProvider)).rejects.toThrow(
+        'Compute Host is reserved by a Session being created: ssh:cluster'
+      )
+    })
+
+    await expect(owner.pruneProvider('ssh:cluster', deleteProvider)).resolves.toEqual([])
+    expect(deleteProvider).toHaveBeenCalledOnce()
   })
 })

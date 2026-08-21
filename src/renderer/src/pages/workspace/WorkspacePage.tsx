@@ -65,6 +65,7 @@ import { useWorkspaceSessionController } from './workspace-session-controller'
 import { useWorkspaceBranchSwitchGuard } from './use-workspace-branch-switch-guard'
 import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
+import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -231,6 +232,9 @@ const WorkspacePage = ({
   // Draft compute hosts for a not-yet-created conversation. Cleared when a new conversation draft
   // is started, and stamped onto the session by the Conversation submit transaction.
   const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
+    string[]
+  >([])
+  const [newConversationSelectedComputeHosts, setNewConversationSelectedComputeHosts] = useState<
     string[]
   >([])
   const [notebookReferences, setNotebookReferences] = useState<
@@ -450,11 +454,14 @@ const WorkspacePage = ({
   const activeAutoReviewEnabled = activeSession
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
-  // Per-session enabled compute hosts (providerIds like "ssh:<alias>"). Empty when no host is selected.
-  // New conversations use the draft state, which is cleared when a new conversation draft is started.
-  const activeEnabledComputeHosts = activeSession
-    ? (activeSession.enabledComputeHosts ?? [])
-    : newConversationEnabledComputeHosts
+  const computeHostAccess = createWorkspaceComputeHostAccessController({
+    activeSession,
+    newConversationEnabledComputeHosts,
+    newConversationSelectedComputeHosts,
+    setNewConversationEnabledComputeHosts,
+    setNewConversationSelectedComputeHosts,
+    setError: setAttachmentError
+  })
   // True while any review for the active session is in the 'running' lifecycle.
   // Select the Project-scoped review array so pushes stay reactive without cross-Project collisions.
   const activeSessionId = activeSession?.id
@@ -483,6 +490,7 @@ const WorkspacePage = ({
       pendingPermissions.some((request) => request.sessionId === sessionId),
     newConversationAutoReviewEnabled,
     newConversationEnabledComputeHosts,
+    newConversationSelectedComputeHosts,
     composer,
     session: sessionController,
     runtime,
@@ -492,6 +500,7 @@ const WorkspacePage = ({
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
       setNewConversationEnabledComputeHosts([])
+      setNewConversationSelectedComputeHosts([])
     },
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
@@ -758,6 +767,7 @@ const WorkspacePage = ({
     setNewConversationPermissionProfile(defaultPermissionProfile)
     setNewConversationAutoReviewEnabled(false)
     setNewConversationEnabledComputeHosts([])
+    setNewConversationSelectedComputeHosts([])
     useNavigationStore.getState().recordUserNavigation()
     sessionController.actions.resetNewConversationSpecialist()
     clearSelection()
@@ -833,33 +843,6 @@ const WorkspacePage = ({
     }
 
     setAutoReviewEnabled(activeSession.id, enabled)
-  }
-
-  // Enables or disables a compute host for the active session (single-select semantics).
-  // Enabling one host replaces any existing selection; disabling clears the set.
-  // For a not-yet-created conversation, the Conversation submit transaction stamps this draft state
-  // onto the new session. Existing sessions update only from the durable command result.
-  const handleComputeHostToggle = (providerId: string, enabled: boolean): void => {
-    // Single-select: enable one host ↔ clear all others; disabling clears the selection entirely.
-    const newEnabledHosts = enabled ? [providerId] : []
-    if (!activeSession) {
-      setNewConversationEnabledComputeHosts(newEnabledHosts)
-      return
-    }
-    const source = activeSession
-    setAttachmentError(null)
-    void window.api.compute
-      .enabledHostsSet(source.id, newEnabledHosts)
-      .then((session) => {
-        useSessionStore.getState().applyDurableSessionProjection({
-          source,
-          session,
-          mode: 'enabled-compute-hosts-authority'
-        })
-      })
-      .catch((error: unknown) => {
-        setAttachmentError(error instanceof Error ? error.message : String(error))
-      })
   }
 
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
@@ -1116,9 +1099,11 @@ const WorkspacePage = ({
             agentControls={{
               canChange: canChangeAgentControls,
               autoReviewEnabled: activeAutoReviewEnabled,
-              enabledComputeHosts: activeEnabledComputeHosts,
+              enabledComputeHosts: computeHostAccess.enabledProviderIds,
+              selectedComputeHosts: computeHostAccess.selectedProviderIds,
               toggleAutoReview: changeAutoReviewEnabled,
-              toggleComputeHost: handleComputeHostToggle
+              setComputeHostEnabled: computeHostAccess.setHostEnabled,
+              setComputeHostSelected: computeHostAccess.setHostSelected
             }}
             contextWindow={{
               usage: activeContextUsage,

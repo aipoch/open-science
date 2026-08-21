@@ -439,6 +439,7 @@ describe('Session persistence coordinator architecture', () => {
         'loadSessionForContinuation',
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
+        'mutateSessionComputeHostAccess',
         'patchSessionRuntimeContext',
         'pruneSessionEnabledComputeHosts',
         'readChildren',
@@ -657,6 +658,7 @@ describe('Session persistence coordinator architecture', () => {
         'commitSideChatRelays',
         'containsMessageOnActiveBranch',
         'loadSessionForContinuation',
+        'mutateSessionComputeHostAccess',
         'patchSessionRuntimeContext',
         'readSessionRuntimeContext',
         'runSessionMutation',
@@ -719,7 +721,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(31)
+    expect(expectedSchedulerRoute.size).toBe(32)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -935,6 +937,7 @@ describe('Session persistence coordinator architecture', () => {
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],
       markCommittedProjectSessionsPrepared: ['deletionOwner.markCommittedProjectSessionsPrepared'],
+      mutateSessionComputeHostAccess: ['stateOwner.setEnabledComputeHosts'],
       patchSessionRuntimeContext: ['stateOwner.patchRuntimeContext'],
       pruneSessionEnabledComputeHosts: ['stateOwner.pruneEnabledComputeHosts'],
       readSessionRuntimeContext: ['stateOwner.readRuntimeContext'],

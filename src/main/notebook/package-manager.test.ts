@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -22,6 +22,7 @@ import {
 } from './package-manager'
 import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
+import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import {
   envPrefix,
   pipBin,
@@ -39,6 +40,10 @@ const scriptedSpawn = (
   const calls: [string, string[], NodeJS.ProcessEnv?][] = []
   let i = 0
   const spawn: InstallSpawn = async (command, args, env) => {
+    // Cache maintenance is orthogonal to the transaction result scripts below. The dedicated cache-
+    // growth test observes it directly; existing command-contract tests keep recording only the
+    // install/remove/pip/R subprocesses they own.
+    if (isCacheClean(args)) return ok
     calls.push([command, args, env])
     return results[i++] ?? { code: 0, stdout: '', stderr: '' }
   }
@@ -46,6 +51,7 @@ const scriptedSpawn = (
 }
 
 const ok: SpawnResult = { code: 0, stdout: 'done', stderr: '' }
+const isCacheClean = (args: string[]): boolean => args[0] === '--no-rc' && args[1] === 'clean'
 const safeRPlan: SpawnResult = {
   code: 0,
   stdout: JSON.stringify({
@@ -535,7 +541,8 @@ describe('installPackages', () => {
   it('journals the approved R transaction but not the read-only dry-run', async () => {
     const order: string[] = []
     let call = 0
-    const spawn: InstallSpawn = async (_command, _args, _env, onChild, onBeforeSpawn) => {
+    const spawn: InstallSpawn = async (_command, args, _env, onChild, onBeforeSpawn) => {
+      if (isCacheClean(args)) return ok
       onBeforeSpawn?.()
       order.push(`spawn#${call}`)
       onChild?.(4100 + call)
@@ -864,7 +871,8 @@ describe('installPackages', () => {
       { code: 1, stdout: 'retry install stdout', stderr: 'retry install failed' }
     ]
     let calls = 0
-    const spawn: InstallSpawn = async () => {
+    const spawn: InstallSpawn = async (_command, args) => {
+      if (isCacheClean(args)) return ok
       calls += 1
       return results[calls - 1]
     }
@@ -919,7 +927,13 @@ describe('installPackages', () => {
     let i = 0
     // deps.onBeforeSpawn is threaded to baseSpawn as its 5th arg; a faithful stub invokes it (as the real
     // defaultSpawn does) BEFORE reporting the child, so we can assert both that it ran and that it ran first.
-    const spawn: InstallSpawn = async (_command, _args, _env, onChild, onBeforeSpawn) => {
+    const spawn: InstallSpawn = async (_command, args, _env, onChild, onBeforeSpawn) => {
+      if (isCacheClean(args)) {
+        onBeforeSpawn?.()
+        order.push('cleanup-child')
+        onChild?.(999)
+        return ok
+      }
       onBeforeSpawn?.()
       order.push(`child#${i}`)
       onChild?.(1000 + i)
@@ -946,7 +960,7 @@ describe('installPackages', () => {
     expect(result.ok).toBe(true)
     // The intent fired before the child on the FIRST spawn AND again on the RETRY (old bug: zero intents,
     // since runConda dropped deps.onBeforeSpawn entirely).
-    expect(order).toEqual(['intent', 'child#0', 'intent', 'child#1'])
+    expect(order).toEqual(['intent', 'cleanup-child', 'intent', 'child#0', 'intent', 'child#1'])
     expect(i).toBe(2)
   })
 
@@ -1524,6 +1538,94 @@ describe('installPackages default-env additive-only policy', () => {
 })
 
 describe('installPackages shared pkgs cache lock', () => {
+  it('removes a superseded cached package before the next conda mutation', async () => {
+    const storageRoot = mkdtempSync(join(tmpdir(), 'os-package-cache-growth-'))
+    const root = runtimeRoot(storageRoot)
+    const cachePath = join(root, 'pkgs')
+    const stalePackage = join(cachePath, 'zlib-1.2.13-h2466b09_6')
+    mkdirSync(stalePackage, { recursive: true })
+    const order: string[] = []
+    let cleanEnv: NodeJS.ProcessEnv | undefined
+    let cleanArgs: string[] | undefined
+    const spawn: InstallSpawn = async (_command, args, env) => {
+      if (isCacheClean(args)) {
+        order.push('clean')
+        cleanArgs = args
+        cleanEnv = env
+        rmSync(stalePackage, { recursive: true, force: true })
+      } else {
+        order.push('install')
+      }
+      return ok
+    }
+
+    const result = await installPackages(
+      { language: 'python', packages: ['zlib==1.3.1'] },
+      {
+        ...base,
+        storageRoot,
+        spawn,
+        micromambaEnv: {
+          selectCache: () => ({
+            path: cachePath,
+            lockKey: micromambaCacheLockKey(cachePath)
+          })
+        },
+        onCacheMaintenanceSettled: () => void order.push('settled')
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(existsSync(stalePackage)).toBe(false)
+    expect(order).toEqual(['clean', 'settled', 'install'])
+    expect(cleanArgs).toEqual(['--no-rc', 'clean', '--packages', '--yes'])
+    expect(cleanEnv).toMatchObject({
+      MAMBA_ROOT_PREFIX: root,
+      CONDA_PKGS_DIRS: cachePath
+    })
+  })
+
+  it('continues the requested install when cache maintenance fails', async () => {
+    const order: string[] = []
+    const spawn: InstallSpawn = async (_command, args) => {
+      if (isCacheClean(args)) {
+        order.push('clean-failed')
+        return { code: 1, stdout: '', stderr: 'cleanup failed' }
+      }
+      order.push('install')
+      return ok
+    }
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'] },
+      { ...base, spawn, onCacheMaintenanceSettled: () => void order.push('settled') }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(order).toEqual(['clean-failed', 'settled', 'install'])
+  })
+
+  it('does not continue when the cleanup worker cannot be confirmed stopped', async () => {
+    let installStarted = false
+    const onCacheMaintenanceSettled = vi.fn()
+    const spawn: InstallSpawn = async (_command, args) => {
+      if (isCacheClean(args)) {
+        throw new Error(`${CHILD_UNCONFIRMED}: cleanup worker may still be running`)
+      }
+      installStarted = true
+      return ok
+    }
+
+    await expect(
+      installPackages(
+        { language: 'python', packages: ['numpy'] },
+        { ...base, spawn, onCacheMaintenanceSettled }
+      )
+    ).rejects.toThrow(CHILD_UNCONFIRMED)
+    expect(installStarted).toBe(false)
+    expect(onCacheMaintenanceSettled).not.toHaveBeenCalled()
+  })
+
   it.each(['legacy', 'selected'] as const)(
     'holds the %s physical cache identity while micromamba runs',
     async (heldCache) => {
@@ -1567,7 +1669,7 @@ describe('installPackages shared pkgs cache lock', () => {
       expect(spawn).not.toHaveBeenCalled()
       releaseCache()
       await Promise.all([reader, install])
-      expect(spawn).toHaveBeenCalledOnce()
+      expect(spawn.mock.calls.filter(([, args]) => !isCacheClean(args))).toHaveLength(1)
     }
   )
 
@@ -1578,8 +1680,12 @@ describe('installPackages shared pkgs cache lock', () => {
   // across a delay, and an exclusive holder requested meanwhile must wait until the spawn releases it.
   it('holds the shared lock across a conda install, so a concurrent exclusive repair cannot run mid-install', async () => {
     const order: string[] = []
-    const spawn: InstallSpawn = async () => {
+    let markInstallStarted!: () => void
+    const installStarted = new Promise<void>((resolve) => (markInstallStarted = resolve))
+    const spawn: InstallSpawn = async (_command, args) => {
+      if (isCacheClean(args)) return ok
       order.push('install-start')
+      markInstallStarted()
       await new Promise((r) => setTimeout(r, 10))
       order.push('install-end')
       return ok
@@ -1588,6 +1694,7 @@ describe('installPackages shared pkgs cache lock', () => {
     // Kick off the conda install (holds the shared lock synchronously), then request the cache EXCLUSIVE
     // on the same key the source uses.
     const install = installPackages({ language: 'python', packages: ['numpy'] }, { spawn, ...base })
+    await installStarted
     const exclusive = withExclusiveCacheLock(
       selectMicromambaCache(runtimeRoot('/root')).lockKey,
       async () => {
@@ -1601,8 +1708,12 @@ describe('installPackages shared pkgs cache lock', () => {
 
   it('holds the shared lock across a conda remove, so a concurrent exclusive repair cannot run mid-remove', async () => {
     const order: string[] = []
-    const spawn: InstallSpawn = async () => {
+    let markRemoveStarted!: () => void
+    const removeStarted = new Promise<void>((resolve) => (markRemoveStarted = resolve))
+    const spawn: InstallSpawn = async (_command, args) => {
+      if (isCacheClean(args)) return ok
       order.push('remove-start')
+      markRemoveStarted()
       await new Promise((r) => setTimeout(r, 10))
       order.push('remove-end')
       return ok
@@ -1619,6 +1730,7 @@ describe('installPackages shared pkgs cache lock', () => {
       },
       { spawn, ...base, pathExists: () => true }
     )
+    await removeStarted
     const exclusive = withExclusiveCacheLock(
       selectMicromambaCache(runtimeRoot('/root')).lockKey,
       async () => {

@@ -120,7 +120,8 @@ const customServerCredentialFingerprint = (server: StoredCustomMcpServer): strin
         server.args ?? [],
         server.url ?? null,
         stableRecordEntries(server.envRefs ?? server.env),
-        stableRecordEntries(server.headerRefs ?? server.headers)
+        stableRecordEntries(server.headerRefs ?? server.headers),
+        server.oauthClientSecretRef ?? null
       ])
     )
     .digest('hex')

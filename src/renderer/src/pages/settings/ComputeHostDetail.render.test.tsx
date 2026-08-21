@@ -592,7 +592,7 @@ describe('ComputeHostDetail', () => {
 
     await act(async () => release(passwordHost()))
     expect(authSection?.textContent).toContain(
-      'SSH configuration verified and activated. Saved password deleted. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+      'SSH configuration verified and activated. Saved password deleted. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
     )
   })
 
@@ -629,11 +629,11 @@ describe('ComputeHostDetail', () => {
     await click('Test and save')
 
     expect(container.textContent).toContain(
-      'Password authentication verified and activated. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+      'Password authentication verified and activated. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
     )
   })
 
-  it('explains the re-enable and reapproval consequences after a username change', async () => {
+  it('explains the execution-target reset and reapproval consequences after a username change', async () => {
     const changeAuthentication = vi
       .fn<(request: ChangeComputeHostAuthenticationRequest) => Promise<ComputeHost>>()
       .mockResolvedValue(passwordHost())
@@ -663,7 +663,7 @@ describe('ComputeHostDetail', () => {
     await click('Test and save')
 
     expect(container.textContent).toContain(
-      'Username changed. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+      'Username changed. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
     )
   })
 
@@ -719,7 +719,7 @@ describe('ComputeHostDetail', () => {
     await click('Test and save')
 
     expect(container.textContent).toContain(
-      'Connection settings verified and saved. Re-enable this Compute Host in each Session and approve new Permission Grants.'
+      'Connection settings verified and saved. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.'
     )
   })
 

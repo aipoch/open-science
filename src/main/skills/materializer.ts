@@ -2,7 +2,7 @@ import { chmod, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:
 import { join } from 'node:path'
 
 import { createLogger } from '../logger'
-import { COMPUTE_SKILL_ID, preserveComputeHostProjection } from '../compute/skill-doc'
+import { COMPUTE_SKILL_ID } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
 import { hasCanonicalSkillDocumentName, normalizeSkillDocumentName } from './skill-document-name'
 import { isUsableSkillName } from './skill-name'
@@ -192,11 +192,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 
       const target = join(skillsDir, name)
       try {
-        const priorComputeDocument =
-          skill.id === COMPUTE_SKILL_ID
-            ? await readFile(join(target, 'SKILL.md'), 'utf8').catch(() => undefined)
-            : undefined
-        await this.copySkill(target, skill, { priorComputeDocument })
+        await this.copySkill(target, skill)
         versions[name] = version
       } catch (error) {
         await rm(target, { recursive: true, force: true }).catch(() => undefined)
@@ -255,7 +251,6 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
     target: string,
     skill: BundledSkill,
     options: Readonly<{
-      priorComputeDocument?: string
       synthesizeFrontmatter?: boolean
     }> = {}
   ): Promise<void> {
@@ -277,14 +272,6 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
         ? { synthesizeFrontmatter: { description: skill.description || skill.displayName } }
         : {})
     })
-    if (options.priorComputeDocument !== undefined) {
-      const current = await readFile(join(target, 'SKILL.md'), 'utf8')
-      await writeFile(
-        join(target, 'SKILL.md'),
-        preserveComputeHostProjection(current, options.priorComputeDocument),
-        'utf8'
-      )
-    }
     // Skills whose model tooling needs a compute backend this app lacks get an up-front notice so
     // the agent reports cleanly instead of failing through the model commands. Done before the
     // read-only chmod, which would otherwise block the rewrite.
