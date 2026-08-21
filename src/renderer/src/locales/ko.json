@@ -3256,7 +3256,7 @@
   "Esc to close": "Esc로 닫기",
   "Source {{number}}: {{title}}": "출처 {{number}}: {{title}}",
   "Source preview: {{title}}": "출처 미리보기: {{title}}",
-  "Cited URL: {{hostname}}": "인용 URL: {{hostname}}",
+  "Citation-{{number}}": "인용-{{number}}",
   "Open source in browser": "브라우저에서 출처 열기",
   "Only HTTPS sources can be previewed": "HTTPS 출처만 미리 볼 수 있습니다",
   "Open source preview": "출처 미리보기 열기",

@@ -111,6 +111,8 @@ const PreviewTab = ({
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const tabTitle =
+    tab.type === 'source' ? t('Citation-{{number}}', { number: tab.citationNumber }) : tab.title
 
   return (
     <div
@@ -139,7 +141,7 @@ const PreviewTab = ({
           onActivate(tab.id)
         }}
         onKeyDown={onKeyDown}
-        title={tab.title}
+        title={tabTitle}
       >
         {tab.type === 'file' ? (
           <File className="size-3.5 shrink-0" aria-hidden="true" />
@@ -157,12 +159,12 @@ const PreviewTab = ({
         {tab.type === 'file' ? (
           <ExtensionPreservingFileName name={tab.name} />
         ) : (
-          <span className="min-w-0 truncate">{tab.title}</span>
+          <span className="min-w-0 truncate">{tabTitle}</span>
         )}
         <span
-          data-preview-close={tab.title}
+          data-preview-close={tabTitle}
           aria-hidden="true"
-          title={t('Close preview of {{title}}', { title: tab.title })}
+          title={t('Close preview of {{title}}', { title: tabTitle })}
           className={cn(
             'shrink-0 rounded-sm p-0.5 hover:bg-bg-000/60',
             isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'

@@ -157,6 +157,7 @@ describe('preview persistence projections', () => {
           id: 'source:https://example.com/private-paper',
           sessionId: '__sources__',
           type: 'source',
+          citationNumber: '1',
           title: 'Private paper',
           url: 'https://example.com/private-paper',
           createdAt: 1,

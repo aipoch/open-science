@@ -61,6 +61,7 @@ const createSourceItem = (): PreviewSourceItem => ({
   sessionId: '__sources__',
   title: 'Genome study',
   type: 'source',
+  citationNumber: '1',
   url: 'https://example.com/paper'
 })
 
@@ -201,9 +202,15 @@ describe('PreviewPanel', () => {
 
     await renderPanel()
 
-    const sourceTab = container.querySelector('[role="tab"][title="Genome study"]')
+    const sourceTab = container.querySelector('[role="tab"][title="Citation-1"]')
+    const sourceHeader = container.querySelector('header')
     const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
     expect(sourceTab?.querySelector('[data-source-preview-tab-icon]')).not.toBeNull()
+    expect(sourceTab?.textContent).toContain('Citation-1')
+    expect(sourceTab?.textContent).not.toContain('Genome study')
+    expect(sourceHeader?.textContent).toContain('Genome study')
+    expect(sourceHeader?.textContent).toContain('https://example.com/paper')
+    expect(sourceHeader?.textContent).not.toContain('Cited URL:')
     expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
     expect(iframe?.getAttribute('sandbox')).toBe('allow-same-origin allow-scripts')
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')

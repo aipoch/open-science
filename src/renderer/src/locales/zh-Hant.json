@@ -3258,7 +3258,7 @@
   "Esc to close": "按 Esc 關閉",
   "Source {{number}}: {{title}}": "來源 {{number}}：{{title}}",
   "Source preview: {{title}}": "來源預覽：{{title}}",
-  "Cited URL: {{hostname}}": "引用網址：{{hostname}}",
+  "Citation-{{number}}": "引用-{{number}}",
   "Open source in browser": "在瀏覽器中開啟來源",
   "Only HTTPS sources can be previewed": "僅支援預覽 HTTPS 來源",
   "Open source preview": "開啟來源預覽",

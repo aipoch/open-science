@@ -393,7 +393,7 @@ describe('AgentMarkdown renderer recovery', () => {
         <SessionMessageLink
           href="https://example.com/paper#results"
           title="Genome study"
-          className="size-8 underline hover:underline focus:underline active:underline"
+          className="size-8 bg-primary/10 text-primary underline hover:underline focus:underline active:underline"
         >
           1
         </SessionMessageLink>
@@ -406,7 +406,10 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(citation?.getAttribute('role')).toBe('doc-noteref')
     expect(citation?.getAttribute('aria-label')).toBe('Source 1: Genome study')
     expect(citation?.className).toContain('rounded-full')
-    expect(citation?.className).toContain('text-primary')
+    expect(citation?.className).toContain('bg-primary')
+    expect(citation?.className).toContain('text-white')
+    expect(citation?.className).not.toContain('bg-primary/10')
+    expect(citation?.className).not.toContain('text-primary')
     expect(citation?.className).toContain('size-[1em]')
     expect(citation?.className).not.toContain('size-5')
     const citationClasses = citation?.className.split(/\s+/) ?? []
@@ -457,6 +460,7 @@ describe('AgentMarkdown renderer recovery', () => {
         expect.objectContaining({
           id: 'source:https://example.com/paper#results',
           type: 'source',
+          citationNumber: '1',
           title: 'Genome study',
           url: 'https://example.com/paper#results'
         })
