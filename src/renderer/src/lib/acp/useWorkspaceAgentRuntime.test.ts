@@ -244,6 +244,41 @@ describe('workspace agent runtime event processing', () => {
     expect(appliedEventIds).toEqual(events.map((event) => event.id))
   })
 
+  it('keeps synchronous incremental event admission within a linear main-thread work budget', async () => {
+    let eventIdReads = 0
+    const appliedEventIds: string[] = []
+    const processor = createWorkspaceRuntimeEventProcessor(async (event) => {
+      appliedEventIds.push(event.id)
+      return true
+    })
+    const events = Array.from({ length: 1_200 }, (_, index) => {
+      const event = createEvent({
+        id: `thought-event-${index + 1}`,
+        kind: 'thought',
+        role: 'assistant',
+        text: 'x'
+      })
+      const eventId = event.id
+      Object.defineProperty(event, 'id', {
+        enumerable: true,
+        get: () => {
+          eventIdReads += 1
+          return eventId
+        }
+      })
+      return event
+    })
+
+    // IPC listeners admit live events synchronously and intentionally do not await presentation.
+    const drains = events.map((event) => processor.processIncremental([event]))
+    const admissionEventIdReads = eventIdReads
+    await Promise.all(drains)
+    await processor.drain()
+
+    expect(admissionEventIdReads).toBeLessThan(events.length * 20)
+    expect(appliedEventIds).toEqual(events.map((event) => event.id))
+  })
+
   it('releases fast assistant text in grapheme-budgeted 30 fps batches', async () => {
     vi.useFakeTimers()
     try {
