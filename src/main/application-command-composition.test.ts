@@ -191,6 +191,15 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.electron.commandNames()).toEqual([
+      'memory:clear-all',
+      'memory:create-category',
+      'memory:create-entry',
+      'memory:delete-category',
+      'memory:delete-entry',
+      'memory:set-enabled',
+      'memory:snapshot',
+      'memory:update-category',
+      'memory:update-entry',
       'projects:create',
       'projects:delete',
       'projects:get',

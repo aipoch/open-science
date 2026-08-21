@@ -72,6 +72,11 @@ import {
   tagApplicationCommandGroup,
   type TagCommandOwner
 } from './tags/application-commands'
+import {
+  memoryApplicationCommandGroup,
+  registerMemoryApplicationCommands,
+  type MemoryCommandOwner
+} from './memory/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -108,6 +113,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   compute: ComputeApplicationCommandDependencies
   permissionGrants: PermissionGrantDependencies
   tags: TagCommandOwner
+  memory: MemoryCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -209,6 +215,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([tagApplicationCommandGroup], (registrar) =>
       registerTagApplicationCommands(registrar, dependencies.tags)
+    ),
+    defineApplicationCommandModule([memoryApplicationCommandGroup], (registrar) =>
+      registerMemoryApplicationCommands(registrar, dependencies.memory)
     ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)

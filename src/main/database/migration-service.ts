@@ -7,6 +7,7 @@ import type { DatabaseStartupErrorCode } from '../../shared/database-startup'
 import {
   RUNTIME_SCHEMA_BASELINE_CONTRACT,
   applyRuntimeSchemaBaseline,
+  normalizeSchemaObjectSql,
   prepareRuntimeSchemaBaseline,
   verifyCurrentRuntimeSchema,
   verifyRuntimeSchemaBaseline,
@@ -26,6 +27,7 @@ import { visionEvidenceMigration } from './migrations/0009-vision-evidence'
 import { computePasswordAuthMigration } from './migrations/0010-compute-password-auth'
 import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tags'
 import { tagOrderingMigration } from './migrations/0012-tag-ordering'
+import { agentMemoryMigration } from './migrations/0013-agent-memory'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -71,6 +73,20 @@ type MigrationVerifierDescriptor =
       version: 1
       indexes: readonly { name: string; sql: string }[]
     }
+  | {
+      kind: 'sqlite-schema-objects-exist'
+      version: 1
+      objects: readonly { type: 'table' | 'trigger' | 'view'; name: string; sql: string }[]
+    }
+  | {
+      kind: 'table-value-equals'
+      version: 1
+      table: string
+      keyColumn: string
+      keyValue: string
+      valueColumn: string
+      expectedValue: string | number
+    }
 
 type MigrationVerifiers = readonly [MigrationVerifierDescriptor, ...MigrationVerifierDescriptor[]]
 
@@ -114,6 +130,21 @@ const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): stri
     case 'indexes-exist':
       return `indexes-exist:v${verifier.version}:${verifier.indexes
         .flatMap(({ name, sql }) => [name, sql])
+        .map(lengthPrefixedChecksumText)
+        .join('')}`
+    case 'sqlite-schema-objects-exist':
+      return `sqlite-schema-objects-exist:v${verifier.version}:${verifier.objects
+        .flatMap(({ type, name, sql }) => [type, name, sql])
+        .map(lengthPrefixedChecksumText)
+        .join('')}`
+    case 'table-value-equals':
+      return `table-value-equals:v${verifier.version}:${[
+        verifier.table,
+        verifier.keyColumn,
+        verifier.keyValue,
+        verifier.valueColumn,
+        String(verifier.expectedValue)
+      ]
         .map(lengthPrefixedChecksumText)
         .join('')}`
   }
@@ -216,6 +247,12 @@ const TAG_ORDERING_CHECKSUM = checksumMigrationPayload(
   tagOrderingMigration.verifiers,
   tagOrderingMigration.operations
 )
+const AGENT_MEMORY_CHECKSUM = checksumMigrationPayload(
+  agentMemoryMigration.id,
+  agentMemoryMigration.statements,
+  agentMemoryMigration.verifiers,
+  agentMemoryMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -262,6 +299,15 @@ const COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints
   )
 const CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   crossResourceTagsMigration.verifiers
+    .filter((verifier) => verifier.kind === 'check-constraints-exist')
+    .flatMap((verifier) => verifier.tables)
+    .map(({ table, constraints }) => [
+      table,
+      Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+    ])
+)
+const AGENT_MEMORY_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
+  agentMemoryMigration.verifiers
     .filter((verifier) => verifier.kind === 'check-constraints-exist')
     .flatMap((verifier) => verifier.tables)
     .map(({ table, constraints }) => [
@@ -350,6 +396,12 @@ const MIGRATION_MANIFEST = [
   {
     ...tagOrderingMigration,
     checksum: TAG_ORDERING_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...agentMemoryMigration,
+    checksum: AGENT_MEMORY_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -557,6 +609,48 @@ const runMigrationVerifiers = async (
           if (!rows[0]?.sql || normalizeIndexSql(rows[0].sql) !== normalizeIndexSql(index.sql)) {
             throw new Error(`Migration verification found missing index ${index.name}.`)
           }
+        }
+        break
+      }
+      case 'sqlite-schema-objects-exist': {
+        const rows = await migrationSqlExecutor.query<
+          Array<{ type: string; name: string; sql: string | null }>
+        >(
+          client,
+          `SELECT "type", "name", "sql" FROM "sqlite_schema"
+           WHERE "name" IN (${verifier.objects.map(() => '?').join(', ')})`,
+          ...verifier.objects.map(({ name }) => name)
+        )
+        const actual = new Map(rows.map((row) => [row.name, row]))
+        for (const expected of verifier.objects) {
+          const row = actual.get(expected.name)
+          if (
+            !row ||
+            row.type !== expected.type ||
+            normalizeSchemaObjectSql(row.sql) !== normalizeSchemaObjectSql(expected.sql)
+          ) {
+            throw new Error(
+              `Migration verification found missing or incompatible schema object ${expected.name}.`
+            )
+          }
+        }
+        break
+      }
+      case 'table-value-equals': {
+        const table = quoteSqliteIdentifier(verifier.table)
+        const keyColumn = quoteSqliteIdentifier(verifier.keyColumn)
+        const valueColumn = quoteSqliteIdentifier(verifier.valueColumn)
+        const rows = await migrationSqlExecutor.query<
+          Array<{ value: bigint | number | string | null }>
+        >(
+          client,
+          `SELECT ${valueColumn} AS "value" FROM ${table} WHERE ${keyColumn} = ? LIMIT 2`,
+          verifier.keyValue
+        )
+        if (rows.length !== 1 || String(rows[0]?.value) !== String(verifier.expectedValue)) {
+          throw new Error(
+            `Migration verification found an incompatible value in ${verifier.table}.${verifier.valueColumn}.`
+          )
         }
         break
       }
@@ -1205,6 +1299,10 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === crossResourceTagsMigration.id &&
       candidate.checksum === CROSS_RESOURCE_TAGS_CHECKSUM
   )
+  const adoptsAgentMemory = manifest.some(
+    (candidate) =>
+      candidate.id === agentMemoryMigration.id && candidate.checksum === AGENT_MEMORY_CHECKSUM
+  )
   const applied: string[] = []
   const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
@@ -1213,7 +1311,8 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsDatabaseJsonConstraints ? DATABASE_JSON_ALLOWED_SUFFIX_CHECKS : {},
     adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {},
     adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsAgentMemory ? AGENT_MEMORY_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount
@@ -1256,6 +1355,7 @@ export {
   VISION_EVIDENCE_CHECKSUM,
   COMPUTE_PASSWORD_AUTH_CHECKSUM,
   TAG_ORDERING_CHECKSUM,
+  AGENT_MEMORY_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

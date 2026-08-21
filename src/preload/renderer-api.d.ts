@@ -195,6 +195,17 @@ import type {
   UpdateTagRequest
 } from '../shared/tags'
 import type {
+  CreateMemoryCategoryRequest,
+  CreateMemoryEntryRequest,
+  DeleteMemoryCategoryRequest,
+  DeleteMemoryEntryRequest,
+  MemoryChangedEvent,
+  MemorySnapshot,
+  SetMemoryEnabledRequest,
+  UpdateMemoryCategoryRequest,
+  UpdateMemoryEntryRequest
+} from '../shared/memory'
+import type {
   ArtifactGroupPage,
   GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
@@ -729,6 +740,18 @@ export interface OpenScienceAPI {
     reorder(request: ReorderTagsRequest): Promise<TagSnapshot>
     setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot>
     onChanged(listener: AcpListener<TagsChangedEvent>): RemoveListener
+  }
+  memory: {
+    snapshot(): Promise<MemorySnapshot>
+    setEnabled(request: SetMemoryEnabledRequest): Promise<MemorySnapshot>
+    createCategory(request: CreateMemoryCategoryRequest): Promise<MemorySnapshot>
+    updateCategory(request: UpdateMemoryCategoryRequest): Promise<MemorySnapshot>
+    deleteCategory(request: DeleteMemoryCategoryRequest): Promise<MemorySnapshot>
+    createEntry(request: CreateMemoryEntryRequest): Promise<MemorySnapshot>
+    updateEntry(request: UpdateMemoryEntryRequest): Promise<MemorySnapshot>
+    deleteEntry(request: DeleteMemoryEntryRequest): Promise<MemorySnapshot>
+    clearAll(): Promise<MemorySnapshot>
+    onChanged(listener: AcpListener<MemoryChangedEvent>): RemoveListener
   }
   projectFiles: {
     getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>

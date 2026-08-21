@@ -20,6 +20,16 @@ import { ReviewRepository } from '../reviewer/repository'
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
 
+const removeAgentMemoryTriggers = async (client: PrismaClient): Promise<void> => {
+  await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_insert"')
+  await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_delete"')
+  await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_update"')
+  await client.$executeRawUnsafe('DROP TRIGGER "MemoryCategory_about_you_delete"')
+  await client.$executeRawUnsafe('DROP TRIGGER "MemoryCategory_about_you_update"')
+  await client.$executeRawUnsafe('DROP TRIGGER "MemoryCategory_custom_limit"')
+  await client.$executeRawUnsafe('DROP TABLE "MemoryEntryFts"')
+}
+
 afterEach(async () => {
   await disconnect?.()
   disconnect = undefined
@@ -113,7 +123,8 @@ describe('application database (integration)', () => {
         '0009_vision_evidence',
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
-        '0012_tag_ordering'
+        '0012_tag_ordering',
+        '0013_agent_memory'
       ]
     })
 
@@ -587,6 +598,7 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
     await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
+    await removeAgentMemoryTriggers(client)
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -668,6 +680,7 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
     await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
+    await removeAgentMemoryTriggers(client)
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -723,7 +736,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0012_tag_ordering.backup`
+    const backupPath = `${databasePath}.before-0013_agent_memory.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -763,7 +776,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0011_cross_resource_tags' }])
+      ).resolves.toEqual([{ id: '0012_tag_ordering' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1035,7 +1048,8 @@ describe('application database (integration)', () => {
         '0009_vision_evidence',
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
-        '0012_tag_ordering'
+        '0012_tag_ordering',
+        '0013_agent_memory'
       ]
     })
 

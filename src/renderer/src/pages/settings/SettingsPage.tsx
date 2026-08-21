@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Bot,
   Brain,
+  BrainCircuit,
   ChartNoAxesCombined,
   Cloud,
   Globe,
@@ -46,6 +47,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { preloadComputeHosts, useComputeStore } from '@/stores/compute-store'
+import { useMemoryStore } from '@/stores/memory-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
@@ -67,6 +69,7 @@ import { ResourceTagSummary } from './ResourceTagControls'
 import { ConnectorsNavIcon } from './connector-icons'
 import type { ComputeView } from './ComputePanel'
 import type { ArchivedView } from './ArchivedPanel'
+import type { MemoryView } from './MemoryPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
@@ -130,6 +133,13 @@ const SpecialistsPanel = lazy(async () => {
     () => useSpecialistStore.getState().load()
   )
   return { default: module.SpecialistsPanel }
+})
+const MemoryPanel = lazy(async () => {
+  const module = await loadSettingsPanel(
+    () => import('./MemoryPanel'),
+    () => useMemoryStore.getState().load()
+  )
+  return { default: module.MemoryPanel }
 })
 const TagsPanel = lazy(async () => {
   const tagState = useTagStore.getState()
@@ -264,6 +274,7 @@ const PANEL_NAME_LOWER = {
   Connectors: 'connectors',
   Compute: 'compute',
   Specialists: 'specialists',
+  Memory: 'memory',
   Archived: 'archived'
 } as const
 
@@ -285,6 +296,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
       { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'specialists', labelKey: 'Specialists', Icon: Users },
+      { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit },
       { id: 'compute', labelKey: 'Compute', Icon: Zap },
       { id: 'network', labelKey: 'Network', Icon: Globe }
     ]
@@ -384,6 +396,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadTags = useTagStore((state) => state.load)
   const listenForTagChanges = useTagStore((state) => state.listen)
+  const listenForMemoryChanges = useMemoryStore((state) => state.listen)
   const browserSelectedTagId = useTagStore((state) => state.browserSelectedId)
   const setSelectedTagId = useTagStore((state) => state.setBrowserSelectedId)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
@@ -407,6 +420,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     void loadTags()
     return listenForTagChanges()
   }, [listenForTagChanges, loadTags, open])
+
+  useEffect(() => {
+    if (!open) return
+    return listenForMemoryChanges()
+  }, [listenForMemoryChanges, open])
 
   useEffect(() => {
     if (isMobile && isMobileNavOpen) {
@@ -503,6 +521,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     currentRoute.panel === 'specialists' ? currentRoute.view : { kind: 'list' }
   const archivedView: ArchivedView =
     currentRoute.panel === 'archived' ? currentRoute.view : { kind: 'list' }
+  const memoryView: MemoryView =
+    currentRoute.panel === 'memory' ? currentRoute.view : { kind: 'list' }
   const activeTagId = currentRoute.panel === 'tags' ? currentRoute.tagId : undefined
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
@@ -569,6 +589,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const navigateArchived = (archived: ArchivedView): void =>
     navigate({ panel: 'archived', view: archived })
+
+  const navigateMemory = (memory: MemoryView): void => navigate({ panel: 'memory', view: memory })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
@@ -695,6 +717,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         rootLabelKey: 'Specialists',
         rootTo,
         leaf
+      }
+    }
+    if (activePanel === 'memory' && memoryView.kind !== 'list') {
+      return {
+        rootLabelKey: 'Memory',
+        rootTo: { panel: 'memory', view: { kind: 'list' } },
+        leaf: memoryView.kind === 'create' ? t('New category') : t('Edit category')
       }
     }
     if (activePanel === 'archived' && archivedView.kind === 'project') {
@@ -1154,7 +1183,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             </TooltipProvider>
 
             <div data-slot="settings-content-scroll" className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto min-h-full w-full max-w-[880px]">
+              <div
+                className={cn(
+                  'mx-auto w-full max-w-[880px]',
+                  activePanel === 'memory' ? 'h-full' : 'min-h-full'
+                )}
+              >
                 <SettingsPanelLoadingBoundary
                   panelKey={`${activePanel}:${historyIndex}`}
                   onClose={onClose}
@@ -1227,6 +1261,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         })
                       }}
                     />
+                  ) : activePanel === 'memory' ? (
+                    <MemoryPanel view={memoryView} onNavigate={navigateMemory} />
                   ) : activePanel === 'connectors' ? (
                     connectorsView.kind === 'detail' ? (
                       <div>

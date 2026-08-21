@@ -168,6 +168,8 @@ const registerWithFakes = (overrides?: {
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
   customMcpServers?: Array<{ id: string; name: string }>
+  memory?: AcpTestOptions['memory']
+  delegatedNotebookConnection?: AcpTestOptions['delegatedNotebookConnection']
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
   interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
 }): AcpTestOptions => {
@@ -204,7 +206,9 @@ const registerWithFakes = (overrides?: {
     onAllSessionsCancellationRequested: overrides?.onAllSessionsCancellationRequested,
     beforeSessionDelete: overrides?.beforeSessionDelete,
     initializationBarrier: overrides?.initializationBarrier,
-    profileService: overrides?.profileService as never
+    profileService: overrides?.profileService as never,
+    memory: overrides?.memory,
+    delegatedNotebookConnection: overrides?.delegatedNotebookConnection
   }
 
   const runtime = createAcpRuntime(options)
@@ -629,6 +633,21 @@ describe('ACP module transport seam', () => {
 
     expect(handlers.has('acp:get-state')).toBe(true)
     expect(handlers.has('acp:respond-permission')).toBe(true)
+  })
+})
+
+describe('ACP runtime composition — memory eligibility', () => {
+  it('passes recall to the primary runtime and withholds it from delegated runtimes', () => {
+    const memory = { recallForPrompt: vi.fn().mockResolvedValue(undefined) }
+
+    registerWithFakes({ memory })
+    expect(AcpRuntimeMock.mock.calls.at(-1)?.[0]).toMatchObject({ memory })
+
+    registerWithFakes({
+      memory,
+      delegatedNotebookConnection: {} as AcpTestOptions['delegatedNotebookConnection']
+    })
+    expect(AcpRuntimeMock.mock.calls.at(-1)?.[0]).not.toHaveProperty('memory')
   })
 })
 

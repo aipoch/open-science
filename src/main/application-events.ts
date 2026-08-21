@@ -34,6 +34,7 @@ import type { SideChatRelayDeliveredEvent, SideChatRuntimeEvent } from '../share
 import type { UpdateStatus } from '../shared/update'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
+import type { MemoryChangedEvent } from '../shared/memory'
 
 // This catalog describes only events that already flow through renderer-broadcast. Window-only
 // signals and generated Web-only channels stay on their existing transports until their owner moves
@@ -57,6 +58,7 @@ export type ApplicationEventMap = {
   'project-files:changed': ProjectFilesChangedEvent
   'permissions:changed': PermissionGrantsChangedEvent
   'tags:changed': TagsChangedEvent
+  'memory:changed': MemoryChangedEvent
   'connectors:approval-request': ConnectorApprovalRequest
   'connectors:approval-settled': string
   'skills:conversation-import-request': ConversationSkillImportApprovalRequest

@@ -19,6 +19,15 @@ vi.mock('./ipc-handler-registry', () => ({
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 
 const validatedChannels = [
+  'memory:clear-all',
+  'memory:create-category',
+  'memory:create-entry',
+  'memory:delete-category',
+  'memory:delete-entry',
+  'memory:set-enabled',
+  'memory:snapshot',
+  'memory:update-category',
+  'memory:update-entry',
   'projects:create',
   'projects:delete',
   'projects:get',

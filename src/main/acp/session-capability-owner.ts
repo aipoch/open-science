@@ -129,6 +129,7 @@ export type SessionCapabilityNotebookOptions = {
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
+  memoryTools?: boolean
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
@@ -894,6 +895,7 @@ export class AcpSessionCapabilityOwner {
           createNotebookMcpServerConfig({
             command: this.options.notebook.mcpCommand ?? process.execPath,
             entryPath: this.options.notebook.mcpEntryPath,
+            memoryTools: this.options.notebook.memoryTools ?? true,
             ...environment
           })
         )
@@ -972,8 +974,11 @@ export class AcpSessionCapabilityOwner {
         request.projectId,
         request.onNotebookConnection
       )
-      if (environment && this.canPublishHttpRoute(request)) {
-        host.registerNotebook(request.routingIds.notebook, environment)
+      if (environment && this.options.notebook && this.canPublishHttpRoute(request)) {
+        host.registerNotebook(request.routingIds.notebook, {
+          ...environment,
+          memoryTools: this.options.notebook.memoryTools ?? true
+        })
         servers.push({
           type: 'http',
           name: NOTEBOOK_MCP_SERVER_NAME,

@@ -52,6 +52,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0012_tag_ordering',
     checksum: '2cbc89454c8642d65806366add598ef4547fb7f513e04c267d1ad0274a472e2f'
+  },
+  {
+    id: '0013_agent_memory',
+    checksum: 'e398804209d9fc699a966bed07186717062e0516fbd43bb5f46ef7d9668986fc'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

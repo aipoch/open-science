@@ -32,6 +32,34 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it('marks delegated Notebook MCP processes as ineligible for memory tools', async () => {
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        memoryTools: false,
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'delegate' })
+      }
+    })
+    const provision = await owner.provision({
+      stableAppSessionId: 'delegate-session',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace/delegate',
+      projectId: 'project'
+    })
+    const notebook = provision.mcpServers.find((server) => server.name === 'open_science_notebook')
+
+    expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+      value: '0'
+    })
+  })
+
   it('uses an execution-owned Artifact handoff file for a delegated runtime', async () => {
     const owner = createOwner({
       artifacts: {
