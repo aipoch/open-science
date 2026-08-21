@@ -11,7 +11,12 @@
 // own minimal profile records and catalogs. Behavior mirrors the rules in design.md §5 (capability
 // semantics), §8 (revision + read-back), §10 (delete leaves bindings unavailable).
 
-import type { AgentReadModel, ConnectorReadModel, SkillCatalogReadModel } from '../agents-service'
+import type {
+  AgentDetailReadModel,
+  AgentSummaryReadModel,
+  ConnectorReadModel,
+  SkillCatalogReadModel
+} from '../agents-service'
 
 // ---------------------------------------------------------------------------
 // Internal fake state
@@ -114,7 +119,17 @@ export class FakeHostAgents {
     }
   }
 
-  private project(profile: FakeProfileRecord): AgentReadModel {
+  private projectSummary(profile: FakeProfileRecord): AgentSummaryReadModel {
+    return {
+      id: profile.id,
+      name: profile.name,
+      displayName: profile.displayName,
+      description: profile.description,
+      enabled: profile.enabled
+    }
+  }
+
+  private project(profile: FakeProfileRecord): AgentDetailReadModel {
     return {
       id: profile.id,
       name: profile.name,
@@ -141,13 +156,13 @@ export class FakeHostAgents {
 
   // ----- public read surface -----------------------------------------------------
 
-  async list(): Promise<AgentReadModel[]> {
+  async list(): Promise<AgentSummaryReadModel[]> {
     return Array.from(this.profiles.values())
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((profile) => this.project(profile))
+      .map((profile) => this.projectSummary(profile))
   }
 
-  async get(name: string): Promise<AgentReadModel> {
+  async get(name: string): Promise<AgentDetailReadModel> {
     const profile = this.profiles.get(name)
     if (!profile) throw agentsError('get', `Specialist "${name}" not found.`)
     return this.project(profile)
@@ -176,7 +191,7 @@ export class FakeHostAgents {
     unrestricted?: boolean
     skillNames?: string[]
     connectorNames?: string[]
-  }): Promise<AgentReadModel> {
+  }): Promise<AgentDetailReadModel> {
     const method = 'create'
     const name = input.name
     if (!name || typeof name !== 'string') throw agentsError(method, 'name is required')
@@ -226,7 +241,7 @@ export class FakeHostAgents {
       connectorNames?: string[]
       revision?: number
     }
-  ): Promise<AgentReadModel> {
+  ): Promise<AgentDetailReadModel> {
     const method = 'update'
     const existing = this.profiles.get(name)
     if (!existing) throw agentsError(method, `Specialist "${name}" not found.`)
@@ -266,7 +281,7 @@ export class FakeHostAgents {
     name: string,
     skillRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentReadModel> {
+  ): Promise<AgentDetailReadModel> {
     return this.mutateCollection(name, 'skill', skillRef, 'attach', options.revision)
   }
 
@@ -274,7 +289,7 @@ export class FakeHostAgents {
     name: string,
     skillRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentReadModel> {
+  ): Promise<AgentDetailReadModel> {
     return this.mutateCollection(name, 'skill', skillRef, 'detach', options.revision)
   }
 
@@ -282,7 +297,7 @@ export class FakeHostAgents {
     name: string,
     connectorRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentReadModel> {
+  ): Promise<AgentDetailReadModel> {
     return this.mutateCollection(name, 'connector', connectorRef, 'attach', options.revision)
   }
 
@@ -290,7 +305,7 @@ export class FakeHostAgents {
     name: string,
     connectorRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentReadModel> {
+  ): Promise<AgentDetailReadModel> {
     return this.mutateCollection(name, 'connector', connectorRef, 'detach', options.revision)
   }
 
@@ -300,7 +315,7 @@ export class FakeHostAgents {
     ref: string,
     action: 'attach' | 'detach',
     revision: number | undefined
-  ): AgentReadModel {
+  ): AgentDetailReadModel {
     const method = `${action}${kind[0].toUpperCase()}${kind.slice(1)}`
     const existing = this.profiles.get(name)
     if (!existing) throw agentsError(method, `Specialist "${name}" not found.`)

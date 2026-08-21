@@ -96,15 +96,23 @@ export type AgentsServiceDeps = {
 // Public read models (camelCase records returned to the SDK)
 // ---------------------------------------------------------------------------
 
-export type AgentReadModel = {
+// Listing Specialists is a discovery operation, so its collection shape is limited to the five
+// fields needed to identify and present a Specialist. Callers that need editable configuration must
+// explicitly request one profile via get().
+export type AgentSummaryReadModel = {
   id: string
   name: string
   displayName: string
   description: string
+  enabled: boolean
+}
+
+// Single-Agent details and mutation read-backs retain the prompt so callers can inspect, edit, and
+// verify a complete Specialist configuration.
+export type AgentDetailReadModel = AgentSummaryReadModel & {
   systemPrompt: string
   iconKey?: string
   colorKey?: string
-  enabled: boolean
   capabilityMode: 'full' | 'selected'
   fullAccess: SpecialistProfileView['fullAccess']
   selectedCapabilities: SpecialistProfileView['selectedCapabilities']
@@ -158,15 +166,19 @@ class AgentsCallError extends AgentsSafeError {
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
 
-const projectAgent = (profile: SpecialistProfileView): AgentReadModel => ({
+const projectAgentSummary = (profile: SpecialistProfileView): AgentSummaryReadModel => ({
   id: profile.id,
   name: profile.name,
   displayName: profile.displayName ?? profile.name,
   description: profile.description,
+  enabled: profile.enabled
+})
+
+const projectAgentDetail = (profile: SpecialistProfileView): AgentDetailReadModel => ({
+  ...projectAgentSummary(profile),
   systemPrompt: profile.systemPrompt,
   iconKey: profile.iconKey,
   colorKey: profile.colorKey,
-  enabled: profile.enabled,
   capabilityMode: profile.capabilityMode,
   fullAccess: profile.fullAccess,
   selectedCapabilities: profile.selectedCapabilities,
@@ -224,7 +236,7 @@ export class AgentsService {
         opName === 'attach_connector' ||
         opName === 'detach_connector'
       ) {
-        return projectAgent(
+        return projectAgentDetail(
           await executeAgentsMutation(
             { op: opName, params } as Parameters<typeof executeAgentsMutation>[0],
             {
@@ -344,18 +356,18 @@ export class AgentsService {
   }
 
   // Returns custom Specialist Profiles only — never synthesizes the Settings-only Reviewer row.
-  async list(): Promise<AgentReadModel[]> {
+  async list(): Promise<AgentSummaryReadModel[]> {
     const profiles = await this.deps.profileService.list()
-    return profiles.map(projectAgent)
+    return profiles.map(projectAgentSummary)
   }
 
   // Resolves the exact public Specialist name to the current Profile and returns a renderer-safe
   // read model including stable id and revision.
-  async get(params: { name?: unknown }): Promise<AgentReadModel> {
+  async get(params: { name?: unknown }): Promise<AgentDetailReadModel> {
     const name = asString(params.name)
     if (!name) throw agentsPublicError('name is required')
     const profile = await this.deps.profileService.getByName(name)
-    return projectAgent(profile)
+    return projectAgentDetail(profile)
   }
 
   // Returns the complete Specialist-visible skill catalog, including Main-disabled installed

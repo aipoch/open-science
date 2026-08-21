@@ -162,7 +162,13 @@ gate('host.agents repl integration', () => {
     releaseControl = connection.release
 
     // Seed a specialist profile directly through the authoritative ProfileService.
-    await profileService.create({ name: 'Bio Expert', description: 'secret: apikey=XYZ' })
+    await profileService.create({
+      name: 'Bio Expert',
+      description: 'secret: apikey=XYZ',
+      systemPrompt: 'RPC SYSTEM PROMPT SENTINEL',
+      iconKey: 'beaker',
+      colorKey: 'green'
+    })
   })
 
   afterAll(async () => {
@@ -183,8 +189,11 @@ gate('host.agents repl integration', () => {
       expect(r.error).toBeNull()
       const list = JSON.parse(r.result ?? '[]')
       expect(list).toHaveLength(1)
+      expect(Object.keys(list[0]).sort()).toEqual(
+        ['id', 'name', 'displayName', 'description', 'enabled'].sort()
+      )
       expect(list[0].name).toBe('Bio Expert')
-      expect(list[0].revision).toBe(1)
+      expect(r.result).not.toContain('RPC SYSTEM PROMPT SENTINEL')
       // No synthesized Settings-only Reviewer row.
       expect(list.some((item: { id: string }) => item.id === 'reviewer')).toBe(false)
     } finally {
@@ -192,7 +201,7 @@ gate('host.agents repl integration', () => {
     }
   }, 60_000)
 
-  it('host.agents.get(name) returns id + revision', async () => {
+  it('host.agents.get(name) returns complete detail including the system prompt', async () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: token,
@@ -205,6 +214,23 @@ gate('host.agents repl integration', () => {
       expect(got.name).toBe('Bio Expert')
       expect(got.revision).toBe(1)
       expect(typeof got.id).toBe('string')
+      expect(got.systemPrompt).toBe('RPC SYSTEM PROMPT SENTINEL')
+      expect(Object.keys(got).sort()).toEqual(
+        [
+          'id',
+          'name',
+          'displayName',
+          'description',
+          'enabled',
+          'systemPrompt',
+          'iconKey',
+          'colorKey',
+          'capabilityMode',
+          'fullAccess',
+          'selectedCapabilities',
+          'revision'
+        ].sort()
+      )
     } finally {
       child.kill()
     }

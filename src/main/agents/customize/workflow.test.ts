@@ -304,10 +304,15 @@ describe('customize Skill: scope clarification', () => {
 describe('customize Skill: live read + complete draft', () => {
   it('reads live Profiles plus Skill/Connector catalogs before proposing a target state', async () => {
     const sdk = makeSdk()
-    const [profile] = await sdk.list()
+    const [summary] = await sdk.list()
+    const profile = await sdk.get(summary.name)
     const skillCatalog = await sdk.listSkills()
     const connectorCatalog = await sdk.listConnectors()
     expect(profile.name).toBe('Bio Expert')
+    expect(Object.keys(summary).sort()).toEqual(
+      ['id', 'name', 'displayName', 'description', 'enabled'].sort()
+    )
+    expect(profile.systemPrompt).toBe('You are a bio expert.')
     expect(skillCatalog.map((entry) => entry.id)).toContain('skill-a')
     expect(connectorCatalog.map((entry) => entry.id)).toContain('conn-a')
     const target = buildReviewedTarget(profile, connectorCatalog)

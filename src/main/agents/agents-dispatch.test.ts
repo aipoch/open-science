@@ -54,7 +54,9 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
     const viaDispatch = await service.dispatch({ op: 'list' })
     const viaRead = await service.read({ op: 'list' })
     expect(viaDispatch).toEqual(viaRead)
-    expect((viaDispatch as Array<{ id: string }>)[0].id).toBe('sp-1')
+    expect(Object.keys((viaDispatch as Array<{ id: string }>)[0]).sort()).toEqual(
+      ['id', 'name', 'displayName', 'description', 'enabled'].sort()
+    )
   })
 
   it('rejects an unknown op with a sanitized host.agents.<op>: error', async () => {
@@ -131,7 +133,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
       name: 'Bio',
       displayName: 'Bio',
       description: '',
-      systemPrompt: '',
+      systemPrompt: 'CREATE READ-BACK PROMPT SENTINEL',
       enabled: true,
       capabilityMode: 'full' as const,
       fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
@@ -145,10 +147,28 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
     const result = (await service.dispatch({ op: 'create', params: { name: 'Bio' } })) as {
       id: string
       capabilityMode: string
+      systemPrompt: string
     }
     expect(created).toHaveBeenCalledTimes(1)
     expect(result.id).toBe('sp-1')
     expect(result.capabilityMode).toBe('full')
+    expect(result.systemPrompt).toBe('CREATE READ-BACK PROMPT SENTINEL')
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        'id',
+        'name',
+        'displayName',
+        'description',
+        'enabled',
+        'systemPrompt',
+        'iconKey',
+        'colorKey',
+        'capabilityMode',
+        'fullAccess',
+        'selectedCapabilities',
+        'revision'
+      ].sort()
+    )
   })
 
   it('switch fails closed when its approval/binding/persistence seams are not configured', async () => {
@@ -366,7 +386,12 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
   it('routes a displayName edit through the ordinary mutation path', async () => {
     // The ProfileService returns the real post-write record; the dispatcher
     // must surface it verbatim, not echo the request patch.
-    const updated = specialist({ displayName: 'Biology', description: 'new', revision: 4 })
+    const updated = specialist({
+      displayName: 'Biology',
+      description: 'new',
+      systemPrompt: 'UPDATE READ-BACK PROMPT SENTINEL',
+      revision: 4
+    })
     const { service, profileService, gateway } = buildService({
       profiles: [specialist()]
     })
@@ -377,10 +402,11 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       params: { name: 'Bio', patch: { display_name: 'Biology', description: 'new', revision: 3 } }
     })) as SpecialistProfileView
 
-    // Ordinary path returns a projected AgentReadModel (no {status:'updated'} envelope).
+    // Ordinary path returns a projected AgentDetailReadModel (no {status:'updated'} envelope).
     expect(result.name).toBe('Bio')
     expect(result.displayName).toBe('Biology')
     expect(result.revision).toBe(4)
+    expect(result.systemPrompt).toBe('UPDATE READ-BACK PROMPT SENTINEL')
     // The ordinary path pinned the re-resolved name -> id and revision before update.
     const updateArgs = (profileService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(updateArgs.id).toBe('sp-1')
@@ -411,11 +437,54 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       params: { name: 'Bio', patch: { description: 'edited', revision: 3 } }
     })) as { id: string; description: string }
 
-    // Ordinary path returns a projected AgentReadModel (no {status:'updated'} envelope).
+    // Ordinary path returns a projected AgentDetailReadModel (no {status:'updated'} envelope).
     expect(result.id).toBe('sp-1')
     expect(result.description).toBe('edited')
     // The privileged gateway was NOT consulted for a non-name update.
     expect(gateway.decide).not.toHaveBeenCalled()
+  })
+
+  it('an attach mutation returns detail including the post-write system prompt', async () => {
+    const attached = specialist({
+      systemPrompt: 'ATTACH READ-BACK PROMPT SENTINEL',
+      selectedCapabilities: {
+        skillIds: ['skill-1'],
+        connectorIds: [],
+        connectorTools: []
+      },
+      revision: 4
+    })
+    const attachSkill = vi.fn(async () => attached)
+    const profileService = withExplicitResolvers({
+      ...noopProfileService(),
+      getByName: vi.fn(async () => specialist()),
+      attachSkill
+    } as unknown as ProfileService)
+    const service = new AgentsService({
+      profileService,
+      catalog: {
+        ...noopCatalog(),
+        listSkillCatalog: vi.fn(async () => [
+          {
+            id: 'skill-1',
+            frameworkName: 'skill-one',
+            displayName: 'Skill One',
+            source: 'personal',
+            mainEnabled: true,
+            available: true
+          }
+        ])
+      }
+    })
+
+    const result = (await service.dispatch({
+      op: 'attach_skill',
+      params: { name: 'Bio', skill_ref: 'skill-1', revision: 3 }
+    })) as SpecialistProfileView
+
+    expect(result.systemPrompt).toBe('ATTACH READ-BACK PROMPT SENTINEL')
+    expect(result.selectedCapabilities.skillIds).toEqual(['skill-1'])
+    expect(attachSkill).toHaveBeenCalledWith('sp-1', 'skill-1', 3, 'selected')
   })
 
   it('routes delete through applyDelete and returns { status: deleted, name }', async () => {

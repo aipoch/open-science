@@ -45,9 +45,9 @@ The Skill never uses the following, and you must not invent them:
 The SDK is name-first and lives in the trusted calling session. JavaScript methods, inputs, and
 returned records all use camelCase. Methods:
 
-- `host.agents.list()` — custom Specialists only.
-- `host.agents.get(name)` — one Specialist by immutable name (returns stable `id` and `revision`, but you
-  do not show those to the user).
+- `host.agents.list()` — custom Specialist summaries for discovery and selection only.
+- `host.agents.get(name)` — one existing Specialist's complete current state by immutable name
+  (returns stable `id` and `revision`, but you do not show those to the user).
 - `host.agents.create(input)` — object form (see below).
 - `host.agents.update(name, patch)` — `name` selects the Specialist and is immutable; use
   `patch.displayName` to change its presentation label.
@@ -99,12 +99,13 @@ the application approves the privileged operation.
 
 ## Workflow — every operation
 
-Follow this order for every mutation. Do not skip the live read, and do not snapshot catalog contents
+Follow this order for every mutation. Do not snapshot catalog contents
 into a profile or session (resolution is always live):
 
 1. **Understand scope.** What does the user want to create/change/delete/switch?
-2. **Live read.** Call `get`/`list` plus `listSkills`/`listConnectors` to read the current state and
-   the catalogs before proposing anything.
+2. **Live read.** Use `list` for discovery and selection. For an existing Specialist, call `get(name)`
+   to read its complete current state. Also call `listSkills`/`listConnectors` to read the catalogs
+   before proposing anything.
    Resolve persisted Custom Connector UUIDs through the live Connector catalog and use each
    Connector's immutable `name` in drafts, reviews, and mutation inputs. Never show a Connector UUID
    in ordinary prose. Bundled Connector IDs already equal their names; do not invent suffixes.
@@ -112,8 +113,8 @@ into a profile or session (resolution is always live):
 4. **Review.** Show the complete target state to the user.
 5. **Applicable confirmation.** Get the confirmation that matches the operation kind (see below).
 6. **Mutate.** Call the SDK with the reviewed revision.
-7. **Read-back.** Re-read actual state via `get`/`list` (or binding read-back for switch) before
-   reporting completion.
+7. **Read-back.** After a mutation, re-read actual state with `get(name)`. After delete, verify absence
+   with `list` or an expected not-found result from `get(name)`. For switch, use binding read-back.
 
 ## Scope clarification (Full vs Selected)
 
@@ -189,14 +190,14 @@ Report it as a **user decision** and stop. Do not retry it.
 
 ## Read-back and reporting
 
-- After a successful create/update, re-read with `get`/`list` and report the actual state. Never assume
+- After a successful create/update, re-read with `get(name)` and report the actual state. Never assume
   success from the call alone.
 - After `switch`, report that approval lets the **current control tool finish**, then automatically
   continues the same task under the approved target. A decline leaves the current Agent unchanged.
   The binding survives app restart.
 - After `delete`, report that existing conversations bound to the deleted Specialist become
   **unavailable** — they are not switched to Main Agent; the user must explicitly choose another
-  Specialist or Main Agent.
+  Specialist or Main Agent. Verify deletion with `list` or an expected not-found `get(name)` result.
 
 ## Do not expose UUIDs/revisions in ordinary prose
 
