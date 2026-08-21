@@ -2973,7 +2973,8 @@ async function hostCollect(selectors, options = undefined) {
     options === undefined
       ? undefined
       : remappedHostObject(options, 'host.collect options', {
-          timeoutSeconds: 'timeout_seconds'
+          timeoutSeconds: 'timeout_seconds',
+          returnWhen: 'return_when'
         })
   return delegatedObservationRpc('collect', normalizedSelectors, normalizedOptions)
 }

@@ -100,7 +100,8 @@ const COLLECT_AGENT_CONTRACT = {
     type: 'object',
     additionalProperties: false,
     properties: {
-      timeoutSeconds: { type: 'number', minimum: 0, maximum: 1800, default: 30 }
+      timeoutSeconds: { type: 'number', minimum: 0, maximum: 1800, default: 30 },
+      returnWhen: { type: 'string', enum: ['all', 'any'], default: 'all' }
     }
   },
   returns: { type: 'array', items: DELEGATE_OBSERVATION_SCHEMA },
@@ -358,7 +359,13 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
       'host.collect private RPC options use timeout_seconds; caller-facing timeoutSeconds must be remapped before transport.'
     )
   }
+  if (hasOwn(requestedOptions, 'returnWhen')) {
+    throw new Error(
+      'host.collect private RPC options use return_when; caller-facing returnWhen must be remapped before transport.'
+    )
+  }
   const timeoutSeconds = requestedOptions.timeout_seconds
+  const returnWhen = requestedOptions.return_when
   if (
     timeoutSeconds !== undefined &&
     (typeof timeoutSeconds !== 'number' ||
@@ -370,9 +377,15 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
       'host.collect options.timeout_seconds must be a finite number from 0 through 1800; choose a value in that range or omit it.'
     )
   }
+  if (returnWhen !== undefined && returnWhen !== 'all' && returnWhen !== 'any') {
+    throw new Error('host.collect options.return_when must be all or any; omit it to use all.')
+  }
   return {
     selectors,
-    options: timeoutSeconds === undefined ? {} : { timeoutSeconds }
+    options: {
+      ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
+      ...(returnWhen === undefined ? {} : { returnWhen })
+    }
   }
 }
 

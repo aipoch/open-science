@@ -46,6 +46,22 @@ type ProductionFrameworkRuntimeOptions = Readonly<{
   resolvePermissionProfile?(sessionId: string): PermissionProfileId | undefined
 }>
 
+const DELEGATED_CHILD_SYSTEM_PROMPT_APPEND = [
+  'You are a Subagent executing a delegated Attempt for the Main Agent.',
+  'Your final response is automatically preserved as the canonical terminal result for this Attempt, including ordinary conclusions, change summaries, validation results, Artifacts, and any required structured output.',
+  "Use host.sendFrameMessage('parent', ...) only while the Attempt is still running when the Main Agent needs an early actionable update, must answer a question, or must coordinate around a blocker or material risk.",
+  'When a structured-output schema is configured, submitting it with host.submitOutput(value) remains mandatory; that submission supplements and never replaces your ordinary final response.',
+  'Do not duplicate your final response through parent messaging when completing normally.'
+].join(' ')
+
+const withDelegatedChildContext = (backend: ResolvedAgentBackend): ResolvedAgentBackend => ({
+  ...backend,
+  systemPromptAppends: [
+    ...(backend.systemPromptAppends ?? []),
+    DELEGATED_CHILD_SYSTEM_PROMPT_APPEND
+  ]
+})
+
 const openCodeModelConfig = (backend: ResolvedAgentBackend): AgentModelConfig => ({
   env: { ...backend.env },
   configFiles: [
@@ -216,7 +232,7 @@ const createProductionDelegatedFrameworkRuntime = (
           return createAcpRuntime({
             ...options.runtime,
             notebookRpcServer: options.notebookRpcServer(),
-            fixedBackend: owned.backend,
+            fixedBackend: withDelegatedChildContext(owned.backend),
             runtimeCallbacks: callbacks,
             delegatedNotebookConnection: owned.connection,
             permissionGrantContext: {
@@ -243,5 +259,9 @@ const createProductionDelegatedFrameworkRuntime = (
     }
   })
 
-export { createProductionDelegatedFrameworkRuntime }
+export {
+  createProductionDelegatedFrameworkRuntime,
+  DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
+  withDelegatedChildContext
+}
 export type { ProductionFrameworkRuntimeOptions }
