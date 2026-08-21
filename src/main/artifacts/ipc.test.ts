@@ -190,7 +190,11 @@ describe('artifact IPC handlers', () => {
     } as unknown as ArtifactRepository
     const provenance = {
       finalizeRun: vi.fn(async () => {
-        callOrder.push('sqlite')
+        callOrder.push('sqlite-finalize')
+        return [finalizedArtifact]
+      }),
+      activateFinalizedRun: vi.fn(async () => {
+        callOrder.push('sqlite-activate')
         return [finalizedArtifact]
       })
     }
@@ -226,7 +230,7 @@ describe('artifact IPC handlers', () => {
     await handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
 
     expect(mutationScopes).toEqual([{ projectId: 'default-project', sessionId: 'session-1' }])
-    expect(callOrder).toEqual(['sqlite', 'compatibility'])
+    expect(callOrder).toEqual(['sqlite-finalize', 'compatibility', 'sqlite-activate'])
     expect(provenance.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         messageId: 'message-1',
@@ -519,7 +523,8 @@ describe('artifact IPC handlers', () => {
         .mockResolvedValue([finalizedArtifact])
     } as unknown as ArtifactRepository
     const provenance = {
-      finalizeRun: vi.fn().mockResolvedValue([finalizedArtifact])
+      finalizeRun: vi.fn().mockResolvedValue([finalizedArtifact]),
+      activateFinalizedRun: vi.fn().mockResolvedValue([finalizedArtifact])
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
@@ -570,6 +575,7 @@ describe('artifact IPC handlers', () => {
     ).resolves.toEqual([finalizedArtifact])
     expect(repository.finalizeRunArtifacts).toHaveBeenCalledTimes(2)
     expect(provenance.finalizeRun).toHaveBeenCalledTimes(2)
+    expect(provenance.activateFinalizedRun).toHaveBeenCalledOnce()
     expect(registry.resolve(claimId).finalizedMessageId).toBe('message-1')
     expect(diagnosticLogger.error).toHaveBeenCalledOnce()
   })
@@ -687,6 +693,93 @@ describe('artifact IPC handlers', () => {
       size: 16,
       truncated: true
     })
+  })
+
+  it('resolves a logical Artifact preview at read time and preserves an explicit Version', async () => {
+    const root = await createStorageRoot()
+    const currentPath = join(root, 'current.txt')
+    await writeFile(currentPath, 'current head')
+    const resolveManagedFilePath = vi.fn().mockResolvedValue(currentPath)
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      resolveManagedFilePath
+    })
+    const request = {
+      path: '/stale/projection.txt',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
+      versionId: 'artifact-v1',
+      maxBytes: 1024
+    }
+
+    await expect(handlers.readPreview(request)).resolves.toMatchObject({
+      content: 'current head'
+    })
+    expect(resolveManagedFilePath).toHaveBeenCalledWith(request)
+  })
+
+  it('reads a logical Artifact preview through the verified lease and always closes it', async () => {
+    const bytes = Buffer.from('verified artifact bytes')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const verifyUnchanged = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({
+      size: bytes.byteLength,
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        const chunk = bytes.subarray(position, position + length)
+        buffer.set(chunk, offset)
+        return { bytesRead: chunk.byteLength }
+      }),
+      verifyUnchanged,
+      close
+    })
+    const resolveManagedFilePath = vi.fn().mockRejectedValue(new Error('must not resolve a path'))
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openManagedFileVersion,
+      resolveManagedFilePath
+    })
+    const request = {
+      path: '/replaceable/artifact.txt',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
+      versionId: 'artifact-v1',
+      maxBytes: 1024
+    }
+
+    await expect(handlers.readPreview(request)).resolves.toMatchObject({
+      content: 'verified artifact bytes'
+    })
+    expect(openManagedFileVersion).toHaveBeenCalledWith(request)
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
+    expect(verifyUnchanged).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('closes the logical Artifact lease when its post-read integrity check fails', async () => {
+    const bytes = Buffer.from('changed artifact bytes')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openManagedFileVersion: vi.fn().mockResolvedValue({
+        size: bytes.byteLength,
+        read: vi.fn(
+          async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+            const chunk = bytes.subarray(position, position + length)
+            buffer.set(chunk, offset)
+            return { bytesRead: chunk.byteLength }
+          }
+        ),
+        verifyUnchanged: vi.fn().mockRejectedValue(new Error('managed version changed')),
+        close
+      })
+    })
+
+    await expect(
+      handlers.readPreview({
+        path: '/replaceable/artifact.txt',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        versionId: 'artifact-v1'
+      })
+    ).rejects.toThrow('managed version changed')
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('reads bounded base64 previews for small managed image artifacts', async () => {

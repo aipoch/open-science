@@ -551,6 +551,16 @@ const api: OpenScienceAPI = {
     repairIndex: (request) => electronRendererContracts.invoke('projectFiles.repairIndex', request),
     onChanged: (listener) => electronRendererContracts.subscribe('projectFiles.onChanged', listener)
   },
+  managedFileVersions: {
+    getCapability: () => electronRendererContracts.invoke('managedFileVersions.getCapability'),
+    inspect: (request) => electronRendererContracts.invoke('managedFileVersions.inspect', request),
+    diffText: (request) =>
+      electronRendererContracts.invoke('managedFileVersions.diffText', request),
+    cancelDiff: (request) =>
+      electronRendererContracts.invoke('managedFileVersions.cancelDiff', request),
+    saveTextEdit: (request) =>
+      electronRendererContracts.invoke('managedFileVersions.saveTextEdit', request)
+  },
   compute: {
     // SSH compute host record CRUD, backed by the same SQLite/Prisma layer as projects.
     list: () => electronRendererContracts.invoke('compute.list'),

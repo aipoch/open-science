@@ -164,6 +164,43 @@ beforeEach(() => {
         items: pickerProjectFiles,
         totalCount: pickerProjectFiles.length
       })
+    },
+    managedFileVersions: {
+      inspect: vi.fn().mockImplementation(async (request) => {
+        const file = pickerProjectFiles.find(
+          (candidate) =>
+            candidate.source === request.source && candidate.sourceFileId === request.fileId
+        )!
+        return {
+          ok: true,
+          value: {
+            source: file.source,
+            projectId: file.projectId,
+            fileId: file.sourceFileId,
+            sessionId: file.sessionId,
+            displayName: file.name,
+            headVersionId: file.sourceVersionId,
+            selectedVersionId: file.sourceVersionId,
+            versions: [
+              {
+                id: file.sourceVersionId,
+                source: file.source,
+                fileId: file.sourceFileId,
+                versionNumber: 1,
+                displayName: file.name,
+                originKind: file.source === 'upload' ? 'user_upload' : 'agent_generated',
+                basedOnVersionId: null,
+                contentType: file.mimeType,
+                sizeBytes: file.size,
+                checksum: '1'.repeat(64),
+                createdAt: '2026-08-14T00:00:00.000Z'
+              }
+            ],
+            canEdit: false,
+            canDiff: false
+          }
+        }
+      })
     }
   }
   container = document.createElement('div')
@@ -604,17 +641,25 @@ describe('ComposerEditor', () => {
 
     // Enter selects the highlighted row; the editor swaps the token for a green artifact chip.
     dispatchKey(document, 'Enter')
+    await flushProjectFiles()
 
     const chip = editor().querySelector('[data-mention-type="artifact"]')
     expect(chip).not.toBeNull()
     expect(chip?.textContent).toBe('@sequence.csv')
     expect(chip?.getAttribute('data-mention-path')).toBe('upload-version:default/session-1/up-1-v1')
     expect(chip?.getAttribute('data-mention-source')).toBe('upload')
+    expect(chip?.getAttribute('data-mention-source-file-id')).toBe('up-1')
     expect(chip?.className).toContain('bg-mention-chip')
 
     const lastCall = onDocChange.mock.calls.at(-1)?.[0] as ComposerDoc
     expect(
-      lastCall.nodes.some((node) => node.type === 'artifact' && node.id === 'upload:up-1')
+      lastCall.nodes.some(
+        (node) =>
+          node.type === 'artifact' &&
+          node.source !== 'linked-folder' &&
+          node.id === 'upload:up-1' &&
+          node.sourceFileId === 'up-1'
+      )
     ).toBe(true)
   })
 
@@ -665,6 +710,7 @@ describe('ComposerEditor', () => {
     })
     await flushProjectFiles()
     dispatchKey(document, 'Enter')
+    await flushProjectFiles()
 
     const chips = editor().querySelectorAll('[data-mention-type="artifact"]')
     expect(chips).toHaveLength(2)

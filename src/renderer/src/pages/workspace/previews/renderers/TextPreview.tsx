@@ -12,16 +12,27 @@ export const PreviewTextContent = ({
   name,
   source = 'artifact',
   projectId,
-  sessionId
+  sessionId,
+  managedFileId,
+  selectedVersionId
 }: {
   path: string
   name: string
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const state = usePreviewFileContent({ path, source, projectId, sessionId })
+  const state = usePreviewFileContent({
+    path,
+    source,
+    projectId,
+    sessionId,
+    managedFileId,
+    selectedVersionId
+  })
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 
@@ -45,5 +56,7 @@ export const TextPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
     source={item.source}
     projectId={item.projectId}
     sessionId={item.sessionId}
+    managedFileId={item.managedFileId}
+    selectedVersionId={item.selectedVersionId}
   />
 )

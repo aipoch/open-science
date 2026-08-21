@@ -118,6 +118,7 @@ const createArtifact = async (input: {
           checksum: checksum(input.content),
           evidenceJson: '{}',
           evidenceChecksum: checksum('{}'),
+          evidenceSchemaVersion: 1,
           createdAt: new Date('2026-07-27T10:05:00.000Z')
         }
       }

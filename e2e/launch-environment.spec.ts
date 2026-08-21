@@ -31,6 +31,10 @@ test('allows native window-system tests to opt into normal presentation', () => 
   expect(environment.OPEN_SCIENCE_E2E_WINDOW_MODE).toBe('normal')
 })
 
+test('pins the Electron UI to English for stable accessibility selectors', () => {
+  expect(electronLaunchTarget('profile-root', {}, 'darwin').args).toContain('--lang=en-US')
+})
+
 test('enables Session CPU tracing only for an active local performance profile', () => {
   const ordinary = launchEnvironment('storage-root', undefined, {})
   const profiled = launchEnvironment('storage-root', undefined, {}, undefined, 'hidden', true)
@@ -41,13 +45,18 @@ test('enables Session CPU tracing only for an active local performance profile',
 
 test('enables the basic password store only for Linux E2E profiles', () => {
   expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
-    args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--lang=en-US',
+      '--password-store=basic',
+      expect.any(String)
+    ]
   })
   expect(electronLaunchTarget('profile-root', {}, 'darwin')).toEqual({
-    args: ['--user-data-dir=profile-root', expect.any(String)]
+    args: ['--user-data-dir=profile-root', '--lang=en-US', expect.any(String)]
   })
   expect(electronLaunchTarget('profile-root', {}, 'win32')).toEqual({
-    args: ['--user-data-dir=profile-root', expect.any(String)]
+    args: ['--user-data-dir=profile-root', '--lang=en-US', expect.any(String)]
   })
 })
 
@@ -61,10 +70,15 @@ test('launches packaged and source applications with the expected Linux argument
       'linux'
     )
   ).toEqual({
-    args: ['--user-data-dir=profile-root', '--password-store=basic'],
+    args: ['--user-data-dir=profile-root', '--lang=en-US', '--password-store=basic'],
     executablePath: '/artifacts/Open Science.app/Contents/MacOS/Open Science'
   })
   expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
-    args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--lang=en-US',
+      '--password-store=basic',
+      expect.any(String)
+    ]
   })
 })

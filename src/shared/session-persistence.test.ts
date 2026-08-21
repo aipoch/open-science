@@ -513,6 +513,45 @@ describe('message attribution persistence', () => {
 })
 
 describe('message part persistence', () => {
+  it('round-trips managed file and Version identity for an upload mention', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@shared.csv',
+          parts: [
+            {
+              type: 'artifact',
+              id: 'upload:shared-csv',
+              sourceFileId: 'shared-csv',
+              versionId: 'shared-csv-v2',
+              name: 'shared.csv',
+              source: 'upload',
+              path: 'upload-version:project-a/source-session/shared-csv-v2'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      {
+        type: 'artifact',
+        id: 'upload:shared-csv',
+        sourceFileId: 'shared-csv',
+        versionId: 'shared-csv-v2',
+        name: 'shared.csv',
+        source: 'upload',
+        path: 'upload-version:project-a/source-session/shared-csv-v2'
+      }
+    ])
+  })
+
   it('preserves a linked-folder reference as root id plus relative path', () => {
     const restored = normalizeSessionFile({
       ...createSessionWithActivity(undefined),

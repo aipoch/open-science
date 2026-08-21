@@ -19,6 +19,7 @@ import type {
   ProvenanceMessage,
   ProvenanceMessagePart
 } from '../../shared/artifact-provenance'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 type ProvenanceMessageSnapshotOptions = {
   storageRoot: string
@@ -30,6 +31,38 @@ type ProvenanceMessageSnapshotOptions = {
 type SessionDeletionReceipt =
   | { kind: 'ordinary'; projectId: string; sessionId: string }
   | { kind: 'retained'; projectId: string; sessionId: string; operationId: string }
+
+type AgentMessageScope = {
+  originKind: string
+  rootFrameId: string | null
+  agentFrameId: string | null
+  messageBranchId: string | null
+  messageId: string | null
+}
+
+const requireAgentMessageScope = <T extends AgentMessageScope>(
+  version: T
+): T & {
+  originKind: 'agent_generated'
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+} => {
+  if (
+    version.originKind !== 'agent_generated' ||
+    !version.rootFrameId ||
+    !version.agentFrameId ||
+    !version.messageBranchId
+  ) {
+    throw new Error('Artifact Version does not contain complete Agent message ownership.')
+  }
+  return version as T & {
+    originKind: 'agent_generated'
+    rootFrameId: string
+    agentFrameId: string
+    messageBranchId: string
+  }
+}
 
 class FinalizedArtifactBindingConflictError extends Error {
   constructor(message: string) {
@@ -139,19 +172,23 @@ class ProvenanceMessageSnapshotRepository {
       throw new FinalizedArtifactBindingConflictError('Session conversation graph is unavailable.')
     }
     const client = await this.options.getClient()
-    const versions = await client.artifactVersion.findMany({
-      where: {
-        state: 'finalized',
-        messageId: { not: null },
-        artifact: { is: { projectId: session.projectId, sessionId: session.id } }
-      },
-      select: {
-        rootFrameId: true,
-        agentFrameId: true,
-        messageBranchId: true,
-        messageId: true
-      }
-    })
+    const versions = await client.artifactVersion
+      .findMany({
+        where: {
+          originKind: 'agent_generated',
+          state: 'finalized',
+          messageId: { not: null },
+          artifact: { is: { projectId: session.projectId, sessionId: session.id } }
+        },
+        select: {
+          originKind: true,
+          rootFrameId: true,
+          agentFrameId: true,
+          messageBranchId: true,
+          messageId: true
+        }
+      })
+      .then((rows) => rows.map(requireAgentMessageScope))
     const scopes = new Map<string, (typeof versions)[number]>()
     for (const version of versions) {
       if (!version.messageId) continue
@@ -174,20 +211,24 @@ class ProvenanceMessageSnapshotRepository {
     const graph = session.conversationGraph
     if (!graph) throw new Error('Session conversation graph is unavailable.')
     const client = await this.options.getClient()
-    const versions = await client.artifactVersion.findMany({
-      where: {
-        state: 'finalized',
-        messageId: { not: null },
-        messageSnapshotId: null,
-        artifact: { is: { projectId: session.projectId, sessionId: session.id } }
-      },
-      select: {
-        rootFrameId: true,
-        agentFrameId: true,
-        messageBranchId: true,
-        messageId: true
-      }
-    })
+    const versions = await client.artifactVersion
+      .findMany({
+        where: {
+          originKind: 'agent_generated',
+          state: 'finalized',
+          messageId: { not: null },
+          messageSnapshotId: null,
+          artifact: { is: { projectId: session.projectId, sessionId: session.id } }
+        },
+        select: {
+          originKind: true,
+          rootFrameId: true,
+          agentFrameId: true,
+          messageBranchId: true,
+          messageId: true
+        }
+      })
+      .then((rows) => rows.map(requireAgentMessageScope))
     const scopes = new Map<string, (typeof versions)[number]>()
     for (const version of versions) {
       if (!version.messageId) continue
@@ -227,13 +268,16 @@ class ProvenanceMessageSnapshotRepository {
     // The live graph is the final opportunity to freeze branch-scoped Messages. Deletion fails
     // closed if any finalized output cannot be linked to immutable Message evidence.
     await this.captureFinalizedMessages(session)
-    const finalizedVersions = await client.artifactVersion.findMany({
-      where: {
-        state: 'finalized',
-        artifact: { is: { projectId: session.projectId, sessionId: session.id } }
-      },
-      include: { messageSnapshot: true }
-    })
+    const finalizedVersions = (
+      await client.artifactVersion.findMany({
+        where: {
+          originKind: 'agent_generated',
+          state: 'finalized',
+          artifact: { is: { projectId: session.projectId, sessionId: session.id } }
+        },
+        include: { messageSnapshot: true }
+      })
+    ).map(requireAgentArtifactVersion)
     if (finalizedVersions.some((version) => !version.messageSnapshot)) {
       throw new Error(
         'Session deletion requires Message snapshots for every finalized Artifact Version.'

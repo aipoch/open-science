@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { formatByteSize } from '@/lib/utils'
@@ -15,6 +15,7 @@ import { HighlightedText } from './HighlightedText'
 // The reference passed back to the composer when an artifact row is picked.
 export type PickedArtifact = {
   id: string
+  sourceFileId: string
   name: string
   path: string
   source: 'upload' | 'artifact'
@@ -35,6 +36,7 @@ type ArtifactMentionPopupProps = {
 // One suggestion row: a picked artifact plus the display size and its section tag. `positions` holds
 // the fuzzy-match indices into `name` to highlight (empty when the query is empty).
 type ArtifactRow = PickedArtifact & {
+  projectId: string
   size?: number
   tag: 'upload' | 'output'
   positions?: number[]
@@ -79,6 +81,8 @@ export const ArtifactMentionPopup = ({
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const generatedListboxId = useId()
   const resolvedListboxId = listboxId ?? generatedListboxId
+  const selectionRevisionRef = useRef(0)
+  const [selectionError, setSelectionError] = useState<string>()
   const [projectFiles, setProjectFiles] = useState<{
     projectId?: string
     files: ProjectFileItem[]
@@ -102,17 +106,18 @@ export const ArtifactMentionPopup = ({
     }
   }, [activeProjectId])
 
-  // ManagedFile is the single picker read model. Its paths are typed immutable Version locators, so
-  // cross-session selections retain exact Upload/Artifact identity without loading Session JSON.
+  // ManagedFile supplies a logical file identity. The consumer resolves its current DB head when the
+  // turn starts; only an explicit history action may attach an immutable Version id.
   const rows = useMemo<ArtifactRow[]>(
     () =>
       projectFiles.projectId === activeProjectId
         ? projectFiles.files.map((file) => ({
             id: file.id,
+            sourceFileId: file.sourceFileId,
+            projectId: file.projectId,
             name: file.name,
             path: file.path,
             source: file.source,
-            ...(file.sourceVersionId ? { versionId: file.sourceVersionId } : {}),
             mimeType: file.mimeType,
             size: file.size,
             tag: file.source === 'upload' ? ('upload' as const) : ('output' as const)
@@ -165,6 +170,58 @@ export const ArtifactMentionPopup = ({
     if (activeOptionId)
       document.getElementById(activeOptionId)?.scrollIntoView?.({ block: 'nearest' })
   }, [activeOptionId])
+
+  const selectRow = useCallback(
+    async (row: ArtifactRow): Promise<void> => {
+      const revision = ++selectionRevisionRef.current
+      setSelectionError(undefined)
+      const inspect = window.api.managedFileVersions?.inspect
+      if (!inspect) {
+        setSelectionError(t('File version resolution is unavailable.'))
+        return
+      }
+      try {
+        const result = await inspect({
+          source: row.source,
+          projectId: row.projectId,
+          fileId: row.sourceFileId
+        })
+        if (revision !== selectionRevisionRef.current) return
+        if (!result.ok) {
+          setSelectionError(t('Could not resolve file version.'))
+          return
+        }
+        const head = result.value.versions.find(
+          (version) => version.id === result.value.headVersionId
+        )
+        if (!head) {
+          setSelectionError(t('The current file version is unavailable.'))
+          return
+        }
+        onSelect({
+          id: row.id,
+          sourceFileId: row.sourceFileId,
+          name: result.value.displayName,
+          path: row.path,
+          source: row.source,
+          mimeType: head.contentType ?? row.mimeType,
+          versionId: head.id
+        })
+      } catch {
+        if (revision !== selectionRevisionRef.current) return
+        setSelectionError(t('Could not resolve file version.'))
+      }
+    },
+    [onSelect, t]
+  )
+
+  useEffect(
+    () => () => {
+      selectionRevisionRef.current += 1
+    },
+    []
+  )
+
   // Handle navigation keys at the document level while mounted, since focus stays in the editor.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -187,7 +244,7 @@ export const ArtifactMentionPopup = ({
         const active = matches[safeIndex]
         if (event.key === 'Enter' || active) event.preventDefault()
         if (active) {
-          onSelect(toPicked(active))
+          void selectRow(active)
         }
       } else if (event.key === 'Escape') {
         event.preventDefault()
@@ -197,7 +254,7 @@ export const ArtifactMentionPopup = ({
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [matches, safeIndex, onSelect, onClose])
+  }, [matches, safeIndex, selectRow, onClose])
 
   // Split the flat match list back into its two sections, preserving the flat highlight index.
   const uploadMatches = matches.filter((row) => row.tag === 'upload')
@@ -228,7 +285,7 @@ export const ArtifactMentionPopup = ({
         onMouseEnter={() => setActiveIndex(index)}
         // Keep the editor focused/caret intact so the mention stays open long enough for the click.
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => onSelect(toPicked(row))}
+        onClick={() => void selectRow(row)}
         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-text-100 hover:bg-bg-200 hover:text-text-000 transition-colors cursor-pointer${
           isActive ? ' bg-bg-200 !text-text-000' : ''
         }`}
@@ -266,6 +323,11 @@ export const ArtifactMentionPopup = ({
 
   return (
     <div className="absolute bottom-full left-0 mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
+      {selectionError ? (
+        <div role="alert" className="px-2 py-1.5 text-sm text-danger-000">
+          {selectionError}
+        </div>
+      ) : null}
       {matches.length === 0 ? (
         <div
           role={loadState === 'error' ? 'alert' : 'status'}
@@ -323,13 +385,3 @@ export const ArtifactMentionPopup = ({
     </div>
   )
 }
-
-// Narrow a row down to the reference shape handed back to the composer.
-const toPicked = (row: ArtifactRow): PickedArtifact => ({
-  id: row.id,
-  name: row.name,
-  path: row.path,
-  source: row.source,
-  mimeType: row.mimeType,
-  versionId: row.versionId
-})

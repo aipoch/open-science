@@ -53,10 +53,11 @@ describe('database JSON and remaining domain constraints', () => {
       `INSERT INTO "ArtifactVersion" (
         "id","artifactId","versionNumber","filename","artifactRunId","rootFrameId","agentFrameId",
         "messageBranchId","runtimeSegmentId","promptMessageId","state","contentStorageKey",
-        "evidenceStorageKey","sizeBytes","checksum","evidenceJson","evidenceChecksum","updatedAt"
+        "evidenceStorageKey","sizeBytes","checksum","evidenceJson","evidenceChecksum",
+        "evidenceSchemaVersion","updatedAt"
       ) VALUES (
         'version','lineage',1,'result.txt','run','root','agent','branch','segment','prompt','staging',
-        'content','evidence.json',0,'checksum','{}','evidence-checksum',CURRENT_TIMESTAMP
+        'content','evidence.json',0,'checksum','{}','evidence-checksum',1,CURRENT_TIMESTAMP
       )`
     )
     await client.$executeRawUnsafe(

@@ -29,6 +29,8 @@ type PreviewFileContentInternalState =
 type UsePreviewFileContentRequest = {
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   path: string
   source?: PreviewFileSource
   maxBytes?: number
@@ -39,6 +41,8 @@ type UsePreviewFileContentRequest = {
 export const usePreviewFileContent = ({
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   path,
   source = 'artifact',
   maxBytes = PREVIEW_TEXT_MAX_BYTES,
@@ -48,6 +52,8 @@ export const usePreviewFileContent = ({
     projectId ?? null,
     sessionId ?? null,
     source,
+    managedFileId ?? null,
+    selectedVersionId ?? null,
     encoding,
     maxBytes,
     path
@@ -76,6 +82,8 @@ export const usePreviewFileContent = ({
     void readPreview({
       ...createPreviewRequestScope({ projectId, sessionId, source, path }),
       path,
+      ...(managedFileId ? { fileId: managedFileId } : {}),
+      ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
       maxBytes,
       encoding,
       offset
@@ -93,7 +101,18 @@ export const usePreviewFileContent = ({
     return () => {
       canceled = true
     }
-  }, [encoding, maxBytes, offset, path, projectId, requestKey, sessionId, source])
+  }, [
+    encoding,
+    managedFileId,
+    maxBytes,
+    offset,
+    path,
+    projectId,
+    requestKey,
+    selectedVersionId,
+    sessionId,
+    source
+  ])
 
   if (state.requestKey !== requestKey) return { status: 'loading' }
 

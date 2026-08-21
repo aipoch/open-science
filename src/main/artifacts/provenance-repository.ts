@@ -52,6 +52,7 @@ import { ArtifactProvenanceReadModel } from './provenance-read-model'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
 import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import { digestFileWithinBudget } from '../bounded-file-io'
@@ -72,6 +73,17 @@ type ArtifactProvenanceRepositoryOptions = {
   now?: () => Date
   durability?: ArtifactDurability
   resourceBudgets?: LocalResourceBudgetOverrides
+}
+
+type ProjectableVersionFileRecord = Omit<PersistedVersionFileRecord, 'artifactRunId'> & {
+  artifactRunId: string | null
+}
+
+type VersionDescriptorRecord = ProjectableVersionFileRecord & {
+  state: string
+  messageId: string | null
+  originKind: string
+  basedOnVersionId: string | null
 }
 
 export type WriteAppGeneratedArtifactVersionRequest = Omit<
@@ -177,6 +189,7 @@ class ArtifactProvenanceRepository {
     })
     this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
       getClient: options.getClient,
+      now: this.now,
       loadSession: options.loadSession,
       projectVersionFile: (version, projectId, appSessionId) =>
         this.toArtifactVersionFile(version, projectId, appSessionId)
@@ -354,42 +367,44 @@ class ArtifactProvenanceRepository {
       include: { artifact: true }
     })
     if (!existing) return undefined
+    const agentVersion = requireAgentArtifactVersion(existing)
     const producerMatches =
       request.producerRunId !== undefined
-        ? (existing.producerRunId ?? undefined) === request.producerRunId
-        : existing.producerRunId === null || hasServerInferredProducer(existing.evidenceJson)
+        ? (agentVersion.producerRunId ?? undefined) === request.producerRunId
+        : agentVersion.producerRunId === null ||
+          hasServerInferredProducer(agentVersion.evidenceJson)
     if (
-      existing.artifact.projectId !== projectId ||
-      existing.artifact.sessionId !== appSessionId ||
-      existing.artifactRunId !== artifactRunId ||
-      existing.artifact.normalizedFilename !== normalizedFilename ||
-      (existing.contentType ?? undefined) !== request.contentType ||
+      agentVersion.artifact.projectId !== projectId ||
+      agentVersion.artifact.sessionId !== appSessionId ||
+      agentVersion.artifactRunId !== artifactRunId ||
+      agentVersion.artifact.normalizedFilename !== normalizedFilename ||
+      (agentVersion.contentType ?? undefined) !== request.contentType ||
       !producerMatches
     ) {
       throw new Error(
         `Artifact write operation was reused for a different request: ${writeOperationId}`
       )
     }
-    if (existing.state === 'staging') {
+    if (agentVersion.state === 'staging') {
       return this.stagingRecovery.recoverVersion(
-        existing,
+        agentVersion,
         projectId,
         appSessionId,
         request.filename,
         this.stagingRecovery.routingPublisher(projectId, artifactStorageSessionId, request.filename)
       )
     }
-    if (existing.state !== 'pending' && existing.state !== 'finalized') {
+    if (agentVersion.state !== 'pending' && agentVersion.state !== 'finalized') {
       throw new Error(`Artifact write has an invalid lifecycle state: ${writeOperationId}`)
     }
-    if (existing.state === 'pending') {
+    if (agentVersion.state === 'pending') {
       await this.stagingRecovery.routingPublisher(
         projectId,
         artifactStorageSessionId,
         request.filename
-      )(existing, { replaceUnroutedBytes: true })
+      )(agentVersion, { replaceUnroutedBytes: true })
     }
-    return this.toArtifactVersionFile(existing, projectId, appSessionId)
+    return this.toArtifactVersionFile(agentVersion, projectId, appSessionId)
   }
 
   async validateFinalizationOwnership(request: FinalizeArtifactVersionsRequest): Promise<void> {
@@ -398,6 +413,12 @@ class ArtifactProvenanceRepository {
 
   async finalizeRun(request: FinalizeArtifactVersionsRequest): Promise<ArtifactVersionFile[]> {
     return this.messageFinalizer.finalizeRun(request)
+  }
+
+  async activateFinalizedRun(
+    request: FinalizeArtifactVersionsRequest
+  ): Promise<ArtifactVersionFile[]> {
+    return this.messageFinalizer.activateFinalizedRun(request)
   }
 
   async listRunVersions(request: {
@@ -411,6 +432,7 @@ class ArtifactProvenanceRepository {
     const client = await this.options.getClient()
     const versions = await client.artifactVersion.findMany({
       where: {
+        originKind: 'agent_generated',
         artifactRunId,
         state: { in: ['pending', 'finalized'] },
         artifact: { is: { projectId, sessionId: appSessionId } }
@@ -420,7 +442,9 @@ class ArtifactProvenanceRepository {
     })
 
     return Promise.all(
-      versions.map((version) => this.toArtifactVersionFile(version, projectId, appSessionId))
+      versions.map((version) =>
+        this.toArtifactVersionFile(requireAgentArtifactVersion(version), projectId, appSessionId)
+      )
     )
   }
 
@@ -520,12 +544,18 @@ class ArtifactProvenanceRepository {
     const versions = await client.artifactVersion.findMany({
       where: {
         id: { in: versionIds },
+        originKind: 'agent_generated',
         state: 'finalized',
         artifact: { is: { projectId } }
       },
       include: { artifact: true }
     })
-    const versionsById = new Map(versions.map((version) => [version.id, version]))
+    const versionsById = new Map(
+      versions.map((version) => {
+        const agentVersion = requireAgentArtifactVersion(version)
+        return [agentVersion.id, agentVersion] as const
+      })
+    )
 
     return Promise.all(
       versionIds.flatMap((versionId) => {
@@ -676,15 +706,26 @@ class ArtifactProvenanceRepository {
   async deleteProjectProvenance(projectIdValue: string): Promise<void> {
     const projectId = assertSafeSegment(projectIdValue, 'project id')
     const client = await this.options.getClient()
-    const uploadVersions = await client.uploadVersion.findMany({
-      where: { uploadFile: { is: { projectId } } },
-      select: { contentStorageKey: true }
-    })
+    const [uploadVersions, versionWriteOperations] = await Promise.all([
+      client.uploadVersion.findMany({
+        where: { uploadFile: { is: { projectId } } },
+        select: { contentStorageKey: true }
+      }),
+      client.managedFileVersionWriteOperation.findMany({
+        where: { projectId, source: { in: ['artifact', 'upload'] } },
+        orderBy: { operationId: 'asc' },
+        select: { contentStorageKey: true }
+      })
+    ])
 
-    // Delete managed Upload bytes while their authority rows still make the operation replayable.
-    // Any failure leaves the Project deletion intent and storage keys available for a later retry.
-    for (const version of uploadVersions) {
-      await rm(resolveStorageKey(this.options.storageRoot, version.contentStorageKey), {
+    // Journal paths are explicit authority and need not live under a source's conventional root.
+    // Keep every row until all unique Upload Version and Artifact/Upload journal paths are removed,
+    // so a partial filesystem failure remains idempotently replayable from the complete journal.
+    const managedStorageKeys = new Set(
+      [...uploadVersions, ...versionWriteOperations].map((entry) => entry.contentStorageKey)
+    )
+    for (const contentStorageKey of managedStorageKeys) {
+      await rm(resolveStorageKey(this.options.storageRoot, contentStorageKey), {
         force: true
       })
     }
@@ -698,6 +739,31 @@ class ArtifactProvenanceRepository {
           ]
         }
       })
+      await tx.managedFileVersionWriteOperation.deleteMany({ where: { projectId } })
+      await tx.artifactLineage.updateMany({
+        where: { projectId },
+        data: { currentVersionId: null }
+      })
+      await tx.uploadFile.updateMany({
+        where: { projectId },
+        data: { currentVersionId: null }
+      })
+      const artifactVersions = await tx.artifactVersion.findMany({
+        where: { artifact: { is: { projectId } } },
+        orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+        select: { id: true }
+      })
+      for (const version of artifactVersions) {
+        await tx.artifactVersion.delete({ where: { id: version.id } })
+      }
+      const uploadVersionRows = await tx.uploadVersion.findMany({
+        where: { uploadFile: { is: { projectId } } },
+        orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+        select: { id: true }
+      })
+      for (const version of uploadVersionRows) {
+        await tx.uploadVersion.delete({ where: { id: version.id } })
+      }
       await tx.artifactLineage.deleteMany({ where: { projectId } })
       await tx.uploadFile.deleteMany({ where: { projectId } })
       await tx.artifactMessageSnapshot.deleteMany({ where: { projectId } })
@@ -711,7 +777,7 @@ class ArtifactProvenanceRepository {
   }
 
   private async toArtifactVersionFile(
-    version: PersistedVersionFileRecord,
+    version: ProjectableVersionFileRecord,
     projectId: string,
     appSessionId: string
   ): Promise<ArtifactVersionFile> {
@@ -750,7 +816,7 @@ class ArtifactProvenanceRepository {
       environment,
       projectId,
       sessionId: appSessionId,
-      runId: version.artifactRunId,
+      runId: version.artifactRunId ?? undefined,
       name: version.filename,
       path: filePath,
       fileUrl: pathToFileURL(filePath).toString(),
@@ -761,7 +827,7 @@ class ArtifactProvenanceRepository {
   }
 
   private async toDescriptor(
-    version: PersistedVersionFileRecord & { state: string; messageId: string | null },
+    version: VersionDescriptorRecord,
     projectId: string,
     appSessionId: string
   ): Promise<ArtifactVersionDescriptor> {
@@ -772,7 +838,9 @@ class ArtifactProvenanceRepository {
     return {
       ...relocatableFile,
       state: version.state as 'pending' | 'finalized',
-      messageId: version.messageId ?? undefined
+      messageId: version.messageId ?? undefined,
+      originKind: version.originKind as 'agent_generated' | 'user_edit' | 'legacy',
+      basedOnVersionId: version.basedOnVersionId ?? undefined
     }
   }
 }

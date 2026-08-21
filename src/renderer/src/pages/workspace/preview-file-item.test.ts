@@ -167,6 +167,7 @@ describe('preview file item helpers', () => {
   it('creates namespaced upload preview items that use the original upload name', () => {
     expect(createPreviewFileItemFromUpload(createUploadAttachment(), 'session-1')).toEqual({
       id: 'upload:upload-1',
+      managedFileId: 'upload-1',
       sessionId: 'session-1',
       title: 'raw microscope image.png',
       type: 'file',
@@ -176,6 +177,23 @@ describe('preview file item helpers', () => {
       format: 'image',
       mimeType: 'image/png',
       size: 2048
+    })
+  })
+
+  it('keeps the managed upload identity separate from its namespaced preview tab id', () => {
+    expect(
+      createPreviewFileItemFromUpload(
+        createUploadAttachment({ versionId: 'upload-version-2', versionNumber: 2 }),
+        'session-1',
+        'project-1'
+      )
+    ).toMatchObject({
+      id: 'upload:upload-1',
+      managedFileId: 'upload-1',
+      selectedVersionId: 'upload-version-2',
+      versionNumber: 2,
+      projectId: 'project-1',
+      path: 'upload-version:project-1/session-1/upload-version-2'
     })
   })
 
@@ -269,6 +287,30 @@ describe('preview file item helpers', () => {
       source: 'upload',
       name: 'scan.png',
       format: 'image'
+    })
+  })
+
+  it('recovers exact managed Upload identity and source scope from a mention locator', () => {
+    const item = createPreviewFileItemFromMention(
+      createMentionPart({
+        id: 'upload:upload-file-3',
+        sourceFileId: 'upload-file-3',
+        name: 'shared.csv',
+        path: 'upload-version:project-1/source-session/upload-version-4',
+        source: 'upload',
+        versionId: 'upload-version-4'
+      }),
+      'current-session',
+      'current-project'
+    )
+
+    expect(item).toMatchObject({
+      id: 'upload:upload-file-3',
+      managedFileId: 'upload-file-3',
+      selectedVersionId: 'upload-version-4',
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      source: 'upload'
     })
   })
 

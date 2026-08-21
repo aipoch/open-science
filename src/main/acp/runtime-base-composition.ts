@@ -177,7 +177,8 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     uploads: uploadRepository,
     artifacts: artifactRepository,
     artifactVersions: options.artifacts?.provenance,
-    grantedRoots: options.grantedRoots
+    grantedRoots: options.grantedRoots,
+    managedFileVersions: options.artifacts?.managedFileVersions
   })
 
   return Object.freeze({

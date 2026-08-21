@@ -65,6 +65,10 @@ const GENERATED_SOURCE_OMISSIONS = [
   'locale.initialize',
   'locale.onChanged',
   'locale.setPreference',
+  'managedFileVersions.cancelDiff',
+  'managedFileVersions.diffText',
+  'managedFileVersions.inspect',
+  'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
   'network.getInfo',
   'notifications.syncViewState',
@@ -132,6 +136,7 @@ const GENERATED_SOURCE_OMISSIONS = [
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
   'getRuntimeVersions',
+  'managedFileVersions.getCapability',
   'saveBlobFile',
   'saveManagedFile',
   'window.close'

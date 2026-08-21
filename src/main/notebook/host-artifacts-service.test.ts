@@ -251,6 +251,38 @@ describe('HostArtifactsService', () => {
     await expect(service.list({ limit: 101 }, context)).rejects.toThrow('between 1 and 100')
   })
 
+  it('rejects an obsolete offset cursor and a changed catalog snapshot with stable errors', async () => {
+    let items = [
+      artifact({ sourceFileId: 'C', versionId: 'C-v1', sortAtMs: 3 }),
+      artifact({ sourceFileId: 'A', versionId: 'A-v1', sortAtMs: 2 }),
+      artifact({ sourceFileId: 'B', versionId: 'B-v1', sortAtMs: 1 })
+    ]
+    const catalog: HostArtifactCatalog = {
+      readHostArtifactCatalog: vi.fn(async () => items)
+    }
+    const service = new HostArtifactsService(catalog, {
+      artifact: { resolveVersionContent: vi.fn() },
+      upload: { resolveManagedUploadPath: vi.fn() }
+    })
+
+    const first = await service.list({ limit: 2 }, context)
+    expect(first.artifacts.map((item) => item.id)).toEqual(['C', 'A'])
+    const unchangedSecond = await service.list({ limit: 2, cursor: first.nextCursor }, context)
+    expect(unchangedSecond.artifacts.map((item) => item.id)).toEqual(['B'])
+    items = [artifact({ sourceFileId: 'A', versionId: 'A-v2', sortAtMs: 4 }), items[0]!, items[2]!]
+    await expect(service.list({ limit: 2, cursor: first.nextCursor }, context)).rejects.toThrow(
+      /HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED/u
+    )
+
+    const obsolete = Buffer.from(
+      JSON.stringify({ version: 1, queryKey: 'obsolete', offset: 2 }),
+      'utf8'
+    ).toString('base64url')
+    await expect(service.list({ cursor: obsolete }, context)).rejects.toThrow(
+      /cursor format is obsolete.*first page/iu
+    )
+  })
+
   it('supports direct Version lookup and rejects every mixed or malformed option', async () => {
     const { service, readHostArtifactCatalog } = harness()
 

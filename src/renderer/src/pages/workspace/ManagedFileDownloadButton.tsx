@@ -7,8 +7,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import type { SaveManagedFileRequest } from '../../../../shared/file-save'
 
-type ManagedFileDownloadButtonProps = SaveManagedFileRequest & {
+type ManagedFileDownloadButtonProps = {
+  source: SaveManagedFileRequest['source']
+  path: string
+  projectId?: string
+  fileId?: string
+  versionId?: string
+  suggestedName: string
   appearance?: 'icon' | 'primary'
+  tone?: 'default' | 'strong'
   className?: string
   disabled?: boolean
   iconSize?: 'icon-xs' | 'icon-sm' | 'icon'
@@ -22,8 +29,12 @@ type DownloadStatus = 'idle' | 'saving' | 'saved' | 'error'
 const ManagedFileDownloadButtonState = ({
   source,
   path,
+  projectId,
+  fileId,
+  versionId,
   suggestedName,
   appearance = 'icon',
+  tone = 'default',
   className,
   disabled = false,
   iconSize = 'icon-xs',
@@ -52,7 +63,14 @@ const ManagedFileDownloadButtonState = ({
     if (resetTimerRef.current !== undefined) window.clearTimeout(resetTimerRef.current)
     setStatus('saving')
     void window.api
-      .saveManagedFile({ source, path, suggestedName })
+      .saveManagedFile({
+        source,
+        path,
+        ...(projectId ? { projectId } : {}),
+        ...(fileId ? { fileId } : {}),
+        ...(versionId ? { versionId } : {}),
+        suggestedName
+      } as SaveManagedFileRequest)
       .then((result) => {
         if (!mountedRef.current || activeSaveRef.current !== attempt) return
 
@@ -126,7 +144,9 @@ const ManagedFileDownloadButtonState = ({
                 !isPrimary &&
                   (status === 'saved'
                     ? 'text-emerald-600 hover:bg-muted hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400'
-                    : 'text-text-100 hover:bg-muted hover:text-text-000'),
+                    : tone === 'strong'
+                      ? 'text-text-000 hover:bg-muted hover:text-text-000'
+                      : 'text-text-100 hover:bg-muted hover:text-text-000'),
                 revealOnParentHover &&
                   (status === 'idle'
                     ? 'opacity-0 group-hover:opacity-100 group-focus-visible/download:opacity-100 focus-visible:opacity-100'
@@ -164,7 +184,14 @@ const ManagedFileDownloadButtonState = ({
 
 // Keeps managed-file export behind one source-neutral renderer control.
 const ManagedFileDownloadButton = (props: ManagedFileDownloadButtonProps): React.JSX.Element => {
-  const requestKey = JSON.stringify([props.source, props.path, props.suggestedName])
+  const requestKey = JSON.stringify([
+    props.source,
+    props.path,
+    'projectId' in props ? props.projectId : undefined,
+    'fileId' in props ? props.fileId : undefined,
+    'versionId' in props ? props.versionId : undefined,
+    props.suggestedName
+  ])
   return <ManagedFileDownloadButtonState key={requestKey} {...props} />
 }
 

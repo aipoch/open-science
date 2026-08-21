@@ -443,6 +443,7 @@ describe('upload repository', () => {
     expect(files).toHaveLength(2)
     expect(files.every((file) => file.versions[0]?.state === 'ready')).toBe(true)
     expect(files.every((file) => file.versions[0]?.versionNumber === 1)).toBe(true)
+    expect(files.every((file) => file.currentVersionId === file.versions[0]?.id)).toBe(true)
 
     const [again] = await repository.finalizePendingSessionUploads(
       'session-1',
@@ -554,6 +555,9 @@ describe('upload repository', () => {
       client.uploadVersion.findUniqueOrThrow({ where: { id: versionId } })
     ).resolves.toMatchObject({ state: 'ready' })
     await expect(
+      client.uploadFile.findUniqueOrThrow({ where: { id: pending.id } })
+    ).resolves.toMatchObject({ currentVersionId: versionId })
+    await expect(
       client.managedFile.findUniqueOrThrow({
         where: {
           projectId_source_sourceFileId: {
@@ -615,6 +619,39 @@ describe('upload repository', () => {
         }
       }
     })
+    const newerContent = Buffer.from('newer ready version')
+    const newerVersionId = 'upload-version-newer-ready'
+    const newerStorageKey = [
+      'uploads',
+      'project-1',
+      'session-1',
+      'upload-post-rename',
+      'versions',
+      newerVersionId,
+      'content'
+    ].join('/')
+    const newerPath = join(root, ...newerStorageKey.split('/'))
+    await mkdir(dirname(newerPath), { recursive: true })
+    await writeFile(newerPath, newerContent)
+    await client.uploadVersion.create({
+      data: {
+        id: newerVersionId,
+        uploadFileId: 'upload-post-rename',
+        versionNumber: 2,
+        state: 'ready',
+        originKind: 'legacy',
+        contentStorageKey: newerStorageKey,
+        filename: 'renamed.txt',
+        originalFilename: 'renamed.txt',
+        contentType: 'text/plain',
+        sizeBytes: BigInt(newerContent.byteLength),
+        checksum: createHash('sha256').update(newerContent).digest('hex')
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-post-rename' },
+      data: { currentVersionId: newerVersionId }
+    })
 
     await repository.recoverStagingUploads()
 
@@ -633,7 +670,10 @@ describe('upload repository', () => {
           }
         }
       })
-    ).resolves.toMatchObject({ sourceVersionId: versionId })
+    ).resolves.toMatchObject({ sourceVersionId: newerVersionId, storageKey: newerStorageKey })
+    await expect(
+      client.uploadFile.findUniqueOrThrow({ where: { id: 'upload-post-rename' } })
+    ).resolves.toMatchObject({ currentVersionId: newerVersionId })
   })
 
   it('recovers and removes a deterministic live-copy temp left before its final rename', async () => {

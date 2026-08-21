@@ -226,6 +226,7 @@ describe('Artifact Provenance repository architecture', () => {
   it('keeps the established public facade and private projection helpers', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'activateFinalizedRun',
         'createVersion',
         'deleteProjectProvenance',
         'finalizeRun',
@@ -310,6 +311,7 @@ describe('Artifact Provenance repository architecture', () => {
     expect(
       Object.fromEntries(
         [
+          'activateFinalizedRun',
           'createVersion',
           'finalizeRun',
           'getLineage',
@@ -329,6 +331,7 @@ describe('Artifact Provenance repository architecture', () => {
         ].map((method) => [method, delegationTarget(facade, facadeFile, method)])
       )
     ).toEqual({
+      activateFinalizedRun: 'this.messageFinalizer.activateFinalizedRun',
       createVersion: 'this.versionWriter.writeVersion',
       finalizeRun: 'this.messageFinalizer.finalizeRun',
       getLineage: 'this.readModel.getLineage',

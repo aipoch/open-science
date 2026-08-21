@@ -76,7 +76,7 @@ type ArtifactProvenancePanelProps = {
   item: PreviewFileItem
   projectId: string
   onClose: () => void
-  onVersionChange?: (item: PreviewFileItem) => void
+  onVersionChange?: (item: PreviewFileItem) => boolean
 }
 
 const tabs: Array<{ id: ProvenanceTab; label: string }> = [
@@ -543,6 +543,12 @@ const ArtifactProvenancePanel = ({
     ? resolveArtifactVersionDescriptor(lineage, requestedVersionId)
     : undefined
   const selectedVersionId = lineage ? selectedVersionDescriptor?.versionId : requestedVersionId
+  const isUserEdit = selectedVersionDescriptor?.originKind === 'user_edit'
+  const isLegacyVersion = selectedVersionDescriptor?.originKind === 'legacy'
+  const basedOnVersionId = selectedVersionDescriptor?.basedOnVersionId ?? undefined
+  const basedOnVersionNumber = lineage?.versions.find(
+    (version) => version.versionId === basedOnVersionId
+  )?.versionNumber
   const selectedVersionUnavailable = Boolean(lineage && requestedVersionId && !selectedVersionId)
   const provenanceKey = `${lineageKey}:${selectedVersionId ?? ''}`
   const coreProvenance =
@@ -590,7 +596,7 @@ const ArtifactProvenancePanel = ({
 
   useEffect(() => {
     let active = true
-    if (!item.artifactId || !selectedVersionId || !lineage) return
+    if (!item.artifactId || !selectedVersionId || !lineage || isUserEdit || isLegacyVersion) return
     void window.api.artifacts
       .getVersionProvenance({
         projectId,
@@ -612,7 +618,16 @@ const ArtifactProvenancePanel = ({
     return () => {
       active = false
     }
-  }, [item.artifactId, item.sessionId, lineage, projectId, provenanceKey, selectedVersionId])
+  }, [
+    isUserEdit,
+    isLegacyVersion,
+    item.artifactId,
+    item.sessionId,
+    lineage,
+    projectId,
+    provenanceKey,
+    selectedVersionId
+  ])
 
   useEffect(() => {
     if (
@@ -851,10 +866,12 @@ const ArtifactProvenancePanel = ({
     const version = lineage?.versions.find((candidate) => candidate.versionId === versionId)
     if (!version) return
 
-    setSelectedVersion({ artifactId: item.artifactId, versionId })
     const nextItem = createPreviewFileItemForArtifactVersion({ item, version, projectId })
-    if (onVersionChange) onVersionChange(nextItem)
-    else usePreviewWorkbenchStore.getState().upsertItem(nextItem)
+    const committed = onVersionChange
+      ? onVersionChange(nextItem)
+      : usePreviewWorkbenchStore.getState().upsertItem(nextItem)
+    if (!committed) return
+    setSelectedVersion({ artifactId: item.artifactId, versionId })
   }
 
   const downloadExecutionNotebook = async (): Promise<void> => {
@@ -1046,24 +1063,26 @@ const ArtifactProvenancePanel = ({
         </Button>
       </div>
 
-      <div
-        ref={tabScrollFadeRef}
-        role="tablist"
-        className="scroll-fade-x flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
-      >
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {t(tab.label)}
-          </button>
-        ))}
-      </div>
+      {!isUserEdit && !isLegacyVersion ? (
+        <div
+          ref={tabScrollFadeRef}
+          role="tablist"
+          className="scroll-fade-x flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
+        >
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {t(tab.label)}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? <p className="p-5 text-sm text-danger-000">{error}</p> : null}
@@ -1072,7 +1091,33 @@ const ArtifactProvenancePanel = ({
             {t('Provenance is not available for this legacy file.')}
           </p>
         ) : null}
-        {!error && !lineageUnavailable && !provenance ? (
+        {!error && isUserEdit ? (
+          <section className="p-5">
+            <h2 className="text-sm font-medium text-text-100">{t('Edited in Open Science')}</h2>
+            {basedOnVersionId && basedOnVersionNumber !== undefined ? (
+              <button
+                type="button"
+                aria-label={t('Open source version v{{version}}', {
+                  version: basedOnVersionNumber
+                })}
+                className="mt-1 text-sm text-primary hover:underline"
+                onClick={() => selectVersion(basedOnVersionId)}
+              >
+                {t('Based on v{{version}}', { version: basedOnVersionNumber })}
+              </button>
+            ) : (
+              <p className="mt-1 text-sm text-text-300">
+                {t('Based on an earlier immutable version.')}
+              </p>
+            )}
+          </section>
+        ) : null}
+        {!error && isLegacyVersion ? (
+          <p className="p-5 text-sm text-text-300">
+            {t('Provenance is not available for this legacy version.')}
+          </p>
+        ) : null}
+        {!error && !lineageUnavailable && !isUserEdit && !isLegacyVersion && !provenance ? (
           <div className="flex h-full items-center justify-center text-text-300">
             <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
           </div>

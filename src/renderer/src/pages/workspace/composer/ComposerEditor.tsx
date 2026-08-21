@@ -376,6 +376,7 @@ export const ComposerEditor = ({
     artifactMention.replaceTokenWith({
       type: 'artifact',
       id: ref.id,
+      sourceFileId: ref.sourceFileId,
       name: ref.name,
       path: ref.path,
       source: ref.source,

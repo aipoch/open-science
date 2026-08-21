@@ -41,9 +41,14 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     artifactId: string,
     versionId: string,
     versionNumber = 1,
-    agentFrameId = 'agent-frame',
-    rootFrameId = `root-${versionId}`
+    options: {
+      managedVisibleAt?: Date | null
+      agentFrameId?: string
+      rootFrameId?: string
+    } = {}
   ): Promise<void> => {
+    const agentFrameId = options.agentFrameId ?? 'agent-frame'
+    const rootFrameId = options.rootFrameId ?? `root-${versionId}`
     await client.artifactLineage.upsert({
       where: {
         projectId_sessionId_normalizedFilename: {
@@ -76,8 +81,13 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       runtimeSegmentId: 'runtime',
       promptMessageId: 'prompt',
       state: 'finalized',
+      managedVisibleAt:
+        options.managedVisibleAt === undefined
+          ? new Date(`2026-08-0${versionNumber}T00:00:01.000Z`)
+          : options.managedVisibleAt,
       contentStorageKey: `artifacts/${projectId}/${sessionId}/${versionId}/content`,
       evidenceStorageKey: `artifacts/${projectId}/${sessionId}/${versionId}/evidence.json`,
+      evidenceSchemaVersion: 1,
       contentType: 'text/csv',
       sizeBytes: 10n,
       checksum: checksum(versionId),
@@ -86,6 +96,10 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       createdAt: new Date(`2026-08-0${versionNumber}T00:00:00.000Z`)
     }
     await client.artifactVersion.create({ data })
+    await client.artifactLineage.update({
+      where: { id: artifactId },
+      data: { currentVersionId: versionId }
+    })
   }
 
   const createUploadVersion = async (
@@ -120,7 +134,308 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         }
       }
     })
+    await client.uploadFile.update({
+      where: { id: uploadId },
+      data: { currentVersionId: versionId }
+    })
   }
+
+  it('resolves default catalog entries from DB heads when ManagedFile projections are stale', async () => {
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1', 1)
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v2', 2)
+    await createUploadVersion('project-a', 'session-b', 'upload-a', 'upload-v1')
+    await client.uploadVersion.create({
+      data: {
+        id: 'upload-v2',
+        uploadFileId: 'upload-a',
+        versionNumber: 2,
+        state: 'ready',
+        contentStorageKey: 'uploads/project-a/session-b/upload-v2',
+        filename: 'upload-a-v2.pdf',
+        originalFilename: 'upload-a-v2.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 22n,
+        checksum: checksum('upload-v2'),
+        createdAt: new Date('2026-08-04T00:00:00.000Z')
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-a' },
+      data: { currentVersionId: 'upload-v2' }
+    })
+    await client.managedFile.createMany({
+      data: [
+        {
+          source: 'artifact',
+          sourceFileId: 'artifact-a',
+          sourceVersionId: 'artifact-v1',
+          checksum: checksum('artifact-v1'),
+          projectId: 'project-a',
+          sessionId: 'session-a',
+          displayName: 'stale-artifact.csv',
+          storageKey: 'artifact-a',
+          mimeType: 'text/plain',
+          sizeBytes: 1n,
+          sortAtMs: 1n
+        },
+        {
+          source: 'upload',
+          sourceFileId: 'upload-a',
+          sourceVersionId: 'upload-v1',
+          checksum: checksum('upload-v1'),
+          projectId: 'project-a',
+          sessionId: 'session-b',
+          displayName: 'stale-upload.pdf',
+          storageKey: 'upload-a',
+          mimeType: 'text/plain',
+          sizeBytes: 1n,
+          sortAtMs: 2n
+        }
+      ]
+    })
+
+    await expect(repository.readHostArtifactCatalog({ projectId: 'project-a' })).resolves.toEqual([
+      expect.objectContaining({
+        source: 'upload',
+        versionId: 'upload-v2',
+        filename: 'upload-a-v2.pdf',
+        checksum: checksum('upload-v2'),
+        sizeBytes: 22
+      }),
+      expect.objectContaining({
+        source: 'artifact',
+        versionId: 'artifact-v2',
+        filename: 'artifact-a.csv',
+        checksum: checksum('artifact-v2'),
+        rootFrameId: 'root-artifact-v2'
+      })
+    ])
+  })
+
+  it('lists current DB heads when ManagedFile projections are missing', async () => {
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1', 1)
+    await createUploadVersion('project-a', 'session-b', 'upload-a', 'upload-v1')
+
+    await expect(repository.readHostArtifactCatalog({ projectId: 'project-a' })).resolves.toEqual([
+      expect.objectContaining({
+        source: 'upload',
+        sourceFileId: 'upload-a',
+        versionId: 'upload-v1'
+      }),
+      expect.objectContaining({
+        source: 'artifact',
+        sourceFileId: 'artifact-a',
+        versionId: 'artifact-v1'
+      })
+    ])
+  })
+
+  it('hides compatibility-failed generated heads without hiding legacy or user edits', async () => {
+    await createArtifactVersion(
+      'project-a',
+      'session-a',
+      'catalog-failed',
+      'catalog-failed-v1',
+      1,
+      { managedVisibleAt: null }
+    )
+    await client.artifactLineage.create({
+      data: {
+        id: 'catalog-legacy',
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        normalizedFilename: 'catalog-legacy.csv',
+        filename: 'catalog-legacy.csv'
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'catalog-legacy-v1',
+        artifactId: 'catalog-legacy',
+        versionNumber: 1,
+        filename: 'catalog-legacy.csv',
+        originKind: 'legacy',
+        state: 'finalized',
+        contentStorageKey: 'artifacts/project-a/session-a/catalog-legacy-v1/content',
+        contentType: 'text/csv',
+        sizeBytes: 11n,
+        checksum: checksum('catalog-legacy-v1'),
+        createdAt: new Date('2026-08-02T00:00:00.000Z')
+      }
+    })
+    await client.artifactLineage.update({
+      where: { id: 'catalog-legacy' },
+      data: { currentVersionId: 'catalog-legacy-v1' }
+    })
+
+    await client.artifactLineage.create({
+      data: {
+        id: 'catalog-edit',
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        normalizedFilename: 'catalog-edit.csv',
+        filename: 'catalog-edit.csv'
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'catalog-edit-v1',
+        artifactId: 'catalog-edit',
+        versionNumber: 1,
+        filename: 'catalog-edit.csv',
+        originKind: 'legacy',
+        state: 'finalized',
+        contentStorageKey: 'artifacts/project-a/session-a/catalog-edit-v1/content',
+        contentType: 'text/csv',
+        sizeBytes: 12n,
+        checksum: checksum('catalog-edit-v1'),
+        createdAt: new Date('2026-08-02T00:00:00.000Z')
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'catalog-edit-v2',
+        artifactId: 'catalog-edit',
+        versionNumber: 2,
+        filename: 'catalog-edit.csv',
+        originKind: 'user_edit',
+        basedOnVersionId: 'catalog-edit-v1',
+        storageTag: 'edit1234',
+        storedFilename: '{edit1234}_catalog-edit.csv',
+        state: 'finalized',
+        contentStorageKey: 'artifacts/project-a/session-a/catalog-edit-v2/content',
+        contentType: 'text/csv',
+        sizeBytes: 13n,
+        checksum: checksum('catalog-edit-v2'),
+        createdAt: new Date('2026-08-03T00:00:00.000Z')
+      }
+    })
+    await client.artifactLineage.update({
+      where: { id: 'catalog-edit' },
+      data: { currentVersionId: 'catalog-edit-v2' }
+    })
+
+    const files = await repository.listFiles({
+      projectId: 'project-a',
+      collection: { kind: 'sessionArtifacts', sessionId: 'session-a' },
+      limit: 10
+    })
+    expect(files.items.map((item) => item.sourceFileId).sort()).toEqual([
+      'catalog-edit',
+      'catalog-legacy'
+    ])
+
+    const search = await repository.searchArtifacts({
+      primaryProjectId: 'project-a',
+      otherProjectIds: [],
+      filenameContains: 'catalog-',
+      primaryLimit: 10,
+      otherLimit: 0
+    })
+    expect(search.primary.items.map((item) => item.sourceFileId).sort()).toEqual([
+      'catalog-edit',
+      'catalog-legacy'
+    ])
+
+    const hostCatalog = await repository.readHostArtifactCatalog({ projectId: 'project-a' })
+    expect(hostCatalog.map((item) => item.sourceFileId).sort()).toEqual([
+      'catalog-edit',
+      'catalog-legacy'
+    ])
+  })
+
+  it('does not resurrect native heads across authoritative deletion membership gates', async () => {
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1')
+    await createUploadVersion('project-a', 'session-b', 'upload-a', 'upload-v1')
+    await client.managedFile.create({
+      data: {
+        source: 'artifact',
+        sourceFileId: 'artifact-a',
+        sourceVersionId: 'artifact-v1',
+        checksum: checksum('artifact-v1'),
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        displayName: 'artifact-a.csv',
+        storageKey: 'artifact-a',
+        mimeType: 'text/csv',
+        sizeBytes: 10n,
+        sortAtMs: 1n,
+        deletedAt: new Date('2026-08-05T00:00:00.000Z'),
+        deleteOperationId: 'delete-artifact-a'
+      }
+    })
+    await client.managedFileSessionSync.create({
+      data: {
+        projectId: 'project-a',
+        sessionId: 'session-b',
+        filesRevision: 1,
+        groupSortAtMs: 1n,
+        uploadCount: 1,
+        deletedAt: new Date('2026-08-05T00:00:00.000Z'),
+        deleteOperationId: 'delete-session-b'
+      }
+    })
+
+    const expectCatalogIds = async (expected: string[]): Promise<void> => {
+      const files = await repository.listFiles({
+        projectId: 'project-a',
+        collection: { kind: 'all' },
+        limit: 10
+      })
+      expect(files.items.map((item) => item.sourceFileId).sort()).toEqual(expected)
+      const search = await repository.searchArtifacts({
+        primaryProjectId: 'project-a',
+        otherProjectIds: [],
+        filenameContains: 'artifact-a',
+        primaryLimit: 10,
+        otherLimit: 0
+      })
+      expect(search.primary.items.map((item) => item.sourceFileId).sort()).toEqual(
+        expected.filter((id) => id.startsWith('artifact-'))
+      )
+      const hostCatalog = await repository.readHostArtifactCatalog({ projectId: 'project-a' })
+      expect(hostCatalog.map((item) => item.sourceFileId).sort()).toEqual(expected)
+    }
+
+    await expectCatalogIds([])
+
+    await client.managedFile.deleteMany({ where: { projectId: 'project-a' } })
+    await client.managedFileSessionSync.deleteMany({ where: { projectId: 'project-a' } })
+    await client.project.create({
+      data: {
+        id: 'project-a',
+        name: 'Archived project',
+        archivedAt: new Date('2026-08-05T00:00:00.000Z')
+      }
+    })
+    await expectCatalogIds([])
+
+    await client.project.update({ where: { id: 'project-a' }, data: { archivedAt: null } })
+    await client.projectDeletionIntent.create({ data: { projectId: 'project-a' } })
+    await expectCatalogIds([])
+
+    await client.projectDeletionIntent.delete({ where: { projectId: 'project-a' } })
+    await client.fileOriginSession.updateMany({
+      where: { projectId: 'project-a' },
+      data: {
+        state: 'deleting',
+        deletionOperationId: 'delete-origin',
+        retainedReviewIdsJson: '[]'
+      }
+    })
+    await expectCatalogIds([])
+
+    await client.fileOriginSession.updateMany({
+      where: { projectId: 'project-a' },
+      data: {
+        state: 'deleted',
+        deletedAt: new Date('2026-08-05T00:00:00.000Z'),
+        deletionOperationId: null,
+        retainedReviewIdsJson: null
+      }
+    })
+    await expectCatalogIds(['artifact-a', 'upload-a'])
+  })
 
   it('projects latest generated Artifacts and Uploads from the current Project catalog', async () => {
     await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-version-a')
@@ -243,24 +558,14 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
   })
 
   it('projects producer provenance from the latest generated Version only', async () => {
-    await createArtifactVersion(
-      'project-a',
-      'session-a',
-      'artifact-a',
-      'artifact-a-v1',
-      1,
-      'frame-a',
-      'shared-root'
-    )
-    await createArtifactVersion(
-      'project-a',
-      'session-a',
-      'artifact-a',
-      'artifact-a-v2',
-      2,
-      'frame-b',
-      'shared-root'
-    )
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-a-v1', 1, {
+      agentFrameId: 'frame-a',
+      rootFrameId: 'shared-root'
+    })
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-a-v2', 2, {
+      agentFrameId: 'frame-b',
+      rootFrameId: 'shared-root'
+    })
     await client.managedFile.create({
       data: {
         source: 'artifact',

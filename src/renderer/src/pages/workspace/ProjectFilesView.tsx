@@ -466,11 +466,13 @@ const ProjectFilesViewContent = ({
       size: file.size,
       mtimeMs: file.mtimeMs,
       artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
-      selectedVersionId: file.source === 'artifact' ? file.sourceVersionId : undefined,
+      managedFileId: file.sourceFileId,
       originSession: file.originSession
     })
 
-  const previewFile = (file: ProjectFileItem): void => openFileDialog(toPreviewFile(file))
+  const previewFile = (file: ProjectFileItem): void => {
+    openFileDialog(toPreviewFile(file))
+  }
 
   const openFileInPanel = (file: ProjectFileItem): void => {
     const workbench = usePreviewWorkbenchStore.getState()

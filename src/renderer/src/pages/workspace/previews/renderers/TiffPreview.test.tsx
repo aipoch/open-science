@@ -9,7 +9,7 @@ import type {
   TiffDecodeWorkerRequest,
   TiffDecodeWorkerResponse
 } from '../tiff-preview-worker-protocol'
-import { TiffPreviewContent } from './TiffPreview'
+import { TiffPreviewContent, TiffPreviewRenderer } from './TiffPreview'
 
 let workerResponseOverride:
   ((request: TiffDecodeWorkerRequest) => TiffDecodeWorkerResponse | undefined) | undefined
@@ -137,6 +137,41 @@ describe('TiffPreviewContent', () => {
     expect(container.querySelector('[aria-label="Zoom in"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Zoom out"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Reset zoom"]')).not.toBeNull()
+  })
+
+  it('acquires the exact managed Upload version selected by the preview item', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <TiffPreviewRenderer
+          item={{
+            id: 'upload:upload-1',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            title: 'chart.tiff',
+            type: 'file',
+            source: 'upload',
+            path: 'upload-version:stale-projection',
+            name: 'chart.tiff',
+            format: 'tiff',
+            managedFileId: 'upload-1',
+            selectedVersionId: 'upload-v3'
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() =>
+      expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'upload',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          fileId: 'upload-1',
+          versionId: 'upload-v3'
+        })
+      )
+    )
   })
 
   it('renders a left-aligned intrinsic thumbnail without the full zoom frame', async () => {

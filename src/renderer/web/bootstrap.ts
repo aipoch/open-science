@@ -17,6 +17,7 @@ import {
   type WebEventConnectionPhase
 } from '../../shared/web-event-connection'
 import { installWebRendererContracts } from './api-installer'
+import { managedFileVersionHostCapability } from '../../shared/managed-file-versions'
 import { i18next, initI18n } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
@@ -414,6 +415,7 @@ const installWebApi = async (): Promise<EventCursor> => {
     subscribe,
     nativeAdapters: {
       getRuntimeVersions: () => bootstrap.versions,
+      'managedFileVersions.getCapability': () => managedFileVersionHostCapability(false),
       saveBlobFile: (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {
         downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
         return Promise.resolve({ saved: true })

@@ -26,6 +26,7 @@ import {
   ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceRepository
 } from './provenance-repository'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { ArtifactRepository } from './repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 
@@ -43,6 +44,100 @@ afterEach(async () => {
 })
 
 describe('artifact provenance repository', () => {
+  it('projects finalized user edits in lineage without inventing Agent provenance', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-user-edit-lineage-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'notes.md',
+        filename: 'notes.md'
+      }
+    })
+    const baseStorageKey = 'artifacts/project-1/session-1/version-1/content'
+    const editStorageKey = 'artifacts/project-1/session-1/version-2/content'
+    await mkdir(dirname(join(storageRoot, baseStorageKey)), { recursive: true })
+    await mkdir(dirname(join(storageRoot, editStorageKey)), { recursive: true })
+    await writeFile(join(storageRoot, baseStorageKey), 'base')
+    await writeFile(join(storageRoot, editStorageKey), 'edited')
+    await client.artifactVersion.create({
+      data: {
+        id: 'version-1',
+        artifactId: 'artifact-1',
+        versionNumber: 1,
+        filename: 'notes.md',
+        originKind: 'legacy',
+        state: 'finalized',
+        contentStorageKey: baseStorageKey,
+        sizeBytes: 4n,
+        checksum: 'a'.repeat(64)
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'version-2',
+        artifactId: 'artifact-1',
+        versionNumber: 2,
+        filename: 'notes.md',
+        originKind: 'user_edit',
+        basedOnVersionId: 'version-1',
+        storageTag: 'v1a2b3c4d',
+        storedFilename: 'v1a2b3c4d_notes.md',
+        writeOperationId: 'edit-operation-1',
+        state: 'finalized',
+        managedVisibleAt: new Date('2026-08-14T00:00:00.000Z'),
+        contentStorageKey: editStorageKey,
+        sizeBytes: 6n,
+        checksum: 'c'.repeat(64),
+        createdAt: new Date('2026-08-14T00:00:00.000Z')
+      }
+    })
+
+    await expect(
+      repository.getLineage({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: 'artifact-1'
+      })
+    ).resolves.toMatchObject({
+      versions: [
+        { versionId: 'version-1', originKind: 'legacy' },
+        {
+          versionId: 'version-2',
+          originKind: 'user_edit',
+          basedOnVersionId: 'version-1'
+        }
+      ]
+    })
+    await expect(
+      repository.getVersionProvenance({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-2'
+      })
+    ).rejects.toThrow('Artifact Version not found: version-2')
+    await expect(
+      repository.getVersionProvenance({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-1'
+      })
+    ).rejects.toThrow('Artifact Version not found: version-1')
+  })
+
   it('stores reconstruction cache beside the exact owned immutable Version', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reconstruction-cache-'))
     const client = createProjectDbClient(storageRoot)
@@ -84,6 +179,7 @@ describe('artifact provenance repository', () => {
         contentStorageKey,
         evidenceStorageKey:
           'artifacts/project-1/session-1/.provenance/versions/version-1/evidence.json',
+        evidenceSchemaVersion: 1,
         sizeBytes: BigInt(14),
         checksum: 'a'.repeat(64),
         evidenceJson: '{}',
@@ -493,9 +589,9 @@ describe('artifact provenance repository', () => {
         versionId: first.versionId
       })
     ).rejects.toThrow(`Artifact Version not found: ${first.versionId}`)
-    const firstRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: first.versionId }
-    })
+    const firstRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: first.versionId } })
+    )
     expect(JSON.parse(firstRow.evidenceJson)).toMatchObject({ agent_name: 'Codex' })
 
     const versions = await client.artifactVersion.findMany({
@@ -656,9 +752,9 @@ describe('artifact provenance repository', () => {
         artifactRunId: 'artifact-run-1'
       })
     ).resolves.toEqual([expect.objectContaining({ versionId: version.versionId })])
-    const row = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
+    const row = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
     expect(JSON.parse(row.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-not-supplied' },
       execution_status: { state: 'unavailable', reason: 'producer-not-supplied' }
@@ -1493,6 +1589,7 @@ describe('artifact provenance repository', () => {
         state: 'staging',
         contentStorageKey,
         evidenceStorageKey,
+        evidenceSchemaVersion: 1,
         sizeBytes: BigInt(Buffer.byteLength(content)),
         checksum: contentChecksum,
         evidenceJson,
@@ -1541,6 +1638,7 @@ describe('artifact provenance repository', () => {
           'artifacts/project-1/session-1/.provenance/artifact-corrupt/versions/version-recovery-corrupt/content',
         evidenceStorageKey:
           'artifacts/project-1/session-1/.provenance/artifact-corrupt/versions/version-recovery-corrupt/evidence.json',
+        evidenceSchemaVersion: 1,
         sizeBytes: BigInt(Buffer.byteLength('expected')),
         checksum: createHash('sha256').update('expected').digest('hex'),
         evidenceJson,
@@ -1851,7 +1949,9 @@ describe('artifact provenance repository', () => {
       filename: 'sin.png',
       contentType: 'image/png'
     })
-    const row = await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    const row = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
     const evidence = JSON.parse(row.evidenceJson) as Record<string, unknown>
     const execution = JSON.parse(row.executionSnapshotJson ?? '{}') as {
       producerRunId: string
@@ -2077,9 +2177,9 @@ describe('artifact provenance repository', () => {
       filename: 'inferred.png',
       contentType: 'image/png'
     })
-    const inferredRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: inferred.versionId }
-    })
+    const inferredRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: inferred.versionId } })
+    )
     expect(inferredRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(inferredRow.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-not-supplied' },
@@ -2124,9 +2224,9 @@ describe('artifact provenance repository', () => {
       filename: 'ambiguous.png',
       contentType: 'image/png'
     })
-    const ambiguousRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: ambiguous.versionId }
-    })
+    const ambiguousRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: ambiguous.versionId } })
+    )
     expect(ambiguousRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(ambiguousRow.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
@@ -2461,9 +2561,9 @@ describe('artifact provenance repository', () => {
       filename: 'sin.png',
       contentType: 'image/png'
     })
-    const row = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
+    const row = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
 
     expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(row.evidenceJson)).toMatchObject({
@@ -2718,9 +2818,9 @@ describe('artifact provenance repository', () => {
       filename: 'plot.png',
       contentType: 'image/png'
     })
-    const inferredRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: inferred.versionId }
-    })
+    const inferredRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: inferred.versionId } })
+    )
     expect(inferredRow).toMatchObject({
       producerRunId: 'notebook-run-owner',
       producerRunIndex: 0
@@ -2799,9 +2899,11 @@ describe('artifact provenance repository', () => {
       filename: 'spoof.png',
       contentType: 'image/png'
     })
-    const spoofedRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: spoofedObservation.versionId }
-    })
+    const spoofedRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({
+        where: { id: spoofedObservation.versionId }
+      })
+    )
     expect(spoofedRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(spoofedRow.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-source-unverifiable' }
@@ -2828,9 +2930,9 @@ describe('artifact provenance repository', () => {
       filename: 'inline.png',
       contentType: 'image/png'
     })
-    const inlineRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: inline.versionId }
-    })
+    const inlineRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: inline.versionId } })
+    )
     expect(inlineRow).toMatchObject({
       producerRunId: 'notebook-run-owner',
       producerRunIndex: 0
@@ -2865,9 +2967,9 @@ describe('artifact provenance repository', () => {
       filename: 'unobserved-local.png',
       contentType: 'image/png'
     })
-    const unobservedLocalRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: unobservedLocal.versionId }
-    })
+    const unobservedLocalRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: unobservedLocal.versionId } })
+    )
     expect(unobservedLocalRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(unobservedLocalRow.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
@@ -3329,6 +3431,92 @@ describe('artifact provenance repository', () => {
     expect(replayed.map((version) => version.versionId)).toEqual(
       finalized.map((version) => version.versionId)
     )
+    await expect(
+      client.artifactVersion.findMany({
+        where: { id: { in: finalized.map((version) => version.versionId) } },
+        select: { managedVisibleAt: true }
+      })
+    ).resolves.toEqual([{ managedVisibleAt: null }, { managedVisibleAt: null }])
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: finalizableVersions[0].artifactId } })
+    ).resolves.toMatchObject({ currentVersionId: null })
+    const competing = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: finalized[1].versionId }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'artifact-competing-run-v4',
+        artifactId: competing.artifactId,
+        versionNumber: 4,
+        filename: competing.filename,
+        originKind: 'agent_generated',
+        artifactRunId: 'artifact-run-competing',
+        writeOperationId: 'write-competing-v4',
+        writeRequestChecksum: 'f'.repeat(64),
+        rootFrameId: competing.rootFrameId,
+        agentFrameId: competing.agentFrameId,
+        messageBranchId: competing.messageBranchId,
+        runtimeSegmentId: competing.runtimeSegmentId,
+        promptMessageId: competing.promptMessageId,
+        notebookSessionId: competing.notebookSessionId,
+        producerRunId: competing.producerRunId,
+        producerRunIndex: competing.producerRunIndex,
+        messageId: null,
+        state: 'finalized',
+        managedVisibleAt: null,
+        contentStorageKey: 'artifacts/project-1/session-1/competing-v4/content',
+        evidenceStorageKey: 'artifacts/project-1/session-1/competing-v4/evidence.json',
+        contentType: competing.contentType,
+        sizeBytes: competing.sizeBytes,
+        checksum: competing.checksum,
+        evidenceJson: competing.evidenceJson,
+        evidenceChecksum: competing.evidenceChecksum,
+        evidenceSchemaVersion: competing.evidenceSchemaVersion,
+        executionSnapshotJson: competing.executionSnapshotJson,
+        executionSnapshotChecksum: competing.executionSnapshotChecksum,
+        executionSnapshotStorageKey: competing.executionSnapshotStorageKey,
+        executionSnapshotSchemaVersion: competing.executionSnapshotSchemaVersion
+      }
+    })
+    await repository.activateFinalizedRun(finalizeRequest)
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: finalizableVersions[0].artifactId } })
+    ).resolves.toMatchObject({ currentVersionId: finalized[1].versionId })
+    await expect(
+      client.artifactVersion.findMany({
+        where: { id: { in: finalized.map((version) => version.versionId) } },
+        select: { managedVisibleAt: true }
+      })
+    ).resolves.toEqual([
+      { managedVisibleAt: expect.any(Date) },
+      { managedVisibleAt: expect.any(Date) }
+    ])
+    const laterUserEditId = 'artifact-user-edit-v5'
+    await client.artifactVersion.create({
+      data: {
+        id: laterUserEditId,
+        artifactId: finalizableVersions[0].artifactId,
+        versionNumber: 5,
+        filename: common.filename,
+        originKind: 'user_edit',
+        basedOnVersionId: finalized[1].versionId,
+        storageTag: 'vlate0001',
+        storedFilename: 'vlate0001_sin.png',
+        state: 'finalized',
+        contentStorageKey: 'artifacts/project-1/session-1/user-edit-v5/content',
+        contentType: 'image/png',
+        sizeBytes: BigInt(4),
+        checksum: 'd'.repeat(64)
+      }
+    })
+    await client.artifactLineage.update({
+      where: { id: finalizableVersions[0].artifactId },
+      data: { currentVersionId: laterUserEditId }
+    })
+    await repository.activateFinalizedRun(finalizeRequest)
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: finalizableVersions[0].artifactId } })
+    ).resolves.toMatchObject({ currentVersionId: laterUserEditId })
     expect(
       await client.artifactVersion.count({
         where: { state: 'finalized', messageId: 'message-1' }
@@ -3911,9 +4099,9 @@ describe('artifact provenance repository', () => {
       source: createPngInlineSource('plot bytes')
     })
     const version = await repository.createVersion(request)
-    const versionRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
+    const versionRow = requireAgentArtifactVersion(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
     await rm(version.path)
     await rm(join(storageRoot, ...versionRow.evidenceStorageKey.split('/')))
 
@@ -4067,6 +4255,17 @@ describe('artifact provenance repository', () => {
     await client.artifactVersion.update({
       where: { id: version.versionId },
       data: { messageSnapshotId: snapshotId }
+    })
+    await client.artifactLineage.update({
+      where: { id: version.artifactId },
+      data: { currentVersionId: null }
+    })
+    await client.managedFile.deleteMany({
+      where: {
+        projectId: request.projectId,
+        source: 'artifact',
+        sourceFileId: version.artifactId
+      }
     })
     await client.artifactVersion.delete({ where: { id: version.versionId } })
 
@@ -4405,6 +4604,249 @@ describe('artifact provenance repository', () => {
     await expect(client.artifactLineage.count({ where: { projectId: 'project-2' } })).resolves.toBe(
       1
     )
+  })
+
+  it('deletes migrated Artifact and Upload graphs with multiple derived Versions', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-version-chain-delete-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: new ArtifactRepository(storageRoot)
+    })
+
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'report.md',
+        filename: 'report.md'
+      }
+    })
+    await client.artifactVersion.createMany({
+      data: [
+        {
+          id: 'artifact-v1',
+          artifactId: 'artifact-1',
+          versionNumber: 1,
+          filename: 'report.md',
+          originKind: 'legacy',
+          state: 'finalized',
+          contentStorageKey: 'artifacts/project-1/session-1/artifact-v1/content',
+          sizeBytes: 1,
+          checksum: 'a'.repeat(64)
+        },
+        {
+          id: 'artifact-v2',
+          artifactId: 'artifact-1',
+          versionNumber: 2,
+          filename: 'report.md',
+          originKind: 'legacy',
+          basedOnVersionId: 'artifact-v1',
+          state: 'finalized',
+          contentStorageKey: 'artifacts/project-1/session-1/artifact-v2/content',
+          sizeBytes: 2,
+          checksum: 'b'.repeat(64)
+        }
+      ]
+    })
+    await client.artifactLineage.update({
+      where: { id: 'artifact-1' },
+      data: { currentVersionId: 'artifact-v2' }
+    })
+
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'input.csv',
+        originalFilename: 'Input.csv'
+      }
+    })
+    await client.uploadVersion.createMany({
+      data: [
+        {
+          id: 'upload-v1',
+          uploadFileId: 'upload-1',
+          versionNumber: 1,
+          state: 'ready',
+          contentStorageKey: 'uploads/project-1/session-1/upload-1/v1/content',
+          filename: 'input.csv',
+          originalFilename: 'Input.csv',
+          sizeBytes: 1,
+          checksum: 'c'.repeat(64)
+        },
+        {
+          id: 'upload-v2',
+          uploadFileId: 'upload-1',
+          versionNumber: 2,
+          state: 'ready',
+          originKind: 'user_edit',
+          basedOnVersionId: 'upload-v1',
+          storageTag: 'v1a2b3c4d',
+          storedFilename: 'v1a2b3c4d_input.csv',
+          contentStorageKey: 'uploads/project-1/session-1/upload-1/v2/content',
+          filename: 'input.csv',
+          originalFilename: 'Input.csv',
+          sizeBytes: 2,
+          checksum: 'd'.repeat(64)
+        }
+      ]
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-v2' }
+    })
+    for (const storageKeyValue of [
+      'uploads/project-1/session-1/upload-1/v1/content',
+      'uploads/project-1/session-1/upload-1/v2/content'
+    ]) {
+      const path = join(storageRoot, ...storageKeyValue.split('/'))
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, 'x')
+    }
+
+    await expect(repository.deleteProjectProvenance('project-1')).resolves.toBeUndefined()
+    await expect(client.artifactVersion.count()).resolves.toBe(0)
+    await expect(client.artifactLineage.count()).resolves.toBe(0)
+    await expect(client.uploadVersion.count()).resolves.toBe(0)
+    await expect(client.uploadFile.count()).resolves.toBe(0)
+    await expect(client.fileOriginSession.count()).resolves.toBe(0)
+  })
+
+  it('retains every Version write journal until all Artifact and Upload journal bytes are deleted', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-version-journal-delete-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: new ArtifactRepository(storageRoot)
+    })
+    const operations = [
+      {
+        operationId: 'operation-artifact-a-staging',
+        source: 'artifact',
+        state: 'staging',
+        contentStorageKey: 'managed-version-journals/project-1/artifact/staging/content'
+      },
+      {
+        operationId: 'operation-artifact-b-file-ready',
+        source: 'artifact',
+        state: 'file_ready',
+        contentStorageKey: 'managed-version-journals/project-1/artifact/file-ready/content'
+      },
+      {
+        operationId: 'operation-artifact-c-published',
+        source: 'artifact',
+        state: 'published',
+        contentStorageKey: 'managed-version-journals/project-1/artifact/published/content'
+      },
+      {
+        operationId: 'operation-upload-a-staging',
+        source: 'upload',
+        state: 'staging',
+        contentStorageKey: 'uploads/project-1/session-1/upload-1/staging/content'
+      },
+      {
+        operationId: 'operation-upload-b-file-ready',
+        source: 'upload',
+        state: 'file_ready',
+        contentStorageKey: 'uploads/project-1/session-1/upload-1/file-ready/content'
+      },
+      {
+        operationId: 'operation-upload-c-published',
+        source: 'upload',
+        state: 'published',
+        contentStorageKey: 'uploads/project-1/session-1/upload-1/published/content'
+      }
+    ]
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'notes.txt',
+        originalFilename: 'Notes.txt',
+        currentVersionId: null,
+        versions: {
+          create: {
+            id: 'upload-v1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: operations[5]!.contentStorageKey,
+            filename: 'notes.txt',
+            originalFilename: 'Notes.txt',
+            sizeBytes: 1,
+            checksum: 'f'.repeat(64)
+          }
+        }
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-v1' }
+    })
+    await client.managedFileVersionWriteOperation.createMany({
+      data: operations.map((operation, index) => ({
+        ...operation,
+        projectId: 'project-1',
+        sourceFileId: `${operation.source}-1`,
+        basedOnVersionId: `${operation.source}-v1`,
+        expectedHeadVersionId: `${operation.source}-v1`,
+        storageTag: `vjournal${index}`,
+        storedFilename: `vjournal${index}_notes.txt`,
+        checksum: String(index).repeat(64),
+        sizeBytes: 1,
+        textFormatJson: '{}'
+      }))
+    })
+    for (const operation of operations) {
+      const path = join(storageRoot, ...operation.contentStorageKey.split('/'))
+      await mkdir(dirname(path), { recursive: true })
+      if (operation.operationId === 'operation-artifact-b-file-ready') {
+        await mkdir(path)
+      } else {
+        await writeFile(path, 'x')
+      }
+    }
+
+    await expect(repository.deleteProjectProvenance('project-1')).rejects.toThrow()
+    await expect(
+      client.managedFileVersionWriteOperation.count({ where: { projectId: 'project-1' } })
+    ).resolves.toBe(6)
+    await expect(client.uploadFile.count({ where: { projectId: 'project-1' } })).resolves.toBe(1)
+    await expect(
+      readFile(join(storageRoot, ...operations[0]!.contentStorageKey.split('/')))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(storageRoot, ...operations[2]!.contentStorageKey.split('/')))
+    ).resolves.toEqual(Buffer.from('x'))
+
+    const blockingPath = join(storageRoot, ...operations[1]!.contentStorageKey.split('/'))
+    await rm(blockingPath, { recursive: true })
+    await writeFile(blockingPath, 'x')
+    await expect(repository.deleteProjectProvenance('project-1')).resolves.toBeUndefined()
+
+    await expect(
+      client.managedFileVersionWriteOperation.count({ where: { projectId: 'project-1' } })
+    ).resolves.toBe(0)
+    for (const operation of operations) {
+      await expect(
+        readFile(join(storageRoot, ...operation.contentStorageKey.split('/')))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    }
   })
 
   it('retains Upload authority when Project byte deletion must be retried', async () => {

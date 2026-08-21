@@ -143,6 +143,7 @@ const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewStat
       ...(item.size !== undefined ? { size: item.size } : {}),
       ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
       ...(item.artifactId ? { artifactId: item.artifactId } : {}),
+      ...(item.managedFileId ? { managedFileId: item.managedFileId } : {}),
       ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
       ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
       ...(item.originSession ? { originSession: item.originSession } : {})
@@ -196,6 +197,7 @@ const toRestoredSlice = (
             : {}),
           ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
           ...(item.artifactId ? { artifactId: item.artifactId } : {}),
+          ...(item.managedFileId ? { managedFileId: item.managedFileId } : {}),
           ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
           ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
           ...(item.originSession ? { originSession: item.originSession } : {})

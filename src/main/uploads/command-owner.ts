@@ -2,6 +2,11 @@ import { stat } from 'node:fs/promises'
 
 import type { ApplicationCallerLease, ApplicationInvocation } from '../application-command-router'
 import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
+import {
+  readBoundedManagedFilePreview,
+  readBoundedManagedFilePreviewLease,
+  type ManagedFilePreviewReadLease
+} from '../managed-file-preview'
 
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
@@ -52,6 +57,10 @@ type UploadProgressTarget = Readonly<{
 }>
 
 type UploadCommandOwnerOptions = Readonly<{
+  resolveManagedFilePath?: (request: ReadArtifactPreviewRequest) => Promise<string>
+  openManagedFileVersion?: (
+    request: ReadArtifactPreviewRequest
+  ) => Promise<ManagedFilePreviewReadLease>
   withSessionMutation?: <Result>(
     projectId: string,
     sessionId: string,
@@ -392,7 +401,25 @@ const createUploadCommandOwner = (
           ? options.withSessionMutation(request.projectId, request.sessionId, finalize)
           : finalize()
       }),
-    readPreview: ({ args: [request] }) => repository.readManagedUploadPreview(request)
+    readPreview: async ({ args: [request] }) => {
+      if (request.projectId && request.fileId && options.openManagedFileVersion) {
+        const lease = await options.openManagedFileVersion(request)
+        try {
+          return await readBoundedManagedFilePreviewLease(
+            lease,
+            request,
+            'Invalid upload preview encoding.'
+          )
+        } finally {
+          await lease.close()
+        }
+      }
+      if (!request.projectId || !request.fileId || !options.resolveManagedFilePath) {
+        return repository.readManagedUploadPreview(request)
+      }
+      const path = await options.resolveManagedFilePath(request)
+      return readBoundedManagedFilePreview(path, request, 'Invalid upload preview encoding.')
+    }
   })
 }
 

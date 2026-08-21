@@ -418,7 +418,20 @@ class LegacyRecoveryOwner {
         version.state === 'ready'
           ? version
           : await tx.uploadVersion.update({ where: { id: version.id }, data: { state: 'ready' } })
-      const timestamp = updated.createdAt ?? new Date()
+      const file = await tx.uploadFile.findUniqueOrThrow({
+        where: { id: version.uploadFileId },
+        include: { currentVersion: true }
+      })
+      const shouldAdvanceHead =
+        !file.currentVersion || file.currentVersion.versionNumber < updated.versionNumber
+      if (shouldAdvanceHead) {
+        await tx.uploadFile.update({
+          where: { id: file.id },
+          data: { currentVersionId: updated.id }
+        })
+      }
+      const head = shouldAdvanceHead ? updated : file.currentVersion!
+      const timestamp = head.createdAt ?? new Date()
       await tx.managedFile.upsert({
         where: {
           projectId_source_sourceFileId: {
@@ -430,25 +443,25 @@ class LegacyRecoveryOwner {
         create: {
           source: 'upload',
           sourceFileId: version.uploadFileId,
-          sourceVersionId: version.id,
-          checksum: version.checksum,
+          sourceVersionId: head.id,
+          checksum: head.checksum,
           projectId,
           sessionId,
-          displayName: version.originalFilename || version.filename,
-          storageKey: version.contentStorageKey,
-          mimeType: version.contentType,
-          sizeBytes: version.sizeBytes,
+          displayName: head.originalFilename || head.filename,
+          storageKey: head.contentStorageKey,
+          mimeType: head.contentType,
+          sizeBytes: head.sizeBytes,
           mtimeMs: BigInt(timestamp.getTime()),
           sortAtMs: BigInt(timestamp.getTime())
         },
         update: {
-          sourceVersionId: version.id,
-          checksum: version.checksum,
+          sourceVersionId: head.id,
+          checksum: head.checksum,
           sessionId,
-          displayName: version.originalFilename || version.filename,
-          storageKey: version.contentStorageKey,
-          mimeType: version.contentType,
-          sizeBytes: version.sizeBytes,
+          displayName: head.originalFilename || head.filename,
+          storageKey: head.contentStorageKey,
+          mimeType: head.contentType,
+          sizeBytes: head.sizeBytes,
           mtimeMs: BigInt(timestamp.getTime()),
           sortAtMs: BigInt(timestamp.getTime()),
           deletedAt: null,

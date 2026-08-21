@@ -23,6 +23,7 @@ type Fixture = {
   authorizeReferencedUploads: Mock
   releaseGrant: Mock
   registerTurnInputs: Mock
+  promptClose: Mock
 }
 
 const request = (overrides: Partial<AcpPromptRequest> = {}): AcpPromptRequest => ({
@@ -44,11 +45,13 @@ const setup = (
   imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
 ): Fixture => {
   const turn = contextTurn()
+  const promptClose = vi.fn()
   const promptContent = {
     prepare: vi.fn(async () => ({
       content: 'provider-content',
       historyImageCount: 0,
-      turnInputs: { uploads: [], references: [] }
+      turnInputs: { uploads: [], references: [] },
+      close: promptClose
     }))
   }
   const contextUsage = {
@@ -141,7 +144,8 @@ const setup = (
     turnSkill,
     authorizeReferencedUploads,
     releaseGrant,
-    registerTurnInputs
+    registerTurnInputs,
+    promptClose
   }
 }
 
@@ -262,6 +266,7 @@ describe('AcpPromptPreparationOwner', () => {
     handle.close()
     handle.close()
     expect(fixture.releaseGrant).toHaveBeenCalledTimes(1)
+    expect(fixture.promptClose).toHaveBeenCalledTimes(1)
     expect(fixture.turn.fail).not.toHaveBeenCalled()
   })
 
@@ -292,7 +297,8 @@ describe('AcpPromptPreparationOwner', () => {
             resolve({
               content: 'stale-provider-content',
               historyImageCount: 0,
-              turnInputs: { uploads: [], references: [] }
+              turnInputs: { uploads: [], references: [] },
+              close: fixture.promptClose
             })
         })
     )
@@ -306,6 +312,7 @@ describe('AcpPromptPreparationOwner', () => {
 
     expect(handle.status).toBe('cancelled')
     expect(fixture.releaseGrant).toHaveBeenCalledTimes(1)
+    expect(fixture.promptClose).toHaveBeenCalledTimes(1)
     expect(fixture.contextUsage.beginTurn).not.toHaveBeenCalled()
     expect(fixture.registerTurnInputs).not.toHaveBeenCalled()
   })
@@ -317,7 +324,8 @@ describe('AcpPromptPreparationOwner', () => {
     const fixture = setup(imageInputCompatibility)
     fixture.promptContent.prepare.mockResolvedValueOnce({
       content: [{ type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }],
-      historyImageCount: 1
+      historyImageCount: 1,
+      close: fixture.promptClose
     })
 
     const handle = await fixture.prepare({
@@ -360,5 +368,20 @@ describe('AcpPromptPreparationOwner', () => {
     expect(fixture.turn.fail).toHaveBeenCalledTimes(1)
     expect(fixture.turn.supersede).toHaveBeenCalledTimes(1)
     expect(fixture.releaseGrant).toHaveBeenCalledTimes(1)
+    expect(fixture.promptClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves preparation errors when prepared-content cleanup also fails', async () => {
+    const fixture = setup()
+    const registrationError = new Error('turn input registration failed')
+    fixture.registerTurnInputs.mockRejectedValueOnce(registrationError)
+    fixture.promptClose.mockImplementationOnce(() => {
+      throw new Error('snapshot cleanup failed')
+    })
+
+    await expect(fixture.prepare()).rejects.toBe(registrationError)
+
+    expect(fixture.promptClose).toHaveBeenCalledOnce()
+    expect(fixture.releaseGrant).toHaveBeenCalledOnce()
   })
 })

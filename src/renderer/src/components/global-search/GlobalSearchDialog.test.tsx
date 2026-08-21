@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import type { ChatSession } from '@/stores/session-store'
 import {
   createInitialPreviewWorkbenchState,
@@ -11,6 +12,7 @@ import {
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 
 import { GlobalSearchDialog } from './GlobalSearchDialog'
 
@@ -38,6 +40,7 @@ beforeEach(() => {
     configurable: true,
     value: scrollIntoView
   })
+  previewLeaveGuards.clear()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -113,6 +116,37 @@ beforeEach(() => {
           isIndexComplete: true
         })
       },
+      managedFileVersions: {
+        inspect: vi.fn().mockResolvedValue({
+          ok: true,
+          value: {
+            source: 'artifact',
+            projectId: 'project-a',
+            fileId: 'artifact-1',
+            sessionId: 'session-a',
+            displayName: 'sin-head.png',
+            headVersionId: 'version-2',
+            selectedVersionId: 'version-2',
+            versions: [
+              {
+                id: 'version-2',
+                source: 'artifact',
+                fileId: 'artifact-1',
+                versionNumber: 2,
+                displayName: 'sin-head.png',
+                originKind: 'user_edit',
+                basedOnVersionId: 'version-1',
+                contentType: 'image/png',
+                sizeBytes: 14,
+                checksum: '2'.repeat(64),
+                createdAt: '2026-08-14T00:00:00.000Z'
+              }
+            ],
+            canEdit: false,
+            canDiff: false
+          }
+        })
+      },
       previewResources: {
         acquire: vi.fn().mockResolvedValue({
           id: 'preview-resource-1',
@@ -130,6 +164,7 @@ afterEach(() => {
   container.remove()
   Reflect.deleteProperty(window.HTMLElement.prototype, 'scrollIntoView')
   vi.restoreAllMocks()
+  void i18next.changeLanguage('en')
 })
 
 describe('GlobalSearchDialog', () => {
@@ -161,9 +196,45 @@ describe('GlobalSearchDialog', () => {
     act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
     const mention = document.body.querySelector<HTMLElement>('[aria-label="Mention sin.png"]')
     expect(mention).not.toBeNull()
-    act(() => mention?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await act(async () => {
+      mention?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
 
-    expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({ id: 'artifact-1' })
+    expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({
+      id: 'artifact-1',
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-2',
+      name: 'sin-head.png'
+    })
+  })
+
+  it('keeps Global Search open and inserts nothing when mention head resolution fails', async () => {
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: 'VERSION_NOT_FOUND', message: 'Current file head is unavailable.' }
+    })
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+    const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
+      element.textContent?.includes('sin.png')
+    ) as HTMLElement
+    act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
+    const mention = document.body.querySelector<HTMLElement>('[aria-label="Mention sin.png"]')
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+
+    await act(async () => {
+      mention?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(document.body.textContent).toContain('无法解析文件版本。')
+    expect(document.body.textContent).not.toContain('Current file head is unavailable.')
   })
 
   it('prioritizes Artifacts and selects the first Artifact for a keyword search', async () => {
@@ -203,6 +274,7 @@ describe('GlobalSearchDialog', () => {
       artifactId: 'artifact-1',
       projectId: 'project-a'
     })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem?.selectedVersionId).toBeUndefined()
   })
 
   it('waits for Artifact search before showing a complete keyword result set', async () => {
@@ -418,6 +490,97 @@ describe('GlobalSearchDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it.each(['closed', 'escape', 'unmounted'] as const)(
+    'ignores a late mention inspection after the dialog is %s',
+    async (lifecycle) => {
+      let resolveInspect!: (
+        result: Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+      ) => void
+      const inspection = new Promise<
+        Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+      >((resolve) => {
+        resolveInspect = resolve
+      })
+      vi.mocked(window.api.managedFileVersions.inspect).mockReturnValueOnce(inspection)
+      const onOpenChange = vi.fn()
+      await act(async () => {
+        root.render(
+          <GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />
+        )
+        await new Promise((resolve) => window.setTimeout(resolve, 20))
+      })
+
+      const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+      await act(async () => {
+        input?.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+
+      if (lifecycle === 'closed') {
+        await act(async () => {
+          root.render(
+            <GlobalSearchDialog
+              open={false}
+              onOpenChange={onOpenChange}
+              isSessionPersistenceReady
+            />
+          )
+        })
+      } else if (lifecycle === 'escape') {
+        await act(async () => {
+          input?.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+          )
+        })
+        expect(onOpenChange).toHaveBeenCalledTimes(1)
+      } else {
+        act(() => root.unmount())
+      }
+
+      await act(async () => {
+        resolveInspect({
+          ok: true,
+          value: {
+            source: 'artifact',
+            projectId: 'project-a',
+            fileId: 'artifact-1',
+            sessionId: 'session-a',
+            displayName: 'late-head.png',
+            headVersionId: 'version-late',
+            selectedVersionId: 'version-late',
+            versions: [
+              {
+                id: 'version-late',
+                source: 'artifact',
+                fileId: 'artifact-1',
+                versionNumber: 3,
+                displayName: 'late-head.png',
+                originKind: 'user_edit',
+                basedOnVersionId: 'version-2',
+                contentType: 'image/png',
+                sizeBytes: 15,
+                checksum: '3'.repeat(64),
+                createdAt: '2026-08-14T01:00:00.000Z'
+              }
+            ],
+            canEdit: false,
+            canDiff: false
+          }
+        })
+        await Promise.resolve()
+      })
+
+      expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
+      expect(onOpenChange).toHaveBeenCalledTimes(lifecycle === 'escape' ? 1 : 0)
+    }
+  )
+
   it('opens the active Artifact on Shift+Enter when the current Session cannot accept a mention', async () => {
     useNavigationStore.setState({
       artifactMentionAvailability: { projectId: 'project-a', canMention: false }
@@ -502,6 +665,60 @@ describe('GlobalSearchDialog', () => {
       projectId: 'project-b'
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('keeps search open and does not open a cross-project preview when leaving is rejected', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: { items: [], totalCount: 0 },
+      other: [
+        {
+          ...artifact,
+          id: 'artifact-2',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'version-2',
+          projectId: 'project-b',
+          sessionId: 'session-b',
+          name: 'other.png',
+          path: 'artifact-version:project-b/session-b/artifact-2/version-2'
+        }
+      ],
+      isIndexComplete: true
+    })
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'project-a',
+      activeItemId: 'dirty-file'
+    })
+    previewLeaveGuards.register('workbench:project-a:dirty-file', () => false)
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, 'other.png')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+    onOpenChange.mockClear()
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
   })
 
   it('uses the source message creation time for a legacy artifact', async () => {

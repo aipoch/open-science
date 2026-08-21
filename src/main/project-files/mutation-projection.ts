@@ -128,12 +128,24 @@ const isFileProjectionCurrent = async (
   projectId: string,
   sessionId: string
 ): Promise<boolean> => {
-  const [lineages, rows] = await Promise.all([
+  const [lineages, uploads, rows] = await Promise.all([
     client.artifactLineage.findMany({
       where: { projectId, sessionId },
       include: {
+        currentVersion: true,
         versions: {
           where: { state: 'finalized' },
+          orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+          take: 1
+        }
+      }
+    }),
+    client.uploadFile.findMany({
+      where: { projectId, sessionId },
+      include: {
+        currentVersion: true,
+        versions: {
+          where: { state: 'ready' },
           orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
           take: 1
         }
@@ -152,8 +164,8 @@ const isFileProjectionCurrent = async (
   ])
   const expectedArtifacts = new Map(
     lineages.flatMap((lineage) => {
-      const version = lineage.versions[0]
-      return version ? [[lineage.id, version.id] as const] : []
+      const version = lineage.currentVersion ?? lineage.versions[0]
+      return version?.state === 'finalized' ? [[lineage.id, version.id] as const] : []
     })
   )
   const projectedArtifacts = rows.filter(
@@ -174,6 +186,24 @@ const isFileProjectionCurrent = async (
     return storageSessionId !== undefined && storageSessionId !== row.sessionId
   })
   if (hasMismatchedLegacyUploadOwner) return false
+
+  const expectedUploads = new Map(
+    uploads.flatMap((upload) => {
+      const version = upload.currentVersion ?? upload.versions[0]
+      return version?.state === 'ready' ? [[upload.id, version.id] as const] : []
+    })
+  )
+  const projectedOwnedUploads = rows.filter(
+    (row) => row.source === 'upload' && row.sourceVersionId !== null && row.sessionId === sessionId
+  )
+  if (
+    projectedOwnedUploads.length !== expectedUploads.size ||
+    projectedOwnedUploads.some(
+      (row) => expectedUploads.get(row.sourceFileId) !== row.sourceVersionId
+    )
+  ) {
+    return false
+  }
 
   // A native Upload row is owned by its source Session, even when another Session references it.
   // Detect old derived rows that copied the referencing Session so one startup sync repairs their
@@ -243,11 +273,13 @@ const extractSessionFiles = async (
               versions: {
                 where: { id: upload.versionId, state: 'ready' },
                 take: 1
-              }
+              },
+              currentVersion: true
             }
           })
-          const version = file?.versions[0]
-          if (!file || !version) {
+          const referencedVersion = file?.versions[0]
+          const version = file?.currentVersion ?? referencedVersion
+          if (!file || !referencedVersion || !version || version.state !== 'ready') {
             throw new Error(`Upload Version is unavailable: ${upload.versionId}`)
           }
           files.push({
@@ -299,6 +331,7 @@ const extractSessionFiles = async (
     const lineages = await client.artifactLineage.findMany({
       where: { projectId: session.projectId, sessionId: session.id },
       include: {
+        currentVersion: true,
         versions: {
           where: { state: 'finalized' },
           orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
@@ -309,8 +342,8 @@ const extractSessionFiles = async (
 
     for (const lineage of lineages) {
       authoritativeArtifactIds.add(lineage.id)
-      const version = lineage.versions[0]
-      if (!version) continue
+      const version = lineage.currentVersion ?? lineage.versions[0]
+      if (!version || version.state !== 'finalized') continue
       const createdAtMs = BigInt(version.createdAt.getTime())
       files.push({
         source: 'artifact',

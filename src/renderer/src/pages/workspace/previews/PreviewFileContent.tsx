@@ -9,7 +9,14 @@ export const PreviewFileContent = ({ item }: { item: PreviewFileItem }): React.J
   return (
     <PreviewRuntimeBoundary item={item}>
       {content ?? (
-        <PreviewUnsupportedContent path={item.path} name={item.name} source={item.source} />
+        <PreviewUnsupportedContent
+          path={item.path}
+          name={item.name}
+          source={item.source}
+          projectId={item.projectId}
+          fileId={item.managedFileId}
+          versionId={item.selectedVersionId}
+        />
       )}
     </PreviewRuntimeBoundary>
   )

@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 
 const downloadsPath = join('/Users/example', 'Downloads')
+const sha256 = (bytes: string): string => createHash('sha256').update(bytes).digest('hex')
 
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const getAppPath = vi.hoisted(() => vi.fn())
@@ -274,6 +276,210 @@ describe('file save IPC handlers', () => {
     registerFileSaveHandlers()
 
     expect(handlers.has('file:save-managed')).toBe(true)
+  })
+
+  it('resolves a logical managed file only after Save As confirms so a newer DB head is exported', async () => {
+    let headPath = '/managed/v1-report.csv'
+    const resolveManagedFilePath = vi.fn(async (_source, request) => {
+      expect(request).toEqual({
+        path: 'artifact-version:stale-v1',
+        projectId: 'project-1',
+        fileId: 'artifact-1'
+      })
+      return headPath
+    })
+    const openManagedFile = vi.fn().mockResolvedValue({
+      copyTo: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined)
+    })
+    showSaveDialog.mockImplementation(async () => {
+      headPath = '/managed/v2-report.csv'
+      return { canceled: false, filePath: join(downloadsPath, 'report.csv') }
+    })
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile } as never)
+
+    await handlers.get('file:save-managed')!(
+      { sender: {} },
+      {
+        source: 'artifact',
+        path: 'artifact-version:stale-v1',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        suggestedName: 'report.csv'
+      }
+    )
+
+    expect(openManagedFile).toHaveBeenCalledWith('/managed/v2-report.csv')
+  })
+
+  it('opens a trusted logical-file lease after Save As without reopening its resolved path', async () => {
+    const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/path-must-not-be-used.csv')
+    const copyTo = vi.fn().mockResolvedValue(undefined)
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({ copyTo, close })
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'report.csv')
+    })
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFileVersion } as never)
+
+    await handlers.get('file:save-managed')!(
+      { sender: {} },
+      {
+        source: 'artifact',
+        path: 'artifact-version:stale-v1',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        suggestedName: 'report.csv'
+      }
+    )
+
+    expect(openManagedFileVersion).toHaveBeenCalledWith('artifact', {
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
+    expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'report.csv'))
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('preserves an explicit historical version when exporting a logical managed file', async () => {
+    const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/v1-report.csv')
+    const openManagedFile = vi.fn().mockResolvedValue({
+      copyTo: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined)
+    })
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'report.csv')
+    })
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile } as never)
+
+    await handlers.get('file:save-managed')!(
+      { sender: {} },
+      {
+        source: 'artifact',
+        path: 'artifact-version:v1',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        versionId: 'version-1',
+        suggestedName: 'report.csv'
+      }
+    )
+
+    expect(resolveManagedFilePath).toHaveBeenCalledWith('artifact', {
+      path: 'artifact-version:v1',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
+      versionId: 'version-1'
+    })
+  })
+
+  it('resolves every logical Session Artifact after the destination folder is chosen', async () => {
+    const destinationDirectory = '/downloads/session-artifacts'
+    const resolveManagedFilePath = vi
+      .fn()
+      .mockResolvedValueOnce('/managed/a-v2.csv')
+      .mockResolvedValueOnce('/managed/b-v4.csv')
+    const openManagedFile = vi.fn().mockResolvedValue({
+      copyTo: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined)
+    })
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile } as never)
+
+    await handlers.get('file:save-session-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        files: [
+          { path: 'stale-a', fileId: 'artifact-a', suggestedName: 'a.csv' },
+          { path: 'stale-b', fileId: 'artifact-b', suggestedName: 'b.csv' }
+        ]
+      }
+    )
+
+    expect(resolveManagedFilePath).toHaveBeenNthCalledWith(1, 'artifact', {
+      path: 'stale-a',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'artifact-a'
+    })
+    expect(resolveManagedFilePath).toHaveBeenNthCalledWith(2, 'artifact', {
+      path: 'stale-b',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'artifact-b'
+    })
+  })
+
+  it('exports each logical Session Artifact through its own trusted lease and closes every lease', async () => {
+    const destinationDirectory = '/downloads/session-artifacts'
+    const first = {
+      copyTo: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined)
+    }
+    const second = {
+      copyTo: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined)
+    }
+    const openManagedFileVersion = vi
+      .fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second)
+    const resolveManagedFilePath = vi.fn()
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFileVersion } as never)
+
+    await handlers.get('file:save-session-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        files: [
+          { path: 'stale-a', fileId: 'artifact-a', suggestedName: 'a.csv' },
+          {
+            path: 'stale-b',
+            fileId: 'artifact-b',
+            versionId: 'artifact-b-v1',
+            suggestedName: 'b.csv'
+          }
+        ]
+      }
+    )
+
+    expect(openManagedFileVersion).toHaveBeenNthCalledWith(1, 'artifact', {
+      projectId: 'project-1',
+      fileId: 'artifact-a'
+    })
+    expect(openManagedFileVersion).toHaveBeenNthCalledWith(2, 'artifact', {
+      projectId: 'project-1',
+      fileId: 'artifact-b',
+      versionId: 'artifact-b-v1'
+    })
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
+    expect(first.close).toHaveBeenCalledOnce()
+    expect(second.close).toHaveBeenCalledOnce()
+  })
+
+  it('passes an Upload logical identity to the source-neutral export resolver', async () => {
+    const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/upload-v3.csv')
+    showSaveDialog.mockResolvedValue({ canceled: true })
+    registerFileSaveHandlers({ resolveManagedFilePath } as never)
+
+    await handlers.get('file:save-managed')!(
+      { sender: {} },
+      {
+        source: 'upload',
+        path: 'upload-version:stale-v1',
+        projectId: 'project-1',
+        fileId: 'upload-1',
+        suggestedName: 'study.csv'
+      }
+    )
+
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
   })
 
   it('opens a managed source once and copies that exact file to the selected destination', async () => {
@@ -658,6 +864,127 @@ describe('file save IPC handlers', () => {
     }
   })
 
+  it('reads each logical Project file from the current managed-file head', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-current-head-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveManagedFilePath = vi.fn().mockRejectedValue(new Error('stale path used'))
+    const resolveSessionArtifactFilePath = vi.fn().mockRejectedValue(new Error('stale path used'))
+    const closeArtifact = vi.fn().mockResolvedValue(undefined)
+    const closeUpload = vi.fn().mockResolvedValue(undefined)
+    const verifyArtifact = vi.fn().mockResolvedValue(undefined)
+    const verifyUpload = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi
+      .fn()
+      .mockResolvedValueOnce({
+        size: 21,
+        readRange: vi.fn().mockResolvedValue(Buffer.from('current artifact head')),
+        verifyUnchanged: verifyArtifact,
+        copyTo: vi.fn(),
+        close: closeArtifact
+      })
+      .mockResolvedValueOnce({
+        size: 19,
+        readRange: vi.fn().mockResolvedValue(Buffer.from('current upload head')),
+        verifyUnchanged: verifyUpload,
+        copyTo: vi.fn(),
+        close: closeUpload
+      })
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveManagedFilePath,
+      resolveSessionArtifactFilePath,
+      openManagedFileVersion
+    } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: '/stale/report.csv',
+              fileId: 'artifact-file-1',
+              suggestedName: 'report.csv'
+            },
+            {
+              source: 'upload',
+              sessionId: 'session-2',
+              path: '/stale/data.csv',
+              fileId: 'upload-file-1',
+              suggestedName: 'data.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      expect(openManagedFileVersion.mock.calls).toEqual([
+        ['artifact', { projectId: 'project-1', fileId: 'artifact-file-1' }],
+        ['upload', { projectId: 'project-1', fileId: 'upload-file-1' }]
+      ])
+      expect(resolveManagedFilePath).not.toHaveBeenCalled()
+      expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe(
+        'current artifact head'
+      )
+      expect(Buffer.from(entries['uploads/data.csv']!).toString('utf8')).toBe('current upload head')
+      expect(verifyArtifact).toHaveBeenCalledOnce()
+      expect(verifyUpload).toHaveBeenCalledOnce()
+      expect(closeArtifact).toHaveBeenCalledOnce()
+      expect(closeUpload).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('closes a retained Project Version lease when temporary archive setup fails', async () => {
+    const close = vi.fn().mockResolvedValue(undefined)
+    const readRange = vi.fn()
+    const verifyUnchanged = vi.fn()
+    const temporaryRootError = new Error('temporary storage unavailable')
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'Research-artifacts.zip')
+    })
+    registerFileSaveHandlers({
+      openManagedFileVersion: vi.fn().mockResolvedValue({
+        size: 1,
+        readRange,
+        verifyUnchanged,
+        copyTo: vi.fn(),
+        close
+      }),
+      createProjectArtifactTemporaryRoot: vi.fn().mockRejectedValue(temporaryRootError)
+    } as never)
+
+    await expect(
+      handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              fileId: 'artifact-file-1',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+    ).rejects.toBe(temporaryRootError)
+    expect(readRange).not.toHaveBeenCalled()
+    expect(verifyUnchanged).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('exports Project Artifacts without reading an entire source into memory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-stream-'))
     const destinationPath = join(root, 'Research-artifacts.zip')
@@ -761,6 +1088,267 @@ describe('file save IPC handlers', () => {
       expect(closeValidated).toHaveBeenCalledTimes(1)
       expect(closeReplacement).toHaveBeenCalledTimes(1)
       await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing destination')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an explicit Project file version pinned during zip export', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-exact-version-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({
+      size: 18,
+      readRange: vi.fn().mockResolvedValue(Buffer.from('historical version')),
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      copyTo: vi.fn(),
+      close
+    })
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ openManagedFileVersion } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: '/stale/report.csv',
+              fileId: 'artifact-file-1',
+              versionId: 'artifact-version-2',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      expect(openManagedFileVersion).toHaveBeenCalledWith('artifact', {
+        projectId: 'project-1',
+        fileId: 'artifact-file-1',
+        versionId: 'artifact-version-2'
+      })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe(
+        'historical version'
+      )
+      expect(close).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the legacy managed path only when anchored Version reads are unavailable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-native-fallback-'))
+    const sourcePath = join(root, 'managed-report.csv')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    await writeFile(sourcePath, 'legacy fallback bytes')
+    const resolveManagedFilePath = vi.fn().mockResolvedValue({
+      path: sourcePath,
+      expectedSize: Buffer.byteLength('legacy fallback bytes'),
+      expectedChecksum: sha256('legacy fallback bytes')
+    })
+    const resolveSessionArtifactFilePath = vi.fn()
+    const openManagedFileVersion = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Native anchored managed-file access is unavailable.'), {
+        code: 'NATIVE_WRITE_REQUIRED'
+      })
+    )
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveManagedFilePath,
+      resolveSessionArtifactFilePath,
+      openManagedFileVersion
+    } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://legacy-report',
+              fileId: 'artifact-file-1',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe(
+        'legacy fallback bytes'
+      )
+      expect(resolveManagedFilePath).toHaveBeenCalledWith('artifact', {
+        path: 'artifact://legacy-report',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        fileId: 'artifact-file-1'
+      })
+      expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a same-size replacement during managed Version path fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-corrupt-fallback-'))
+    const sourcePath = join(root, 'managed-report.csv')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const expectedBytes = 'trusted version'
+    const replacementBytes = 'replaced bytes!'
+    expect(Buffer.byteLength(replacementBytes)).toBe(Buffer.byteLength(expectedBytes))
+    await writeFile(sourcePath, replacementBytes)
+    const resolveManagedFilePath = vi.fn().mockResolvedValue({
+      path: sourcePath,
+      expectedSize: Buffer.byteLength(expectedBytes),
+      expectedChecksum: sha256(expectedBytes)
+    })
+    const openManagedFileVersion = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Native anchored managed-file access is unavailable.'), {
+        code: 'NATIVE_WRITE_REQUIRED'
+      })
+    )
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFileVersion } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://legacy-report',
+              fileId: 'artifact-file-1',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://legacy-report',
+            fileId: 'artifact-file-1',
+            suggestedName: 'report.csv',
+            message: 'Project export source does not match the managed Version record.'
+          }
+        ]
+      })
+      expect(showSaveDialog).not.toHaveBeenCalled()
+      await expect(readFile(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not hide managed Version integrity failures behind the legacy path fallback', async () => {
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue('/managed/legacy-report.csv')
+    const openManagedFileVersion = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Managed file version content is unavailable or corrupt.'), {
+        code: 'CONTENT_INTEGRITY_FAILED'
+      })
+    )
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath, openManagedFileVersion } as never)
+
+    const result = await handlers.get('file:save-project-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        suggestedArchiveName: 'Research',
+        files: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://legacy-report',
+            fileId: 'artifact-file-1',
+            suggestedName: 'report.csv'
+          }
+        ]
+      }
+    )
+
+    expect(result).toEqual({
+      saved: true,
+      failures: [
+        {
+          source: 'artifact',
+          sessionId: 'session-1',
+          path: 'artifact://legacy-report',
+          fileId: 'artifact-file-1',
+          suggestedName: 'report.csv',
+          message: 'Managed file version content is unavailable or corrupt.'
+        }
+      ]
+    })
+    expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
+  it('does not replace an explicit historical version with the legacy current path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-exact-no-native-'))
+    const legacyCurrentPath = join(root, 'current-report.csv')
+    await writeFile(legacyCurrentPath, 'wrong current bytes')
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(legacyCurrentPath)
+    const openManagedFileVersion = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Native anchored managed-file access is unavailable.'), {
+        code: 'NATIVE_WRITE_REQUIRED'
+      })
+    )
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath, openManagedFileVersion } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://current-report',
+              fileId: 'artifact-file-1',
+              versionId: 'artifact-version-1',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://current-report',
+            fileId: 'artifact-file-1',
+            versionId: 'artifact-version-1',
+            suggestedName: 'report.csv',
+            message: 'Native anchored managed-file access is unavailable.'
+          }
+        ]
+      })
+      expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
+      expect(showSaveDialog).not.toHaveBeenCalled()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -1749,5 +2337,38 @@ describe('assertSaveManagedFileRequest validation paths', () => {
       { source: 'artifact', path: '/managed/report.csv', suggestedName: 7 },
       'numeric-suggested-name'
     )
+  })
+})
+
+describe('assertSaveSessionArtifactsRequest logical identity validation', () => {
+  beforeEach(() => {
+    handlers.clear()
+    showSaveDialog.mockReset()
+    showOpenDialog.mockReset()
+  })
+
+  it.each([
+    { identity: { fileId: 42 }, label: 'numeric file id' },
+    { identity: { fileId: '   ' }, label: 'blank file id' },
+    { identity: { fileId: 'artifact-1', versionId: 42 }, label: 'numeric version id' },
+    { identity: { fileId: 'artifact-1', versionId: '' }, label: 'blank version id' },
+    { identity: { versionId: 'artifact-v1' }, label: 'version without file id' }
+  ] as const)('rejects $label before opening a save dialog', async ({ identity }) => {
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath: vi.fn().mockResolvedValue('/managed/report.csv')
+    } as never)
+
+    await expect(
+      handlers.get('file:save-session-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          files: [{ path: 'artifact://report', suggestedName: 'report.csv', ...identity }]
+        }
+      )
+    ).rejects.toThrow('Invalid Session Artifact save request.')
+    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(showOpenDialog).not.toHaveBeenCalled()
   })
 })

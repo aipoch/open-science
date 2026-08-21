@@ -110,6 +110,9 @@ const OfficeDownloadFallback = ({
       <ManagedFileDownloadButton
         source={source}
         path={item.path}
+        projectId={item.projectId}
+        fileId={item.managedFileId}
+        versionId={item.selectedVersionId}
         suggestedName={item.name}
         appearance="primary"
         wrapperClassName="mt-3"
@@ -205,7 +208,17 @@ const RemoteOfficePreviewContent = ({
     )
 
     void window.api.officePreview
-      .open({ requestId, source, path: item.path, name: item.name, extension, attempt })
+      .open({
+        requestId,
+        source,
+        path: item.path,
+        ...(item.projectId ? { projectId: item.projectId } : {}),
+        ...(item.managedFileId ? { fileId: item.managedFileId } : {}),
+        ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {}),
+        name: item.name,
+        extension,
+        attempt
+      })
       .then((result) => {
         if (!active) {
           if (result.kind === 'started') void window.api.officePreview.close(result.sessionId)
@@ -243,7 +256,18 @@ const RemoteOfficePreviewContent = ({
       removeStateListener()
       if (openedSessionId) void window.api.officePreview.close(openedSessionId)
     }
-  }, [attempt, extension, hostId, item.name, item.path, ownsLease, source])
+  }, [
+    attempt,
+    extension,
+    hostId,
+    item.managedFileId,
+    item.name,
+    item.path,
+    item.projectId,
+    item.selectedVersionId,
+    ownsLease,
+    source
+  ])
 
   useEffect(() => {
     if (!frame || frameLoadGeneration === 0) return

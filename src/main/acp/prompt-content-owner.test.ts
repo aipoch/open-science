@@ -1,17 +1,21 @@
 import type { ContentBlock } from '@agentclientprotocol/sdk'
-import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
+import { MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
-import { MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
-import { createManagedFileReferenceResolver } from './file-reference-resolver'
+import {
+  createManagedFileReferenceResolver,
+  FileReferenceResolver
+} from './file-reference-resolver'
 import { AcpPromptContentOwner } from './prompt-content-owner'
+import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 
 const roots: string[] = []
 
@@ -26,56 +30,462 @@ const contentBlocks = (content: string | ContentBlock[]): ContentBlock[] => {
   return content as ContentBlock[]
 }
 
+type TrustedLeaseFixture = {
+  size: number
+  read: ReturnType<typeof vi.fn>
+  readRange: ReturnType<typeof vi.fn>
+  copyTo: ReturnType<typeof vi.fn>
+  verifyUnchanged: ReturnType<typeof vi.fn>
+  close: ReturnType<typeof vi.fn>
+}
+
+const createTrustedLease = (bytes: Buffer): TrustedLeaseFixture => {
+  const readRange = vi.fn(async (begin: number, end: number) => bytes.subarray(begin, end))
+  const read = vi.fn(
+    async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+      const chunk = bytes.subarray(position, position + length)
+      buffer.set(chunk, offset)
+      return { bytesRead: chunk.byteLength }
+    }
+  )
+  const verifyUnchanged = vi.fn(async () => undefined)
+  const copyTo = vi.fn(async (destinationPath: string) => {
+    await writeFile(destinationPath, bytes, { flag: 'wx' })
+  })
+  const close = vi.fn(async () => undefined)
+  return { size: bytes.byteLength, read, readRange, copyTo, verifyUnchanged, close }
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('AcpPromptContentOwner', () => {
-  it('sends a read-only linked file from its disposable snapshot URI', async () => {
+  it('keeps resource links on a private verified snapshot until prepared content closes', async () => {
     const root = await createRoot()
-    const sourcePath = join(root, 'study.csv')
-    await writeFile(sourcePath, 'id,value\n1,2\n')
-    const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRoot: async () => ({ path: root, access: 'ro' }) }
+    const replacedPath = join(root, 'replaced.txt')
+    await writeFile(replacedPath, 'untrusted path bytes')
+    const trustedBytes = Buffer.from('verified lease bytes')
+    const trustedLease = createTrustedLease(trustedBytes)
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () =>
+            ({
+              absolutePath: replacedPath,
+              name: 'notes.txt',
+              mimeType: 'text/plain',
+              allowSkillImportReference: false,
+              sourceFileId: 'artifact-file',
+              versionId: 'artifact-version-2',
+              trustedLease
+            }) as never
+        }
+      ])
     })
-    const resolveReference = vi.spyOn(resolver, 'resolve')
-    const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
 
-    const prepared = await owner.prepare({
+    const result = await owner.prepare({
       appSessionId: 'session-1',
-      projectId: 'default-project',
-      connectionGeneration: 2,
-      text: 'analyze this file',
+      projectId: 'project-1',
+      text: 'read this',
       historyImages: [],
       historyUploads: [],
       currentUploads: [],
       references: [
         {
-          id: 'linked-1',
-          name: 'study.csv',
-          source: 'linked-folder',
-          rootId: 'root-1',
-          relativePath: 'study.csv',
-          mimeType: 'text/csv'
+          id: 'artifact-row',
+          sourceFileId: 'artifact-file',
+          name: 'notes.txt',
+          path: 'artifact-version:stale',
+          source: 'artifact'
+        }
+      ],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      fileTextBudget: 1
+    })
+
+    const resourceLink = contentBlocks(result.content).find(
+      (block): block is Extract<ContentBlock, { type: 'resource_link' }> =>
+        block.type === 'resource_link'
+    )
+    expect(resourceLink).toMatchObject({ name: 'notes.txt', mimeType: 'text/plain' })
+    const snapshotPath = fileURLToPath(resourceLink!.uri)
+    expect(snapshotPath).not.toBe(replacedPath)
+    await writeFile(replacedPath, 'replaced again after prepare')
+    await expect(readFile(snapshotPath)).resolves.toEqual(trustedBytes)
+    expect((await stat(dirname(snapshotPath))).mode & 0o777).toBe(0o700)
+    expect((await stat(snapshotPath)).mode & 0o777).toBe(0o600)
+    expect(trustedLease.copyTo).toHaveBeenCalledWith(snapshotPath, { exclusive: true })
+    expect(trustedLease.close).toHaveBeenCalledOnce()
+
+    result.close()
+    await expect(access(snapshotPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves snapshot copy errors when lease close and cleanup also fail', async () => {
+    const trustedLease = createTrustedLease(Buffer.from('verified lease bytes'))
+    const copyError = new Error('snapshot copy failed')
+    trustedLease.copyTo.mockRejectedValueOnce(copyError)
+    trustedLease.close.mockRejectedValueOnce(new Error('lease close failed'))
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () =>
+            ({
+              absolutePath: '/replaced.txt',
+              name: 'notes.txt',
+              mimeType: 'text/plain',
+              allowSkillImportReference: false,
+              trustedLease
+            }) as never
+        }
+      ])
+    })
+
+    await expect(
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'read this',
+        historyImages: [],
+        historyUploads: [],
+        currentUploads: [],
+        references: [
+          {
+            id: 'artifact-row',
+            sourceFileId: 'artifact-file',
+            name: 'notes.txt',
+            path: 'artifact-version:stale',
+            source: 'artifact'
+          }
+        ],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+    ).rejects.toBe(copyError)
+    expect(trustedLease.close).toHaveBeenCalledOnce()
+  })
+
+  it('keeps prepared-content close best-effort and idempotent when snapshot cleanup fails', async () => {
+    const root = await createRoot()
+    const sourcePath = join(root, 'source.txt')
+    await writeFile(sourcePath, 'path bytes')
+    const trustedLease = createTrustedLease(Buffer.from('verified bytes'))
+    const removeDirectory = vi.fn(() => {
+      throw new Error('snapshot cleanup failed')
+    })
+    const owner = new AcpPromptContentOwner({
+      createResourceSnapshotStore: () => new TurnResourceSnapshotStore({ removeDirectory }),
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () =>
+            ({
+              absolutePath: sourcePath,
+              name: 'notes.txt',
+              mimeType: 'text/plain',
+              allowSkillImportReference: false,
+              trustedLease
+            }) as never
+        }
+      ])
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: 'read this',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [
+        {
+          id: 'artifact-row',
+          sourceFileId: 'artifact-file',
+          name: 'notes.txt',
+          path: 'artifact-version:stale',
+          source: 'artifact'
+        }
+      ],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      fileTextBudget: 1
+    })
+    const resourceLink = contentBlocks(result.content).find(
+      (block): block is Extract<ContentBlock, { type: 'resource_link' }> =>
+        block.type === 'resource_link'
+    )
+    const snapshotRoot = dirname(fileURLToPath(resourceLink!.uri))
+
+    expect(() => result.close()).not.toThrow()
+    expect(() => result.close()).not.toThrow()
+    expect(removeDirectory).toHaveBeenCalledOnce()
+    await rm(snapshotRoot, { recursive: true, force: true })
+  })
+
+  it('consumes small managed reference text from the trusted lease and closes it', async () => {
+    const root = await createRoot()
+    const replacedPath = join(root, 'replaced.txt')
+    await writeFile(replacedPath, 'wrong path bytes')
+    const trustedBytes = Buffer.from('trusted lease bytes')
+    const trustedLease = createTrustedLease(trustedBytes)
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () =>
+            ({
+              absolutePath: replacedPath,
+              name: 'notes.txt',
+              mimeType: 'text/plain',
+              allowSkillImportReference: false,
+              sourceFileId: 'artifact-file',
+              versionId: 'artifact-version-2',
+              checksum: '2'.repeat(64),
+              trustedLease
+            }) as never
+        }
+      ])
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: 'read this',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [
+        {
+          id: 'artifact-row',
+          sourceFileId: 'artifact-file',
+          versionId: 'artifact-version-2',
+          name: 'notes.txt',
+          path: 'artifact-version:stale',
+          source: 'artifact'
         }
       ],
       codexSkillInputs: [],
       skillImportEnabled: false
     })
 
-    const resource = contentBlocks(prepared.content).find((block) => block.type === 'resource')
-    expect(resource).toMatchObject({
+    expect(contentBlocks(result.content)).toContainEqual({
       type: 'resource',
-      resource: { text: 'id,value\n1,2\n' }
+      resource: expect.objectContaining({ text: 'trusted lease bytes' })
     })
-    if (resource?.type === 'resource') {
-      expect(resource.resource.uri).not.toBe(pathToFileURL(sourcePath).href)
-    }
-    expect(resolveReference).toHaveBeenCalledWith(
-      expect.objectContaining({ connectionGeneration: 2 }),
-      expect.anything()
-    )
-    owner.clear()
+    expect(trustedLease.readRange).toHaveBeenCalledWith(0, trustedBytes.byteLength)
+    expect(trustedLease.close).toHaveBeenCalledOnce()
+    result.close()
+  })
+
+  it('builds budgeted managed text previews from trusted ranges and closes the lease', async () => {
+    const root = await createRoot()
+    const trustedBytes = Buffer.from(`TRUSTED-BEGIN\n${'a'.repeat(600_000)}\nTRUSTED-END`)
+    const replacedPath = join(root, 'replaced-large.txt')
+    await writeFile(replacedPath, Buffer.alloc(trustedBytes.byteLength, 0x78))
+    const trustedLease = createTrustedLease(trustedBytes)
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () =>
+            ({
+              absolutePath: replacedPath,
+              name: 'large.txt',
+              mimeType: 'text/plain',
+              allowSkillImportReference: false,
+              sourceFileId: 'artifact-file',
+              versionId: 'artifact-version-2',
+              checksum: '2'.repeat(64),
+              trustedLease
+            }) as never
+        }
+      ])
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: 'summarize this',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [
+        {
+          id: 'artifact-row',
+          sourceFileId: 'artifact-file',
+          name: 'large.txt',
+          path: 'artifact-version:stale',
+          source: 'artifact'
+        }
+      ],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      fileTextBudget: 2_000
+    })
+
+    const renderedText = contentBlocks(result.content)
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n')
+    expect(renderedText).toContain('TRUSTED-BEGIN')
+    expect(renderedText).toContain('TRUSTED-END')
+    expect(trustedLease.read.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(trustedLease.close).toHaveBeenCalledOnce()
+    result.close()
+  })
+
+  it('inlines managed images from the trusted lease and closes it', async () => {
+    const root = await createRoot()
+    const replacedPath = join(root, 'replaced.png')
+    await writeFile(replacedPath, 'wrong image bytes')
+    const trustedBytes = Buffer.from('trusted image bytes')
+    const trustedLease = createTrustedLease(trustedBytes)
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () =>
+            ({
+              absolutePath: replacedPath,
+              name: 'figure.png',
+              mimeType: 'image/png',
+              allowSkillImportReference: false,
+              trustedLease
+            }) as never
+        }
+      ])
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: 'inspect this',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [
+        {
+          id: 'artifact-row',
+          sourceFileId: 'artifact-file',
+          name: 'figure.png',
+          path: 'artifact-version:stale',
+          source: 'artifact',
+          mimeType: 'image/png'
+        }
+      ],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    expect(contentBlocks(result.content)).toContainEqual({
+      type: 'image',
+      data: trustedBytes.toString('base64'),
+      mimeType: 'image/png',
+      uri: expect.any(String)
+    })
+    expect(trustedLease.close).toHaveBeenCalledOnce()
+    result.close()
+  })
+
+  it('closes the trusted lease when automatic consumption fails', async () => {
+    const trustedLease = createTrustedLease(Buffer.from('unreadable'))
+    trustedLease.readRange.mockRejectedValueOnce(new Error('anchored read failed'))
+    trustedLease.close.mockRejectedValueOnce(new Error('close failed'))
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () =>
+            ({
+              absolutePath: '/missing.txt',
+              name: 'notes.txt',
+              mimeType: 'text/plain',
+              allowSkillImportReference: false,
+              trustedLease
+            }) as never
+        }
+      ])
+    })
+
+    await expect(
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'read this',
+        historyImages: [],
+        historyUploads: [],
+        currentUploads: [],
+        references: [
+          {
+            id: 'artifact-row',
+            sourceFileId: 'artifact-file',
+            name: 'notes.txt',
+            path: 'artifact-version:stale',
+            source: 'artifact'
+          }
+        ],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+    ).rejects.toThrow('anchored read failed')
+    expect(trustedLease.close).toHaveBeenCalledOnce()
+  })
+
+  it('registers the exact head identity resolved at Agent turn start', async () => {
+    const root = await createRoot()
+    const path = join(root, 'head.csv')
+    await writeFile(path, 'id,value\n1,2\n')
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: new FileReferenceResolver([
+        {
+          source: 'artifact',
+          resolve: async () => ({
+            absolutePath: path,
+            name: 'head.csv',
+            mimeType: 'text/csv',
+            allowSkillImportReference: false,
+            sourceFileId: 'artifact-file',
+            versionId: 'artifact-version-2',
+            checksum: '2'.repeat(64)
+          })
+        }
+      ])
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: 'analyze',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [
+        {
+          id: 'stale-row',
+          sourceFileId: 'artifact-file',
+          name: 'stale.csv',
+          path: 'artifact-version:stale',
+          source: 'artifact'
+        }
+      ],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    expect(result.turnInputs?.references).toEqual([
+      {
+        id: 'stale-row',
+        sourceFileId: 'artifact-file',
+        name: 'head.csv',
+        path: 'artifact-version:stale',
+        source: 'artifact',
+        versionId: 'artifact-version-2',
+        checksum: '2'.repeat(64)
+      }
+    ])
   })
 
   it('keeps the text fast path isolated from ambient resolvers and defensively owns Codex metadata', async () => {
@@ -101,9 +511,14 @@ describe('AcpPromptContentOwner', () => {
       onSkillImportAttachmentEligible
     })
 
-    expect(plain).toEqual({ content: '  plain text is preserved  ', historyImageCount: 0 })
+    expect(plain).toEqual({
+      content: '  plain text is preserved  ',
+      historyImageCount: 0,
+      close: expect.any(Function)
+    })
     expect(resolveReference).not.toHaveBeenCalled()
     expect(onSkillImportAttachmentEligible).not.toHaveBeenCalled()
+    plain.close()
 
     const codexSkillInputs = [{ name: 'research', path: '/skills/research/SKILL.md' }]
     const withCodexMetadata = await owner.prepare({
@@ -132,8 +547,10 @@ describe('AcpPromptContentOwner', () => {
           }
         }
       ],
-      historyImageCount: 0
+      historyImageCount: 0,
+      close: expect.any(Function)
     })
+    withCodexMetadata.close()
     expect(resolveReference).not.toHaveBeenCalled()
   })
 

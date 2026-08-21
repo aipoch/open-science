@@ -56,6 +56,17 @@ import type {
   GetArtifactCodeReconstructionRequest
 } from '../shared/artifact-code-reconstruction'
 import type {
+  ManagedFileVersionInspectRequest,
+  ManagedFileVersionInspectResult,
+  ManagedFileVersionHostCapability,
+  ManagedFileVersionIpcResult,
+  ManagedFileVersionDiffRequest,
+  ManagedFileVersionDiffResult,
+  ManagedFileVersionCancelDiffRequest,
+  ManagedFileVersionSaveTextEditRequest,
+  SaveTextEditResult
+} from '../shared/managed-file-versions'
+import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
@@ -737,6 +748,21 @@ export interface OpenScienceAPI {
     searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
     repairIndex(request: { projectId: string }): Promise<void>
     onChanged(listener: AcpListener<ProjectFilesChangedEvent>): RemoveListener
+  }
+  managedFileVersions: {
+    getCapability(): Promise<ManagedFileVersionHostCapability>
+    inspect(
+      request: ManagedFileVersionInspectRequest
+    ): Promise<ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>>
+    diffText(
+      request: ManagedFileVersionDiffRequest
+    ): Promise<ManagedFileVersionIpcResult<ManagedFileVersionDiffResult>>
+    cancelDiff(
+      request: ManagedFileVersionCancelDiffRequest
+    ): Promise<ManagedFileVersionIpcResult<{ cancelled: boolean }>>
+    saveTextEdit(
+      request: ManagedFileVersionSaveTextEditRequest
+    ): Promise<ManagedFileVersionIpcResult<SaveTextEditResult>>
   }
   compute: {
     // SSH compute host record CRUD (Compute settings tab). No credentials cross this boundary.

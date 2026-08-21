@@ -2616,10 +2616,12 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
 
       const sanitized: MessagePart = { type: 'artifact', id, name, path, source }
       const versionId = asString(part.versionId)
+      const sourceFileId = asString(part.sourceFileId)
 
       return {
         ...sanitized,
         ...(mimeType ? { mimeType } : {}),
+        ...(sourceFileId ? { sourceFileId } : {}),
         ...(versionId ? { versionId } : {})
       }
     }

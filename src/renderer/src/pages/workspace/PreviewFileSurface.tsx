@@ -2,12 +2,22 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  FileDiff,
   GitBranch,
   Maximize2,
   MoreHorizontal,
+  Pencil,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -16,7 +26,14 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
+import {
+  MANAGED_TEXT_EDIT_EXTENSIONS,
+  type ManagedFileVersionDescriptor,
+  type ManagedFileVersionDiffResult,
+  type ManagedFileVersionInspectResult
+} from '../../../../shared/managed-file-versions'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,10 +47,12 @@ import { LocalFileHeaderActions } from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import {
   createPreviewFileItemForArtifactVersion,
+  createPreviewFileItemForManagedVersion,
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
+import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
 
 type PreviewFileSurfaceProps = {
   item: PreviewFileItem
@@ -43,11 +62,33 @@ type PreviewFileSurfaceProps = {
   onClose: () => void
   onOpenFullScreen?: () => void
   onOpenProvenance?: () => void
-  // Notified after the View in context action navigates to the artifact's origin session; the
-  // full-screen dialog uses this to exit so the switched conversation is actually visible.
   onViewInContextNavigate?: () => void
   onReload?: () => void
   provenanceEntry?: 'menu' | 'leading' | 'trailing'
+  leaveGuardScope?: string
+  workbenchConnected?: boolean
+  onItemChange?: (item: PreviewFileItem) => void
+}
+
+const hasManagedTextEditExtension = (filename: string): boolean => {
+  const extensionIndex = filename.lastIndexOf('.')
+  if (extensionIndex <= 0 || extensionIndex === filename.length - 1) return false
+  return MANAGED_TEXT_EDIT_EXTENSIONS.has(filename.slice(extensionIndex + 1).toLowerCase())
+}
+
+type PreviewFileSurfaceHandle = {
+  confirmLeave: () => boolean
+}
+
+const previewHeaderActionClassName = 'text-text-000 hover:text-text-000'
+
+const isDiffModeSourceTextVersion = (inspect: ManagedFileVersionInspectResult): boolean => {
+  const selectedVersion = inspect.versions.find(
+    (version) => version.id === inspect.selectedVersionId
+  )
+  return (
+    selectedVersion !== undefined && !selectedVersion.basedOnVersionId && inspect.text !== undefined
+  )
 }
 
 const PreviewProvenanceButton = ({
@@ -69,7 +110,7 @@ const PreviewProvenanceButton = ({
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="text-text-100 hover:text-text-000"
+            className={previewHeaderActionClassName}
             aria-label={t('Open Provenance for {{title}}', { title: item.title })}
             onClick={onOpenProvenance}
           >
@@ -99,14 +140,12 @@ const PreviewViewInContextButton = ({
     <TooltipProvider delayDuration={300}>
       <Tooltip>
         <TooltipTrigger asChild>
-          {/* A disabled button swallows pointer events, so the trigger spans it to keep the
-              archived-session hint hoverable. */}
           <span className="inline-flex">
             <Button
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="text-text-100 hover:text-text-000"
+              className={previewHeaderActionClassName}
               disabled={disabled}
               aria-label={t('View in context for {{title}}', { title: item.title })}
               onClick={onViewInContext}
@@ -134,7 +173,9 @@ const PreviewFileHeader = ({
   viewInContextDisabled,
   onReload,
   provenanceEntry = 'menu',
-  tooltipClassName
+  tooltipClassName,
+  managedControls,
+  managedControlsOnly = false
 }: Pick<
   PreviewFileSurfaceProps,
   | 'item'
@@ -145,9 +186,10 @@ const PreviewFileHeader = ({
   | 'provenanceEntry'
   | 'tooltipClassName'
 > & {
-  // Undefined hides the entry; disabled keeps it visible with the archived-session hint.
   onViewInContext?: () => void
   viewInContextDisabled?: boolean
+  managedControls?: React.ReactNode
+  managedControlsOnly?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -159,7 +201,7 @@ const PreviewFileHeader = ({
         item.source === 'local' ? 'min-h-8 py-0.5' : 'h-8'
       }`}
     >
-      {onOpenProvenance && provenanceEntry === 'leading' ? (
+      {!managedControlsOnly && onOpenProvenance && provenanceEntry === 'leading' ? (
         <PreviewProvenanceButton
           item={item}
           onOpenProvenance={onOpenProvenance}
@@ -190,7 +232,7 @@ const PreviewFileHeader = ({
         </Tooltip>
       </TooltipProvider>
       {/* A local file has no managed provenance or origin Session, so it takes the reload/copy/open
-          actions in place of the whole managed action row. */}
+        actions in place of the whole managed action row. */}
       {item.source === 'local' ? (
         <LocalFileHeaderActions
           path={item.path}
@@ -200,69 +242,87 @@ const PreviewFileHeader = ({
         />
       ) : (
         <>
-          {onOpenProvenance && provenanceEntry === 'trailing' ? (
-            <PreviewProvenanceButton
-              item={item}
-              onOpenProvenance={onOpenProvenance}
-              tooltipClassName={tooltipClassName}
-            />
-          ) : null}
-          {onViewInContext && provenanceEntry === 'trailing' ? (
-            <PreviewViewInContextButton
-              item={item}
-              onViewInContext={onViewInContext}
-              disabled={viewInContextDisabled ?? false}
-              tooltipClassName={tooltipClassName}
-            />
-          ) : null}
-          <ManagedFileDownloadButton
-            source={item.source ?? 'artifact'}
-            path={item.path}
-            suggestedName={item.name}
-            className="bg-transparent shadow-none"
-          />
-          {item.originSession?.state === 'deleted' ? (
-            <span
-              data-testid="deleted-origin-session"
-              className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
-            >
-              {t('Source session deleted')}
-            </span>
-          ) : null}
-          {onOpenProvenance && provenanceEntry === 'menu' ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="text-text-100 hover:text-text-000"
-                  aria-label={t('File actions for {{title}}', { title: item.title })}
+          {managedControls}
+          {!managedControlsOnly ? (
+            <>
+              {onOpenProvenance && provenanceEntry === 'trailing' ? (
+                <PreviewProvenanceButton
+                  item={item}
+                  onOpenProvenance={onOpenProvenance}
+                  tooltipClassName={tooltipClassName}
+                />
+              ) : null}
+              {onViewInContext && provenanceEntry === 'trailing' ? (
+                <PreviewViewInContextButton
+                  item={item}
+                  onViewInContext={onViewInContext}
+                  disabled={viewInContextDisabled ?? false}
+                  tooltipClassName={tooltipClassName}
+                />
+              ) : null}
+              <ManagedFileDownloadButton
+                source={item.source ?? 'artifact'}
+                path={item.path}
+                {...(item.projectId && item.managedFileId
+                  ? {
+                      projectId: item.projectId,
+                      fileId: item.managedFileId,
+                      ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
+                    }
+                  : {})}
+                suggestedName={item.name}
+                tone="strong"
+                className="bg-transparent shadow-none"
+              />
+              {item.originSession?.state === 'deleted' ? (
+                <span
+                  data-testid="deleted-origin-session"
+                  className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
                 >
-                  <MoreHorizontal aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="z-[70] min-w-36">
-                <DropdownMenuItem onSelect={onOpenProvenance}>
-                  <GitBranch className="mr-2 size-4" aria-hidden="true" />
-                  {t('Provenance')}
-                </DropdownMenuItem>
-                {onViewInContext ? (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem disabled={viewInContextDisabled} onSelect={onViewInContext}>
-                      <Eye className="mr-2 size-4" aria-hidden="true" />
-                      {t('View in context')}
-                      {viewInContextDisabled ? ` (${t('Source conversation is archived')})` : ''}
+                  {t('Source session deleted')}
+                </span>
+              ) : null}
+              {onOpenProvenance && provenanceEntry === 'menu' ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className={previewHeaderActionClassName}
+                      aria-label={t('File actions for {{title}}', { title: item.title })}
+                    >
+                      <MoreHorizontal aria-hidden="true" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="z-[70] min-w-36">
+                    <DropdownMenuItem onSelect={onOpenProvenance}>
+                      <GitBranch className="mr-2 size-4" aria-hidden="true" />
+                      {t('Provenance')}
                     </DropdownMenuItem>
-                  </>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                    {onViewInContext ? (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={viewInContextDisabled}
+                          onSelect={onViewInContext}
+                        >
+                          <Eye className="mr-2 size-4" aria-hidden="true" />
+                          {t('View in context')}
+                          {viewInContextDisabled
+                            ? ` (${t('Source conversation is archived')})`
+                            : ''}
+                        </DropdownMenuItem>
+                      </>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </>
           ) : null}
         </>
       )}
-      {onOpenFullScreen ? (
+      {!managedControlsOnly && onOpenFullScreen ? (
         <TooltipProvider delayDuration={200}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -270,7 +330,7 @@ const PreviewFileHeader = ({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                className="text-text-100 hover:text-text-000"
+                className={previewHeaderActionClassName}
                 aria-label={t('Open full screen preview of {{title}}', { title: item.title })}
                 onClick={onOpenFullScreen}
               >
@@ -283,25 +343,27 @@ const PreviewFileHeader = ({
           </Tooltip>
         </TooltipProvider>
       ) : null}
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="text-text-100 hover:text-text-000"
-              aria-label={t('Close preview of {{title}}', { title: item.title })}
-              onClick={onClose}
-            >
-              <X aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent className={tooltipClassName}>
-            {t('Close preview of {{title}}', { title: item.title })}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      {!managedControlsOnly ? (
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className={previewHeaderActionClassName}
+                aria-label={t('Close preview of {{title}}', { title: item.title })}
+                onClick={onClose}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className={tooltipClassName}>
+              {t('Close preview of {{title}}', { title: item.title })}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : null}
     </header>
   )
 }
@@ -316,7 +378,6 @@ const ArtifactVersionNavigation = ({
   onSelect: (versionId: string) => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-
   const selectedIndex = lineage.versions.findIndex(
     (version) => version.versionId === selectedVersionId
   )
@@ -360,188 +421,698 @@ const ArtifactVersionNavigation = ({
   )
 }
 
-// The content slot is shared by both presentations so every supported file type follows the same
-// renderer path. Callers can temporarily suppress it while another surface owns the preview.
-const PreviewFileSurface = ({
-  item,
-  contentKey,
-  renderContent = true,
-  tooltipClassName,
-  onClose,
-  onOpenFullScreen,
-  onViewInContextNavigate,
-  provenanceEntry = 'menu'
-}: PreviewFileSurfaceProps): React.JSX.Element => {
-  const [provenanceTarget, setProvenanceTarget] = useState<string>()
-  // Bumping this token remounts the content tree so a local file is re-read from disk.
-  const [reloadToken, setReloadToken] = useState(0)
-  const [versionOverride, setVersionOverride] = useState<{
-    key: string
-    item: PreviewFileItem
-  }>()
-  const [lineageResult, setLineageResult] = useState<{
-    key: string
-    value?: ArtifactLineageProvenance
-  }>()
-  const projectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
-  const storedItem = usePreviewWorkbenchStore((state) =>
-    state.items.find((candidate) => candidate.id === item.id)
+const ManagedVersionNavigation = ({
+  inspect,
+  onSelect
+}: {
+  inspect: ManagedFileVersionInspectResult
+  onSelect: (versionId: string) => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const selectedIndex = inspect.versions.findIndex(
+    (version) => version.id === inspect.selectedVersionId
   )
-  const itemIdentityKey = `${item.id}:${item.artifactId ?? ''}`
-  const previewItem =
-    storedItem?.type === 'file' && storedItem.artifactId === item.artifactId
-      ? storedItem
-      : versionOverride?.key === itemIdentityKey
-        ? versionOverride.item
-        : item
-  const surfaceKey = item.id
-  const showProvenance = provenanceTarget === surfaceKey
-  const lineageKey = `${projectId ?? ''}:${previewItem.sessionId}:${previewItem.artifactId ?? ''}`
-  // Finalization increments the owning Session's filesRevision even when this already-open preview
-  // remains on an older Version. Include it in the request identity so the version navigator learns
-  // about newly finalized Versions without forcing the user's current selection to change.
-  const sessionFilesRevision = useSessionStore(
-    (state) =>
-      state.sessions.find((session) => session.id === previewItem.sessionId)?.filesRevision ?? 0
-  )
-  // A GENERATED-card click updates selectedVersionId on the stable preview tab. Refetch even when the
-  // Artifact identity is unchanged; the cached lineage may predate that immutable Version.
-  const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}`
-  const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
-  const exactSelectedVersion = lineage?.versions.find(
-    (version) => version.versionId === previewItem.selectedVersionId
-  )
-  const newestLoadedVersion = lineage?.versions.at(-1)
-  const selectionIsNewerThanLoadedLineage =
-    typeof previewItem.versionNumber === 'number' &&
-    typeof newestLoadedVersion?.versionNumber === 'number' &&
-    previewItem.versionNumber > newestLoadedVersion.versionNumber
-  const selectedVersion =
-    exactSelectedVersion ??
-    (lineage && !selectionIsNewerThanLoadedLineage
-      ? resolveArtifactVersionDescriptor(lineage, previewItem.selectedVersionId)
-      : undefined)
-  const selectedVersionId = selectedVersion?.versionId ?? previewItem.selectedVersionId
-  const resolvedPreviewItem =
-    selectedVersion && projectId
-      ? createPreviewFileItemForArtifactVersion({
-          item: previewItem,
-          version: selectedVersion,
-          projectId
-        })
-      : previewItem
-
-  useEffect(() => {
-    let active = true
-    if (!projectId || !previewItem.artifactId || previewItem.source === 'upload') return
-
-    void window.api.artifacts
-      .getLineage({
-        projectId,
-        appSessionId: previewItem.sessionId,
-        artifactId: previewItem.artifactId
-      })
-      .then((value) => {
-        if (active) setLineageResult({ key: lineageKey, value })
-      })
-      .catch(() => undefined)
-
-    return () => {
-      active = false
-    }
-  }, [
-    lineageKey,
-    lineageRequestKey,
-    previewItem.artifactId,
-    previewItem.sessionId,
-    previewItem.source,
-    projectId
-  ])
-
-  const applyVersionItem = (nextItem: PreviewFileItem): void => {
-    setVersionOverride({ key: itemIdentityKey, item: nextItem })
-    if (storedItem?.type === 'file' && storedItem.artifactId === item.artifactId) {
-      usePreviewWorkbenchStore.getState().upsertItem(nextItem)
-    }
-  }
-
-  const selectPreviewVersion = (versionId: string): void => {
-    if (!lineage || !projectId) return
-    const version = lineage.versions.find((candidate) => candidate.versionId === versionId)
-    if (!version) return
-
-    applyVersionItem(
-      createPreviewFileItemForArtifactVersion({ item: previewItem, version, projectId })
-    )
-  }
-
-  // View in context needs the same managed-artifact identity as Provenance, plus a live origin
-  // session. Deletion is terminal, so either signal hides the entry: the refetched lineage or the
-  // item's creation-time originSession snapshot (the lineage may not have refetched yet).
-  const originSessionDeleted =
-    lineage?.originSession.state === 'deleted' || previewItem.originSession?.state === 'deleted'
-  const canViewInContext =
-    previewItem.source !== 'upload' &&
-    previewItem.artifactId !== undefined &&
-    projectId !== undefined &&
-    !originSessionDeleted
-  // Archive is reversible, so the entry stays visible but inert rather than disappearing.
-  const originSessionArchived = useSessionStore(
-    (state) =>
-      state.sessions.find((session) => session.id === previewItem.sessionId)?.archivedAt !==
-      undefined
-  )
-  const viewInContext = (): void => {
-    if (!projectId) return
-    const opened = useNavigationStore
-      .getState()
-      .openSession(projectId, previewItem.sessionId, 'user')
-    // A guard rejection (session vanished mid-flight) must not close the full-screen dialog on a
-    // navigation that never happened.
-    if (opened) onViewInContextNavigate?.()
-  }
-
   return (
-    <div className="flex size-full min-h-0 flex-col overflow-hidden">
-      <PreviewFileHeader
-        item={resolvedPreviewItem}
-        onClose={onClose}
-        onOpenFullScreen={onOpenFullScreen}
-        onReload={() => setReloadToken((token) => token + 1)}
-        provenanceEntry={provenanceEntry}
-        onOpenProvenance={
-          previewItem.source !== 'upload' && previewItem.artifactId && projectId
-            ? () => setProvenanceTarget(surfaceKey)
-            : undefined
-        }
-        onViewInContext={canViewInContext ? viewInContext : undefined}
-        viewInContextDisabled={originSessionArchived}
-        tooltipClassName={tooltipClassName}
-      />
-      {!showProvenance && lineage ? (
-        <ArtifactVersionNavigation
-          lineage={lineage}
-          selectedVersionId={selectedVersionId}
-          onSelect={selectPreviewVersion}
-        />
-      ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-bg-000">
-        {showProvenance && projectId ? (
-          <ArtifactProvenancePanel
-            item={resolvedPreviewItem}
-            projectId={projectId}
-            onClose={() => setProvenanceTarget(undefined)}
-            onVersionChange={applyVersionItem}
-          />
-        ) : renderContent ? (
-          <PreviewFileContent
-            key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
-            item={resolvedPreviewItem}
-          />
-        ) : null}
-      </div>
+    <div
+      data-testid="managed-preview-version-navigation"
+      className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2"
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={t('Previous file version')}
+        disabled={selectedIndex <= 0}
+        onClick={() => {
+          const id = inspect.versions[selectedIndex - 1]?.id
+          if (id) onSelect(id)
+        }}
+      >
+        <ChevronLeft aria-hidden="true" />
+      </Button>
+      <span className="min-w-8 text-center text-xs font-medium text-text-100">
+        v{inspect.versions[selectedIndex]?.versionNumber}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={t('Next file version')}
+        disabled={selectedIndex >= inspect.versions.length - 1}
+        onClick={() => {
+          const id = inspect.versions[selectedIndex + 1]?.id
+          if (id) onSelect(id)
+        }}
+      >
+        <ChevronRight aria-hidden="true" />
+      </Button>
     </div>
   )
 }
 
+// The content slot is shared by both presentations so every supported file type follows the same
+// renderer path. Callers can temporarily suppress it while another surface owns the preview.
+const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
+  (
+    {
+      item,
+      contentKey,
+      renderContent = true,
+      tooltipClassName,
+      onClose,
+      onOpenFullScreen,
+      onViewInContextNavigate,
+      provenanceEntry = 'menu',
+      leaveGuardScope,
+      workbenchConnected = false,
+      onItemChange
+    },
+    ref
+  ): React.JSX.Element => {
+    const { t } = useTranslation()
+    const [provenanceTarget, setProvenanceTarget] = useState<string>()
+    // Bumping this token remounts the content tree so a local file is re-read from disk.
+    const [reloadToken, setReloadToken] = useState(0)
+    const [versionOverride, setVersionOverride] = useState<{
+      key: string
+      item: PreviewFileItem
+    }>()
+    const [lineageResult, setLineageResult] = useState<{
+      key: string
+      value?: ArtifactLineageProvenance
+    }>()
+    const [managedInspectResult, setManagedInspectResult] = useState<{
+      key: string
+      value: ManagedFileVersionInspectResult
+    }>()
+    const [managedRefresh, setManagedRefresh] = useState(0)
+    const [mode, setMode] = useState<'view' | 'edit' | 'diff'>('view')
+    const [draft, setDraft] = useState('')
+    const [editBaseline, setEditBaseline] = useState<{
+      text: string
+      expectedHeadVersionId: string
+    }>()
+    const [saving, setSaving] = useState(false)
+    const [editError, setEditError] = useState<string>()
+    const [conflictHead, setConflictHead] = useState<ManagedFileVersionDescriptor>()
+    const [diffResult, setDiffResult] = useState<ManagedFileVersionDiffResult>()
+    const [diffError, setDiffError] = useState<string>()
+    const activeDiffRequestId = useRef<string | undefined>(undefined)
+    const saveGenerationRef = useRef(0)
+    const acceptedIdentityTransitionRef = useRef<string | undefined>(undefined)
+    const activeProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
+    const storedItem = usePreviewWorkbenchStore((state) =>
+      workbenchConnected
+        ? state.items.find(
+            (candidate) =>
+              candidate.type === 'file' &&
+              candidate.id === item.id &&
+              candidate.projectId === (item.projectId ?? activeProjectId)
+          )
+        : undefined
+    )
+    const sourceItem = storedItem?.type === 'file' ? storedItem : item
+    const itemIdentityKey = `${sourceItem.projectId ?? ''}:${sourceItem.source ?? 'artifact'}:${sourceItem.id}:${sourceItem.managedFileId ?? ''}:${sourceItem.artifactId ?? ''}:${sourceItem.selectedVersionId ?? ''}:${sourceItem.path}`
+    const previewItem = versionOverride?.key === itemIdentityKey ? versionOverride.item : sourceItem
+    const projectId = previewItem.projectId ?? activeProjectId
+    const surfaceKey = item.id
+    const showProvenance = provenanceTarget === surfaceKey
+    const lineageKey = `${projectId ?? ''}:${previewItem.sessionId}:${previewItem.artifactId ?? ''}`
+    // Finalization increments the owning Session's filesRevision even when this already-open preview
+    // remains on an older Version. Include it in the request identity so the version navigator learns
+    // about newly finalized Versions without forcing the user's current selection to change.
+    const sessionFilesRevision = useSessionStore(
+      (state) =>
+        state.sessions.find((session) => session.id === previewItem.sessionId)?.filesRevision ?? 0
+    )
+    const originSessionArchived = useSessionStore(
+      (state) =>
+        state.sessions.find((session) => session.id === previewItem.sessionId)?.archivedAt !==
+        undefined
+    )
+    // A GENERATED-card click updates selectedVersionId on the stable preview tab. Refetch even when the
+    // Artifact identity is unchanged; the cached lineage may predate that immutable Version.
+    const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}`
+    const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
+    const exactSelectedVersion = lineage?.versions.find(
+      (version) => version.versionId === previewItem.selectedVersionId
+    )
+    const newestLoadedVersion = lineage?.versions.at(-1)
+    const selectionIsNewerThanLoadedLineage =
+      typeof previewItem.versionNumber === 'number' &&
+      typeof newestLoadedVersion?.versionNumber === 'number' &&
+      previewItem.versionNumber > newestLoadedVersion.versionNumber
+    const selectedVersion =
+      exactSelectedVersion ??
+      (lineage && !previewItem.managedFileId && !selectionIsNewerThanLoadedLineage
+        ? resolveArtifactVersionDescriptor(lineage, previewItem.selectedVersionId)
+        : undefined)
+    const selectedVersionId = selectedVersion?.versionId ?? previewItem.selectedVersionId
+    const resolvedPreviewItem =
+      selectedVersion && projectId
+        ? createPreviewFileItemForArtifactVersion({
+            item: previewItem,
+            version: selectedVersion,
+            projectId
+          })
+        : previewItem
+    const managedSource: 'artifact' | 'upload' =
+      previewItem.source === 'upload' ? 'upload' : 'artifact'
+    const managedIdentity = useMemo(
+      () =>
+        projectId && previewItem.managedFileId
+          ? { source: managedSource, projectId, fileId: previewItem.managedFileId }
+          : undefined,
+      [managedSource, previewItem.managedFileId, projectId]
+    )
+    const managedRequestKey = managedIdentity
+      ? `${managedIdentity.source}:${managedIdentity.projectId}:${managedIdentity.fileId}:${previewItem.selectedVersionId ?? ''}:${managedRefresh}`
+      : undefined
+    const managedInspect =
+      managedInspectResult && managedInspectResult.key === managedRequestKey
+        ? managedInspectResult.value
+        : undefined
+    const previousManagedInspect =
+      managedIdentity &&
+      managedInspectResult?.value.source === managedIdentity.source &&
+      managedInspectResult.value.projectId === managedIdentity.projectId &&
+      managedInspectResult.value.fileId === managedIdentity.fileId
+        ? managedInspectResult.value
+        : undefined
+    const managedNavigationInspect =
+      managedInspect ??
+      (previousManagedInspect &&
+      previewItem.selectedVersionId &&
+      previousManagedInspect.versions.some(
+        (version) => version.id === previewItem.selectedVersionId
+      )
+        ? { ...previousManagedInspect, selectedVersionId: previewItem.selectedVersionId }
+        : undefined)
+    const managedControlsInspect =
+      managedInspect ?? (mode === 'diff' ? managedNavigationInspect : undefined)
+    // Text eligibility controls the version toolset, while current write permission only controls
+    // editing. Read-only projects and hosts keep history and comparison available.
+    const showManagedTextTools = managedControlsInspect?.text !== undefined
+    const isSelectedManagedSourceText =
+      managedInspect !== undefined && isDiffModeSourceTextVersion(managedInspect)
+    const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
+    const invalidateSave = (): void => {
+      saveGenerationRef.current += 1
+      setSaving(false)
+    }
+
+    const confirmLeave = useCallback(
+      (): boolean => !isDirty || window.confirm(t('Discard unsaved changes?')),
+      [isDirty, t]
+    )
+    useImperativeHandle(ref, () => ({ confirmLeave }), [confirmLeave])
+
+    useEffect(
+      () =>
+        leaveGuardScope ? previewLeaveGuards.register(leaveGuardScope, confirmLeave) : undefined,
+      [confirmLeave, leaveGuardScope]
+    )
+
+    useEffect(() => {
+      if (acceptedIdentityTransitionRef.current === itemIdentityKey) {
+        acceptedIdentityTransitionRef.current = undefined
+        return
+      }
+      const generation = ++saveGenerationRef.current
+      setMode('view')
+      setDraft('')
+      setEditBaseline(undefined)
+      setEditError(undefined)
+      setConflictHead(undefined)
+      setSaving(false)
+      return () => {
+        if (saveGenerationRef.current === generation) saveGenerationRef.current += 1
+      }
+    }, [itemIdentityKey])
+
+    useEffect(() => {
+      let active = true
+      const managedFileVersions = window.api.managedFileVersions
+      if (
+        !managedIdentity ||
+        !managedRequestKey ||
+        typeof managedFileVersions.inspect !== 'function'
+      )
+        return
+      const leaveDiffMode = (): void => {
+        setMode((current) => (current === 'diff' ? 'view' : current))
+        setDiffResult(undefined)
+        setDiffError(undefined)
+      }
+      void managedFileVersions
+        .inspect({
+          ...managedIdentity,
+          ...(previewItem.selectedVersionId ? { versionId: previewItem.selectedVersionId } : {})
+        })
+        .then((result) => {
+          if (!active) return
+          if (!result.ok) {
+            leaveDiffMode()
+            return
+          }
+          setManagedInspectResult({ key: managedRequestKey, value: result.value })
+          const isSourceTextVersion = isDiffModeSourceTextVersion(result.value)
+          if (!result.value.canDiff && !isSourceTextVersion) leaveDiffMode()
+          else if (!result.value.canDiff) {
+            setDiffResult(undefined)
+            setDiffError(undefined)
+          }
+        })
+        .catch(() => {
+          if (active) leaveDiffMode()
+        })
+      return () => {
+        active = false
+      }
+    }, [managedIdentity, managedRequestKey, previewItem.selectedVersionId])
+
+    useEffect(() => {
+      let active = true
+      if (!projectId || !previewItem.artifactId || previewItem.source === 'upload') return
+
+      void window.api.artifacts
+        .getLineage({
+          projectId,
+          appSessionId: previewItem.sessionId,
+          artifactId: previewItem.artifactId
+        })
+        .then((value) => {
+          if (active) setLineageResult({ key: lineageKey, value })
+        })
+        .catch(() => undefined)
+
+      return () => {
+        active = false
+      }
+    }, [
+      lineageKey,
+      lineageRequestKey,
+      previewItem.artifactId,
+      previewItem.sessionId,
+      previewItem.source,
+      projectId
+    ])
+
+    const applyVersionItem = (nextItem: PreviewFileItem, skipWorkbenchGuard = false): boolean => {
+      const nextIdentityKey = `${nextItem.projectId ?? ''}:${nextItem.source ?? 'artifact'}:${nextItem.id}:${nextItem.managedFileId ?? ''}:${nextItem.artifactId ?? ''}:${nextItem.selectedVersionId ?? ''}:${nextItem.path}`
+      if (workbenchConnected) {
+        acceptedIdentityTransitionRef.current = nextIdentityKey
+        if (!usePreviewWorkbenchStore.getState().upsertItem(nextItem, skipWorkbenchGuard)) {
+          acceptedIdentityTransitionRef.current = undefined
+          return false
+        }
+      } else {
+        if (!skipWorkbenchGuard && !confirmLeave()) return false
+        if (onItemChange) acceptedIdentityTransitionRef.current = nextIdentityKey
+        onItemChange?.(nextItem)
+        // Uncontrolled surfaces own their local selection; controlled Dialogs publish through
+        // onItemChange and must not retain an origin-keyed override that can become stale.
+        if (!onItemChange) setVersionOverride({ key: itemIdentityKey, item: nextItem })
+      }
+      return true
+    }
+
+    const selectPreviewVersion = (versionId: string): void => {
+      if (!lineage || !projectId) return
+      const version = lineage.versions.find((candidate) => candidate.versionId === versionId)
+      if (!version) return
+
+      applyVersionItem(
+        createPreviewFileItemForArtifactVersion({ item: previewItem, version, projectId })
+      )
+    }
+
+    const originSessionDeleted =
+      lineage?.originSession.state === 'deleted' || previewItem.originSession?.state === 'deleted'
+    const canViewInContext =
+      previewItem.source !== 'upload' &&
+      previewItem.artifactId !== undefined &&
+      projectId !== undefined &&
+      !originSessionDeleted
+    const viewInContext = (): void => {
+      if (!projectId) return
+      const opened = useNavigationStore
+        .getState()
+        .openSession(projectId, previewItem.sessionId, 'user')
+      if (opened) onViewInContextNavigate?.()
+    }
+
+    const selectProvenanceVersion = (nextItem: PreviewFileItem): boolean => {
+      if (!applyVersionItem(nextItem)) return false
+      invalidateSave()
+      if (activeDiffRequestId.current) {
+        void window.api.managedFileVersions.cancelDiff({ requestId: activeDiffRequestId.current })
+        activeDiffRequestId.current = undefined
+      }
+      setMode('view')
+      setDraft('')
+      setEditBaseline(undefined)
+      setDiffResult(undefined)
+      setDiffError(undefined)
+      return true
+    }
+
+    const selectManagedVersion = (versionId: string): void => {
+      if (!managedNavigationInspect || !projectId) return
+      const version = managedNavigationInspect.versions.find(
+        (candidate) => candidate.id === versionId
+      )
+      if (!version) return
+      const nextItem = createPreviewFileItemForManagedVersion({
+        item: previewItem,
+        version,
+        projectId,
+        sessionId: managedNavigationInspect.sessionId
+      })
+      if (!applyVersionItem(nextItem)) return
+      invalidateSave()
+      if (activeDiffRequestId.current) {
+        void window.api.managedFileVersions.cancelDiff({ requestId: activeDiffRequestId.current })
+        activeDiffRequestId.current = undefined
+      }
+      setMode((current) => (current === 'diff' ? 'diff' : 'view'))
+      setDiffResult(undefined)
+      setDiffError(undefined)
+    }
+
+    const beginEdit = (): void => {
+      if (!managedInspect?.canEdit || managedInspect.text === undefined) return
+      setDraft(managedInspect.text)
+      setEditBaseline({
+        text: managedInspect.text,
+        expectedHeadVersionId: managedInspect.headVersionId
+      })
+      setEditError(undefined)
+      setConflictHead(undefined)
+      setMode('edit')
+    }
+
+    const saveEdit = async (): Promise<void> => {
+      if (
+        !managedIdentity ||
+        !managedInspect ||
+        !editBaseline ||
+        draft === editBaseline.text ||
+        saving
+      )
+        return
+      setSaving(true)
+      setEditError(undefined)
+      const saveGeneration = saveGenerationRef.current
+      let result
+      try {
+        result = await window.api.managedFileVersions.saveTextEdit({
+          ...managedIdentity,
+          basedOnVersionId: managedInspect.selectedVersionId,
+          expectedHeadVersionId: editBaseline.expectedHeadVersionId,
+          content: draft,
+          operationId: crypto.randomUUID()
+        })
+      } catch {
+        if (saveGenerationRef.current !== saveGeneration) return
+        setSaving(false)
+        setEditError(t('Changes could not be saved.'))
+        return
+      }
+      if (saveGenerationRef.current !== saveGeneration) return
+      setSaving(false)
+      if (!result.ok) {
+        setEditError(t('Changes could not be saved.'))
+        return
+      }
+      if (result.value.kind === 'conflict') {
+        setConflictHead(result.value.actualHead)
+        setEditError(t('This file has a newer version.'))
+        return
+      }
+      setMode('view')
+      setEditBaseline(undefined)
+      setDraft('')
+      if (result.value.kind === 'created' && projectId) {
+        applyVersionItem(
+          createPreviewFileItemForManagedVersion({
+            item: previewItem,
+            version: result.value.version,
+            projectId,
+            sessionId: managedInspect.sessionId
+          }),
+          true
+        )
+      }
+      setManagedRefresh((value) => value + 1)
+    }
+
+    const toggleDiff = (): void => {
+      if (!managedIdentity) return
+      if (mode === 'diff') {
+        setMode('view')
+        setDiffResult(undefined)
+        setDiffError(undefined)
+        return
+      }
+      if (!managedInspect?.canDiff) return
+      if (!confirmLeave()) return
+      invalidateSave()
+      setDiffResult(undefined)
+      setDiffError(undefined)
+      setMode('diff')
+    }
+
+    useEffect(() => {
+      if (mode !== 'diff' || !managedIdentity || !managedInspect?.canDiff) return
+      const requestId = crypto.randomUUID()
+      activeDiffRequestId.current = requestId
+      void window.api.managedFileVersions
+        .diffText({ ...managedIdentity, versionId: managedInspect.selectedVersionId, requestId })
+        .then((result) => {
+          if (activeDiffRequestId.current !== requestId) return
+          activeDiffRequestId.current = undefined
+          if (result.ok) setDiffResult(result.value)
+          else if (result.error.code !== 'DIFF_CANCELLED')
+            setDiffError(t('Diff could not be loaded.'))
+        })
+        .catch(() => {
+          if (activeDiffRequestId.current === requestId)
+            setDiffError(t('Diff could not be loaded.'))
+        })
+      return () => {
+        if (activeDiffRequestId.current !== requestId) return
+        activeDiffRequestId.current = undefined
+        void window.api.managedFileVersions.cancelDiff({ requestId })
+      }
+    }, [managedIdentity, managedInspect?.canDiff, managedInspect?.selectedVersionId, mode, t])
+
+    return (
+      <div className="flex size-full min-h-0 flex-col overflow-hidden">
+        <PreviewFileHeader
+          item={resolvedPreviewItem}
+          onClose={() => {
+            if (workbenchConnected || confirmLeave()) {
+              invalidateSave()
+              onClose()
+            }
+          }}
+          onOpenFullScreen={onOpenFullScreen}
+          onReload={() => setReloadToken((token) => token + 1)}
+          provenanceEntry={provenanceEntry}
+          onOpenProvenance={
+            previewItem.source !== 'upload' && previewItem.artifactId && projectId
+              ? () => setProvenanceTarget(surfaceKey)
+              : undefined
+          }
+          onViewInContext={canViewInContext ? viewInContext : undefined}
+          viewInContextDisabled={originSessionArchived}
+          tooltipClassName={tooltipClassName}
+          managedControlsOnly={mode === 'edit'}
+          managedControls={
+            showManagedTextTools && managedControlsInspect ? (
+              mode === 'edit' ? (
+                <div className="flex h-7 shrink-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-text-000 hover:text-text-000"
+                    onClick={() => {
+                      if (confirmLeave()) {
+                        invalidateSave()
+                        setMode('view')
+                        setDraft('')
+                        setEditBaseline(undefined)
+                      }
+                    }}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    aria-label={t('Save changes')}
+                    disabled={!isDirty || saving}
+                    onClick={() => void saveEdit()}
+                  >
+                    {t('Save')}
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  {managedInspect?.canEdit ? (
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            className={previewHeaderActionClassName}
+                            aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
+                            onClick={beginEdit}
+                          >
+                            <Pencil aria-hidden="true" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent className={tooltipClassName}>
+                          {t('Edit content')}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant={mode === 'diff' ? 'default' : 'ghost'}
+                          size="icon-xs"
+                          className={mode === 'diff' ? undefined : previewHeaderActionClassName}
+                          aria-label={
+                            mode === 'diff'
+                              ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
+                              : t('Compare {{name}} with its source version', {
+                                  name: resolvedPreviewItem.name
+                                })
+                          }
+                          disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
+                          onClick={toggleDiff}
+                        >
+                          <FileDiff aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className={tooltipClassName}>
+                        {mode === 'diff'
+                          ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
+                          : managedControlsInspect.canDiff
+                            ? t('Compare with source version')
+                            : t('No source version to compare')}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </>
+              )
+            ) : undefined
+          }
+        />
+        {!showProvenance && managedNavigationInspect?.text !== undefined ? (
+          <ManagedVersionNavigation
+            inspect={managedNavigationInspect}
+            onSelect={selectManagedVersion}
+          />
+        ) : !showProvenance &&
+          !managedIdentity &&
+          lineage &&
+          hasManagedTextEditExtension(resolvedPreviewItem.name) ? (
+          <ArtifactVersionNavigation
+            lineage={lineage}
+            selectedVersionId={selectedVersionId}
+            onSelect={selectPreviewVersion}
+          />
+        ) : null}
+        <div className="min-h-0 flex-1 overflow-y-auto bg-bg-000">
+          {showProvenance && projectId ? (
+            <ArtifactProvenancePanel
+              item={resolvedPreviewItem}
+              projectId={projectId}
+              onClose={() => setProvenanceTarget(undefined)}
+              onVersionChange={selectProvenanceVersion}
+            />
+          ) : mode === 'edit' ? (
+            <div className="flex size-full min-h-0 flex-col">
+              <textarea
+                autoFocus
+                aria-label={t('Edit {{name}} source', { name: resolvedPreviewItem.name })}
+                className="min-h-0 flex-1 resize-none bg-bg-000 p-4 font-mono text-sm leading-6 text-text-000 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+              />
+              {editError ? (
+                <div
+                  role="alert"
+                  className="flex items-center justify-between border-t border-border-300 px-3 py-2 text-xs text-destructive"
+                >
+                  {editError}
+                  {conflictHead ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (!projectId || !managedInspect) return
+                        const nextItem = createPreviewFileItemForManagedVersion({
+                          item: previewItem,
+                          version: conflictHead,
+                          projectId,
+                          sessionId: managedInspect.sessionId
+                        })
+                        if (!applyVersionItem(nextItem)) return
+                        invalidateSave()
+                        setMode('view')
+                        setDraft('')
+                        setEditBaseline(undefined)
+                      }}
+                    >
+                      {t('View latest version')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : mode === 'diff' ? (
+            managedInspect && !managedInspect.canDiff && isSelectedManagedSourceText ? (
+              renderContent ? (
+                <PreviewFileContent
+                  key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
+                  item={resolvedPreviewItem}
+                />
+              ) : null
+            ) : diffResult ? (
+              <ManagedVersionDiffContent
+                result={diffResult}
+                format={resolvedPreviewItem.format}
+                name={resolvedPreviewItem.name}
+              />
+            ) : (
+              <div className="p-4 text-sm text-text-100">
+                {diffError ?? t('Comparing versions...')}
+              </div>
+            )
+          ) : renderContent ? (
+            <PreviewFileContent
+              key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
+              item={resolvedPreviewItem}
+            />
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+)
+
+PreviewFileSurface.displayName = 'PreviewFileSurface'
+
 export { PreviewFileSurface }
+export type { PreviewFileSurfaceHandle }

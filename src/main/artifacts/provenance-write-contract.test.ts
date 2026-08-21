@@ -1,15 +1,21 @@
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import type { NotebookRunInputFile } from '../../shared/notebook'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { createPngBytes } from './artifact-test-fixtures'
 import * as provenanceModule from './provenance-repository'
 import { ArtifactProvenanceRepository } from './provenance-repository'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 import {
   createArtifactVersionRequest,
   createProvenanceTestFixture,
@@ -51,6 +57,7 @@ const PUBLIC_METHODS = [
   'replayVersion',
   'validateFinalizationOwnership',
   'finalizeRun',
+  'activateFinalizedRun',
   'listRunVersions',
   'prepareProjectReconciliation',
   'reconcileSession',
@@ -124,22 +131,25 @@ describe('artifact provenance allocation and write identity', () => {
     })
     expect(rows.map(({ versionNumber }) => versionNumber)).toEqual([1, 2])
     for (const [index, row] of rows.entries()) {
+      const agentRow = requireAgentArtifactVersion(row)
       const expectedBytes = createPngBytes(index === 0 ? 'version one' : 'version two')
-      expect(row.checksum).toBe(sha256(expectedBytes))
-      expect(row.evidenceChecksum).toBe(sha256(row.evidenceJson))
-      expect(row.evidenceJson).toBe(JSON.stringify(canonicalize(JSON.parse(row.evidenceJson))))
-      expect(JSON.parse(row.evidenceJson)).toMatchObject({
+      expect(agentRow.checksum).toBe(sha256(expectedBytes))
+      expect(agentRow.evidenceChecksum).toBe(sha256(agentRow.evidenceJson))
+      expect(agentRow.evidenceJson).toBe(
+        JSON.stringify(canonicalize(JSON.parse(agentRow.evidenceJson)))
+      )
+      expect(JSON.parse(agentRow.evidenceJson)).toMatchObject({
         artifact_id: first.artifactId,
-        version_id: row.id,
+        version_id: agentRow.id,
         version_number: index + 1,
-        checksum: row.checksum
+        checksum: agentRow.checksum
       })
       await expect(
-        readFile(join(storageRoot, ...row.contentStorageKey.split('/')))
+        readFile(join(storageRoot, ...agentRow.contentStorageKey.split('/')))
       ).resolves.toEqual(expectedBytes)
       await expect(
-        readFile(join(storageRoot, ...row.evidenceStorageKey.split('/')), 'utf8')
-      ).resolves.toBe(row.evidenceJson)
+        readFile(join(storageRoot, ...agentRow.evidenceStorageKey.split('/')), 'utf8')
+      ).resolves.toBe(agentRow.evidenceJson)
     }
   })
 
@@ -162,6 +172,157 @@ describe('artifact provenance allocation and write identity', () => {
       repository.createVersion({ ...request, writeRequestChecksum: '4'.repeat(64) })
     ).rejects.toThrow(/write operation.*different request/i)
     await expect(client.artifactVersion.count()).resolves.toBe(1)
+  })
+
+  it('diffs a generated text Version against its published or same-run predecessor', async () => {
+    const value = await fixture()
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'write a README',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const assistant = {
+      id: 'message-1',
+      role: 'agent' as const,
+      content: 'done',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const conversationGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [prompt, assistant],
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Generated text versions',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [prompt, assistant],
+      conversationGraph,
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const repository = new ArtifactProvenanceRepository({
+      ...value.repositoryOptions,
+      loadSession: async () => session
+    })
+    const context = {
+      rootFrameId: conversationGraph.rootFrameId,
+      agentFrameId: conversationGraph.activeFrameId,
+      messageBranchId: conversationGraph.branches[0].id,
+      runtimeSegmentId: conversationGraph.runtimeSegments[0].id,
+      promptMessageId: prompt.id
+    }
+    const writeVersion = async (
+      artifactRunId: string,
+      writeOperationId: string,
+      content: string
+    ): Promise<ArtifactVersionFile> => {
+      await value.compatibilityRepository.writePendingFile({
+        projectId: 'project-1',
+        sessionId: 'artifact-session-1',
+        runId: artifactRunId,
+        filename: 'README.md',
+        mimeType: 'text/markdown',
+        source: { kind: 'inline', content, encoding: 'utf8' }
+      })
+      return repository.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId,
+        writeOperationId,
+        writeRequestChecksum: sha256(writeOperationId),
+        ...context,
+        filename: 'README.md',
+        contentType: 'text/markdown'
+      })
+    }
+    const finishRun = async (
+      artifactRunId: string,
+      artifactVersionIds: string[],
+      activate: boolean
+    ): Promise<void> => {
+      const request = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId,
+        artifactVersionIds,
+        ...context,
+        messageId: assistant.id
+      }
+      await repository.finalizeRun(request)
+      if (activate) await repository.activateFinalizedRun(request)
+    }
+
+    const first = await writeVersion('artifact-run-public', 'write-markdown-1', '# First\n')
+    await finishRun('artifact-run-public', [first.versionId], true)
+
+    const hidden = await writeVersion('artifact-run-hidden', 'write-markdown-2', '# Hidden\n')
+    await finishRun('artifact-run-hidden', [hidden.versionId], false)
+
+    const third = await writeVersion('artifact-run-active', 'write-markdown-3', '# Third\n')
+    const fourth = await writeVersion('artifact-run-active', 'write-markdown-4', '# Fourth\n')
+    await expect(
+      value.client.artifactVersion.findMany({
+        where: { id: { in: [third.versionId, fourth.versionId] } },
+        orderBy: { versionNumber: 'asc' },
+        select: { basedOnVersionId: true }
+      })
+    ).resolves.toEqual([
+      { basedOnVersionId: first.versionId },
+      { basedOnVersionId: third.versionId }
+    ])
+
+    await finishRun('artifact-run-active', [third.versionId, fourth.versionId], false)
+    await expect(
+      value.client.artifactLineage.findUniqueOrThrow({ where: { id: first.artifactId } })
+    ).resolves.toMatchObject({ currentVersionId: first.versionId })
+    await expect(
+      value.client.artifactVersion.findUniqueOrThrow({ where: { id: hidden.versionId } })
+    ).resolves.toMatchObject({ state: 'finalized', managedVisibleAt: null })
+
+    await repository.activateFinalizedRun({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactRunId: 'artifact-run-active',
+      artifactVersionIds: [third.versionId, fourth.versionId],
+      ...context,
+      messageId: assistant.id
+    })
+
+    const service = new ManagedFileVersionService({
+      storageRoot: value.storageRoot,
+      getClient: () => Promise.resolve(value.client),
+      nativeWriteAvailable: true,
+      readAnchored: (_rootPath, parentPath, name) => readFileSync(join(parentPath, name))
+    })
+    await expect(
+      service.diffText({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: fourth.artifactId,
+        versionId: fourth.versionId,
+        requestId: 'generated-markdown-diff'
+      })
+    ).resolves.toMatchObject({
+      baseVersionId: third.versionId,
+      selectedVersionId: fourth.versionId,
+      lines: expect.arrayContaining([
+        expect.objectContaining({ kind: 'removed', oldLineNumber: 1 }),
+        expect.objectContaining({ kind: 'added', newLineNumber: 1 })
+      ])
+    })
   })
 
   it('keeps the SQLite lifecycle in staging when an immutable evidence barrier fails', async () => {
@@ -332,9 +493,9 @@ describe('artifact provenance producer and source validation', () => {
     })
 
     const version = await value.repository.createVersion(request)
-    const row = await value.client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
+    const row = requireAgentArtifactVersion(
+      await value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
     expect(row).toMatchObject({ producerRunId: 'producer-run', producerRunIndex: 0 })
     expect(JSON.parse(row.evidenceJson)).toMatchObject({
       producer: {
@@ -398,9 +559,9 @@ describe('artifact provenance producer and source validation', () => {
       writeOperationId: 'mtime-operation',
       writeRequestChecksum: '6'.repeat(64)
     })
-    const row = await value.client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
+    const row = requireAgentArtifactVersion(
+      await value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
     expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(row.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
@@ -427,9 +588,9 @@ describe('artifact provenance producer and source validation', () => {
         sourceFileObservation: { ...observation, sizeBytes: observation.sizeBytes + 1 }
       })
     )
-    const row = await value.client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
+    const row = requireAgentArtifactVersion(
+      await value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
     expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(row.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-source-unverifiable' }
@@ -478,9 +639,9 @@ describe('artifact provenance producer and source validation', () => {
         }
       })
     )
-    const row = await value.client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
+    const row = requireAgentArtifactVersion(
+      await value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
 
     expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
     expect(JSON.parse(row.evidenceJson)).toMatchObject({

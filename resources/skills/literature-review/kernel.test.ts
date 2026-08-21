@@ -5,9 +5,12 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-const python3 = ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'].find(
-  existsSync
-)
+const python3 = [
+  process.env.OPEN_SCIENCE_TEST_PY_ENV,
+  '/opt/homebrew/bin/python3',
+  '/usr/local/bin/python3',
+  '/usr/bin/python3'
+].find((candidate): candidate is string => typeof candidate === 'string' && existsSync(candidate))
 const gate = python3 ? describe : describe.skip
 const testFile = resolve(dirname(fileURLToPath(import.meta.url)), 'test_kernel.py')
 

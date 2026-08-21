@@ -27,6 +27,158 @@ afterEach(async () => {
 })
 
 describe('managed file reference resolver', () => {
+  it('opens an exact trusted lease for a logical reference without reopening its path', async () => {
+    const close = vi.fn(async () => undefined)
+    const openResolved = vi.fn().mockResolvedValue({
+      path: '/replaced-after-open.txt',
+      size: 12,
+      read: vi.fn(),
+      readRange: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close,
+      logicalFile: { id: 'artifact-file', displayName: 'notes.txt' },
+      version: {
+        id: 'artifact-version-2',
+        checksum: '2'.repeat(64),
+        contentType: 'text/plain'
+      }
+    })
+    const resolver = createManagedFileReferenceResolver({
+      managedFileVersions: { openResolved } as never
+    })
+
+    const resolved = await resolver.resolve(
+      { projectId: 'project-1', sessionId: 'session-1' },
+      {
+        id: 'artifact-row',
+        sourceFileId: 'artifact-file',
+        versionId: 'artifact-version-2',
+        name: 'stale.txt',
+        path: 'artifact-version:stale',
+        source: 'artifact'
+      }
+    )
+
+    expect(openResolved).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-file',
+      versionId: 'artifact-version-2'
+    })
+    expect(resolved).toMatchObject({
+      absolutePath: '/replaced-after-open.txt',
+      size: 12,
+      sourceFileId: 'artifact-file',
+      versionId: 'artifact-version-2',
+      checksum: '2'.repeat(64),
+      trustedLease: { close }
+    })
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it.each(['artifact', 'upload'] as const)(
+    'resolves a default %s reference through the current DB head at prompt preparation',
+    async (source) => {
+      root = await mkdtemp(join(tmpdir(), 'file-reference-head-'))
+      const headPath = join(root, `${source}-v2.csv`)
+      await writeFile(headPath, 'head bytes')
+      const close = vi.fn(async () => undefined)
+      const openResolved = vi.fn().mockResolvedValue({
+        path: headPath,
+        size: 10,
+        read: vi.fn(),
+        readRange: vi.fn(),
+        verifyUnchanged: vi.fn(),
+        close,
+        logicalFile: { id: `${source}-file`, displayName: 'study.csv' },
+        version: {
+          id: `${source}-version-2`,
+          checksum: '2'.repeat(64),
+          contentType: 'text/csv'
+        }
+      })
+      const resolver = createManagedFileReferenceResolver({
+        managedFileVersions: { openResolved } as never
+      })
+
+      await expect(
+        resolver.resolve(
+          { projectId: 'project-1', sessionId: 'target-session' },
+          {
+            id: `${source}-row`,
+            sourceFileId: `${source}-file`,
+            name: 'stale-name.csv',
+            path: `${source}-version:stale-projection`,
+            source
+          }
+        )
+      ).resolves.toMatchObject({
+        absolutePath: headPath,
+        name: 'study.csv',
+        mimeType: 'text/csv',
+        size: 10,
+        sourceFileId: `${source}-file`,
+        versionId: `${source}-version-2`,
+        checksum: '2'.repeat(64)
+      })
+      expect(openResolved).toHaveBeenCalledWith({
+        source,
+        projectId: 'project-1',
+        fileId: `${source}-file`
+      })
+      expect(close).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves an explicit historical Version when preparing an Agent reference', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-exact-'))
+    const historicalPath = join(root, 'artifact-v1.csv')
+    await writeFile(historicalPath, 'v1 bytes')
+    const close = vi.fn(async () => undefined)
+    const openResolved = vi.fn().mockResolvedValue({
+      path: historicalPath,
+      size: 8,
+      read: vi.fn(),
+      readRange: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close,
+      logicalFile: { id: 'artifact-file', displayName: 'study.csv' },
+      version: {
+        id: 'artifact-version-1',
+        checksum: '1'.repeat(64),
+        contentType: 'text/csv'
+      }
+    })
+    const resolver = createManagedFileReferenceResolver({
+      managedFileVersions: { openResolved } as never
+    })
+
+    await expect(
+      resolver.resolve(
+        { projectId: 'project-1', sessionId: 'target-session' },
+        {
+          id: 'artifact-row',
+          sourceFileId: 'artifact-file',
+          versionId: 'artifact-version-1',
+          name: 'study.csv',
+          path: 'artifact-version:stale-projection',
+          source: 'artifact'
+        }
+      )
+    ).resolves.toMatchObject({
+      sourceFileId: 'artifact-file',
+      versionId: 'artifact-version-1',
+      checksum: '1'.repeat(64)
+    })
+
+    expect(openResolved).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-file',
+      versionId: 'artifact-version-1'
+    })
+    expect(close).not.toHaveBeenCalled()
+  })
   it('validates upload paths and returns trusted on-disk metadata', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const uploads = new UploadRepository(root)

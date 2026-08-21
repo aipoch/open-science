@@ -20286,7 +20286,8 @@ describe('ACP runtime session management', () => {
     const version = await client.artifactVersion.findFirstOrThrow({
       where: { artifactRunId: claim.runId }
     })
-    expect(JSON.parse(version.evidenceJson)).toMatchObject({
+    expect(version.evidenceJson).not.toBeNull()
+    expect(JSON.parse(version.evidenceJson!)).toMatchObject({
       producer: {
         state: 'available',
         kind: 'connector',
@@ -20704,7 +20705,8 @@ describe('ACP runtime session management', () => {
       where: { artifactRunId: claim.runId }
     })
     expect(finalizedVersion).toMatchObject({ state: 'finalized', messageId: 'assistant-current' })
-    expect(JSON.parse(finalizedVersion.evidenceJson)).toMatchObject({
+    expect(finalizedVersion.evidenceJson).not.toBeNull()
+    expect(JSON.parse(finalizedVersion.evidenceJson!)).toMatchObject({
       producer: {
         state: 'available',
         kind: 'connector',

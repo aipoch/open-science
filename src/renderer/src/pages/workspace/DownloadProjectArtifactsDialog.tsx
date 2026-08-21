@@ -168,6 +168,9 @@ const DownloadProjectArtifactsDialog = ({
           source: file.source,
           sessionId: file.sessionId,
           path: file.path,
+          // A current-version projection can be re-resolved through its logical ID. Legacy rows
+          // without an authoritative version keep the validated path compatibility flow.
+          ...(file.sourceVersionId ? { fileId: file.sourceFileId } : {}),
           suggestedName: file.name
         }))
       })

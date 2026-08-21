@@ -6,13 +6,10 @@ import {
   ChevronDown,
   File,
   Folder,
-  Lock,
-  LockOpen,
   Monitor,
   Paperclip,
   Plus,
-  Server,
-  Trash2
+  Server
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -25,9 +22,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -41,9 +35,9 @@ import type { ProjectFileItem } from '../../../../shared/project-files'
 
 import { ArtifactPreview } from './artifact-preview'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { grantedRootAccessBadgeClassName } from './granted-root-access-badge'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import type { MessageArtifact } from './preview-file-item'
+import { GrantedRootMenuRow } from './project-files-granted-root-menu-row'
 import { createProjectFilePreviewArtifact } from './project-files-preview-owner'
 import type { ProjectFilesFilterOption } from './project-files-query-model'
 import { FILE_MISSING_TAG_KEY } from './previews/preview-errors'
@@ -123,6 +117,8 @@ const formatRelativeFileTime = (
 const FileActionButtons = ({
   source,
   path,
+  projectId,
+  fileId,
   name,
   disabled,
   className,
@@ -130,6 +126,8 @@ const FileActionButtons = ({
 }: {
   source: 'artifact' | 'upload'
   path: string
+  projectId: string
+  fileId: string
   name: string
   disabled: boolean
   className: string
@@ -148,6 +146,8 @@ const FileActionButtons = ({
       <ManagedFileDownloadButton
         source={source}
         path={path}
+        projectId={projectId}
+        fileId={fileId}
         suggestedName={name}
         disabled={disabled}
         iconSize="icon-sm"
@@ -182,6 +182,7 @@ const FileTile = ({
   source,
   projectId,
   sessionId,
+  fileId,
   size,
   timestamp,
   previewLabel,
@@ -194,6 +195,7 @@ const FileTile = ({
   source: 'artifact' | 'upload'
   projectId: string
   sessionId: string
+  fileId: string
   size?: number
   timestamp?: number
   previewLabel: string
@@ -208,6 +210,7 @@ const FileTile = ({
     enabled: isNearViewport,
     projectId,
     sessionId,
+    managedFileId: fileId,
     path: previewArtifact.path,
     source
   })
@@ -235,6 +238,7 @@ const FileTile = ({
             source={source}
             projectId={projectId}
             sessionId={sessionId}
+            managedFileId={fileId}
             isVisible={isNearViewport}
           />
           {missing ? (
@@ -267,6 +271,8 @@ const FileTile = ({
       <FileActionButtons
         source={source}
         path={previewArtifact.path}
+        projectId={projectId}
+        fileId={fileId}
         name={name}
         disabled={missing}
         className="right-1.5 top-1.5"
@@ -295,6 +301,7 @@ const FileListRow = ({
     enabled: isNearViewport,
     projectId: file.projectId,
     sessionId: file.sessionId,
+    managedFileId: file.sourceFileId,
     path: file.path,
     source: file.source
   })
@@ -337,6 +344,8 @@ const FileListRow = ({
       <FileActionButtons
         source={file.source}
         path={file.path}
+        projectId={file.projectId}
+        fileId={file.sourceFileId}
         name={file.name}
         disabled={missing}
         className="right-2 top-1/2 -translate-y-1/2"
@@ -398,6 +407,7 @@ const ProjectFileItems = ({
             source={file.source}
             projectId={file.projectId}
             sessionId={file.sessionId}
+            fileId={file.sourceFileId}
             size={file.size}
             timestamp={file.mtimeMs ?? file.sortAtMs}
             previewLabel={previewLabel}
@@ -434,107 +444,6 @@ const FilterMenuItem = ({
     <span className="shrink-0 text-[11px] text-text-300">{option.count}</span>
   </DropdownMenuItem>
 )
-
-const GrantedRootMenuRow = ({
-  root,
-  isSelected,
-  onSelect,
-  onCloseMenu
-}: {
-  root: GrantedLocalRoot
-  isSelected: boolean
-  onSelect: (root: GrantedLocalRoot) => void
-  onCloseMenu: () => void
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  const setAccess = useGrantedFoldersStore((state) => state.setAccess)
-  const remove = useGrantedFoldersStore((state) => state.remove)
-
-  // The whole row is the submenu trigger: hovering it opens the manage submenu (Radix hover
-  // intent), while clicking still selects the folder. Clicking a sub-trigger would normally open
-  // the submenu instead, so the click is default-prevented and the menu closed manually.
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger asChild>
-        <div
-          role="menuitemradio"
-          aria-checked={isSelected}
-          className="gap-2"
-          data-testid={`granted-root-${root.id}`}
-          onClick={(event) => {
-            event.preventDefault()
-            onSelect(root)
-            onCloseMenu()
-          }}
-        >
-          <Folder
-            className="mt-0.5 size-4 shrink-0 self-start text-text-300"
-            strokeWidth={1.8}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate">{root.name}</span>
-            <span title={root.path} className="block truncate font-mono text-[11px] text-text-300">
-              {root.path}
-            </span>
-          </span>
-          {/* Trailing cluster: badge and check sit 2px apart. */}
-          <span className="flex shrink-0 items-center gap-0.5">
-            <span className={grantedRootAccessBadgeClassName(root.access)}>{root.access}</span>
-            {isSelected ? (
-              <Check
-                className="size-4 shrink-0 text-primary"
-                strokeWidth={2}
-                aria-hidden="true"
-                data-testid={`granted-root-check-${root.id}`}
-              />
-            ) : null}
-          </span>
-        </div>
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="z-[70] w-[220px]">
-        <DropdownMenuLabel
-          title={root.path}
-          className="truncate font-mono text-[11px] text-text-300"
-        >
-          {root.path}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {root.access === 'ro' ? (
-          <DropdownMenuItem
-            className="gap-2"
-            data-testid={`granted-root-allow-writes-${root.id}`}
-            onSelect={() => void setAccess(root.id, 'rw').catch(() => undefined)}
-          >
-            <LockOpen
-              className="size-4 shrink-0 text-text-300"
-              strokeWidth={1.8}
-              aria-hidden="true"
-            />
-            <span>{t('Allow writes')}</span>
-          </DropdownMenuItem>
-        ) : (
-          <DropdownMenuItem
-            className="gap-2"
-            data-testid={`granted-root-make-read-only-${root.id}`}
-            onSelect={() => void setAccess(root.id, 'ro').catch(() => undefined)}
-          >
-            <Lock className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
-            <span>{t('Make read-only')}</span>
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem
-          className="gap-2 text-danger-000 data-[highlighted]:text-danger-000"
-          data-testid={`granted-root-remove-${root.id}`}
-          onSelect={() => void remove(root.id).catch(() => undefined)}
-        >
-          <Trash2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-          <span>{t('Remove access')}</span>
-        </DropdownMenuItem>
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  )
-}
 
 // Keeps all/uploads filters fixed while session choices expand through their own group-header cursor,
 // preventing menu exploration from advancing any file collection shown in the content area.

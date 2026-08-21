@@ -42,7 +42,7 @@ type AnimatedResizablePanelOptions = {
   defaultOpenSize: number
   minOpenSize: number
   requestVersion?: number
-  onPanelStateChange: (state: ResizablePanelState) => void
+  onPanelStateChange: (state: ResizablePanelState) => boolean | void
   onPixelWidthChange?: (width: number) => void
   collapseFocusTargetRef: React.RefObject<HTMLButtonElement | null>
 }
@@ -180,9 +180,12 @@ const useAnimatedResizablePanel = ({
         collapseFocusTargetRef.current?.focus()
       }
 
-      onPanelStateChange(isNearCollapsedSize ? 'collapsed' : 'open')
+      const accepted = onPanelStateChange(isNearCollapsedSize ? 'collapsed' : 'open')
+      if (isNearCollapsedSize && accepted === false) {
+        animatePanelSize(Math.max(lastOpenSizeRef.current, minOpenSize), 'opening')
+      }
     },
-    [collapseFocusTargetRef, onPanelStateChange, onPixelWidthChange]
+    [animatePanelSize, collapseFocusTargetRef, minOpenSize, onPanelStateChange, onPixelWidthChange]
   )
 
   // Synchronize restored state on first layout without introducing an entrance animation.
@@ -247,7 +250,7 @@ type PreviewPanelLayoutPort = {
   state: ResizablePanelState
   openRequestVersion: number
   toggle: () => void
-  syncState: (state: ResizablePanelState) => void
+  syncState: (state: ResizablePanelState) => boolean
 }
 
 // Presents one layout contract to WorkspacePage across desktop and mobile surfaces.

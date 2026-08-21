@@ -1,5 +1,3 @@
-import { Prisma, type ManagedFile } from '@prisma/client'
-
 import type {
   ArtifactGroupPage,
   GetProjectFilesOverviewRequest,
@@ -14,18 +12,17 @@ import type {
 } from '../../shared/project-files'
 import type { ProjectFilesClientProvider } from './mutation-projection'
 import {
-  countMatchingArtifacts,
   decodeFileCursor,
   decodeGroupCursor,
   decodeSearchArtifactCursor,
   encodeCursor,
-  getMatchingOverviewCounts,
-  listMatchingArtifactGroups,
-  listMatchingArtifacts,
-  listMatchingFiles,
-  listOtherProjectArtifacts,
+  getAuthoritativeOverviewCounts,
+  listAuthoritativeArtifactGroups,
+  listAuthoritativeFiles,
+  listAuthoritativeManagedFiles,
   normalizeLimit,
   normalizeSearch,
+  queryAuthoritativeFiles,
   requireIdentifier,
   toOriginProjection,
   toProjectFileItem,
@@ -50,16 +47,8 @@ class ProjectFilesQueryOwner {
     requireIdentifier(projectId, 'projectId')
     const search = normalizeSearch(rawSearch)
     const client = await this.getClient()
-    const [totalCount, uploadCount, artifactCount, artifactGroupCount] = search
-      ? await getMatchingOverviewCounts(client, projectId, search)
-      : await Promise.all([
-          client.managedFile.count({ where: { projectId, deletedAt: null } }),
-          client.managedFile.count({ where: { projectId, source: 'upload', deletedAt: null } }),
-          client.managedFile.count({ where: { projectId, source: 'artifact', deletedAt: null } }),
-          client.managedFileSessionSync.count({
-            where: { projectId, deletedAt: null, artifactCount: { gt: 0 } }
-          })
-        ])
+    const [totalCount, uploadCount, artifactCount, artifactGroupCount] =
+      await getAuthoritativeOverviewCounts(client, projectId, search)
 
     return {
       totalCount,
@@ -100,41 +89,14 @@ class ProjectFilesQueryOwner {
       return { items: [], totalCount: 0 }
     }
     const cursor = request.cursor ? decodeFileCursor(request.cursor, normalizedRequest) : undefined
-    const where: Prisma.ManagedFileWhereInput = {
-      projectId: request.projectId,
-      ...(source ? { source } : {}),
-      deletedAt: null,
-      ...(sessionId !== undefined
-        ? { sessionId }
-        : search?.excludedSessionIds.length
-          ? { sessionId: { notIn: search.excludedSessionIds } }
-          : {}),
-      ...(cursor
-        ? {
-            OR: [
-              { sortAtMs: { lt: BigInt(cursor.sortAtMs) } },
-              { sortAtMs: BigInt(cursor.sortAtMs), seq: { lt: cursor.seq } }
-            ]
-          }
-        : {})
-    }
-    const [rows, totalCount] = search
-      ? await listMatchingFiles(client, request.projectId, source, sessionId, search, cursor, limit)
-      : await Promise.all([
-          client.managedFile.findMany({
-            where,
-            orderBy: [{ sortAtMs: 'desc' }, { seq: 'desc' }],
-            take: limit + 1
-          }),
-          client.managedFile.count({
-            where: {
-              projectId: request.projectId,
-              ...(source ? { source } : {}),
-              deletedAt: null,
-              ...(sessionId !== undefined ? { sessionId } : {})
-            }
-          })
-        ])
+    const [rows, totalCount] = await listAuthoritativeFiles(client, {
+      projectIds: [request.projectId],
+      source,
+      sessionId,
+      search,
+      cursor,
+      limit: limit + 1
+    })
     const pageRows = rows.slice(0, limit)
     const lastRow = pageRows.at(-1)
     const origins = await client.fileOriginSession.findMany({
@@ -191,27 +153,24 @@ class ProjectFilesQueryOwner {
       ? decodeSearchArtifactCursor(request.primaryCursor, request.primaryProjectId, search)
       : undefined
     const client = await this.getClient()
-    const excludedSessionIds = search?.excludedSessionIds ?? []
-    const [primaryRows, primaryTotalCount, otherRows] = await Promise.all([
-      listMatchingArtifacts(
-        client,
-        request.primaryProjectId,
+    const [primaryResult, otherRows] = await Promise.all([
+      listAuthoritativeFiles(client, {
+        projectIds: [request.primaryProjectId],
+        source: 'artifact',
         search,
-        excludedSessionIds,
         cursor,
-        primaryLimit
-      ),
-      countMatchingArtifacts(client, request.primaryProjectId, search, excludedSessionIds),
-      request.otherLimit > 0 && otherProjectIds.length > 0
-        ? listOtherProjectArtifacts(
-            client,
-            otherProjectIds,
+        limit: primaryLimit + 1
+      }),
+      request.otherLimit > 0
+        ? queryAuthoritativeFiles(client, {
+            projectIds: otherProjectIds,
+            source: 'artifact',
             search,
-            excludedSessionIds,
-            request.otherLimit
-          )
+            limit: request.otherLimit
+          })
         : Promise.resolve([])
     ])
+    const [primaryRows, primaryTotalCount] = primaryResult
     const primaryPageRows = primaryRows.slice(0, primaryLimit)
     const lastPrimaryRow = primaryPageRows.at(-1)
     const rows = [...primaryPageRows, ...otherRows]
@@ -228,7 +187,7 @@ class ProjectFilesQueryOwner {
     const originsBySession = new Map(
       origins.map((origin) => [`${origin.projectId}:${origin.sessionId}`, origin])
     )
-    const toItem = (row: ManagedFile): ProjectFileItem =>
+    const toItem = (row: (typeof rows)[number]): ProjectFileItem =>
       toProjectFileItem(
         row,
         this.dataRoot,
@@ -340,17 +299,7 @@ class ProjectFilesQueryOwner {
         : []
     }
 
-    // ponytail: fuzzy search needs the whole current Project catalog; move filtering into SQLite
-    // only if measured Project sizes make this bounded metadata scan material.
-    const rows = await client.managedFile.findMany({
-      where: {
-        projectId: request.projectId,
-        deletedAt: null,
-        sourceVersionId: { not: null },
-        source: { in: ['artifact', 'upload'] }
-      },
-      orderBy: [{ sortAtMs: 'desc' }, { seq: 'desc' }]
-    })
+    const rows = await listAuthoritativeManagedFiles(client, [request.projectId])
     const artifactVersionIds = rows.flatMap((row) =>
       row.source === 'artifact' && row.sourceVersionId ? [row.sourceVersionId] : []
     )
@@ -454,40 +403,12 @@ class ProjectFilesQueryOwner {
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const cursor = request.cursor ? decodeGroupCursor(request.cursor, request) : undefined
-    const groupWhere: Prisma.ManagedFileSessionSyncWhereInput = {
+    const [rows, totalCount] = await listAuthoritativeArtifactGroups(client, {
       projectId: request.projectId,
-      deletedAt: null,
-      artifactCount: { gt: 0 },
-      ...(search?.excludedSessionIds.length
-        ? { sessionId: { notIn: search.excludedSessionIds } }
-        : {})
-    }
-    const where: Prisma.ManagedFileSessionSyncWhereInput = {
-      ...groupWhere,
-      ...(cursor
-        ? {
-            OR: [
-              { groupSortAtMs: { lt: BigInt(cursor.groupSortAtMs) } },
-              {
-                groupSortAtMs: BigInt(cursor.groupSortAtMs),
-                sessionId: { lt: cursor.sessionId }
-              }
-            ]
-          }
-        : {})
-    }
-    const [rows, totalCount] = search
-      ? await listMatchingArtifactGroups(client, request.projectId, search, cursor, limit)
-      : await Promise.all([
-          client.managedFileSessionSync.findMany({
-            where,
-            orderBy: [{ groupSortAtMs: 'desc' }, { sessionId: 'desc' }],
-            take: limit + 1
-          }),
-          client.managedFileSessionSync.count({
-            where: groupWhere
-          })
-        ])
+      search,
+      cursor,
+      limit: limit + 1
+    })
     const pageRows = rows.slice(0, limit)
     const lastRow = pageRows.at(-1)
     const origins = await client.fileOriginSession.findMany({
@@ -501,7 +422,7 @@ class ProjectFilesQueryOwner {
     return {
       items: pageRows.map((row) => ({
         sessionId: row.sessionId,
-        artifactCount: toSafeCount(row.artifactCount, 'artifact group count'),
+        artifactCount: toSafeCount(row.artifactCount, 'catalog artifact group size'),
         ...toOriginProjection(originsBySession.get(row.sessionId))
       })),
       totalCount,

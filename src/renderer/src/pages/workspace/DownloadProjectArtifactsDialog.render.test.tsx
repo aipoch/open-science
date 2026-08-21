@@ -26,6 +26,7 @@ const file = (
   id,
   source,
   sourceFileId: id,
+  sourceVersionId: `${id}-version-1`,
   projectId: project.id,
   sessionId,
   name: `${id}.csv`,
@@ -183,17 +184,43 @@ describe('DownloadProjectArtifactsDialog', () => {
           source: 'artifact',
           sessionId: 'session-1',
           path: 'artifact://report',
+          fileId: 'report',
           suggestedName: 'report.csv'
         },
         {
           source: 'upload',
           sessionId: 'session-1',
           path: 'upload://dataset',
+          fileId: 'dataset',
           suggestedName: 'dataset.csv'
         }
       ]
     })
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a legacy file without an authoritative version on the path fallback', async () => {
+    const legacyFile = { ...files[0], sourceVersionId: undefined }
+    listFiles.mockResolvedValue({ items: [legacyFile], totalCount: 1 })
+    await renderDialog()
+
+    await act(async () => {
+      confirmButton()?.click()
+      await Promise.resolve()
+    })
+
+    expect(saveProjectArtifacts).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      suggestedArchiveName: 'Research project',
+      files: [
+        {
+          source: 'artifact',
+          sessionId: 'session-1',
+          path: 'artifact://report',
+          suggestedName: 'report.csv'
+        }
+      ]
+    })
   })
 
   it('keeps only failed files selected with an inline summary after a partial export', async () => {

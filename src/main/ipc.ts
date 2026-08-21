@@ -177,6 +177,11 @@ import {
 import { createProjectFilesHandlers, registerProjectFilesIpcHandlers } from './project-files/ipc'
 import { createManagedFileIndexRepository } from './project-files/repository'
 import {
+  createManagedFileVersionHandlers,
+  registerManagedFileVersionIpcHandlers
+} from './managed-file-versions/ipc'
+import { ManagedFileVersionService } from './managed-file-versions/service'
+import {
   ProjectDeletionCoordinator,
   ProjectDeletionRecoveryLoop
 } from './projects/deletion-coordinator'
@@ -449,6 +454,10 @@ const createApplicationModules = async (
       diagnosticErrorFields(error)
     )
   }
+  const managedFileVersionService = new ManagedFileVersionService({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveStorageRoot())
+  })
   // Session reads and permission scope validation both need a late-bound view of ACP ownership:
   // startup runs before the runtime exists, while later reads must preserve live prompt state.
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
@@ -541,8 +550,24 @@ const createApplicationModules = async (
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
     source: ManagedPreviewSource,
-    request: { path: string; projectId?: string; sessionId?: string }
+    request: {
+      path: string
+      projectId?: string
+      sessionId?: string
+      fileId?: string
+      versionId?: string
+    }
   ): Promise<string> => {
+    if ((source === 'artifact' || source === 'upload') && request.projectId && request.fileId) {
+      return managedFileVersionService
+        .resolve({
+          source,
+          projectId: request.projectId,
+          fileId: request.fileId,
+          ...(request.versionId ? { versionId: request.versionId } : {})
+        })
+        .then((resolved) => resolved.path)
+    }
     if (source === 'artifact') {
       const versionIdentity = parseArtifactVersionLocator(request.path)
       return versionIdentity
@@ -578,7 +603,9 @@ const createApplicationModules = async (
   })
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
-    resolvePath: resolveManagedFilePath
+    resolvePath: resolveManagedFilePath,
+    openManagedFileVersion: (source, request) =>
+      managedFileVersionService.openResolved({ source, ...request })
   })
   const managedPreviewOwners = createManagedPreviewOwnerRegistry(previewResources)
 
@@ -744,6 +771,14 @@ const createApplicationModules = async (
     onDelivered: (event) => broadcastToRenderers('side-chat:relay-delivered', event)
   })
   const uploadCommandOwner = createUploadCommandOwner(uploadRepository, {
+    resolveManagedFilePath: (request) => resolveManagedFilePath('upload', request),
+    openManagedFileVersion: (request) =>
+      managedFileVersionService.openResolved({
+        source: 'upload',
+        projectId: request.projectId!,
+        fileId: request.fileId!,
+        ...(request.versionId ? { versionId: request.versionId } : {})
+      }),
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   })
@@ -843,6 +878,10 @@ const createApplicationModules = async (
     sessionPersistenceCoordinator,
     projectDeletionCoordinator
   )
+  const managedFileVersionHandlers = createManagedFileVersionHandlers(managedFileVersionService, {
+    withDataRootWrite,
+    onChanged: (event) => broadcastToRenderers('project-files:changed', event)
+  })
   // Stashed host.agents.switch bindings for sessions that are not yet durable (fresh unsent drafts),
   // flushed to disk on the session's first save so an approved switch survives an app restart before
   // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
@@ -1376,6 +1415,29 @@ const createApplicationModules = async (
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
   computeJobDeletionRef.current = jobDeletionOwner
   await projectDeletionCoordinator.restorePendingDeletionBarriers()
+  try {
+    await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
+  } catch (error) {
+    storageLog.error(
+      'managed file version recovery incomplete; will retry next launch',
+      diagnosticErrorFields(error)
+    )
+  }
+  void managedFileVersionService
+    .auditActiveVersionIntegrity()
+    .then((integrityErrors) => {
+      if (integrityErrors.length > 0) {
+        storageLog.error('managed file version integrity audit found corrupt active content', {
+          count: integrityErrors.length
+        })
+      }
+    })
+    .catch((error) =>
+      storageLog.error(
+        'managed file version integrity audit incomplete; will retry next launch',
+        diagnosticErrorFields(error)
+      )
+    )
   await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
   const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
@@ -1957,8 +2019,24 @@ const createApplicationModules = async (
   const logsCommandOwner = createLogsCommandOwner()
   declareElectronAdapter('desktop-utilities', () => {
     registerFileSaveHandlers({
-      resolveManagedFilePath,
+      resolveManagedFilePath: (source, request) =>
+        (source === 'artifact' || source === 'upload') && request.projectId && request.fileId
+          ? managedFileVersionService
+              .resolvePath({
+                source,
+                projectId: request.projectId,
+                fileId: request.fileId,
+                ...(request.versionId ? { versionId: request.versionId } : {})
+              })
+              .then((resolved) => ({
+                path: resolved.path,
+                expectedSize: Number(resolved.version.sizeBytes),
+                expectedChecksum: resolved.version.checksum
+              }))
+          : resolveManagedFilePath(source, request),
       resolveSessionArtifactFilePath,
+      openManagedFileVersion: (source, request) =>
+        managedFileVersionService.openResolved({ source, ...request }),
       translate
     })
     registerLogsIpcHandlers(logsCommandOwner)
@@ -1975,6 +2053,7 @@ const createApplicationModules = async (
       repository: artifactRepository,
       runRegistry: artifactRunRegistry,
       provenanceRepository: artifactProvenanceRepository,
+      managedFileVersions: managedFileVersionService,
       uploadRepository,
       notebookRpcServer,
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
@@ -2624,11 +2703,18 @@ const createApplicationModules = async (
     )
   )
   const officePreviewSupervisor = new OfficePreviewSupervisor({
-    inspectResource: ({ source, path }) => previewResources.inspect({ source, path }),
+    inspectResource: ({ source, path, projectId, fileId, versionId }) =>
+      previewResources.inspect({ source, path, projectId, fileId, versionId }),
     acquireResource: (ownerId, request, snapshot, maxBytes) =>
       previewResources.acquire(
         ownerId,
-        { source: request.source, path: request.path },
+        {
+          source: request.source,
+          path: request.path,
+          projectId: request.projectId,
+          fileId: request.fileId,
+          versionId: request.versionId
+        },
         { snapshot, maxBytes }
       ),
     releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
@@ -2780,6 +2866,14 @@ const createApplicationModules = async (
     getActiveArtifactRunIds: () =>
       runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : [],
     provenance: artifactProvenanceRepository,
+    resolveManagedFilePath: (request) => resolveManagedFilePath('artifact', request),
+    openManagedFileVersion: (request) =>
+      managedFileVersionService.openResolved({
+        source: 'artifact',
+        projectId: request.projectId!,
+        fileId: request.fileId!,
+        ...(request.versionId ? { versionId: request.versionId } : {})
+      }),
     codeReconstruction,
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
@@ -2864,6 +2958,9 @@ const createApplicationModules = async (
       projectDeletionCoordinator,
       projectFilesHandlers
     )
+  )
+  declareElectronAdapter('managed-file-versions', () =>
+    registerManagedFileVersionIpcHandlers(managedFileVersionHandlers)
   )
   // Backs the "This computer" browser; shares localFsService with the managed-preview resolver.
   declareElectronAdapter('local-fs', () => registerLocalFsIpcHandlers(localFsService))

@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { ArtifactMentionPopup } from './ArtifactMentionPopup'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ProjectFileItem } from '../../../../../shared/project-files'
@@ -54,6 +55,37 @@ beforeEach(() => {
         items: defaultProjectFiles,
         totalCount: defaultProjectFiles.length
       })
+    },
+    managedFileVersions: {
+      inspect: vi.fn().mockImplementation(async (request) => ({
+        ok: true,
+        value: {
+          source: request.source,
+          projectId: request.projectId,
+          fileId: request.fileId,
+          sessionId: 'session-1',
+          displayName: request.source === 'upload' ? 'sequence.csv' : 'report.pdf',
+          headVersionId: `${request.fileId}-v2`,
+          selectedVersionId: `${request.fileId}-v2`,
+          versions: [
+            {
+              id: `${request.fileId}-v2`,
+              source: request.source,
+              fileId: request.fileId,
+              versionNumber: 2,
+              displayName: request.source === 'upload' ? 'sequence.csv' : 'report.pdf',
+              originKind: request.source === 'upload' ? 'user_upload' : 'agent_generated',
+              basedOnVersionId: null,
+              contentType: request.source === 'upload' ? 'text/csv' : 'application/pdf',
+              sizeBytes: 2048,
+              checksum: '2'.repeat(64),
+              createdAt: '2026-08-14T00:00:00.000Z'
+            }
+          ],
+          canEdit: false,
+          canDiff: false
+        }
+      }))
     }
   }
   useNavigationStore.setState({ activeProjectId: 'default' })
@@ -66,6 +98,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  void i18next.changeLanguage('en')
 })
 
 const options = (): HTMLElement[] =>
@@ -82,6 +115,13 @@ const pressKey = (key: string, init: KeyboardEventInit = {}): KeyboardEvent => {
     document.dispatchEvent(event)
   })
   return event
+}
+
+const flushSelection = async (): Promise<void> => {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
 }
 
 const renderPopup = async ({
@@ -239,13 +279,15 @@ describe('ArtifactMentionPopup', () => {
     expect(options()).toHaveLength(1)
     expect(document.body.textContent).toContain('shared-data.csv')
     pressKey('Enter')
+    await flushSelection()
     expect(onSelect).toHaveBeenCalledWith({
       id: 'upload:shared-csv',
-      name: 'shared-data.csv',
+      sourceFileId: 'shared-csv',
+      name: 'sequence.csv',
       path: 'upload-version:default/other-session/shared-csv-v1',
       source: 'upload',
-      versionId: 'shared-csv-v1',
-      mimeType: 'text/csv'
+      mimeType: 'text/csv',
+      versionId: 'shared-csv-v2'
     })
   })
 
@@ -274,13 +316,15 @@ describe('ArtifactMentionPopup', () => {
 
     expect(document.body.textContent).toContain('other-session-result.pdf')
     pressKey('Enter')
+    await flushSelection()
     expect(onSelect).toHaveBeenCalledWith({
       id: 'artifact-lineage-1',
-      name: 'other-session-result.pdf',
+      sourceFileId: 'artifact-lineage-1',
+      name: 'report.pdf',
       path: 'artifact-version:default/other-session/artifact-lineage-1/artifact-version-2',
       source: 'artifact',
-      versionId: 'artifact-version-2',
-      mimeType: 'application/pdf'
+      mimeType: 'application/pdf',
+      versionId: 'artifact-lineage-1-v2'
     })
   })
 
@@ -299,6 +343,7 @@ describe('ArtifactMentionPopup', () => {
 
     // First row is the upload.
     pressKey('Enter')
+    await flushSelection()
     expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -317,6 +362,7 @@ describe('ArtifactMentionPopup', () => {
     pressKey('ArrowDown')
     const tabEvent = pressKey('Tab')
     const shiftTabEvent = pressKey('Tab', { shiftKey: true })
+    await flushSelection()
 
     expect(tabEvent.defaultPrevented).toBe(true)
     expect(shiftTabEvent.defaultPrevented).toBe(false)
@@ -331,6 +377,7 @@ describe('ArtifactMentionPopup', () => {
 
     const artifactRow = options()[1]
     act(() => artifactRow.click())
+    await flushSelection()
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'art-1',
@@ -339,6 +386,49 @@ describe('ArtifactMentionPopup', () => {
         source: 'artifact'
       })
     )
+  })
+
+  it('resolves the current DB head when a stale suggestion is selected', async () => {
+    const onSelect = vi.fn()
+    await renderPopup({ onSelect })
+
+    await act(async () => {
+      options()[0]?.click()
+      await Promise.resolve()
+    })
+
+    expect(window.api.managedFileVersions.inspect).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'default',
+      fileId: 'up-1'
+    })
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceFileId: 'up-1',
+        versionId: 'up-1-v2',
+        name: 'sequence.csv'
+      })
+    )
+  })
+
+  it('keeps the popup open without inserting when head resolution fails', async () => {
+    const onSelect = vi.fn()
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: 'VERSION_NOT_FOUND', message: 'File head unavailable.' }
+    })
+    await renderPopup({ onSelect })
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+
+    await act(async () => {
+      options()[0]?.click()
+      await Promise.resolve()
+    })
+
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('无法解析文件版本。')
+    expect(document.body.textContent).not.toContain('File head unavailable.')
+    expect(options()).toHaveLength(2)
   })
 
   it('shows an empty state when the project has no artifacts', async () => {

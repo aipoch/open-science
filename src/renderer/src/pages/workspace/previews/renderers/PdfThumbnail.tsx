@@ -270,6 +270,8 @@ export const PdfThumbnail = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs,
@@ -282,6 +284,8 @@ export const PdfThumbnail = ({
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -297,7 +301,9 @@ export const PdfThumbnail = ({
     path,
     mimeType,
     size,
-    mtimeMs
+    mtimeMs,
+    managedFileId,
+    selectedVersionId
   })
   const requestKey = `${resourceKey}:pdf-thumbnail:${renderWidth}`
   const [setElement, isNearViewport] = useNearViewport<HTMLDivElement>()
@@ -319,6 +325,8 @@ export const PdfThumbnail = ({
         source,
         path,
         ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+        ...(managedFileId ? { fileId: managedFileId } : {}),
+        ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
         ...(mimeType ? { mimeType } : {})
       },
       renderWidth
@@ -339,7 +347,18 @@ export const PdfThumbnail = ({
       subscribed = false
       subscription.unsubscribe()
     }
-  }, [mimeType, path, projectId, renderWidth, requestKey, sessionId, shouldRender, source])
+  }, [
+    managedFileId,
+    mimeType,
+    path,
+    projectId,
+    renderWidth,
+    requestKey,
+    selectedVersionId,
+    sessionId,
+    shouldRender,
+    source
+  ])
 
   return (
     <div

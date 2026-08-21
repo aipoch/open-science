@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import type { Page } from 'playwright'
+import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const PROJECT_NAME = 'Project files journey'
@@ -10,6 +10,11 @@ const IMAGE_CONTENT = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64'
 )
+const VERSION_TWO_CONTENT = '# Fixture findings\n\nFirst edited version.'
+const VERSION_THREE_CONTENT = '## Fixture findings\n\nSecond edited version.'
+const SCRIPT_NAME = 'analysis.sh'
+const SCRIPT_CONTENT = '#!/bin/bash\n# stable\necho "old"\n'
+const SCRIPT_VERSION_TWO_CONTENT = '#!/bin/bash\n# stable\necho "new"\n'
 
 const createProject = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'New project' }).click()
@@ -19,7 +24,54 @@ const createProject = async (page: Page): Promise<void> => {
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
-test('uploads an attachment and previews it from Project files', async ({ app }) => {
+const saveTextVersion = async (
+  preview: Locator,
+  baseline: string,
+  nextContent: string,
+  fileName = FILE_NAME
+): Promise<void> => {
+  await preview.getByRole('button', { name: `Edit ${fileName}` }).click()
+  const editor = preview.getByRole('textbox', { name: `Edit ${fileName} source` })
+  await expect(editor).toHaveValue(baseline)
+  const saveButton = preview.getByRole('button', { name: 'Save changes' })
+  await expect(preview.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
+  await expect(saveButton).toHaveText('Save')
+  await expect(saveButton.locator('svg')).toHaveCount(0)
+  await expect(preview.getByRole('button', { name: `Download ${fileName}` })).toHaveCount(0)
+  await expect(preview.getByRole('button', { name: `Close preview of ${fileName}` })).toHaveCount(0)
+  await editor.fill(nextContent)
+  await saveButton.click()
+  await expect(editor).toBeHidden()
+  await expect(preview.getByRole('button', { name: `Download ${fileName}` })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Close preview of ${fileName}` })).toBeVisible()
+}
+
+const visibleChangeTextContents = async (changes: Locator): Promise<string[]> =>
+  changes.evaluateAll((elements) =>
+    elements.map((element) => {
+      const copy = element.cloneNode(true) as HTMLElement
+      copy.querySelectorAll('.sr-only').forEach((label) => label.remove())
+      return copy.textContent ?? ''
+    })
+  )
+
+const reconstructedDiffText = async (
+  container: Locator
+): Promise<{ before: string; after: string }> =>
+  container.evaluate((element) => {
+    const textWithout = (selector: string): string => {
+      const copy = element.cloneNode(true) as HTMLElement
+      copy.querySelectorAll('.sr-only').forEach((label) => label.remove())
+      copy.querySelectorAll(selector).forEach((change) => change.remove())
+      return copy.textContent ?? ''
+    }
+    return {
+      before: textWithout('ins[data-managed-diff="added"]'),
+      after: textWithout('del[data-managed-diff="removed"]')
+    }
+  })
+
+test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   await createProject(page)
@@ -43,8 +95,139 @@ test('uploads an attachment and previews it from Project files', async ({ app })
   await expect(preview).toBeVisible()
   await expect(preview.getByText('Fixture findings', { exact: true })).toBeVisible()
   await expect(preview.getByText('Deterministic preview content.', { exact: true })).toBeVisible()
+
+  // Three immutable versions let this journey prove that an active diff follows version changes.
+  const versionNavigation = preview.getByTestId('managed-preview-version-navigation')
+  await saveTextVersion(preview, FILE_CONTENT, VERSION_TWO_CONTENT)
+  await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
+  await expect(preview.getByText('First edited version.', { exact: true })).toBeVisible()
+
+  await saveTextVersion(preview, VERSION_TWO_CONTENT, VERSION_THREE_CONTENT)
+  await expect(versionNavigation.getByText('v3', { exact: true })).toBeVisible()
+  await expect(preview.getByText('Second edited version.', { exact: true })).toBeVisible()
+
+  await preview
+    .getByRole('button', { name: `Compare ${FILE_NAME} with its source version` })
+    .click()
+  const differences = preview.getByRole('region', { name: 'File version differences' })
+  await expect(differences.getByRole('heading', { name: 'Fixture findings' })).toHaveCount(0)
+  const rawHeading = differences.locator('[data-diff-kind="mixed"] pre').filter({
+    hasText: 'Fixture findings'
+  })
+  const rawHeadingAdded = rawHeading.locator('ins[data-managed-diff="added"]')
+  await expect(rawHeading).toBeVisible()
+  expect(await visibleChangeTextContents(rawHeadingAdded)).toEqual(['#'])
+  expect(
+    await rawHeading.evaluate((element) => {
+      const copy = element.cloneNode(true) as HTMLElement
+      copy.querySelectorAll('.sr-only').forEach((label) => label.remove())
+      return copy.textContent
+    })
+  ).toBe('## Fixture findings')
+  expect(
+    await rawHeading.evaluate((element) => getComputedStyle(element.parentElement!).backgroundColor)
+  ).toBe('rgba(0, 0, 0, 0)')
+  const removedChange = differences.locator('p del[data-managed-diff="removed"]')
+  const addedChange = differences.locator('p ins[data-managed-diff="added"]')
+  await expect(removedChange).toBeVisible()
+  await expect(addedChange).toBeVisible()
+  expect(await visibleChangeTextContents(removedChange)).toEqual(['First'])
+  expect(await visibleChangeTextContents(addedChange)).toEqual(['Second'])
+  await expect(removedChange.locator('.sr-only')).toHaveText('Removed:')
+  await expect(addedChange.locator('.sr-only')).toHaveText('Added:')
+  expect(
+    await removedChange.evaluate(
+      (element) =>
+        getComputedStyle(element.closest<HTMLElement>('[data-diff-kind]')!).backgroundColor
+    )
+  ).toBe('rgba(0, 0, 0, 0)')
+  const diffColors = await differences.evaluate((region) => {
+    const added = getComputedStyle(region.querySelector<HTMLElement>('p ins')!)
+    const removed = getComputedStyle(region.querySelector<HTMLElement>('p del')!)
+    return {
+      addedBackground: added.backgroundColor,
+      removedBackground: removed.backgroundColor,
+      addedDecoration: added.textDecorationLine,
+      removedDecoration: removed.textDecorationLine
+    }
+  })
+  expect(diffColors.addedBackground).not.toBe(diffColors.removedBackground)
+  expect(diffColors.addedBackground).not.toBe('rgba(0, 0, 0, 0)')
+  expect(diffColors.removedBackground).not.toBe('rgba(0, 0, 0, 0)')
+  expect(diffColors.addedDecoration).not.toContain('underline')
+  expect(diffColors.removedDecoration).toContain('line-through')
+  await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
+  await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toBeVisible()
+  await expect(differences.getByRole('heading', { name: 'Fixture findings' })).toBeVisible()
+  const versionTwoParagraph = differences.locator(
+    'p:has(del[data-managed-diff="removed"]):has(ins[data-managed-diff="added"])'
+  )
+  await expect(versionTwoParagraph).toBeVisible()
+  expect(await reconstructedDiffText(versionTwoParagraph)).toEqual({
+    before: 'Deterministic preview content.',
+    after: 'First edited version.'
+  })
+
+  await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
+  await expect(versionNavigation.getByText('v1', { exact: true })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toBeVisible()
+  await expect(differences).toBeHidden()
+  await expect(preview.getByText('Deterministic preview content.', { exact: true })).toBeVisible()
+  await expect(preview.locator('[data-diff-kind]')).toHaveCount(0)
+
+  await versionNavigation.getByRole('button', { name: 'Next file version' }).click()
+  await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toBeVisible()
+  await expect(differences).toBeVisible()
+  await expect(versionTwoParagraph).toBeVisible()
+  expect(await reconstructedDiffText(versionTwoParagraph)).toEqual({
+    before: 'Deterministic preview content.',
+    after: 'First edited version.'
+  })
+
   await preview.getByRole('button', { name: `Close preview of ${FILE_NAME}` }).click()
   await expect(preview).toBeHidden()
+})
+
+test('shows structured text replacements with character-level highlights', async ({ app }) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: SCRIPT_NAME,
+    mimeType: 'text/x-shellscript',
+    buffer: Buffer.from(SCRIPT_CONTENT)
+  })
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached script.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('button', { name: `Preview uploaded file ${SCRIPT_NAME}` }).click()
+  const preview = page.getByRole('dialog', { name: `Preview ${SCRIPT_NAME}` })
+  await saveTextVersion(preview, SCRIPT_CONTENT, SCRIPT_VERSION_TWO_CONTENT, SCRIPT_NAME)
+
+  await preview
+    .getByRole('button', { name: `Compare ${SCRIPT_NAME} with its source version` })
+    .click()
+  const differences = preview.getByRole('region', { name: 'File version differences' })
+  const mixedLine = differences.locator('[data-diff-kind="mixed"]')
+  const removedText = mixedLine.locator('del[data-diff-segment="removed"]')
+  const addedText = mixedLine.locator('ins[data-diff-segment="added"]')
+  await expect(removedText.locator('[data-managed-diff-content]')).toHaveText('old')
+  await expect(addedText.locator('[data-managed-diff-content]')).toHaveText('new')
+  await expect(removedText.locator('.sr-only')).toHaveText('Removed:')
+  await expect(addedText.locator('.sr-only')).toHaveText('Added:')
+  await expect(mixedLine.locator('pre > span')).toHaveText(['echo "', '"'])
+  await expect(mixedLine).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(differences.locator('[data-diff-kind="removed"]')).toHaveCount(0)
+  await expect(differences.locator('[data-diff-kind="added"]')).toHaveCount(0)
+  await expect(differences.getByTestId('source-line-number')).toHaveCount(0)
+  await expect(
+    differences.locator('[aria-label="Added line"], [aria-label="Removed line"]')
+  ).toHaveCount(0)
 })
 
 test('loads managed image previews from Project files', async ({ app }) => {

@@ -113,7 +113,8 @@ describe('application database (integration)', () => {
         '0009_vision_evidence',
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
-        '0012_tag_ordering'
+        '0012_tag_ordering',
+        '0013_managed_file_version_foundation'
       ]
     })
 
@@ -465,7 +466,8 @@ describe('application database (integration)', () => {
         sizeBytes: 3n,
         checksum: 'c'.repeat(64),
         evidenceJson: '{}',
-        evidenceChecksum: 'd'.repeat(64)
+        evidenceChecksum: 'd'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
     await client.artifactVersionInput.create({
@@ -587,6 +589,8 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
     await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
+    await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
+    await client.$executeRawUnsafe('DROP TABLE "Tag"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -643,7 +647,8 @@ describe('application database (integration)', () => {
         sizeBytes: 3n,
         checksum: 'a'.repeat(64),
         evidenceJson: '{}',
-        evidenceChecksum: 'b'.repeat(64)
+        evidenceChecksum: 'b'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
 
@@ -668,6 +673,8 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
     await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
+    await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
+    await client.$executeRawUnsafe('DROP TABLE "Tag"')
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -703,9 +710,12 @@ describe('application database (integration)', () => {
       $queryRawUnsafe: vi.fn(async () => [])
     } as unknown as PrismaClient
 
-    await expect(applyRuntimeSchemaBaseline(client, { pendingCheckConstraints: [] })).rejects.toBe(
-      migrationFailure
-    )
+    await expect(
+      applyRuntimeSchemaBaseline(client, {
+        pendingCheckConstraints: [],
+        verificationTarget: 'baseline'
+      })
+    ).rejects.toBe(migrationFailure)
   })
 
   it('releases and recreates the shared client for exclusive migration validation', async () => {
@@ -846,7 +856,8 @@ describe('application database (integration)', () => {
         sizeBytes: 3n,
         checksum: 'b'.repeat(64),
         evidenceJson: '{"schema_version":1}',
-        evidenceChecksum: 'c'.repeat(64)
+        evidenceChecksum: 'c'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
 
@@ -1035,7 +1046,8 @@ describe('application database (integration)', () => {
         '0009_vision_evidence',
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
-        '0012_tag_ordering'
+        '0012_tag_ordering',
+        '0013_managed_file_version_foundation'
       ]
     })
 

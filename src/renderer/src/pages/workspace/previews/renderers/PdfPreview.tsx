@@ -267,6 +267,8 @@ export const PdfPreviewContent = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs
@@ -276,6 +278,8 @@ export const PdfPreviewContent = ({
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -286,6 +290,8 @@ export const PdfPreviewContent = ({
     sessionId,
     source,
     path,
+    managedFileId,
+    selectedVersionId,
     mimeType,
     size,
     mtimeMs
@@ -403,6 +409,8 @@ export const PdfPreviewContent = ({
           source,
           path,
           ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+          ...(managedFileId ? { fileId: managedFileId } : {}),
+          ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
           ...(mimeType ? { mimeType } : {})
         })
         resourceId = resource.id
@@ -430,7 +438,7 @@ export const PdfPreviewContent = ({
       canceled = true
       if (resourceId) void dispose()
     }
-  }, [mimeType, path, projectId, requestKey, sessionId, source])
+  }, [managedFileId, mimeType, path, projectId, requestKey, selectedVersionId, sessionId, source])
 
   const currentDocumentState = documentState?.requestKey === requestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
@@ -511,6 +519,8 @@ export const PdfPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
     source={item.source}
     projectId={item.projectId}
     sessionId={item.sessionId}
+    managedFileId={item.managedFileId}
+    selectedVersionId={item.selectedVersionId}
     mimeType={item.mimeType}
     size={item.size}
     mtimeMs={item.mtimeMs}

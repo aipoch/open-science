@@ -124,7 +124,7 @@ describe('DownloadSessionArtifactsDialog', () => {
     expect(saveSessionArtifacts).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
-      files: [{ path: 'artifact://report', suggestedName: 'report.csv' }]
+      files: [{ path: 'artifact://report', fileId: 'artifact-1', suggestedName: 'report.csv' }]
     })
     expect(onClose).toHaveBeenCalledTimes(1)
   })

@@ -2159,6 +2159,10 @@ describe('production delegated-work composition', () => {
         finalizeRun: async (request) => {
           await ownership.validateFinalizationOwnership(request)
           return versionsByRun.get(request.artifactRunId) ?? []
+        },
+        activateFinalizedRun: async (request) => {
+          await ownership.validateFinalizationOwnership(request)
+          return versionsByRun.get(request.artifactRunId) ?? []
         }
       } as unknown as ArtifactProvenanceRepository
     })

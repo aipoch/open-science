@@ -363,6 +363,7 @@ class ProjectFilesMutationOwner {
       client.artifactLineage.findMany({
         where: { projectId, sessionId },
         include: {
+          currentVersion: true,
           versions: {
             where: { state: 'finalized' },
             orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
@@ -373,6 +374,7 @@ class ProjectFilesMutationOwner {
       client.uploadFile.findMany({
         where: { projectId, sessionId },
         include: {
+          currentVersion: true,
           versions: {
             where: { state: 'ready' },
             orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
@@ -382,8 +384,8 @@ class ProjectFilesMutationOwner {
       })
     ])
     const artifactFiles: IndexedFileInput[] = lineages.flatMap((lineage) => {
-      const version = lineage.versions[0]
-      return version
+      const version = lineage.currentVersion ?? lineage.versions[0]
+      return version?.state === 'finalized'
         ? [
             {
               source: 'artifact' as const,
@@ -404,9 +406,9 @@ class ProjectFilesMutationOwner {
         : []
     })
     const uploadFiles: IndexedFileInput[] = uploads.flatMap((upload) => {
-      const version = upload.versions[0]
+      const version = upload.currentVersion ?? upload.versions[0]
       const createdAt = version?.createdAt ?? version?.registeredAt
-      return version && createdAt
+      return version?.state === 'ready' && createdAt
         ? [
             {
               source: 'upload' as const,

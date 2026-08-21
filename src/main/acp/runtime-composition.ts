@@ -120,6 +120,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     NotificationInboxController,
     'record' | 'settleAction' | 'settleAuthorization'
   >
+  managedFileVersions?: Pick<
+    import('../managed-file-versions/service').ManagedFileVersionService,
+    'openResolved'
+  >
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
@@ -160,6 +164,7 @@ const createAcpRuntime = ({
   repository,
   runRegistry,
   provenanceRepository,
+  managedFileVersions,
   uploadRepository,
   notebookRpcServer,
   peekNotebookHandoffContext,
@@ -263,6 +268,7 @@ const createAcpRuntime = ({
                 repository,
                 runRegistry,
                 provenance: provenanceRepository,
+                managedFileVersions,
                 getRpcConnection: () => notebookRpcServer.ensureStarted(),
                 issueRpcCapability: (binding) =>
                   notebookRpcServer.issueArtifactRunCapability(binding),

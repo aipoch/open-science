@@ -15,6 +15,10 @@ import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { createLogger, errorLogFields } from '../logger'
 import type { UploadRepository } from '../uploads/repository'
+import type {
+  ManagedFileReadLease,
+  ManagedFileVersionService
+} from '../managed-file-versions/service'
 
 const log = createLogger('acp-file-reference-resolver')
 
@@ -24,6 +28,11 @@ export type FileReferenceContext = {
   connectionGeneration?: number
 }
 
+export type TrustedFileReferenceLease = Pick<
+  ManagedFileReadLease,
+  'size' | 'read' | 'readRange' | 'copyTo' | 'verifyUnchanged' | 'close'
+>
+
 export type ResolvedFileReference = {
   absolutePath: string
   uri: string
@@ -31,6 +40,10 @@ export type ResolvedFileReference = {
   mimeType?: string
   size: number
   allowSkillImportReference: boolean
+  sourceFileId?: string
+  versionId?: string
+  checksum?: string
+  trustedLease?: TrustedFileReferenceLease
 }
 
 // This adapter is the deliberate extension seam for linked folders and other future file origins.
@@ -288,13 +301,18 @@ export class FileReferenceResolver {
     if (!adapter) throw new Error(`File reference source is not configured: ${reference.source}`)
 
     const resolved = await adapter.resolve(context, reference)
-    const fileInfo = await stat(resolved.absolutePath)
-    if (!fileInfo.isFile()) throw new Error('Referenced path is not a file.')
+    try {
+      const fileInfo = resolved.trustedLease ? undefined : await stat(resolved.absolutePath)
+      if (fileInfo && !fileInfo.isFile()) throw new Error('Referenced path is not a file.')
 
-    return {
-      ...resolved,
-      uri: pathToFileURL(resolved.absolutePath).href,
-      size: fileInfo.size
+      return {
+        ...resolved,
+        uri: pathToFileURL(resolved.absolutePath).href,
+        size: resolved.trustedLease?.size ?? fileInfo!.size
+      }
+    } catch (error) {
+      await resolved.trustedLease?.close().catch(() => undefined)
+      throw error
     }
   }
 
@@ -321,17 +339,45 @@ export const createManagedFileReferenceResolver = (dependencies: {
   grantedRoots?: {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openResolved'>
 }): FileReferenceResolver => {
   const adapters: FileReferenceAdapter[] = []
   const readOnlyProjection = dependencies.grantedRoots
     ? new ReadOnlyLinkedFileProjection(dependencies.readOnlyProjectionMaxSessionBytes)
     : undefined
 
-  if (dependencies.uploads) {
+  const resolveLogicalReference = async (
+    projectId: string,
+    reference: Extract<FileReference, { source: 'artifact' | 'upload' }>
+  ): Promise<ManagedFileReadLease | undefined> => {
+    if (!reference.sourceFileId || !dependencies.managedFileVersions) return undefined
+    return dependencies.managedFileVersions.openResolved({
+      source: reference.source,
+      projectId,
+      fileId: reference.sourceFileId,
+      ...(reference.versionId ? { versionId: reference.versionId } : {})
+    })
+  }
+
+  if (dependencies.uploads || dependencies.managedFileVersions) {
     adapters.push({
       source: 'upload',
       resolve: async ({ projectId, sessionId }, reference) => {
         if (reference.source !== 'upload') throw new Error('Invalid upload reference.')
+        const logical = await resolveLogicalReference(projectId, reference)
+        if (logical) {
+          return {
+            absolutePath: logical.path,
+            name: logical.logicalFile.displayName,
+            mimeType: logical.version.contentType ?? reference.mimeType,
+            allowSkillImportReference: true,
+            sourceFileId: logical.logicalFile.id,
+            versionId: logical.version.id,
+            checksum: logical.version.checksum,
+            trustedLease: logical
+          }
+        }
+        if (!dependencies.uploads) throw new Error('Upload repository is not configured.')
         let absolutePath: string
         try {
           absolutePath = await dependencies.uploads!.resolveSessionUploadPath(
@@ -358,11 +404,24 @@ export const createManagedFileReferenceResolver = (dependencies: {
     })
   }
 
-  if (dependencies.artifacts) {
+  if (dependencies.artifacts || dependencies.managedFileVersions) {
     adapters.push({
       source: 'artifact',
       resolve: async ({ projectId }, reference) => {
         if (reference.source !== 'artifact') throw new Error('Invalid artifact reference.')
+        const logical = await resolveLogicalReference(projectId, reference)
+        if (logical) {
+          return {
+            absolutePath: logical.path,
+            name: logical.logicalFile.displayName,
+            mimeType: logical.version.contentType ?? reference.mimeType,
+            allowSkillImportReference: false,
+            sourceFileId: logical.logicalFile.id,
+            versionId: logical.version.id,
+            checksum: logical.version.checksum,
+            trustedLease: logical
+          }
+        }
         const versionIdentity = parseArtifactVersionLocator(reference.path)
         if (versionIdentity) {
           if (versionIdentity.projectId !== projectId) {
@@ -380,6 +439,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
             allowSkillImportReference: false
           }
         }
+        if (!dependencies.artifacts) throw new Error('Artifact repository is not configured.')
         return {
           absolutePath: await dependencies.artifacts!.resolveManagedFilePath({
             path: reference.path

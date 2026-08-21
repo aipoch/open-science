@@ -9,6 +9,11 @@ import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import { createInitialProjectState, useProjectStore } from './project-store'
 import { createInitialSessionState, useSessionStore } from './session-store'
 import { useNavigationStore } from './navigation-store'
+import { previewLeaveGuards, workbenchPreviewGuardScope } from './preview-leave-guard'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from './preview-workbench-store'
 
 vi.mock('@/lib/last-opened-project', () => ({
   recordLastOpenedProject: vi.fn(),
@@ -38,6 +43,8 @@ const createProject = (id: string): Project => ({
 })
 
 beforeEach(() => {
+  previewLeaveGuards.clear()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useProjectStore.setState({
     ...createInitialProjectState(),
     projects: [
@@ -62,6 +69,96 @@ beforeEach(() => {
 })
 
 describe('navigation store', () => {
+  it('does not mutate navigation or Session selection when a dirty preview refuses project leave', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions(
+        [
+          createSession({ id: 'a', projectId: 'project-a' }),
+          createSession({ id: 'b', projectId: 'project-b', updatedAt: 2 })
+        ],
+        { version: SESSION_MANIFEST_VERSION }
+      )
+    useSessionStore.getState().selectSession('a')
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'project-a',
+      activeItemId: 'file-1'
+    })
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, () => false)
+
+    const opened = useNavigationStore.getState().openProject('project-b', 'user')
+
+    expect(opened).toBe(false)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a',
+      userNavigationRevision: 0
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBe('a')
+    expect(recordLastOpenedProject).not.toHaveBeenCalled()
+  })
+
+  it('confirms a cross-project leave once and commits navigation and preview scope atomically', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions(
+        [
+          createSession({ id: 'a', projectId: 'project-a' }),
+          createSession({ id: 'b', projectId: 'project-b', updatedAt: 2 })
+        ],
+        { version: SESSION_MANIFEST_VERSION }
+      )
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+    const guard = vi.fn(() => true)
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, guard)
+
+    const opened = useNavigationStore.getState().openProject('project-b', 'user')
+
+    expect(opened).toBe(true)
+    expect(guard).toHaveBeenCalledOnce()
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(usePreviewWorkbenchStore.getState().activeProjectId).toBe('project-b')
+    expect(useSessionStore.getState().selectedSessionId).toBe('b')
+  })
+
+  it('atomically switches preview scope when opening a session in another project', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({ id: 'b', projectId: 'project-b', updatedAt: 2 })], {
+        version: SESSION_MANIFEST_VERSION
+      })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+    const guard = vi.fn(() => true)
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, guard)
+
+    useNavigationStore.getState().openSession('project-b', 'b', 'user')
+
+    expect(guard).toHaveBeenCalledOnce()
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(usePreviewWorkbenchStore.getState().activeProjectId).toBe('project-b')
+    expect(useSessionStore.getState().selectedSessionId).toBe('b')
+  })
+
+  it('keeps the workspace visible when its dirty preview refuses a home navigation', () => {
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'project-a',
+      activeItemId: 'file-1'
+    })
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, () => false)
+
+    useNavigationStore.getState().goHome('user')
+    useNavigationStore.getState().requestProjectCreation()
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a',
+      pendingProjectCreation: false
+    })
+  })
   it('opens a project and selects its most recent session', () => {
     useSessionStore
       .getState()

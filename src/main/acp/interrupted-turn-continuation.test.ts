@@ -100,6 +100,9 @@ describe('continueInterruptedTurn', () => {
           {
             type: 'artifact',
             id: 'artifact-1',
+            sourceFileId: 'artifact-lineage-1',
+            versionId: 'artifact-version-3',
+            checksum: 'a'.repeat(64),
             name: 'evidence.csv',
             path: '/workspace/evidence.csv',
             source: 'artifact'
@@ -132,7 +135,15 @@ describe('continueInterruptedTurn', () => {
         text: expect.stringMatching(/continue the interrupted turn/i),
         turnIntent: 'plan-first',
         forcedSkillIds: ['skill-1'],
-        referencedArtifacts: [expect.objectContaining({ id: 'artifact-1' })],
+        referencedArtifacts: [
+          expect.objectContaining({
+            id: 'artifact-1',
+            source: 'artifact',
+            sourceFileId: 'artifact-lineage-1',
+            versionId: 'artifact-version-3',
+            checksum: 'a'.repeat(64)
+          })
+        ],
         suppressUserMessage: true,
         provenanceContext: expect.objectContaining({ promptMessageId: 'prompt-1' })
       })

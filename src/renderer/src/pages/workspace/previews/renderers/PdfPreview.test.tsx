@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
-import { PdfPreviewContent } from './PdfPreview'
+import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 
@@ -89,6 +89,39 @@ describe('PdfPreviewContent', () => {
     expect(destroyDocument).toHaveBeenCalled()
     expect(destroyDocument.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(window.api.previewResources.release).mock.invocationCallOrder[0] as number
+    )
+  })
+
+  it('acquires the exact managed Artifact version selected by the preview item', async () => {
+    await act(async () => {
+      root.render(
+        <PdfPreviewRenderer
+          item={{
+            id: 'artifact-1',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            title: 'report.pdf',
+            type: 'file',
+            source: 'artifact',
+            path: 'artifact-version:stale-projection',
+            name: 'report.pdf',
+            format: 'pdf',
+            managedFileId: 'artifact-1',
+            selectedVersionId: 'artifact-v2'
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() =>
+      expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+        source: 'artifact',
+        path: 'artifact-version:stale-projection',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        fileId: 'artifact-1',
+        versionId: 'artifact-v2'
+      })
     )
   })
 
