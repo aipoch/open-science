@@ -24,7 +24,7 @@ import {
   defaultVendorModel,
   isOfficialVendorId,
   isVendorModelResponsesSupported,
-  resolveCustomModelInputLimit,
+  resolveCustomModelContextWindow,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
@@ -44,6 +44,7 @@ import { encryptKey, maskKey, tryDecryptKey } from './crypto'
 import { classifyStatus, validateProvider as validateProviderTarget } from './validate'
 import { listProviderModels } from './list-models'
 import type { ResolvedProvider } from './provider-env'
+import { resolveCustomTokenLimits } from './provider-token-limits'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
   ProviderAuthLifecycleOwner
@@ -200,17 +201,13 @@ class ProviderAccountsModule {
     } else if (request.type === 'custom') {
       const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
       const model = request.model?.trim() || existing?.model
-      const inputLimit =
-        request.inputLimit === null ? undefined : (request.inputLimit ?? existing?.inputLimit)
+      const tokenLimits = resolveCustomTokenLimits(request, existing)
       if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
       if (!model) throw new Error('Model is required for a custom provider.')
       if (!carryKey()) throw new Error('API key is required for a custom provider.')
-      if (inputLimit !== undefined && (!Number.isSafeInteger(inputLimit) || inputLimit <= 0)) {
-        throw new Error('Input limit must be a positive whole number of tokens.')
-      }
       provider.baseUrl = baseUrl
       provider.model = model
-      if (inputLimit !== undefined) provider.inputLimit = inputLimit
+      Object.assign(provider, tokenLimits)
       provider.supportsImageInput =
         request.supportsImageInput ?? existing?.supportsImageInput ?? false
       provider.reasoningEffortPreset =
@@ -498,13 +495,21 @@ class ProviderAccountsModule {
         apiEndpoints: draftEndpoints
       }
     }
-
+    const tokenLimits = draft.type === 'custom' ? resolveCustomTokenLimits(draft) : undefined
     return {
       type: draft.type,
       baseUrl: draft.baseUrl,
       model: draft.model,
       ...(draft.type === 'custom'
-        ? { inputLimit: resolveCustomModelInputLimit(draft.inputLimit ?? undefined) }
+        ? {
+            contextWindow: resolveCustomModelContextWindow(tokenLimits?.contextWindow),
+            ...(tokenLimits?.maxInputTokens === undefined
+              ? {}
+              : { maxInputTokens: tokenLimits.maxInputTokens }),
+            ...(tokenLimits?.maxOutputTokens === undefined
+              ? {}
+              : { maxOutputTokens: tokenLimits.maxOutputTokens })
+          }
         : {}),
       key: draft.key,
       apiEndpoints: draft.apiEndpoints ?? ['anthropic'],

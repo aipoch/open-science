@@ -29,12 +29,11 @@ export type ResolvedProvider = {
   // when the chosen endpoint is openai; falls back to baseUrl when absent.
   openaiBaseUrl?: string
   model?: string
-  // Maximum input accepted by a user-configured model. Framework adapters translate this into
-  // their native input-limit setting without inventing an output cap.
-  inputLimit?: number
-  // Catalog context window for official and subscription models. User-defined custom providers use
-  // inputLimit instead.
+  // Model token limits. Context is the shared request/response budget; input/output are independent
+  // provider-reported caps and remain absent when unknown.
   contextWindow?: number
+  maxInputTokens?: number
+  maxOutputTokens?: number
   key?: string
   // Which chat APIs the endpoint speaks; opencode uses this to pick anthropic vs openai-compatible.
   // Absent ⇒ ['anthropic'].

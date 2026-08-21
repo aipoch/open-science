@@ -449,4 +449,22 @@ describe('ProviderAccountsModule', () => {
       })
     ).resolves.toMatchObject({ ok: false, category: 'incompatible' })
   })
+
+  it.each(['contextWindow', 'maxInputTokens', 'maxOutputTokens'] as const)(
+    'rejects an invalid %s on an unsaved validation draft',
+    async (field) => {
+      await expect(
+        module.validateProvider({
+          draft: {
+            type: 'custom',
+            baseUrl: 'https://lab.example/v1',
+            model: 'lab-model',
+            key: 'secret-key',
+            apiEndpoints: ['openai'],
+            [field]: 0
+          }
+        })
+      ).rejects.toThrow(/positive whole number of tokens/)
+    }
+  )
 })

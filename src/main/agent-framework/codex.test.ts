@@ -235,7 +235,7 @@ describe('codexFramework', () => {
         apiEndpoints: ['openai'],
         baseUrl: 'https://gateway.example/v1',
         model: 'chat-model',
-        inputLimit: 128_000,
+        contextWindow: 128_000,
         key: 'upstream-secret'
       },
       {
@@ -286,7 +286,7 @@ describe('codexFramework', () => {
         baseUrl: 'https://api.minimaxi.com/anthropic',
         openaiBaseUrl: 'https://api.minimaxi.com/v1',
         model: 'MiniMax-M3',
-        inputLimit: 1_000_000,
+        contextWindow: 1_000_000,
         key: 'mm-secret'
       },
       {
@@ -372,7 +372,7 @@ describe('codexFramework', () => {
         apiEndpoints: ['responses'],
         baseUrl: 'https://api.minimaxi.com/v1',
         model: 'MiniMax-M3',
-        inputLimit: 1_000_000,
+        contextWindow: 1_000_000,
         key: 'mm-secret'
       },
       {
@@ -447,7 +447,7 @@ describe('codexFramework', () => {
       apiEndpoints: ['responses' as const],
       baseUrl: 'https://gateway.example/v1',
       model: 'vendor-model-a',
-      inputLimit: 128_000,
+      contextWindow: 128_000,
       key: 'secret'
     }
     const config = framework.prepareModelConfig(activeProvider, {
@@ -463,7 +463,7 @@ describe('codexFramework', () => {
           provider: {
             ...activeProvider,
             model: 'vendor-model-b',
-            inputLimit: 64_000,
+            contextWindow: 64_000,
             supportsImageInput: true
           },
           reasoningEffort: 'low',

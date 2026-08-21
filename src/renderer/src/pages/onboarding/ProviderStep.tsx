@@ -21,6 +21,7 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
@@ -35,6 +36,7 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
+  ...providerFormTokenLimits(value),
   vendorId: value.vendorId,
   region: value.region,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.

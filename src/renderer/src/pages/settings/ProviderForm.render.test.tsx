@@ -62,17 +62,46 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Base URL"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="API key"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
-    const inputLimit = container.querySelector<HTMLInputElement>('[aria-label="Input limit"]')
-    expect(inputLimit?.placeholder).toBe('200000')
-    expect(inputLimit?.step).toBe('1')
-    expect(inputLimit?.getAttribute('list')).toBe('provider-input-limit-presets')
+    const contextWindow = container.querySelector<HTMLInputElement>('[aria-label="Context window"]')
+    expect(contextWindow?.placeholder).toBe('200000')
+    expect(contextWindow?.step).toBe('1')
+    expect(contextWindow?.getAttribute('list')).toBe('provider-context-window-presets')
     expect(
       Array.from(
-        container.querySelectorAll<HTMLOptionElement>('#provider-input-limit-presets option')
+        container.querySelectorAll<HTMLOptionElement>('#provider-context-window-presets option')
       ).map((option) => option.value)
     ).toEqual(['32000', '64000', '128000', '200000', '256000', '1000000'])
+    expect(container.querySelector('[aria-label="Maximum input tokens"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Maximum output tokens"]')).toBeNull()
+
+    act(() => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Advanced settings')
+        ?.click()
+    })
+
+    expect(container.querySelector('[aria-label="Maximum input tokens"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Maximum output tokens"]')).not.toBeNull()
     // The auth style selector was removed; custom always uses a bearer token.
     expect(container.querySelector('[aria-label="Auth style"]')).toBeNull()
+  })
+
+  it('opens Advanced settings when saved model limits would otherwise be hidden', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        maxInputTokens: '272000'
+      })
+    )
+
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[aria-controls="provider-model-limit-advanced-settings"]'
+    )
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('#provider-model-limit-advanced-settings')).not.toBeNull()
+    expect(
+      container.querySelector<HTMLInputElement>('[aria-label="Maximum input tokens"]')?.value
+    ).toBe('272000')
   })
 
   it('shows OpenAI as an official provider with a model catalog', () => {
@@ -89,7 +118,7 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
     expect(container.querySelector('[aria-label="API format"]')).toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Input limit"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Context window"]')).toBeNull()
     expect(container.textContent).toContain('gpt-5.6-sol')
     expect(container.querySelector<HTMLAnchorElement>('a')?.href).toBe(
       'https://platform.openai.com/api-keys'
@@ -332,7 +361,7 @@ describe('ProviderForm field switching', () => {
       container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
     )
 
-    expect(helpButtons).toHaveLength(4)
+    expect(helpButtons).toHaveLength(5)
     expect(
       helpButtons.every((button) => button.getAttribute('aria-label') === 'More information')
     ).toBe(true)

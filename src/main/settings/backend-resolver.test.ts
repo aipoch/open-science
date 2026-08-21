@@ -192,7 +192,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         baseUrl: storedProvider.baseUrl ?? 'https://gateway.example/v1',
         openaiBaseUrl: storedProvider.baseUrl ?? 'https://gateway.example/v1',
         model: effectiveModel,
-        inputLimit: 128_000,
+        contextWindow: 128_000,
         apiEndpoints: ['anthropic', 'openai', 'responses'],
         ...(storedProvider.keyRef ? { key: `plain:${storedProvider.keyRef}` } : {})
       }

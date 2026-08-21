@@ -467,7 +467,7 @@ export class AgentBackendResolver {
           ? { sessionModelRequired: true }
           : {}),
         sessionEffort,
-        contextWindow: provider.inputLimit ?? provider.contextWindow,
+        contextWindow: provider.contextWindow,
         ...(provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: provider.model,
         authentication: modelConfig.authentication,
@@ -554,7 +554,7 @@ export class AgentBackendResolver {
       envOverrides,
       executablePath,
       sessionOptions,
-      contextWindow: provider.inputLimit ?? provider.contextWindow
+      contextWindow: provider.contextWindow
     }
   }
 }

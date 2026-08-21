@@ -1,4 +1,6 @@
 import type { TFunction } from 'i18next'
+import { ChevronDown } from 'lucide-react'
+import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -67,7 +69,7 @@ type ProviderFormProps = {
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const fieldErrorClassName = 'text-xs text-destructive'
-const CUSTOM_PROVIDER_INPUT_LIMIT_PRESETS = [
+const CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS = [
   32_000, 64_000, 128_000, 200_000, 256_000, 1_000_000
 ] as const
 
@@ -126,6 +128,11 @@ const ProviderForm = ({
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
+  const [advancedOpen, setAdvancedOpen] = useState(
+    () => Boolean(value.maxInputTokens.trim()) || Boolean(value.maxOutputTokens.trim())
+  )
+  const advancedVisible =
+    advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
 
   const selectedKey = selectedKindKey(value)
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
@@ -555,31 +562,106 @@ const ProviderForm = ({
           </div>
 
           <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-input-limit">
-              {t('Input limit')}
-            </label>
+            <div className="flex items-center gap-1">
+              <label className={fieldLabelClassName} htmlFor="provider-context-window">
+                {t('Context window')}
+              </label>
+              <FieldHelp content={t('Total tokens shared by the request and response.')} />
+            </div>
             <Input
-              id="provider-input-limit"
-              aria-label={t('Input limit')}
+              id="provider-context-window"
+              aria-label={t('Context window')}
               type="number"
               inputMode="numeric"
               min={1}
               step={1}
-              list="provider-input-limit-presets"
-              value={value.inputLimit}
+              list="provider-context-window-presets"
+              value={value.contextWindow}
               disabled={disabled}
               placeholder="200000"
-              onChange={(event) => onChange({ inputLimit: event.target.value })}
+              onChange={(event) => onChange({ contextWindow: event.target.value })}
             />
-            <datalist id="provider-input-limit-presets">
-              {CUSTOM_PROVIDER_INPUT_LIMIT_PRESETS.map((limit) => (
+            <datalist id="provider-context-window-presets">
+              {CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS.map((limit) => (
                 <option key={limit} value={limit} />
               ))}
             </datalist>
-            {errors.inputLimit ? (
+            {errors.contextWindow ? (
               <p className={fieldErrorClassName} role="alert">
-                {t(errors.inputLimit)}
+                {t(errors.contextWindow)}
               </p>
+            ) : null}
+          </div>
+
+          <div>
+            <button
+              type="button"
+              aria-expanded={advancedVisible}
+              aria-controls="provider-model-limit-advanced-settings"
+              onClick={() => setAdvancedOpen((open) => !open)}
+              className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <ChevronDown
+                className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${
+                  advancedVisible ? '' : '-rotate-90'
+                }`}
+                aria-hidden="true"
+              />
+              {t('Advanced settings')}
+            </button>
+
+            {advancedVisible ? (
+              <div id="provider-model-limit-advanced-settings" className="mt-3 flex flex-col gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1">
+                    <label className={fieldLabelClassName} htmlFor="provider-max-input-tokens">
+                      {t('Maximum input tokens')}
+                    </label>
+                    <FieldHelp content={t('Optional provider-reported input cap.')} />
+                  </div>
+                  <Input
+                    id="provider-max-input-tokens"
+                    aria-label={t('Maximum input tokens')}
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={value.maxInputTokens}
+                    disabled={disabled}
+                    onChange={(event) => onChange({ maxInputTokens: event.target.value })}
+                  />
+                  {errors.maxInputTokens ? (
+                    <p className={fieldErrorClassName} role="alert">
+                      {t(errors.maxInputTokens)}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1">
+                    <label className={fieldLabelClassName} htmlFor="provider-max-output-tokens">
+                      {t('Maximum output tokens')}
+                    </label>
+                    <FieldHelp content={t('Optional provider-reported output cap.')} />
+                  </div>
+                  <Input
+                    id="provider-max-output-tokens"
+                    aria-label={t('Maximum output tokens')}
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={value.maxOutputTokens}
+                    disabled={disabled}
+                    onChange={(event) => onChange({ maxOutputTokens: event.target.value })}
+                  />
+                  {errors.maxOutputTokens ? (
+                    <p className={fieldErrorClassName} role="alert">
+                      {t(errors.maxOutputTokens)}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
             ) : null}
           </div>
         </>

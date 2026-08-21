@@ -330,6 +330,7 @@
       "ownerPaths": [
         "src/main/settings/repository.ts",
         "src/main/settings/record-codec.ts",
+        "src/main/settings/provider-token-limits.ts",
         "src/main/settings/document-codec.ts",
         "src/main/settings/document-store.ts",
         "src/main/settings/compute-grant-port.ts",
@@ -338,7 +339,8 @@
       "interfacePaths": [
         "src/main/settings/repository.ts",
         "src/shared/network-proxy.ts",
-        "src/main/settings/compute-grant-port.ts"
+        "src/main/settings/compute-grant-port.ts",
+        "src/main/settings/provider-token-limits.ts"
       ],
       "consumerModules": [
         "settings_provider_accounts",
@@ -351,6 +353,7 @@
           "src/main/settings/document-store.test.ts",
           "src/main/settings/document-codec.test.ts",
           "src/main/settings/record-codec.test.ts",
+          "src/main/settings/provider-token-limits.test.ts",
           "src/main/settings/repository.test.ts",
           "src/main/settings/compute-grants.test.ts",
           "src/main/settings/connectors-settings.test.ts",

@@ -12,7 +12,7 @@ import {
   isModelBridgeSupported,
   isVendorModelMultimodal,
   isVendorModelResponsesSupported,
-  resolveCustomModelInputLimit,
+  resolveCustomModelContextWindow,
   resolveModelContextWindow,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
@@ -94,7 +94,9 @@ class ProviderRuntimeProjectionOwner {
       apiEndpoints: this.resolveProviderApiEndpoints(provider, activeModel),
       baseUrl: provider.baseUrl,
       model: provider.model,
-      inputLimit: provider.inputLimit,
+      contextWindow: provider.contextWindow,
+      maxInputTokens: provider.maxInputTokens,
+      maxOutputTokens: provider.maxOutputTokens,
       supportsImageInput: this.providerSupportsImageInput(provider, activeModel),
       reasoningEffortPreset:
         provider.type === 'custom' ? provider.reasoningEffortPreset : undefined,
@@ -210,18 +212,24 @@ class ProviderRuntimeProjectionOwner {
     }
 
     const model = modelOverride ?? provider.model
-    const inputLimit =
-      provider.type === 'custom' ? resolveCustomModelInputLimit(provider.inputLimit) : undefined
-    const contextWindow = isClaudeSubscriptionProvider(provider.type)
-      ? resolveModelContextWindow('anthropic', model)
-      : undefined
+    const contextWindow =
+      provider.type === 'custom'
+        ? resolveCustomModelContextWindow(provider.contextWindow)
+        : isClaudeSubscriptionProvider(provider.type)
+          ? resolveModelContextWindow('anthropic', model)
+          : undefined
     return {
       type: provider.type,
       ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
       baseUrl: provider.baseUrl,
       model,
-      ...(inputLimit === undefined ? {} : { inputLimit }),
       ...(contextWindow === undefined ? {} : { contextWindow }),
+      ...(provider.type === 'custom' && provider.maxInputTokens !== undefined
+        ? { maxInputTokens: provider.maxInputTokens }
+        : {}),
+      ...(provider.type === 'custom' && provider.maxOutputTokens !== undefined
+        ? { maxOutputTokens: provider.maxOutputTokens }
+        : {}),
       key,
       apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
       supportsImageInput: this.providerSupportsImageInput(provider, modelOverride),

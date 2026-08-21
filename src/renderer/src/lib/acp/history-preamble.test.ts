@@ -412,7 +412,7 @@ describe('history replay target resolution', () => {
     const bridgeProvider = {
       id: 'persisted-provider',
       apiEndpoints: ['openai'],
-      inputLimit: 100_000
+      contextWindow: 100_000
     } as ProviderView
 
     expect(

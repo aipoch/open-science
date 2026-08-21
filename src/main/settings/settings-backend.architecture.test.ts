@@ -723,15 +723,17 @@ describe('Settings backend ownership architecture', () => {
       'apiEndpoints',
       'baseUrl',
       'codexAuthMode',
+      'contextWindow',
       'disconnectedAt',
       'expiresAt',
       'fetchedModels',
       'id',
-      'inputLimit',
       'keyMask',
       'keyRef',
       'lastValidatedAt',
       'lastValidationFailure',
+      'maxInputTokens',
+      'maxOutputTokens',
       'model',
       'name',
       'reasoningEffortPreset',
@@ -782,6 +784,7 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_repository.ownerPaths).toEqual([
       'src/main/settings/repository.ts',
       'src/main/settings/record-codec.ts',
+      'src/main/settings/provider-token-limits.ts',
       'src/main/settings/document-codec.ts',
       'src/main/settings/document-store.ts',
       'src/main/settings/compute-grant-port.ts',
@@ -790,7 +793,8 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_repository.interfacePaths).toEqual([
       'src/main/settings/repository.ts',
       'src/shared/network-proxy.ts',
-      'src/main/settings/compute-grant-port.ts'
+      'src/main/settings/compute-grant-port.ts',
+      'src/main/settings/provider-token-limits.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
       'src/main/settings/provider-accounts.ts',

@@ -82,7 +82,7 @@ describe('getProviderFormErrors', () => {
     expect(hasProviderFormErrors(errors)).toBe(false)
   })
 
-  it('allows a blank input limit and rejects non-positive or fractional values', () => {
+  it('allows blank model limits and rejects non-positive or fractional values', () => {
     const complete = {
       type: 'custom' as const,
       baseUrl: 'https://g',
@@ -90,18 +90,23 @@ describe('getProviderFormErrors', () => {
       key: 'k'
     }
 
-    expect(
-      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, inputLimit: '' }))
-        .inputLimit
-    ).toBeUndefined()
-    expect(
-      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, inputLimit: '0' }))
-        .inputLimit
-    ).toBe('Input limit must be a positive whole number of tokens.')
-    expect(
-      getProviderFormErrors(createEmptyProviderFormValue({ ...complete, inputLimit: '1.5' }))
-        .inputLimit
-    ).toBe('Input limit must be a positive whole number of tokens.')
+    const fields = [
+      ['contextWindow', 'Context window must be a positive whole number of tokens.'],
+      ['maxInputTokens', 'Maximum input tokens must be a positive whole number of tokens.'],
+      ['maxOutputTokens', 'Maximum output tokens must be a positive whole number of tokens.']
+    ] as const
+
+    for (const [field, message] of fields) {
+      expect(
+        getProviderFormErrors(createEmptyProviderFormValue({ ...complete, [field]: '' }))[field]
+      ).toBeUndefined()
+      expect(
+        getProviderFormErrors(createEmptyProviderFormValue({ ...complete, [field]: '0' }))[field]
+      ).toBe(message)
+      expect(
+        getProviderFormErrors(createEmptyProviderFormValue({ ...complete, [field]: '1.5' }))[field]
+      ).toBe(message)
+    }
   })
 })
 
@@ -160,7 +165,9 @@ describe('provider-kind helpers', () => {
       vendorId: 'minimax',
       region: 'global',
       model: '',
-      inputLimit: ''
+      contextWindow: '',
+      maxInputTokens: '',
+      maxOutputTokens: ''
     })
   })
 
@@ -171,7 +178,9 @@ describe('provider-kind helpers', () => {
       vendorId: 'openai',
       region: undefined,
       model: '',
-      inputLimit: ''
+      contextWindow: '',
+      maxInputTokens: '',
+      maxOutputTokens: ''
     })
     expect(
       selectedKindKey(createEmptyProviderFormValue({ type: 'official', vendorId: 'openai' }))
@@ -185,7 +194,9 @@ describe('provider-kind helpers', () => {
       vendorId: undefined,
       region: undefined,
       model: '',
-      inputLimit: ''
+      contextWindow: '',
+      maxInputTokens: '',
+      maxOutputTokens: ''
     })
   })
 

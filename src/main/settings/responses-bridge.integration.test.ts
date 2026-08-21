@@ -129,7 +129,7 @@ it.runIf(runLiveContract)(
         apiEndpoints: ['responses'],
         baseUrl: 'https://vendor.invalid/v1',
         model: 'probe-native-model',
-        inputLimit: 128_000
+        contextWindow: 128_000
       },
       {
         storageRoot: tempRoot,
@@ -241,7 +241,7 @@ it.runIf(runLiveContract)(
         apiEndpoints: ['responses'],
         baseUrl: 'https://vendor.invalid/v1',
         model: 'probe-native-model',
-        inputLimit: 128_000
+        contextWindow: 128_000
       },
       {
         storageRoot: tempRoot,

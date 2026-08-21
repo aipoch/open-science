@@ -53,8 +53,11 @@ export type StoredProvider = {
   apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
-  // Optional custom-model input limit. Absence is meaningful and resolves to the shared 200k default.
-  inputLimit?: number
+  // Optional custom-model token limits. Context is the shared request/response budget; input/output
+  // are independent provider-reported caps and stay absent when unknown.
+  contextWindow?: number
+  maxInputTokens?: number
+  maxOutputTokens?: number
   supportsImageInput?: boolean
   // Custom-model effort capability. Absence resolves to the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting
