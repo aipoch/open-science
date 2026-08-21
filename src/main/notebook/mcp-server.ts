@@ -22,6 +22,7 @@ import type { ProjectIdScope } from '../../shared/project-scope'
 import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
+const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
@@ -235,6 +236,7 @@ type NotebookRpcToolDefinition = {
   mapResult?: (raw: unknown, input: unknown) => unknown
   resultLimitChars?: number
   includeViewImages?: boolean
+  progressMessage?: string
 }
 
 type NotebookToolContent =
@@ -790,15 +792,39 @@ const registerNotebookRpcTool = (
         definition.method === 'requestUserInput'
           ? { ...input, _appToolRequestId: String(extra.requestId) }
           : input
-      const raw = await callNotebookRpc(
-        environment,
-        definition.method,
-        rpcInput,
-        resolveNotebookRpcFetch(definition.method),
-        extra.signal
-      )
-      return {
-        content: buildNotebookToolContent(raw, definition, input)
+      const progressToken = extra._meta?.progressToken
+      let progress = 0
+      const heartbeat =
+        definition.progressMessage !== undefined && progressToken !== undefined
+          ? setInterval(() => {
+              progress += 1
+              void extra
+                .sendNotification({
+                  method: 'notifications/progress',
+                  params: {
+                    progressToken,
+                    progress,
+                    message: definition.progressMessage
+                  }
+                })
+                .catch(() => undefined)
+            }, NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS)
+          : undefined
+      heartbeat?.unref()
+
+      try {
+        const raw = await callNotebookRpc(
+          environment,
+          definition.method,
+          rpcInput,
+          resolveNotebookRpcFetch(definition.method),
+          extra.signal
+        )
+        return {
+          content: buildNotebookToolContent(raw, definition, input)
+        }
+      } finally {
+        if (heartbeat) clearInterval(heartbeat)
       }
     }
   )
@@ -1020,7 +1046,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'execute',
     inputSchema: executeToolSchema,
     mapResult: compactNotebookExecutionResult,
-    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
+    progressMessage: 'Notebook execution is still running.'
   },
   {
     name: 'repl_execute',
@@ -1030,7 +1057,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     inputSchema: replExecuteToolSchema,
     mapResult: compactNotebookExecutionResult,
     includeViewImages: true,
-    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
+    progressMessage: 'Control-plane REPL execution is still running.'
   },
   {
     name: 'bash_execute',

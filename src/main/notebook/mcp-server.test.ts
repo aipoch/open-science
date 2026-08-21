@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { Client as ModelContextProtocolClient } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { describe, expect, it, vi } from 'vitest'
 import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
@@ -29,6 +31,7 @@ import {
   compactShutdownResult,
   compactRestartResult,
   createNotebookMcpEnvironmentFromProcess,
+  createNotebookMcpServer,
   createNotebookMcpServerConfig,
   resolveNotebookRpcFetch,
   serializeNotebookToolResult
@@ -412,6 +415,75 @@ describe('notebook_execute tool', () => {
     expect(resolveNotebookRpcFetch('execute').name).toBe('fetchLongLivedLocalRpc')
     expect(resolveNotebookRpcFetch('state').name).toBe('fetchLocalRpc')
     expect(resolveNotebookRpcFetch('executeControl').name).toBe('fetchLocalRpc')
+  })
+
+  it.each([
+    ['notebook_execute', 'Notebook execution is still running.'],
+    ['repl_execute', 'Control-plane REPL execution is still running.']
+  ])('keeps a long-running %s call alive with MCP progress', async (toolName, progressMessage) => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    }
+    const server = createNotebookMcpServer(environment)
+    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+
+    const originalFetch = globalThis.fetch
+    let finishRpc: ((response: Response) => void) | undefined
+    globalThis.fetch = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishRpc = resolve
+        })
+    ) as typeof fetch
+    vi.useFakeTimers()
+    const progress: Array<{ progress: number; message?: string }> = []
+    let call: ReturnType<typeof client.callTool> | undefined
+
+    try {
+      call = client.callTool(
+        { name: toolName, arguments: { code: 'long_running_analysis()' } },
+        undefined,
+        {
+          onprogress: (update) => progress.push(update),
+          timeout: 90_000,
+          resetTimeoutOnProgress: true
+        }
+      )
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(progress).toEqual([
+        expect.objectContaining({
+          progress: 1,
+          message: progressMessage
+        })
+      ])
+
+      finishRpc?.({
+        ok: true,
+        json: async () => ({ result: { status: 'completed' } })
+      } as Response)
+      finishRpc = undefined
+      await call
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(progress).toHaveLength(1)
+    } finally {
+      finishRpc?.({
+        ok: true,
+        json: async () => ({ result: { status: 'completed' } })
+      } as Response)
+      await call?.catch(() => undefined)
+      vi.useRealTimers()
+      globalThis.fetch = originalFetch
+      await client.close()
+      await server.close()
+    }
   })
 })
 

@@ -146,6 +146,68 @@ const setup = (
 }
 
 describe('AcpPromptPreparationOwner', () => {
+  it('keeps unbound Notebook input registrations distinct across prompt turns', async () => {
+    const fixture = setup()
+    const registrations = new Map<string, string>()
+    fixture.registerTurnInputs.mockImplementation(async (input) => {
+      const fingerprint = JSON.stringify([input.uploads, input.references])
+      const existing = registrations.get(input.promptMessageId)
+      if (existing !== undefined && existing !== fingerprint) {
+        throw new Error('Notebook turn inputs conflict with an existing immutable registration.')
+      }
+      registrations.set(input.promptMessageId, fingerprint)
+    })
+    fixture.promptContent.prepare
+      .mockResolvedValueOnce({
+        content: 'first provider content',
+        historyImageCount: 0,
+        turnInputs: {
+          uploads: [],
+          references: [
+            {
+              id: 'artifact-1',
+              versionId: 'artifact-version-1',
+              source: 'artifact',
+              name: 'first.csv',
+              path: '/first.csv'
+            }
+          ]
+        }
+      })
+      .mockResolvedValueOnce({
+        content: 'second provider content',
+        historyImageCount: 0,
+        turnInputs: {
+          uploads: [],
+          references: [
+            {
+              id: 'artifact-2',
+              versionId: 'artifact-version-2',
+              source: 'artifact',
+              name: 'second.csv',
+              path: '/second.csv'
+            }
+          ]
+        }
+      })
+
+    const first = await fixture.prepare({
+      fallbackPromptMessageId: undefined,
+      skillImportTurnToken: 'turn-1'
+    })
+    first.close()
+    const second = await fixture.prepare({
+      fallbackPromptMessageId: undefined,
+      skillImportTurnToken: 'turn-2'
+    })
+    second.close()
+
+    expect(fixture.registerTurnInputs.mock.calls.map(([input]) => input.promptMessageId)).toEqual([
+      'prompt-unbound-session-1-turn-1',
+      'prompt-unbound-session-1-turn-2'
+    ])
+  })
+
   it('composes handoff, presentation, Notebook and prompt content and transfers Context once', async () => {
     const fixture = setup()
 
