@@ -183,12 +183,16 @@ test('opens a claim citation in the isolated HTTPS source preview tab', async ({
     const parentStyle = getComputedStyle(element.parentElement as HTMLElement)
 
     return {
+      backgroundColor: style.backgroundColor,
+      color: style.color,
       height: element.getBoundingClientRect().height,
       parentFontSize: Number.parseFloat(parentStyle.fontSize),
       textDecorationLine: style.textDecorationLine
     }
   })
   expect(citationMetrics.height).toBeLessThanOrEqual(citationMetrics.parentFontSize + 0.5)
+  expect(citationMetrics.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(citationMetrics.color).toBe('rgb(255, 255, 255)')
   expect(citationMetrics.textDecorationLine).toBe('none')
   await page.evaluate(await readFile(AXE_PATH, 'utf8'))
   const citationAccessibility = (await citation.evaluate(async (element) => {
@@ -214,7 +218,7 @@ test('opens a claim citation in the isolated HTTPS source preview tab', async ({
   await expect(safetyDialog).toContainText('You are about to preview an external website.')
   await safetyDialog.getByRole('button', { name: 'Open source preview' }).click()
 
-  await expect(page.getByRole('tab', { name: 'Fixture study' })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Citation-1' })).toHaveAttribute(
     'aria-selected',
     'true'
   )
@@ -223,7 +227,8 @@ test('opens a claim citation in the isolated HTTPS source preview tab', async ({
   await expect(sourceFrame).toHaveAttribute('sandbox', 'allow-same-origin allow-scripts')
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
-  await expect(page.getByText('Cited URL: citation.example', { exact: true })).toBeVisible()
+  await expect(page.getByText('Fixture study', { exact: true })).toBeVisible()
+  await expect(page.getByText('https://citation.example/paper', { exact: true })).toBeVisible()
   await expect(
     page.frameLocator('[data-source-preview-frame]').getByRole('heading', {
       name: 'Fixture source'

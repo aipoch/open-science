@@ -3157,7 +3157,7 @@
   "Client metadata URL cannot be combined with a pre-registered client.": "クライアントメタデータ URL を事前登録済みクライアントと併用することはできません。",
   "Source {{number}}: {{title}}": "出典 {{number}}：{{title}}",
   "Source preview: {{title}}": "出典のプレビュー：{{title}}",
-  "Cited URL: {{hostname}}": "引用 URL: {{hostname}}",
+  "Citation-{{number}}": "引用-{{number}}",
   "Open source in browser": "ブラウザーで出典を開く",
   "Only HTTPS sources can be previewed": "HTTPS の出典のみプレビューできます",
   "Open source preview": "出典のプレビューを開く",

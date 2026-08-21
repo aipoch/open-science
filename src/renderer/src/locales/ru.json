@@ -322,7 +322,7 @@
   "Clear file search": "Очистить поиск файлов",
   "Clear key": "Очистить ключ",
   "Clear skill metadata": "Очистить метаданные навыка",
-  "Cited URL: {{hostname}}": "URL источника: {{hostname}}",
+  "Citation-{{number}}": "Цитата-{{number}}",
   "Client metadata URL": "URL метаданных клиента",
   "Close": "Закрыть",
   "Close Provenance": "Закрыть сведения о происхождении",

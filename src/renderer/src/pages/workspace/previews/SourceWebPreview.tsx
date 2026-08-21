@@ -28,7 +28,7 @@ const SourceWebPreview = ({ item }: { item: PreviewSourceItem }): React.JSX.Elem
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12px] font-medium text-text-100">{item.title}</div>
           <div className="truncate text-[10px] text-text-400" title={sourceUrl.href}>
-            {t('Cited URL: {{hostname}}', { hostname: sourceUrl.hostname })}
+            {sourceUrl.href}
           </div>
         </div>
         <TooltipProvider delayDuration={200}>

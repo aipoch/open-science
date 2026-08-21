@@ -3157,7 +3157,7 @@
   "Client metadata URL cannot be combined with a pre-registered client.": "用戶端中繼資料 URL 不能與預先註冊的用戶端同時使用。",
   "Source {{number}}: {{title}}": "來源 {{number}}：{{title}}",
   "Source preview: {{title}}": "來源預覽：{{title}}",
-  "Cited URL: {{hostname}}": "引用網址：{{hostname}}",
+  "Citation-{{number}}": "引用-{{number}}",
   "Open source in browser": "在瀏覽器中開啟來源",
   "Only HTTPS sources can be previewed": "僅支援預覽 HTTPS 來源",
   "Open source preview": "開啟來源預覽",

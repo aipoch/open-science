@@ -553,6 +553,7 @@
 
   [data-citation-marker],
   [data-citation-marker]:is(:hover, :focus, :active) {
+    @apply text-white;
     text-decoration: none;
   }
 

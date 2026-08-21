@@ -105,7 +105,11 @@ const SessionMessageLink = ({
   const citationNumber = getCitationNumber(children)
   const sourceItem =
     href && citationNumber
-      ? createSourcePreviewItem({ href, title: typeof title === 'string' ? title : undefined })
+      ? createSourcePreviewItem({
+          href,
+          citationNumber,
+          title: typeof title === 'string' ? title : undefined
+        })
       : undefined
 
   if (citationNumber && sourceItem) {
@@ -128,9 +132,9 @@ const SessionMessageLink = ({
                 data-citation-marker=""
                 data-incomplete={dataIncomplete}
                 className={cn(
-                  'mx-0.5 inline-flex shrink-0 align-text-bottom items-center justify-center rounded-full bg-primary/10 font-semibold leading-none text-primary transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                  'mx-0.5 inline-flex shrink-0 align-text-bottom items-center justify-center rounded-full font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                   className,
-                  'size-[1em] no-underline hover:no-underline focus:no-underline active:no-underline'
+                  'size-[1em] bg-primary text-white no-underline hover:bg-primary/90 hover:no-underline focus:no-underline active:no-underline'
                 )}
                 onFocus={(event) => {
                   if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()

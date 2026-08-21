@@ -3429,7 +3429,7 @@
   "Client metadata URL cannot be combined with a pre-registered client.": "L’URL des métadonnées client ne peut pas être combinée avec un client préenregistré.",
   "Source {{number}}: {{title}}": "Source {{number}} : {{title}}",
   "Source preview: {{title}}": "Aperçu de la source : {{title}}",
-  "Cited URL: {{hostname}}": "URL citée : {{hostname}}",
+  "Citation-{{number}}": "Citation-{{number}}",
   "Open source in browser": "Ouvrir la source dans le navigateur",
   "Only HTTPS sources can be previewed": "Seules les sources HTTPS peuvent être prévisualisées",
   "Open source preview": "Ouvrir l’aperçu de la source",
