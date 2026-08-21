@@ -19,8 +19,14 @@ import {
 } from '../session-persistence/coordinator'
 import { SpecialistRepository } from '../specialist/repository'
 import { ProfileService } from '../specialist/service'
-import { createDeterministicDelegateExecution } from './deterministic-execution'
-import { type AuthenticatedDelegateCaller } from './durable-delegated-work'
+import {
+  createDeterministicDelegateExecution,
+  type ExecutionControl
+} from './deterministic-execution'
+import {
+  type AuthenticatedDelegateCaller,
+  type DurableDelegatedWork
+} from './durable-delegated-work'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from './durable-delegated-work-test-fixture'
 import { createSessionDelegatedWorkRecords } from './session-record-adapter'
 
@@ -101,6 +107,111 @@ const createHarness = (): Readonly<{
   }
   const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
   return { coordinator, repository, readSession: async () => structuredClone(durable) }
+}
+
+type LateReplayScenario = Readonly<{
+  caller: AuthenticatedDelegateCaller
+  control: ExecutionControl
+  readSession: ReturnType<typeof createHarness>['readSession']
+  records: ReturnType<typeof createSessionDelegatedWorkRecords>
+  repository: SessionMutationRepository
+  work: DurableDelegatedWork
+}>
+
+async function createLateReplayScenario(): Promise<LateReplayScenario> {
+  const { coordinator, repository, readSession } = createHarness()
+  const execution = createDeterministicDelegateExecution()
+  const rootFrameId = createSession().conversationGraph!.rootFrameId
+  const records = createSessionDelegatedWorkRecords(
+    { commands: coordinator, readSession, frameworkId: 'codex', createId: () => 'child-branch' },
+    key
+  )
+  const ids = {
+    frame: ['child-frame'],
+    attempt: ['attempt-1'],
+    message: ['prompt-1', 'pending-1', 'prompt-2', 'answer-1', 'answer-2'],
+    runtime: ['runtime-1', 'runtime-2']
+  }
+  const work = createDurableDelegatedWork({
+    execution,
+    records,
+    now: () => 50,
+    createId: (kind) => ids[kind].shift()!
+  })
+  const caller: AuthenticatedDelegateCaller = {
+    session: key,
+    frameId: rootFrameId,
+    role: 'main',
+    originMessageId: rootPrompt.id,
+    toolInvocationId: 'dispatch'
+  }
+
+  await work.delegate(caller, { task: 'Initial task', name: 'Initial task' }, { wait: false })
+  await expect.poll(() => execution.controls()).toHaveLength(1)
+  const control = execution.control('attempt-1')
+  control.accept()
+  await work.sendMessage(
+    { ...caller, toolInvocationId: 'message-call' },
+    'child-frame',
+    'Additional evidence',
+    { kind: 'info' }
+  )
+
+  return { caller, control, readSession, records, repository, work }
+}
+
+function createScopedToolUpdate(
+  runtimeSegmentId: string,
+  promptMessageId: string,
+  event: AcpAgentRuntimeUpdate['event']
+): AcpAgentRuntimeUpdate {
+  return {
+    scope: {
+      projectId: key.projectId,
+      sessionId: key.sessionId,
+      agentFrameId: 'child-frame',
+      attemptId: 'attempt-1',
+      runtimeSegmentId,
+      promptMessageId
+    },
+    event
+  }
+}
+
+function createInitialToolUpdate(): AcpAgentRuntimeUpdate {
+  return createScopedToolUpdate('runtime-1', 'prompt-1', {
+    id: 'tool-one',
+    timestamp: 40,
+    kind: 'tool',
+    level: 'info',
+    toolCallId: 'call-1',
+    title: 'Inspect evidence',
+    status: 'completed'
+  })
+}
+
+function createLateToolReplay(): AcpAgentRuntimeUpdate {
+  return createScopedToolUpdate('runtime-1', 'prompt-1', {
+    id: 'tool-one-late',
+    timestamp: 41,
+    kind: 'tool',
+    level: 'info',
+    toolCallId: 'call-1',
+    status: 'completed',
+    rawOutput: { replayed: true }
+  })
+}
+
+function createActiveToolUpdate(): AcpAgentRuntimeUpdate {
+  return createScopedToolUpdate('runtime-2', 'prompt-2', {
+    id: 'tool-two',
+    timestamp: 42,
+    kind: 'tool',
+    level: 'info',
+    toolCallId: 'call-2',
+    title: 'Check counterexample',
+    status: 'in_progress'
+  })
 }
 
 describe('Session delegated-work adapter', () => {
@@ -694,6 +805,234 @@ describe('Session delegated-work adapter', () => {
         runtimeSegmentId: 'runtime-2'
       })
   })
+
+  it('completes a queued child turn when a late tool replay arrives from the previous Runtime Segment', async () => {
+    const { control, readSession, records } = await createLateReplayScenario()
+    const replayedToolUpdate = createScopedToolUpdate('runtime-1', 'prompt-1', {
+      id: 'tool-event',
+      timestamp: 40,
+      kind: 'tool',
+      level: 'info',
+      toolCallId: 'call-1',
+      title: 'Inspect evidence',
+      status: 'completed'
+    })
+
+    control.emit({ kind: 'runtime', update: replayedToolUpdate })
+    await control.completeTurn('Initial answer')
+    control.emit({ kind: 'runtime', update: replayedToolUpdate })
+    control.complete('Final answer')
+
+    await expect
+      .poll(async () => (await records.snapshot()).records[0].attempts[0])
+      .toMatchObject({ status: 'completed' })
+    expect((await records.snapshot()).records[0].attempts[0]).not.toHaveProperty('error')
+    expect((await readSession()).conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'agent-runtime:runtime-1:call-1',
+        runtimeSegmentId: 'runtime-1',
+        status: 'completed',
+        eventIds: ['tool-event']
+      })
+    ])
+  })
+
+  it('preserves a provider error when the active child turn follows a late tool replay', async () => {
+    const { control, readSession, records } = await createLateReplayScenario()
+
+    control.emit({ kind: 'runtime', update: createInitialToolUpdate() })
+    await control.completeTurn('Initial answer')
+    control.emit({ kind: 'runtime', update: createLateToolReplay() })
+    control.emit({ kind: 'runtime', update: createActiveToolUpdate() })
+    control.fail(new Error('provider failed'))
+
+    await expect
+      .poll(async () => (await records.snapshot()).records[0].attempts[0])
+      .toMatchObject({
+        status: 'error',
+        error: { code: 'execution_failure', message: 'provider failed' }
+      })
+    expect((await readSession()).conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'agent-runtime:runtime-1:call-1',
+        runtimeSegmentId: 'runtime-1',
+        status: 'completed',
+        eventIds: ['tool-one']
+      }),
+      expect.objectContaining({
+        id: 'agent-runtime:runtime-2:call-2',
+        runtimeSegmentId: 'runtime-2',
+        status: 'failed',
+        eventIds: ['tool-two']
+      })
+    ])
+  })
+
+  it('cancels the active child turn when it follows a late tool replay', async () => {
+    const { caller, control, readSession, records, work } = await createLateReplayScenario()
+
+    control.emit({ kind: 'runtime', update: createInitialToolUpdate() })
+    await control.completeTurn('Initial answer')
+    control.emit({ kind: 'runtime', update: createLateToolReplay() })
+    control.emit({ kind: 'runtime', update: createActiveToolUpdate() })
+
+    await expect(work.stopChildren(caller, ['child-frame'])).resolves.toEqual([
+      { frameId: 'child-frame', status: 'cancelled' }
+    ])
+    await expect
+      .poll(async () => (await records.snapshot()).records[0].attempts[0])
+      .toMatchObject({ status: 'cancelled', cancellationReason: 'main_agent_stop' })
+    expect((await records.snapshot()).records[0].attempts[0]).not.toHaveProperty('error')
+    expect((await readSession()).conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'agent-runtime:runtime-1:call-1',
+        runtimeSegmentId: 'runtime-1',
+        status: 'completed',
+        eventIds: ['tool-one']
+      }),
+      expect.objectContaining({
+        id: 'agent-runtime:runtime-2:call-2',
+        runtimeSegmentId: 'runtime-2',
+        status: 'failed',
+        eventIds: ['tool-two']
+      })
+    ])
+  })
+
+  it('preserves a queued child turn begin error after the previous Runtime Segment closes', async () => {
+    const { control, readSession, records, repository } = await createLateReplayScenario()
+    const beginError = new Error('pending turn storage unavailable')
+    let markBeginSaveStarted!: () => void
+    const beginSaveStarted = new Promise<void>((resolve) => {
+      markBeginSaveStarted = resolve
+    })
+    let rejectBeginSave!: () => void
+    const beginSaveRejection = new Promise<void>((resolve) => {
+      rejectBeginSave = resolve
+    })
+    const persistSession = vi.mocked(repository.saveSession).getMockImplementation()!
+    vi.mocked(repository.saveSession).mockImplementation(async (session) => {
+      if (session.conversationGraph?.messages.some(({ id }) => id === 'prompt-2')) {
+        markBeginSaveStarted()
+        await beginSaveRejection
+        throw beginError
+      }
+      return persistSession(session)
+    })
+
+    control.emit({ kind: 'runtime', update: createInitialToolUpdate() })
+
+    const completingFirstTurn = control.completeTurn('Initial answer')
+    await beginSaveStarted
+    control.emit({ kind: 'runtime', update: createLateToolReplay() })
+    rejectBeginSave()
+    await expect(completingFirstTurn).rejects.toThrow(beginError)
+    control.fail(beginError)
+
+    await expect
+      .poll(async () => (await records.snapshot()).records[0].attempts[0])
+      .toMatchObject({
+        status: 'error',
+        error: { code: 'execution_failure', message: beginError.message }
+      })
+    expect((await readSession()).conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'agent-runtime:runtime-1:call-1',
+        runtimeSegmentId: 'runtime-1',
+        status: 'completed',
+        eventIds: ['tool-one']
+      })
+    ])
+  })
+
+  it('preserves a child turn completion storage error after its transcript is durable', async () => {
+    const { coordinator, repository, readSession } = createHarness()
+    const execution = createDeterministicDelegateExecution()
+    const rootFrameId = createSession().conversationGraph!.rootFrameId
+    const records = createSessionDelegatedWorkRecords(
+      { commands: coordinator, readSession, frameworkId: 'codex', createId: () => 'child-branch' },
+      key
+    )
+    const ids = {
+      frame: ['child-frame'],
+      attempt: ['attempt-1'],
+      message: ['prompt-1', 'answer-1', 'fallback-answer'],
+      runtime: ['runtime-1']
+    }
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      now: () => 50,
+      createId: (kind) => ids[kind].shift()!
+    })
+    const caller: AuthenticatedDelegateCaller = {
+      session: key,
+      frameId: rootFrameId,
+      role: 'main',
+      originMessageId: rootPrompt.id,
+      toolInvocationId: 'dispatch'
+    }
+    const completionError = new Error('child turn completion storage unavailable')
+    let markCompletionSaveStarted!: () => void
+    const completionSaveStarted = new Promise<void>((resolve) => {
+      markCompletionSaveStarted = resolve
+    })
+    let rejectCompletionSave!: () => void
+    const completionSaveRejection = new Promise<void>((resolve) => {
+      rejectCompletionSave = resolve
+    })
+    let completionSaveRejected = false
+    const persistSession = vi.mocked(repository.saveSession).getMockImplementation()!
+    vi.mocked(repository.saveSession).mockImplementation(async (session) => {
+      const attempt = session.runtimeContext?.delegatedWork?.records[0]?.attempts[0]
+      const completingDurableTranscript =
+        !completionSaveRejected &&
+        attempt?.status === 'running' &&
+        session.conversationGraph?.runtimeSegments.some(
+          ({ id, endedAt }) => id === 'runtime-1' && endedAt !== undefined
+        ) &&
+        session.conversationGraph.activities.some(
+          ({ id }) => id === 'agent-runtime:runtime-1:call-1'
+        )
+      if (completingDurableTranscript) {
+        completionSaveRejected = true
+        markCompletionSaveStarted()
+        await completionSaveRejection
+        throw completionError
+      }
+      return persistSession(session)
+    })
+
+    const delegated = work.delegate(caller, { task: 'Initial task', name: 'Initial task' })
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    const control = execution.control('attempt-1')
+    control.accept()
+    control.emit({ kind: 'runtime', update: createInitialToolUpdate() })
+
+    control.complete('Initial answer')
+    await completionSaveStarted
+    control.emit({ kind: 'runtime', update: createLateToolReplay() })
+    rejectCompletionSave()
+
+    await expect(delegated).resolves.toMatchObject({
+      kind: 'results',
+      children: [
+        {
+          status: 'error',
+          error: { code: 'execution_failure', message: completionError.message }
+        }
+      ]
+    })
+    expect((await readSession()).conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'agent-runtime:runtime-1:call-1',
+        runtimeSegmentId: 'runtime-1',
+        status: 'completed',
+        eventIds: ['tool-one']
+      })
+    ])
+  })
+
   it('starts an admitted array against revisioned Session records without sibling conflicts', async () => {
     const { coordinator, readSession } = createHarness()
     const execution = createDeterministicDelegateExecution()
