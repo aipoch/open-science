@@ -244,6 +244,28 @@ describe('workspace agent runtime event processing', () => {
     expect(appliedEventIds).toEqual(events.map((event) => event.id))
   })
 
+  it('does not replay a processed event from an oversized incremental batch', async () => {
+    const appliedEventIds: string[] = []
+    const processor = createWorkspaceRuntimeEventProcessor(async (event) => {
+      appliedEventIds.push(event.id)
+      return true
+    })
+    const firstEvent = createEvent({ id: 'tool-event-1', kind: 'tool', status: 'completed' })
+    const laterEvents = Array.from({ length: 600 }, (_, index) =>
+      createEvent({
+        id: `tool-event-${index + 2}`,
+        kind: 'tool',
+        status: 'completed'
+      })
+    )
+
+    await processor.processIncremental([firstEvent])
+    await processor.processIncremental([firstEvent, ...laterEvents])
+    await processor.drain()
+
+    expect(appliedEventIds).toEqual([firstEvent, ...laterEvents].map((event) => event.id))
+  })
+
   it('keeps synchronous incremental event admission within a linear main-thread work budget', async () => {
     let eventIdReads = 0
     const appliedEventIds: string[] = []

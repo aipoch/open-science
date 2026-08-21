@@ -243,6 +243,7 @@ const createWorkspaceRuntimeEventProcessor = (
     events: readonly AcpRuntimeEvent[],
     replaceLatestEvents: boolean
   ): Promise<void> => {
+    const evictedEvents: AcpRuntimeEvent[] = []
     if (replaceLatestEvents) {
       latestEventsById = new Map(events.map((event) => [event.id, event]))
     } else {
@@ -256,7 +257,7 @@ const createWorkspaceRuntimeEventProcessor = (
           [string, AcpRuntimeEvent] | undefined
         if (!oldest) break
         latestEventsById.delete(oldest[0])
-        releaseEvictedEvent(oldest[1])
+        evictedEvents.push(oldest[1])
       }
     }
     const visibleLaneKeys = new Set<string | symbol>()
@@ -277,6 +278,11 @@ const createWorkspaceRuntimeEventProcessor = (
         presentationBuffer.forceOnAccepted(lane.presentation, event)
       }
     }
+
+    // Keep processed markers through admission so an oversized batch cannot re-admit an event that
+    // this same retention update evicted. Once every batch item has been classified, targeted cleanup
+    // can safely release the evicted lane state.
+    for (const event of evictedEvents) releaseEvictedEvent(event)
 
     if (replaceLatestEvents) {
       for (const [laneKey, lane] of eventLanes) cleanEventLane(laneKey, lane)
