@@ -22,7 +22,7 @@ Open Science 是面向科学家和研究人员的开源、本地优先且模型�
 
 Open Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.18.1 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 8 月）_。Open Science v0.18.1 引入了会话级计算主机发现与执行目标选择（含 CLI 支持）、应用启动时重新设计的错误提示组件、带项目与任务上下文的改进消息中心通知、长用户消息折叠、空初始审查检查、法文本地化、导入技能分组菜单，以及应用更新与项目智能体上下文的 CLI 命令；同时通过面板缓存与运行时探测复用加快设置与启动速度、协调并发的消息与分支变更、记录连接器产物溯源、加固本地 HTTP 边界，并提供更新器恢复指引。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[Open Science v0.18.2 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 8 月）_。Open Science v0.18.2 引入了俄文本地化、对话导出的轮次选择，以及自定义连接器的预注册 OAuth 客户端；同时收窄智能体列表摘要、限制增量事件准入以保持高吞吐流期间渲染器的响应能力、流式导出项目产物 ZIP、带 UTF-8 笔记本源码解码的 MCP 进度心跳、消息编辑时保留附件、恢复不透明 Codex 会话、幂等的任务 API 创建，以及大量工作区、笔记本、更新与持久化修复。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science 开源 AI 研究工作台桌面应用工作区，其中显示了包含生成产物的智能体会话" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
