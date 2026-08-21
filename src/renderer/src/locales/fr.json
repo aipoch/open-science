@@ -578,6 +578,7 @@
   "Data will be stored in <path>{{path}}</path>": "Les données seront stockées dans <path>{{path}}</path>.",
   "Decoding TIFF image": "Décodage d'une image TIFF",
   "Default": "Par défaut",
+  "provider default": "réglage du fournisseur",
   "Default permission mode": "Mode d'autorisation par défaut",
   "Delete": "Supprimer",
   "Delete Session?": "Supprimer la session ?",

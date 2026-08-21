@@ -581,6 +581,19 @@ describe('mandatory product glossary', () => {
     expect(actual).toEqual(expected)
   })
 
+  it('uses native copy for the provider-controlled default hint', () => {
+    expect(
+      Object.fromEntries(TRANSLATED.map((locale) => [locale, catalog(locale)['provider default']]))
+    ).toEqual({
+      fr: 'réglage du fournisseur',
+      ja: 'プロバイダー設定を使用',
+      ko: '모델 제공업체 설정 사용',
+      ru: 'настройка поставщика',
+      'zh-Hans': '由服务商决定',
+      'zh-Hant': '由服務商決定'
+    })
+  })
+
   it('uses the chosen French agent framework term in every sentence', () => {
     const offenders = Object.entries(catalog('fr'))
       .filter(([key]) => /\bagent frameworks?\b/i.test(englishOf(key)))
@@ -3013,7 +3026,8 @@ const VISIBLE_ATTRIBUTES = [
   'aria-description',
   'aria-placeholder',
   'placeholder',
-  'alt'
+  'alt',
+  'hint'
 ]
 
 const bareAttributeValues = (source: string): BareCopy[] => {
@@ -3258,6 +3272,12 @@ describe('bare copy detection', () => {
       { text: 'Dismiss storage warning', line: 1 }
     ])
     expect(bareAttributeValues('<div className="flex items-center gap-2" />')).toEqual([])
+  })
+
+  it('finds bare copy in a user-visible custom hint prop', () => {
+    expect(bareAttributeValues('<MenuRadioItem hint="provider default" />')).toEqual([
+      { text: 'provider default', line: 1 }
+    ])
   })
 
   it('accepts an aria-label already inside t()', () => {

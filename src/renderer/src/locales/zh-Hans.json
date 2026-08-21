@@ -614,6 +614,7 @@
   "Data will be stored in <path>{{path}}</path>": "数据将存放在 <path>{{path}}</path>",
   "Decoding TIFF image": "正在解码 TIFF 图像",
   "Default": "默认",
+  "provider default": "由服务商决定",
   "Default permission mode": "默认权限模式",
   "Delete": "删除",
   "Delete Session?": "删除会话？",

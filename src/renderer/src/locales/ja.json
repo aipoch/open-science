@@ -543,6 +543,7 @@
   "Data will be stored in <path>{{path}}</path>": "データは <path>{{path}}</path> に保存されます",
   "Decoding TIFF image": "TIFF画像のデコード",
   "Default": "デフォルト",
+  "provider default": "プロバイダー設定を使用",
   "Default permission mode": "デフォルトの許可モード",
   "Delete": "削除",
   "Delete Session?": "セッションを削除しますか？",

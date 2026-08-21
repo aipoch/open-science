@@ -562,6 +562,7 @@
   "Data will be stored in <path>{{path}}</path>": "데이터는 <path>{{path}}</path>에 저장됩니다.",
   "Decoding TIFF image": "TIFF 이미지 디코딩",
   "Default": "기본값",
+  "provider default": "모델 제공업체 설정 사용",
   "Default permission mode": "기본 권한 모드",
   "Delete": "삭제",
   "Delete Session?": "세션을 삭제하시겠습니까?",

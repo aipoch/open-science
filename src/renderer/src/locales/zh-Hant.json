@@ -613,6 +613,7 @@
   "Data will be stored in <path>{{path}}</path>": "資料將存放在 <path>{{path}}</path>",
   "Decoding TIFF image": "正在解碼 TIFF 影像",
   "Default": "預設",
+  "provider default": "由服務商決定",
   "Default permission mode": "預設權限模式",
   "Delete": "刪除",
   "Delete Session?": "刪除工作階段？",
