@@ -991,7 +991,8 @@ const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleConversationExport = {
   projectId: 'p-1',
   sessionId: 's-1',
-  format: 'markdown'
+  format: 'markdown',
+  selectedPromptMessageIds: ['prompt-1']
 }
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }

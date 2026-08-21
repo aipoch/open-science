@@ -7,7 +7,6 @@ import {
   type FormEvent
 } from 'react'
 
-import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import type {
   DeleteSessionRequest,
   SessionDeletionResult
@@ -74,6 +73,7 @@ type WorkspaceSessionController = {
       delete: SessionDeleteDialogState | null
       downloadArtifacts: ChatSession | null
       notebook: ChatSession | null
+      exportConversation: ChatSession | null
       jobList: { open: boolean; sessionId: string }
     }
     exportError: string | null
@@ -96,7 +96,8 @@ type WorkspaceSessionController = {
     confirmRename: (event: FormEvent<HTMLFormElement>) => void
     togglePin: (session: ChatSession) => void
     archive: (session: ChatSession) => void
-    exportConversation: (session: ChatSession, format: ConversationExportFormat) => void
+    openExportConversation: (session: ChatSession) => void
+    closeExportConversation: () => void
     openDelete: (session: ChatSession) => void
     closeDelete: () => void
     confirmDelete: () => void
@@ -174,6 +175,7 @@ const useWorkspaceSessionController = ({
   const [deleteDialog, setDeleteDialog] = useState<SessionDeleteDialogState | null>(null)
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
   const [notebookDialog, setNotebookDialog] = useState<ChatSession | null>(null)
+  const [exportConversationDialog, setExportConversationDialog] = useState<ChatSession | null>(null)
   const [jobListDialog, setJobListDialog] = useState({ open: false, sessionId: '' })
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const deletingIdsRef = useRef(new Set<string>())
@@ -251,15 +253,6 @@ const useWorkspaceSessionController = ({
     if (!isPersistenceReady || !renameDialog || renameDialog.draft.trim().length === 0) return
     renameSession(renameDialog.session.id, renameDialog.draft)
     closeRename()
-  }
-
-  const exportConversation = (session: ChatSession, format: ConversationExportFormat): void => {
-    const exporter = window.api?.sessions?.exportConversation
-    if (!exporter) return
-    setExportError(null)
-    void exporter({ projectId: session.projectId, sessionId: session.id, format }).catch(
-      (error: unknown) => setExportError(errorMessage(error))
-    )
   }
 
   const archive = (session: ChatSession): void => {
@@ -632,6 +625,7 @@ const useWorkspaceSessionController = ({
         delete: deleteDialog,
         downloadArtifacts: downloadArtifactsDialog,
         notebook: notebookDialog,
+        exportConversation: exportConversationDialog,
         jobList: jobListDialog
       },
       exportError,
@@ -658,7 +652,11 @@ const useWorkspaceSessionController = ({
         if (isPersistenceReady) togglePinned(session.id)
       },
       archive,
-      exportConversation,
+      openExportConversation: (session: ChatSession) => {
+        setExportError(null)
+        setExportConversationDialog(session)
+      },
+      closeExportConversation: () => setExportConversationDialog(null),
       openDelete,
       closeDelete: () => setDeleteDialog((current) => (current?.isDeleting ? current : null)),
       confirmDelete,

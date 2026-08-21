@@ -4684,6 +4684,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/settings/SettingsPage.tsx',
       'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
       'src/renderer/src/pages/workspace/ContextWindowDialog.tsx',
+      'src/renderer/src/pages/workspace/ConversationExportDialog.tsx',
       'src/renderer/src/pages/workspace/ConversationPanel.tsx',
       'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
       'src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx',

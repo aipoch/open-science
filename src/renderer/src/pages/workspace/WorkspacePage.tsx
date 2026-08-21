@@ -46,6 +46,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { ConversationExportDialog } from './ConversationExportDialog'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
@@ -286,6 +287,10 @@ const WorkspacePage = ({
       composer.lifecycle.settleSessionDeletion(sessionId, deleted),
     deleteSession
   })
+  const exportConversationSessionId = sessionController.view.dialogs.exportConversation?.id
+  const currentExportConversationSession = useSessionStore((state) =>
+    state.sessions.find((session) => session.id === exportConversationSessionId)
+  )
   const historySpecialistId = sessionController.view.specialist.historyId
   const activeSpecialistId = activeSession?.specialistId
   const catalogSkillIds = useMemo(
@@ -949,7 +954,7 @@ const WorkspacePage = ({
             onViewNotebook={sessionController.actions.openNotebook}
             onExportSession={
               typeof window.api.sessions?.exportConversation === 'function'
-                ? sessionController.actions.exportConversation
+                ? sessionController.actions.openExportConversation
                 : undefined
             }
             onTogglePin={(session) => {
@@ -1014,9 +1019,9 @@ const WorkspacePage = ({
             }}
             onExportSession={
               typeof window.api.sessions?.exportConversation === 'function'
-                ? (session, format) => {
+                ? (session) => {
                     close()
-                    sessionController.actions.exportConversation(session, format)
+                    sessionController.actions.openExportConversation(session)
                   }
                 : undefined
             }
@@ -1162,6 +1167,12 @@ const WorkspacePage = ({
       <DownloadSessionArtifactsDialog
         session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
         onClose={sessionController.actions.closeDownloadArtifacts}
+      />
+
+      <ConversationExportDialog
+        session={sessionController.view.dialogs.exportConversation ?? undefined}
+        currentSession={currentExportConversationSession}
+        onClose={sessionController.actions.closeExportConversation}
       />
 
       <DownloadProjectArtifactsDialog
