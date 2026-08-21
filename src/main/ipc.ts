@@ -32,6 +32,8 @@ import { createApplicationEventModule, type ApplicationEventSource } from './app
 import { TagRepository } from './tags/repository'
 import { TagResourceCatalog } from './tags/resource-catalog'
 import { TagService } from './tags/service'
+import { MemoryRepository } from './memory/repository'
+import { MemoryService } from './memory/service'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
@@ -1112,6 +1114,10 @@ const createApplicationModules = async (
     }),
     applicationEvents
   )
+  const memoryService = new MemoryService(
+    new MemoryRepository(() => getProjectDbClient(configRoot)),
+    applicationEvents
+  )
   const tagCleanupLog = createLogger('tags:cleanup')
   const removeResourceTags = async (
     resources: Parameters<TagService['removeResources']>[0]
@@ -1888,6 +1894,7 @@ const createApplicationModules = async (
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
       connectorService,
       computeService: agentComputeService,
+      memoryService,
       skillImporter: conversationSkillImporter,
       planService: {
         call: (input) => {
@@ -2141,6 +2148,7 @@ const createApplicationModules = async (
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
       imageInputCompatibility,
+      memory: memoryService,
       resolveComputeExecutionTargetIds: (sessionId) => hostsRegistry.getSelected(sessionId)
     },
     (options) => {
@@ -3122,6 +3130,7 @@ const createApplicationModules = async (
     },
     permissionGrants: permissionGrantProjection,
     tags: tagService,
+    memory: memoryService,
     dataContent: {
       artifacts: artifactHandlers,
       electron: {

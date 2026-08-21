@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import type { Page } from 'playwright'
+import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
@@ -51,6 +51,163 @@ test('persists the selected theme after closing settings and relaunching', async
   page = await app.restart()
   await expect(page.locator('html')).toHaveClass(/dark/)
   await expect(page.getByRole('button', { name: 'Theme: Dark' })).toBeVisible()
+})
+
+test('persists editable memory across an application restart', async ({ app }) => {
+  let page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  const openMemory = async (): Promise<Locator> => {
+    await page.getByRole('button', { name: 'Model settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('button', { name: 'Memory', exact: true })
+      .click()
+    return settings
+  }
+
+  let settings = await openMemory()
+  await expect(
+    settings.getByText('Memory is off. Agents will not save or recall notes', { exact: false })
+  ).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'About you', exact: false })).toBeVisible()
+
+  await settings.getByRole('button', { name: 'Add', exact: true }).click()
+  await settings.getByPlaceholder('Add a note…').fill('Prefers reproducible experiments.')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  const initialAboutNote = settings
+    .getByRole('paragraph')
+    .filter({ hasText: 'Prefers reproducible experiments.' })
+  await expect(initialAboutNote).toBeVisible()
+
+  await initialAboutNote.hover()
+  await settings.getByRole('button', { name: 'Edit note' }).click()
+  const editor = settings.getByPlaceholder('Add a note…')
+  await editor.fill('Prefers reproducible and concise experiments.')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(
+    settings
+      .getByRole('paragraph')
+      .filter({ hasText: 'Prefers reproducible and concise experiments.' })
+  ).toBeVisible()
+
+  await settings.getByRole('button', { name: 'New category' }).click()
+  await settings.getByRole('textbox', { name: 'Name' }).fill('Experiment results')
+  await settings
+    .getByRole('textbox', { name: 'When should the agent save a note here?' })
+    .fill('Save costly experimental findings.')
+  await settings.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(
+    settings.getByRole('button', { name: 'Experiment results', exact: false })
+  ).toBeVisible()
+
+  await settings.getByRole('button', { name: 'Experiment results', exact: false }).click()
+  await settings.getByRole('button', { name: 'Add', exact: true }).click()
+  await settings.getByPlaceholder('Add a note…').fill('Use a 30 second exposure.')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Turn on' })).toHaveCount(0)
+  await settings.getByRole('switch', { name: 'Memory' }).click()
+  await expect(settings.getByRole('switch', { name: 'Memory' })).toBeChecked()
+
+  await settings.getByRole('button', { name: 'Close settings' }).click()
+  page = await app.restart()
+  settings = await openMemory()
+  await expect(settings.getByRole('switch', { name: 'Memory' })).toBeChecked()
+  await expect(
+    settings.getByRole('button', { name: 'Experiment results', exact: false })
+  ).toBeVisible()
+  await settings.getByRole('button', { name: 'Experiment results', exact: false }).click()
+  await expect(settings.getByText('Use a 30 second exposure.')).toBeVisible()
+  await settings.getByRole('button', { name: 'About you', exact: false }).click()
+  await expect(settings.getByText('Prefers reproducible and concise experiments.')).toBeVisible()
+})
+
+test('contains long memory lists and layers destructive confirmations above settings', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  await page.getByRole('button', { name: 'Model settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Memory', exact: true })
+    .click()
+
+  await settings.getByRole('button', { name: 'New category' }).click()
+  const create = settings.getByRole('button', { name: 'Create', exact: true })
+  await settings.getByRole('textbox', { name: 'Name' }).fill('Layer check')
+  await expect(create).toBeDisabled()
+  await settings
+    .getByRole('textbox', { name: 'When should the agent save a note here?' })
+    .fill('Save notes used to verify nested dialog behavior.')
+  await expect(create).toBeEnabled()
+  await create.click()
+
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const aboutYou = snapshot.categories.find(
+      (category) => 'systemKey' in category && category.systemKey === 'about-you'
+    )
+    if (!aboutYou) throw new Error('About you category was not seeded.')
+    for (let index = 1; index <= 24; index += 1) {
+      await window.api.memory.createEntry({
+        categoryId: aboutYou.id,
+        content: `Overflow note ${String(index).padStart(2, '0')}`
+      })
+    }
+  })
+
+  await settings.getByRole('button', { name: 'About you', exact: false }).click()
+  const entryList = settings.locator('[data-slot="memory-entry-list"]')
+  await expect(settings.getByText('Overflow note 24')).toBeAttached()
+  await expect
+    .poll(() => entryList.evaluate((element) => element.scrollHeight > element.clientHeight))
+    .toBe(true)
+  await entryList.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(settings.getByText('Overflow note 24')).toBeVisible()
+  await expect
+    .poll(() =>
+      entryList
+        .locator('[data-slot="memory-entry"]')
+        .first()
+        .evaluate((element) => getComputedStyle(element).borderBottomWidth)
+    )
+    .toBe('0px')
+  await page.screenshot({ path: testInfo.outputPath('memory-long-list.png') })
+
+  const lastNote = settings.getByText('Overflow note 24')
+  const lastNoteRow = settings
+    .locator('[data-slot="memory-entry"]')
+    .filter({ hasText: 'Overflow note 24' })
+  await lastNoteRow.hover()
+  await expect(settings).toHaveCSS('z-index', '50')
+  await lastNoteRow.getByRole('button', { name: 'Delete note' }).click()
+  const noteDialog = page.getByRole('alertdialog', { name: 'Delete note?' })
+  await expect(noteDialog).toBeVisible()
+  await expect(noteDialog).toHaveCSS('z-index', '70')
+  await page.screenshot({ path: testInfo.outputPath('memory-note-confirmation.png') })
+  await noteDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(lastNote).toBeVisible()
+
+  await settings.getByRole('button', { name: 'Layer check', exact: false }).click()
+  await settings.getByRole('button', { name: 'Category actions' }).click()
+  await page.getByRole('menuitem', { name: 'Delete category' }).click()
+  const categoryDialog = page.getByRole('alertdialog', { name: 'Delete category?' })
+  await expect(categoryDialog).toBeVisible()
+  await expect(categoryDialog).toHaveCSS('z-index', '70')
+  await page.screenshot({ path: testInfo.outputPath('memory-category-confirmation.png') })
+  await categoryDialog.getByRole('button', { name: 'Cancel' }).click()
 })
 
 const localizedSettingsCases = [

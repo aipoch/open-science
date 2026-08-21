@@ -678,3 +678,43 @@ model TagAssignment {
   @@id([tagId, resourceType, resourceId])
   @@index([resourceType, resourceId])
 }
+
+// Profile-global memory is intentionally independent of Project and Session lifecycles so it can
+// be shared by eligible agents across projects and app restarts. Agent provenance stays main-process
+// only; renderer views omit sourceSessionId and sourceAgentId.
+model MemorySettings {
+  id        String   @id
+  enabled   Boolean  @default(false)
+  revision  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MemoryCategory {
+  id         String        @id @default(cuid())
+  systemKey  String?       @unique
+  name       String?
+  nameKey    String?       @unique
+  guidance   String        @default("")
+  autoRecall Boolean       @default(false)
+  revision   Int           @default(1)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  entries    MemoryEntry[]
+}
+
+model MemoryEntry {
+  id              String         @id @default(cuid())
+  categoryId      String
+  content         String
+  contentKey      String
+  origin          String
+  sourceSessionId String?
+  sourceAgentId   String?
+  revision        Int            @default(1)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  category        MemoryCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId, updatedAt])
+}

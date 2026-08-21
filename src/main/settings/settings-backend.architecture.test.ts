@@ -657,7 +657,10 @@ describe('Settings backend ownership architecture', () => {
       'currentModelCall',
       'listModelsCall',
       'viewImageCall',
-      'requestUserInput'
+      'requestUserInput',
+      'memoryListCategories',
+      'memorySearch',
+      'memoryRemember'
     ])
     expect(
       stringSetValues(settingsPaths.notebookLocalRpcServer, 'SKILL_IMPORT_RPC_METHODS')

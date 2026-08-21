@@ -489,6 +489,76 @@
       "tableName": "GrantedLocalRoot",
       "name": "GrantedLocalRoot_access_check",
       "expression": "\"access\" IN ('ro', 'rw')"
+    },
+    {
+      "tableName": "MemorySettings",
+      "name": "MemorySettings_id_check",
+      "expression": "\"id\" = 'memory-settings'"
+    },
+    {
+      "tableName": "MemorySettings",
+      "name": "MemorySettings_enabled_check",
+      "expression": "\"enabled\" IN (false, true)"
+    },
+    {
+      "tableName": "MemorySettings",
+      "name": "MemorySettings_revision_check",
+      "expression": "\"revision\" >= 0"
+    },
+    {
+      "tableName": "MemoryCategory",
+      "name": "MemoryCategory_shape_check",
+      "expression": "((\"systemKey\" = 'about-you' AND \"name\" IS NULL AND \"nameKey\" IS NULL AND \"guidance\" = '' AND \"autoRecall\" = true) OR (\"systemKey\" IS NULL AND \"name\" IS NOT NULL AND \"nameKey\" IS NOT NULL))"
+    },
+    {
+      "tableName": "MemoryCategory",
+      "name": "MemoryCategory_name_check",
+      "expression": "\"name\" IS NULL OR length(trim(\"name\")) BETWEEN 1 AND 64"
+    },
+    {
+      "tableName": "MemoryCategory",
+      "name": "MemoryCategory_nameKey_check",
+      "expression": "\"nameKey\" IS NULL OR length(\"nameKey\") BETWEEN 1 AND 64"
+    },
+    {
+      "tableName": "MemoryCategory",
+      "name": "MemoryCategory_guidance_check",
+      "expression": "length(\"guidance\") <= 1000"
+    },
+    {
+      "tableName": "MemoryCategory",
+      "name": "MemoryCategory_autoRecall_check",
+      "expression": "\"autoRecall\" IN (false, true)"
+    },
+    {
+      "tableName": "MemoryCategory",
+      "name": "MemoryCategory_revision_check",
+      "expression": "\"revision\" >= 1"
+    },
+    {
+      "tableName": "MemoryEntry",
+      "name": "MemoryEntry_content_check",
+      "expression": "length(trim(\"content\")) BETWEEN 1 AND 4000"
+    },
+    {
+      "tableName": "MemoryEntry",
+      "name": "MemoryEntry_contentKey_check",
+      "expression": "length(\"contentKey\") BETWEEN 1 AND 4000"
+    },
+    {
+      "tableName": "MemoryEntry",
+      "name": "MemoryEntry_origin_check",
+      "expression": "\"origin\" IN ('user', 'agent')"
+    },
+    {
+      "tableName": "MemoryEntry",
+      "name": "MemoryEntry_source_check",
+      "expression": "(\"origin\" = 'user' AND \"sourceSessionId\" IS NULL AND \"sourceAgentId\" IS NULL) OR (\"origin\" = 'agent' AND \"sourceSessionId\" IS NOT NULL)"
+    },
+    {
+      "tableName": "MemoryEntry",
+      "name": "MemoryEntry_revision_check",
+      "expression": "\"revision\" >= 1"
     }
   ]
 }

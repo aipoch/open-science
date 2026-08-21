@@ -11,6 +11,7 @@ import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
@@ -56,6 +57,7 @@ beforeAll(async () => {
     import('./ConnectorImportView'),
     import('./ConnectorsPanel'),
     import('./GeneralPanel'),
+    import('./MemoryPanel'),
     import('./NetworkPanel'),
     import('./PermissionsPanel'),
     import('./RemoteControlPanel'),
@@ -243,6 +245,32 @@ const installApi = (): void => {
     compute: {
       list: vi.fn().mockResolvedValue([])
     },
+    memory: {
+      snapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        enabled: false,
+        categories: [
+          {
+            id: 'memory-category-about-you',
+            systemKey: 'about-you',
+            autoRecall: true,
+            revision: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            entries: []
+          }
+        ]
+      }),
+      setEnabled: vi.fn(),
+      createCategory: vi.fn(),
+      updateCategory: vi.fn(),
+      deleteCategory: vi.fn(),
+      createEntry: vi.fn(),
+      updateEntry: vi.fn(),
+      deleteEntry: vi.fn(),
+      clearAll: vi.fn(),
+      onChanged: vi.fn(() => vi.fn())
+    },
     tags: {
       snapshot: vi.fn().mockResolvedValue({
         revision: 1,
@@ -260,6 +288,7 @@ beforeEach(() => {
   useProjectStore.setState(createInitialProjectState())
   useSessionStore.setState(createInitialSessionState())
   useComputeStore.setState(createInitialComputeState())
+  useMemoryStore.setState(createInitialMemoryState())
   useTagStore.setState(createInitialTagState())
   useRuntimeSettingsStore.setState({
     envs: null,
@@ -381,6 +410,15 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('gives Memory a definite-height owner so its note list scrolls internally', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Memory')?.click())
+
+    const panel = document.body.querySelector<HTMLElement>('[data-slot="memory-panel"]')
+    expect(panel).not.toBeNull()
+    expect(panel?.parentElement?.className.split(/\s+/)).toContain('h-full')
+  })
+
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
       revision: 2,
@@ -721,7 +759,7 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
+    // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Memory, Compute, Network)
     // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Remote, Usage, General).
     // Feedback and Archived are anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
@@ -740,19 +778,20 @@ describe('SettingsPage layout', () => {
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
-    expect(navItems[3]?.textContent).toContain('Compute')
-    expect(navItems[4]?.textContent).toContain('Network')
-    expect(navItems[5]?.textContent).toContain('Model')
-    expect(navItems[6]?.textContent).toContain('Agent')
-    expect(navItems[7]?.textContent).toContain('Tags')
-    expect(navItems[8]?.textContent).toContain('Permissions')
-    expect(navItems[9]?.textContent).toContain('Runtimes')
-    expect(navItems[10]?.textContent).toContain('Storage')
-    expect(navItems[11]?.textContent?.trim()).toBe('Remote')
-    expect(navItems[12]?.textContent).toContain('Usage')
-    expect(navItems[13]?.textContent).toContain('General')
-    expect(navItems[14]?.textContent).toContain('Feedback')
-    expect(navItems[15]?.textContent).toContain('Archived')
+    expect(navItems[3]?.textContent).toContain('Memory')
+    expect(navItems[4]?.textContent).toContain('Compute')
+    expect(navItems[5]?.textContent).toContain('Network')
+    expect(navItems[6]?.textContent).toContain('Model')
+    expect(navItems[7]?.textContent).toContain('Agent')
+    expect(navItems[8]?.textContent).toContain('Tags')
+    expect(navItems[9]?.textContent).toContain('Permissions')
+    expect(navItems[10]?.textContent).toContain('Runtimes')
+    expect(navItems[11]?.textContent).toContain('Storage')
+    expect(navItems[12]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[13]?.textContent).toContain('Usage')
+    expect(navItems[14]?.textContent).toContain('General')
+    expect(navItems[15]?.textContent).toContain('Feedback')
+    expect(navItems[16]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()

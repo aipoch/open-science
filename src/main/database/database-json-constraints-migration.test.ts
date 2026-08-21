@@ -146,10 +146,11 @@ describe('database JSON constraints migration', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_session_projection'
+        '0013_session_projection',
+        '0014_agent_memory'
       ],
       from: '0007_notification_attention_metadata',
-      to: '0013_session_projection'
+      to: '0014_agent_memory'
     })
     await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
       code: 'ENOENT'
@@ -161,6 +162,7 @@ describe('database JSON constraints migration', () => {
     await expect(
       access(`${databasePath}.before-0013_session_projection.backup`)
     ).resolves.toBeUndefined()
+    await expect(access(`${databasePath}.before-0014_agent_memory.backup`)).resolves.toBeUndefined()
 
     await expect(
       client.$queryRaw<Array<{ scope: string; reviewerLog: string }>>`

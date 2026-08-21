@@ -2,6 +2,7 @@ import type { EnvironmentCheckId, EnvironmentCheckItem } from '../../../../share
 import type { ArchivedView } from './ArchivedPanel'
 import type { ComputeView } from './ComputePanel'
 import type { ConnectorsView } from './ConnectorsPanel'
+import type { MemoryView } from './MemoryPanel'
 import type { SkillsView } from './SkillsPanel'
 import type { SpecialistsView } from './SpecialistsPanel'
 
@@ -11,6 +12,7 @@ export type SettingsPanelId =
   | 'skills'
   | 'connectors'
   | 'specialists'
+  | 'memory'
   | 'tags'
   | 'compute'
   | 'permissions'
@@ -43,9 +45,11 @@ export type SettingsRoute = {
               ? { panel: Panel; view: SpecialistsView }
               : Panel extends 'archived'
                 ? { panel: Panel; view: ArchivedView }
-                : Panel extends 'tags'
-                  ? { panel: Panel; tagId?: string }
-                  : { panel: Panel }
+                : Panel extends 'memory'
+                  ? { panel: Panel; view: MemoryView }
+                  : Panel extends 'tags'
+                    ? { panel: Panel; tagId?: string }
+                    : { panel: Panel }
 }[SettingsPanelId]
 
 export const INITIAL_SETTINGS_ROUTE: SettingsRoute = {
@@ -62,6 +66,7 @@ export const settingsPanelRoute = (panel: SettingsPanelId): SettingsRoute => {
     case 'compute':
     case 'specialists':
     case 'archived':
+    case 'memory':
       return { panel, view: { kind: 'list' } }
     default:
       return { panel }

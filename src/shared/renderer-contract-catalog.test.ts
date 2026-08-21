@@ -215,6 +215,15 @@ describe('renderer contract catalog', () => {
 
   it('marks the runtime-validated command slice', () => {
     expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
+      'memory.clearAll',
+      'memory.createCategory',
+      'memory.createEntry',
+      'memory.deleteCategory',
+      'memory.deleteEntry',
+      'memory.setEnabled',
+      'memory.snapshot',
+      'memory.updateCategory',
+      'memory.updateEntry',
       'projects.create',
       'projects.delete',
       'projects.get',
@@ -230,6 +239,15 @@ describe('renderer contract catalog', () => {
       'tags.update'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
+      'memory:clear-all',
+      'memory:create-category',
+      'memory:create-entry',
+      'memory:delete-category',
+      'memory:delete-entry',
+      'memory:set-enabled',
+      'memory:snapshot',
+      'memory:update-category',
+      'memory:update-entry',
       'projects:create',
       'projects:delete',
       'projects:get',

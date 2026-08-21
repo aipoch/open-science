@@ -191,6 +191,9 @@ type AcpRuntimeOptions = {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
+  memory?: {
+    recallForPrompt(requestText: string): Promise<string | undefined>
+  }
   skillImport?: AcpRuntimeSkillImportOptions
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
@@ -302,6 +305,7 @@ type AcpRuntimeNotebookOptions = {
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
+  memoryTools?: boolean
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string

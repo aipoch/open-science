@@ -547,6 +547,18 @@ const api: OpenScienceAPI = {
     setAssignment: (request) => electronRendererContracts.invoke('tags.setAssignment', request),
     onChanged: (listener) => electronRendererContracts.subscribe('tags.onChanged', listener)
   },
+  memory: {
+    snapshot: () => electronRendererContracts.invoke('memory.snapshot'),
+    setEnabled: (request) => electronRendererContracts.invoke('memory.setEnabled', request),
+    createCategory: (request) => electronRendererContracts.invoke('memory.createCategory', request),
+    updateCategory: (request) => electronRendererContracts.invoke('memory.updateCategory', request),
+    deleteCategory: (request) => electronRendererContracts.invoke('memory.deleteCategory', request),
+    createEntry: (request) => electronRendererContracts.invoke('memory.createEntry', request),
+    updateEntry: (request) => electronRendererContracts.invoke('memory.updateEntry', request),
+    deleteEntry: (request) => electronRendererContracts.invoke('memory.deleteEntry', request),
+    clearAll: () => electronRendererContracts.invoke('memory.clearAll'),
+    onChanged: (listener) => electronRendererContracts.subscribe('memory.onChanged', listener)
+  },
   // Files exposes metadata pages only. Thumbnail/full-preview bytes continue through the existing
   // artifact/upload APIs after a visible item has been selected or rendered.
   projectFiles: {

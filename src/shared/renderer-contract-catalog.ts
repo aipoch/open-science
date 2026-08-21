@@ -218,6 +218,13 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['listDrives', 'local-fs:list-drives', LOCAL], ['listGrantedRoots', 'local-fs:granted-roots:list', LOCAL], ['openPath', 'local-fs:open-path', LOCAL], ['readPreview', 'local-fs:read-preview', LOCAL],
     ['removeGrantedRoot', 'local-fs:granted-roots:remove', LOCAL], ['reveal', 'local-fs:reveal', LOCAL], ['setGrantedRootAccess', 'local-fs:granted-roots:set-access', LOCAL],
   ]),
+  group('memory', 'memory', [
+    ['onChanged', 'memory:changed', EVENT], ['clearAll', 'memory:clear-all', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['createCategory', 'memory:create-category', WEB, undefined, undefined, RUNTIME_VALIDATED], ['createEntry', 'memory:create-entry', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['deleteCategory', 'memory:delete-category', WEB, undefined, undefined, RUNTIME_VALIDATED], ['deleteEntry', 'memory:delete-entry', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['setEnabled', 'memory:set-enabled', WEB, undefined, undefined, RUNTIME_VALIDATED], ['snapshot', 'memory:snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['updateCategory', 'memory:update-category', WEB, undefined, undefined, RUNTIME_VALIDATED], ['updateEntry', 'memory:update-entry', WEB, undefined, undefined, RUNTIME_VALIDATED],
+  ]),
   group('logs', 'logs', [
     ['getPath', 'logs:get-path'], ['openFile', 'logs:open-file', LOCAL], ['revealInFolder', 'logs:reveal-in-folder', LOCAL],
   ]),
