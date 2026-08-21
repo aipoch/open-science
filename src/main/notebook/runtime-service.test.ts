@@ -3091,6 +3091,68 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('keeps a live root-Frame control run running when the renderer reads Session state', async () => {
+    const root = await createStorageRoot()
+    const executionStarted = createDeferred<void>()
+    const releaseExecution = createDeferred<void>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executionStarted.resolve()
+          await releaseExecution.promise
+          return {
+            status: 'completed',
+            stdout: 'done\n',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const sessionId = 'codex-session'
+    const rootFrameId = 'root-frame-pending-session-1'
+    const executing = service.executeControl({
+      projectId: 'default-project',
+      sessionId,
+      workspaceCwd: '/workspace',
+      code: 'await host.mcp("pubmed", "search_articles", {})',
+      executionInvocationId: 'invocation-1',
+      provenanceContext: {
+        rootFrameId,
+        agentFrameId: rootFrameId,
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+
+    await executionStarted.promise
+    try {
+      const state = await service.state({
+        projectId: 'default-project',
+        sessionId,
+        workspaceCwd: '/workspace'
+      })
+
+      expect(state.runs).toContainEqual(
+        expect.objectContaining({
+          executionInvocationId: 'invocation-1',
+          status: 'running'
+        })
+      )
+    } finally {
+      releaseExecution.resolve()
+      await executing
+    }
+  })
+
   it('serializes overlapping runs on the shared interpreter instead of failing the second', async () => {
     const root = await createStorageRoot()
     let active = 0
