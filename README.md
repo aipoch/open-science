@@ -43,6 +43,7 @@ Open Science supports computational and data-intensive research across disciplin
 - [Frequently Asked Questions](#frequently-asked-questions)
 - [Get Involved](#get-involved)
 - [License](#license)
+- [Star History](#star-history)
 
 ## 🚀 Quick Start
 
@@ -424,3 +425,13 @@ Before opening a public issue, remove API Keys, tokens, private file paths, unpu
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
+
+## Star History
+
+<a href="https://star-history.dera.page/#aipoch/open-science&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=aipoch/open-science&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=aipoch/open-science&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=aipoch/open-science&type=date&legend=top-left" />
+ </picture>
+</a>
