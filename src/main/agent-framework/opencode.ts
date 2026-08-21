@@ -76,6 +76,14 @@ const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; n
 // plaintext key OFF disk — opencode.json only ever holds the reference, never the secret.
 const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
 
+// OpenCode rejects a model limit that declares context without output. Keep maxOutputTokens optional
+// in the provider model, but reserve a conservative adapter-only output budget when it is absent so
+// the generated config remains valid and OpenCode can calculate its native compaction threshold.
+const OPENCODE_DEFAULT_OUTPUT_LIMIT = 32_000
+
+const opencodeOutputLimit = (contextWindow: number, configured?: number): number =>
+  Math.min(configured ?? OPENCODE_DEFAULT_OUTPUT_LIMIT, contextWindow)
+
 const opencodeApiKeyEnv = (provider: ResolvedProvider): string =>
   provider.agentProviderId
     ? `${OPENCODE_API_KEY_ENV}_${provider.agentProviderId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}`
@@ -246,7 +254,7 @@ const buildOpencodeModelConfig = (
           limit: {
             context: provider.contextWindow,
             ...(provider.maxInputTokens === undefined ? {} : { input: provider.maxInputTokens }),
-            ...(provider.maxOutputTokens === undefined ? {} : { output: provider.maxOutputTokens })
+            output: opencodeOutputLimit(provider.contextWindow, provider.maxOutputTokens)
           }
         })
   }

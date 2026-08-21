@@ -197,7 +197,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(content.provider.anthropic.options.baseURL).toBe('https://gateway.example/v1')
   })
 
-  it('does not invent an output limit for a custom model', () => {
+  it('reserves the output limit required by OpenCode when the provider leaves it unset', () => {
     const config = opencodeFramework.prepareModelConfig(
       {
         type: 'custom',
@@ -211,7 +211,8 @@ describe('opencodeFramework.prepareModelConfig', () => {
 
     const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(content.provider.anthropic.models['small-context-model'].limit).toEqual({
-      context: 16_000
+      context: 16_000,
+      output: 16_000
     })
   })
 
@@ -415,13 +416,13 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const expectedModels = {
       'deepseek-v4-pro': {
         options: { reasoningEffort: 'high', thinking: { type: 'enabled' } },
-        limit: { context: 128_000 }
+        limit: { context: 128_000, output: 32_000 }
       },
       'deepseek-v3.2': {
         attachment: true,
         modalities: { input: ['text', 'image'] },
         options: { reasoningEffort: 'low', thinking: { type: 'enabled' } },
-        limit: { context: 64_000 }
+        limit: { context: 64_000, output: 32_000 }
       }
     }
 
@@ -493,7 +494,7 @@ describe('buildOpencodeConfig', () => {
     // instead of ignoring it and falling back to its own default.
     expect(config.model).toBe('anthropic/deepseek-v4-pro')
     expect(config.provider.anthropic.models).toEqual({
-      'deepseek-v4-pro': { limit: { context: 128_000 } }
+      'deepseek-v4-pro': { limit: { context: 128_000, output: 32_000 } }
     })
     // The key is referenced via opencode env interpolation, never emitted as a plaintext literal.
     expect(config.provider.anthropic.options).toEqual({
@@ -516,7 +517,7 @@ describe('buildOpencodeConfig', () => {
     )
   })
 
-  it('replaces stale app-generated model limits without preserving an output cap', () => {
+  it('replaces stale app-generated model limits with the current adapter output reserve', () => {
     const config = JSON.parse(
       buildOpencodeConfig(
         {
@@ -540,7 +541,8 @@ describe('buildOpencodeConfig', () => {
     )
 
     expect(config.provider.anthropic.models['deepseek-v4-pro'].limit).toEqual({
-      context: 64_000
+      context: 64_000,
+      output: 32_000
     })
   })
 
