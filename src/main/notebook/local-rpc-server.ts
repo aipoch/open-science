@@ -84,6 +84,7 @@ import type {
 } from './host-view-image-service'
 
 const log = createLogger('notebook:local-rpc')
+const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
 
 type NotebookLocalRpcServerOptions = {
   token?: string
@@ -511,7 +512,7 @@ class NotebookLocalRpcServer {
   private readonly consumedExecutionToolCalls = new Map<string, Set<string>>()
   private readonly computeSubmissionInvocations = new Map<
     string,
-    Map<string, { fingerprint: string; submission: Promise<unknown> }>
+    Map<string, { fingerprint: string; submission: Promise<unknown>; completed: boolean }>
   >()
 
   constructor(
@@ -2172,7 +2173,9 @@ class NotebookLocalRpcServer {
           }
 
           const sessionInvocations = this.computeSubmissionInvocations.get(sessionId) ?? new Map()
-          const fingerprint = JSON.stringify([providerId, intent, command, options])
+          const fingerprint = createHash('sha256')
+            .update(JSON.stringify([providerId, intent, command, options]))
+            .digest('hex')
           const existing = sessionInvocations.get(invocationId)
           if (existing) {
             if (existing.fingerprint !== fingerprint) {
@@ -2191,10 +2194,23 @@ class NotebookLocalRpcServer {
             command,
             options
           )
-          sessionInvocations.set(invocationId, { fingerprint, submission })
+          const invocation = { fingerprint, submission, completed: false }
+          sessionInvocations.set(invocationId, invocation)
           this.computeSubmissionInvocations.set(sessionId, sessionInvocations)
           try {
-            return await submission
+            const result = await submission
+            invocation.completed = true
+            let completedCount = 0
+            for (const cached of sessionInvocations.values()) {
+              if (cached.completed) completedCount += 1
+            }
+            for (const [cachedInvocationId, cached] of sessionInvocations) {
+              if (completedCount <= MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION) break
+              if (!cached.completed) continue
+              sessionInvocations.delete(cachedInvocationId)
+              completedCount -= 1
+            }
+            return result
           } catch (error) {
             if (sessionInvocations.get(invocationId)?.submission === submission) {
               sessionInvocations.delete(invocationId)
