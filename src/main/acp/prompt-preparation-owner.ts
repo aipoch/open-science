@@ -249,7 +249,7 @@ class AcpPromptPreparationOwner {
           promptMessageId:
             input.request.provenanceContext?.promptMessageId ??
             input.fallbackPromptMessageId ??
-            `prompt-unbound-${input.request.sessionId}`,
+            `prompt-unbound-${input.request.sessionId}-${input.skillImportTurnToken}`,
           uploads: prepared.turnInputs.uploads,
           references: prepared.turnInputs.references
         })

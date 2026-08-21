@@ -50,6 +50,12 @@ describe('SubagentModelSelect', () => {
     expect(effort?.textContent).toContain('Same as main model')
     expect(effort?.disabled).toBe(true)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-slot="settings-row"]')?.className).toContain(
+      'lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]'
+    )
+    expect(document.body.querySelector('[data-slot="settings-row"]')?.className).not.toContain(
+      'md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]'
+    )
     expect(document.body.querySelectorAll('[data-slot="settings-field"]')).toHaveLength(2)
     act(() => root.unmount())
   })

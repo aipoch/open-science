@@ -7,7 +7,7 @@
 // resolving to nothing. That is the one failure mode natural-language keys add, and it is the reason
 // this file grew a source scan.
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import i18next from 'i18next'
@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest'
 import fr from '../locales/fr.json'
 import ja from '../locales/ja.json'
 import ko from '../locales/ko.json'
+import ru from '../locales/ru.json'
 import zhHans from '../locales/zh-Hans.json'
 import zhHant from '../locales/zh-Hant.json'
 import {
@@ -35,6 +36,7 @@ const sourceCatalogs = {
   fr,
   ja,
   ko,
+  ru,
   'zh-Hans': zhHans,
   'zh-Hant': zhHant
 } as const
@@ -67,9 +69,20 @@ const REQUIRED_PLURAL_CATEGORIES = {
   fr: ['one', 'many', 'other'],
   ja: ['other'],
   ko: ['other'],
+  ru: ['one', 'few', 'many', 'other'],
   'zh-Hans': ['other'],
   'zh-Hant': ['other']
 } as const satisfies Record<TranslatedLocale, readonly string[]>
+
+const pluralCategoryOf = (key: string): string | undefined => {
+  const suffix = key.split('_').at(-1)
+  return suffix && PLURAL_CATEGORIES.has(suffix) ? suffix : undefined
+}
+
+const withoutPluralCategory = (key: string): string => {
+  const category = pluralCategoryOf(key)
+  return category ? key.slice(0, -(category.length + 1)) : key
+}
 // This key is selected by a lookup table whose caller always supplies count=0, even though the copy
 // itself has no interpolation marker. Keep the exceptional contract explicit; every other counted
 // key is discovered by its {{count}} marker below.
@@ -82,6 +95,11 @@ describe('supported catalog registration', () => {
 })
 
 describe('runtime catalog fallback', () => {
+  it('ships and registers the Russian catalog', () => {
+    expect(existsSync(join(__dirname, '..', 'locales', 'ru.json'))).toBe(true)
+    expect('ru' in resources).toBe(true)
+  })
+
   it('keeps valid translations without copying the catalog', () => {
     const valid = {
       'Hello {{name}}': '你好，{{name}}',
@@ -224,21 +242,29 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
   it('uses only the plural categories the translated grammar has', () => {
     const allowed = new Set<string>(REQUIRED_PLURAL_CATEGORIES[locale])
     const wrong = Object.keys(catalog(locale))
-      .map((key) => ({ key, suffix: key.split('_').at(-1) ?? '' }))
-      .filter(({ suffix }) => PLURAL_CATEGORIES.has(suffix) && !allowed.has(suffix))
+      .map((key) => ({ key, suffix: pluralCategoryOf(key) }))
+      .filter(({ suffix }) => suffix && !allowed.has(suffix))
       .map(({ key }) => key)
 
     expect(wrong).toEqual([])
   })
 
-  it('stores every counted translation under a locale plural category', () => {
-    const bareCountedKeys = Object.keys(catalog(locale)).filter(
-      (key) =>
-        englishOf(key).includes('{{count}}') &&
-        ![...PLURAL_CATEGORIES].some((category) => key.endsWith(`_${category}`))
+  it('stores every counted translation under every category the locale selects', () => {
+    const entries = catalog(locale)
+    const categories = REQUIRED_PLURAL_CATEGORIES[locale]
+    const countedKeys = Object.keys(entries).filter((key) => englishOf(key).includes('{{count}}'))
+    const stems = new Set(countedKeys.map(withoutPluralCategory))
+    const invalid = countedKeys.filter((key) => {
+      const category = pluralCategoryOf(key)
+      return !category || !categories.includes(category as never)
+    })
+    const missing = [...stems].flatMap((stem) =>
+      categories.flatMap((category) =>
+        entries[`${stem}_${category}`] ? [] : [`${stem}_${category}`]
+      )
     )
 
-    expect(bareCountedKeys).toEqual([])
+    expect([...invalid, ...missing]).toEqual([])
   })
 
   it('provides every plural category selected by the locale at runtime', () => {
@@ -259,13 +285,12 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
 
   it('suffixes dynamic counted keys that have no interpolation marker', () => {
     const entries = catalog(locale)
-    const invalid = COUNTED_KEYS_WITHOUT_MARKER.filter(
-      (key) =>
-        entries[key] !== undefined ||
-        REQUIRED_PLURAL_CATEGORIES[locale].some(
-          (category) => entries[`${key}_${category}`] === undefined
-        )
-    )
+    const invalid = COUNTED_KEYS_WITHOUT_MARKER.flatMap((key) => [
+      ...(entries[key] === undefined ? [] : [key]),
+      ...REQUIRED_PLURAL_CATEGORIES[locale].flatMap((category) =>
+        entries[`${key}_${category}`] === undefined ? [`${key}_${category}`] : []
+      )
+    ])
 
     expect(invalid).toEqual([])
   })
@@ -306,6 +331,10 @@ describe('dynamic counted lookup translations', () => {
     {
       locale: 'ko' as const,
       expected: ['방금 확인함', '3시간 전에 확인함', '3일 전', '3일 전']
+    },
+    {
+      locale: 'ru' as const,
+      expected: ['проверено только что', 'проверено 3 ч назад', '3 дн. назад', '3 дн. назад']
     }
   ])('resolves $locale lookup-table keys through _other', async ({ locale, expected }) => {
     const instance = i18next.createInstance()
@@ -324,6 +353,50 @@ describe('dynamic counted lookup translations', () => {
       instance.t('{{count}}d ago', { count: 3 }),
       instance.t('{{count}} days ago', { count: 3 })
     ]).toEqual(expected)
+  })
+
+  it('selects Russian one, few, many, and other forms', async () => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'ru',
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { ru: { translation: catalog('ru') } }
+    })
+
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} files', { count }))).toEqual([
+      '1 файл',
+      '2 файла',
+      '5 файлов',
+      '1.5 файла'
+    ])
+
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} agents', { count }))).toEqual([
+      '1 агент',
+      '2 агента',
+      '5 агентов',
+      '1.5 агента'
+    ])
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} steps', { count }))).toEqual([
+      '1 шаг',
+      '2 шага',
+      '5 шагов',
+      '1.5 шага'
+    ])
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} jobs', { count }))).toEqual([
+      '1 задание',
+      '2 задания',
+      '5 заданий',
+      '1.5 задания'
+    ])
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} subagents', { count }))).toEqual([
+      '1 субагент',
+      '2 субагента',
+      '5 субагентов',
+      '1.5 субагента'
+    ])
   })
 })
 
@@ -483,6 +556,19 @@ describe('mandatory product glossary', () => {
       'Token usage': '토큰 사용량',
       'Claude setup token': 'Claude 설정 토큰',
       'Token: {{masked}}': '토큰: {{masked}}'
+    },
+    ru: {
+      Agent: 'Агент',
+      Skills: 'Навыки',
+      Specialist: 'Специалист',
+      Specialists: 'Специалисты',
+      Marketplace: 'Маркетплейс',
+      Connector: 'Коннектор',
+      Main: 'Главный агент',
+      Shell: 'Командная строка',
+      'Token usage': 'Использование токенов',
+      'Claude setup token': 'Токен настройки Claude',
+      'Token: {{masked}}': 'Токен: {{masked}}'
     }
   } satisfies Record<TranslatedLocale, Record<string, string>>
 
@@ -493,6 +579,19 @@ describe('mandatory product glossary', () => {
     )
 
     expect(actual).toEqual(expected)
+  })
+
+  it('uses native copy for the provider-controlled default hint', () => {
+    expect(
+      Object.fromEntries(TRANSLATED.map((locale) => [locale, catalog(locale)['provider default']]))
+    ).toEqual({
+      fr: 'réglage du fournisseur',
+      ja: 'プロバイダー設定を使用',
+      ko: '모델 제공업체 설정 사용',
+      ru: 'настройка поставщика',
+      'zh-Hans': '由服务商决定',
+      'zh-Hant': '由服務商決定'
+    })
   })
 
   it('uses the chosen French agent framework term in every sentence', () => {
@@ -713,7 +812,8 @@ describe('mandatory product glossary', () => {
       'zh-Hans': /命令行/,
       'zh-Hant': /命令列/,
       ja: /シェル/,
-      ko: /셸/
+      ko: /셸/,
+      ru: /командн/iu
     }[locale]
     const offenders = Object.entries(catalog(locale))
       .filter(([key]) => /\bshell\b/i.test(englishOf(key)))
@@ -731,11 +831,16 @@ describe('mandatory product glossary', () => {
         'zh-Hans': '主智能体',
         'zh-Hant': '主智能體',
         ja: 'メインエージェント',
-        ko: '메인 에이전트'
+        ko: '메인 에이전트',
+        ru: 'главн'
       }[locale]
       const offenders = Object.entries(catalog(locale))
         .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
-        .filter(([, value]) => !value.toLocaleLowerCase().includes(expected.toLocaleLowerCase()))
+        .filter(([, value]) =>
+          locale === 'ru'
+            ? !value.toLocaleLowerCase('ru').includes(expected) || !/агент/iu.test(value)
+            : !value.toLocaleLowerCase().includes(expected.toLocaleLowerCase())
+        )
         .map(([key]) => key)
 
       expect(offenders).toEqual([])
@@ -749,6 +854,7 @@ describe('mandatory product glossary', () => {
     /\.skill\b/g,
     /skill:\/\//g,
     /host\.skill\b/g,
+    /host\.mcp\("[^"]+", …\)/g,
     /AGENTS\.md/g,
     /ssh-agent/g,
     /setup-token/g,
@@ -847,10 +953,21 @@ describe('mandatory product glossary', () => {
       skill: '스킬',
       untranslatedAgent: /\b(?:sub)?agents?\b/i,
       untranslatedSkill: /\bskills?\b/i
+    },
+    ru: {
+      agent: /агент/iu,
+      skill: /навык/iu,
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
     }
   } satisfies Record<
     TranslatedLocale,
-    { agent: string; skill: string; untranslatedAgent: RegExp; untranslatedSkill: RegExp }
+    {
+      agent: string | RegExp
+      skill: string | RegExp
+      untranslatedAgent: RegExp
+      untranslatedSkill: RegExp
+    }
   >
 
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
@@ -873,10 +990,12 @@ describe('mandatory product glossary', () => {
         .filter(
           ({ source: pattern, untranslated, expected: term }) =>
             pattern.test(source) &&
-            (!prose.toLocaleLowerCase().includes(term.toLocaleLowerCase()) ||
+            (!(typeof term === 'string'
+              ? prose.toLocaleLowerCase(locale).includes(term.toLocaleLowerCase(locale))
+              : term.test(prose)) ||
               untranslated.test(prose))
         )
-        .map(({ expected: term }) => `${key}: ${term}`)
+        .map(({ expected: term }) => `${key}: ${String(term)}`)
     })
 
     expect(offenders).toEqual([])
@@ -893,7 +1012,8 @@ describe('mandatory product glossary', () => {
     'zh-Hans': { credential: '令牌', model: '词元' },
     'zh-Hant': { credential: '權杖', model: '詞元' },
     ja: { credential: 'トークン', model: 'トークン' },
-    ko: { credential: '토큰', model: '토큰' }
+    ko: { credential: '토큰', model: '토큰' },
+    ru: { credential: 'токен', model: 'токен' }
   } satisfies Record<TranslatedLocale, { credential: string; model: string }>
 
   it.each(TRANSLATED)('%s translates token according to credential or model context', (locale) => {
@@ -906,7 +1026,7 @@ describe('mandatory product glossary', () => {
       const term = credentialTokenSource.some((pattern) => pattern.test(source))
         ? expected.credential
         : expected.model
-      return !prose.toLocaleLowerCase().includes(term.toLocaleLowerCase()) ||
+      return !prose.toLocaleLowerCase(locale).includes(term.toLocaleLowerCase(locale)) ||
         /\btokens?\b/i.test(prose)
         ? [`${key}: ${term}`]
         : []
@@ -942,6 +1062,648 @@ describe('mandatory product glossary', () => {
     })
 
     expect(offenders).toEqual([])
+  })
+
+  it('uses Russian glossary terms throughout user-visible prose', () => {
+    const entries = Object.entries(catalog('ru'))
+    const glossary = [
+      { source: /\bconversations?\b/i, translated: /диалог/iu },
+      { source: /\bproviders?\b/i, translated: /поставщик/iu },
+      { source: /\bCompute Hosts?\b/i, translated: /вычислительн[а-яё]*\s+уз/iu },
+      { source: /\bicons?\b/i, translated: /знач(?:ок|к)/iu },
+      { source: /\bTags?\b/i, translated: /тег/iu },
+      { source: /\bCapabilit(?:y|ies)\b/i, translated: /возможност/iu }
+    ]
+    const glossaryOffenders = entries.flatMap(([key, value]) => {
+      const source = withoutTechnicalIdentifiers(englishOf(key))
+      const translation = withoutTechnicalIdentifiers(value)
+      return glossary
+        .filter(
+          ({ source: sourcePattern, translated }) =>
+            sourcePattern.test(source) && !translated.test(translation)
+        )
+        .map(() => key)
+    })
+    const connectorOffenders = entries
+      .filter(([key]) => /\bConnectors?\b/i.test(withoutTechnicalIdentifiers(englishOf(key))))
+      .filter(([, value]) => !/коннектор/iu.test(withoutTechnicalIdentifiers(value)))
+      .map(([key]) => key)
+    const credentialOffenders = entries
+      .filter(([key]) => /\bcredentials?\b/i.test(withoutTechnicalIdentifiers(englishOf(key))))
+      .filter(([, value]) => !/уч[её]тн[а-яё]*\s+данн/iu.test(withoutTechnicalIdentifiers(value)))
+      .map(([key]) => key)
+
+    expect({ glossaryOffenders, connectorOffenders, credentialOffenders }).toEqual({
+      glossaryOffenders: [],
+      connectorOffenders: [],
+      credentialOffenders: []
+    })
+  })
+
+  it('preserves Russian networking and product literals', () => {
+    const literals = ['Claude Code', 'Wi-Fi', '*.internal.example', '10.0.0.0/8']
+    const offenders = Object.entries(catalog('ru')).flatMap(([key, value]) =>
+      literals
+        .filter((literal) => englishOf(key).includes(literal) && !value.includes(literal))
+        .map((literal) => `${key}: ${literal}`)
+    )
+
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('Russian catalog quality', () => {
+  it('does not leave generic English implementation terms in Russian prose', () => {
+    const retained = [
+      /\{\{\w+\}\}/g,
+      /<(?:code|path)>.*?<\/(?:code|path)>/g,
+      /Specialist Marketplace protocol/g,
+      /ssh-agent/g
+    ]
+    const offenders = Object.entries(catalog('ru'))
+      .filter(([, value]) => {
+        const prose = retained.reduce((text, pattern) => text.replace(pattern, ''), value)
+        return (
+          /\b(?:account|alias|backend|Beaker|connection|framework|frontmatter|job|module|output|partition|Provenance|runtimes?|Sandbox|Сandbox|Write)\b/i.test(
+            prose
+          ) || prose.includes('e.g.')
+        )
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not contain unrelated writing systems or inconsistent Side chat terminology', () => {
+    const entries = Object.entries(catalog('ru'))
+    const unrelatedScripts = entries
+      .filter(([, value]) => /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(value))
+      .map(([key]) => key)
+    const sideChat = entries
+      .filter(([key]) => englishOf(key).includes('Side chat'))
+      .filter(([, value]) => !/боков[а-яё]*\s+(?:чат|чате|чата)/iu.test(value))
+      .map(([key]) => key)
+
+    expect({ unrelatedScripts, sideChat }).toEqual({ unrelatedScripts: [], sideChat: [] })
+  })
+
+  it.each([
+    [
+      ".md files need a name and description in YAML frontmatter. .zip or .skill bundles must contain a SKILL.md. You'll confirm before anything is added.",
+      'Файлы .md должны содержать имя и описание в метаданных YAML. Архивы .zip и пакеты .skill должны содержать SKILL.md. Перед добавлением потребуется подтверждение.'
+    ],
+    [
+      'A reviewer agent checks every change before it lands.',
+      'Агент-рецензент проверяет каждое изменение перед его внесением.'
+    ],
+    ['Agent/framework overhead', 'Накладные расходы агента и фреймворка'],
+    [
+      'Base URL, key, and model for a Messages or Chat Completions endpoint',
+      'Базовый URL, ключ и модель для конечной точки Messages или Chat Completions'
+    ],
+    [
+      'Imported {{imported}} · skipped {{skipped}} · failed {{failed}}',
+      'Импортировано: {{imported}} · пропущено: {{skipped}} · с ошибкой: {{failed}}'
+    ],
+    [
+      'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.',
+      'Текущие локальные изменения невозможно восстановить после успешной перезаписи. При неудачной атомарной установке сохраняется текущая версия.'
+    ],
+    [
+      'Your local edits are preserved. Reload to get the latest version (your unsaved changes will be discarded), or cancel and try again.',
+      'Ваши локальные изменения сохранены. Перезагрузите страницу, чтобы получить последнюю версию (несохранённые изменения будут потеряны), или отмените действие и повторите попытку.'
+    ],
+    ['Preview uploaded attachment {{name}}', 'Предпросмотр загруженного вложения {{name}}'],
+    [
+      "Open Science will recreate the folder as you use it. Files from the old location won't be available until it's reconnected.",
+      'Open Science воссоздаст папку при следующем обращении к ней. Файлы из прежнего расположения будут недоступны, пока подключение не восстановится.'
+    ],
+    [
+      'Open Science could not finish recovering a previous project deletion. Retry recovery before archiving or deleting projects.',
+      'Open Science не удалось завершить восстановление после предыдущего удаления проекта. Повторите восстановление перед архивированием или удалением проектов.'
+    ],
+    ['SSH alias', 'Псевдоним SSH'],
+    [
+      'The Compute Host connection timed out.',
+      'Истекло время ожидания подключения к вычислительному узлу.'
+    ],
+    [
+      'Port must be an integer from 1 through 65535.',
+      'Порт должен быть целым числом от 1 до 65535.'
+    ],
+    [
+      ' (control tab falls back to most recent data kernel)',
+      '(вкладка управления возвращается к последнему ядру данных)'
+    ],
+    [
+      'A custom Connector with this name already exists.',
+      'Пользовательский коннектор с таким именем уже существует.'
+    ],
+    ['Agent installation blockers', 'Причины блокировки установки агента'],
+    ['Agent runtime', 'Среда выполнения агента'],
+    ['Agent runtime repair issues', 'Проблемы восстановления среды выполнения агента'],
+    ['Auto-discover from MCP server', 'Автоматически обнаруживать на сервере MCP'],
+    ['Auto-review', 'Автопроверка'],
+    [
+      'Claude sign-out did not complete. Try again.',
+      'Не удалось выйти из Claude. Повторите попытку.'
+    ],
+    ['Collapse sidebar panel', 'Свернуть боковую панель'],
+    [
+      'Current composition and terminal-run history for the active branch. Category values are estimates.',
+      'Текущая структура и история запусков в терминале для активной ветви. Значения категорий приблизительны.'
+    ],
+    ['Custom command', 'Пользовательская команда'],
+    ['Idle', 'Бездействует'],
+    ['Invalid JSON', 'Некорректный JSON'],
+    ['Invalid JSON: {{error}}', 'Некорректный JSON: {{error}}'],
+    ['API format', 'Формат API'],
+    ['API key', 'API-ключ'],
+    ['API key is required.', 'Укажите API-ключ.'],
+    ['Offline', 'Офлайн'],
+    ['Runtimes', 'Среды выполнения'],
+    [
+      'Preview — matches the list and picker.',
+      'Предпросмотр соответствует списку и средству выбора.'
+    ],
+    [
+      'Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.',
+      'Рекомендуется. Использует существующий вход Claude из ~/.claude. Один раз войдите через OAuth в браузере и используйте этот вход во всех инструментах Claude.'
+    ],
+    ['The selected folder is not usable.', 'Выбранную папку нельзя использовать.'],
+    [
+      'The source session was deleted before an applicable review was captured.',
+      'Исходная сессия была удалена до сохранения подходящей проверки.'
+    ],
+    ['Used by Auto-review', 'Используется автопроверкой'],
+    [
+      'Deletion failed and was rolled back.',
+      'Удаление завершилось ошибкой, и изменения были отменены.'
+    ],
+    [
+      'Owned Skill · v{{version}} · bundled by default.',
+      'Собственный навык · v{{version}} · включён по умолчанию.'
+    ],
+    [
+      'Saves a file as an artifact for this conversation.',
+      'Сохраняет файл как артефакт этого диалога.'
+    ],
+    [
+      'Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.',
+      'Удалённый доступ отключён на домашнем компьютере. Снова включите режим удалённого доступа в Open Science и повторите попытку.'
+    ],
+    [
+      'That folder already contains Open Science data. Pick an empty folder, or use the default location.',
+      'Эта папка уже содержит данные Open Science. Выберите пустую папку или используйте расположение по умолчанию.'
+    ],
+    [
+      'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.',
+      'Эта модель не поддерживается мостом Codex Chat Completions. Выберите другую модель для сессии Codex.'
+    ],
+    [
+      'Leave empty to use User from ~/.ssh/config.',
+      'Оставьте пустым, чтобы использовать имя пользователя из ~/.ssh/config.'
+    ],
+    [
+      'A password must be configured before this Compute Host can connect.',
+      'Перед подключением этого вычислительного узла настройте пароль.'
+    ],
+    [
+      'Configure a password for this Compute Host before trying again.',
+      'Настройте пароль для этого вычислительного узла и повторите попытку.'
+    ],
+    [
+      'Choose the exact effort levels accepted by this model. Open Science maps five relative strengths onto them, then sends the selected level using the request format below. Disable when the model does not accept an effort parameter.',
+      'Выберите точные уровни глубины рассуждений, поддерживаемые моделью. Open Science сопоставит с ними пять относительных уровней и передаст выбранное значение в указанном ниже формате запроса. Отключите настройку, если модель не поддерживает этот параметр.'
+    ],
+    [
+      'Installed Skill · v{{version}} · include it to bundle a copy.',
+      'Установленный навык · v{{version}} · включите его, чтобы добавить копию в пакет.'
+    ],
+    [
+      'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
+      'Скачано артефактов: {{downloaded}} из {{total}}. Ошибок: {{failed}}.'
+    ],
+    [
+      'Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.',
+      'Open Science завершил работу до окончания копирования. Текущие данные не изменены. Удалите неполную копию, чтобы снова использовать это расположение.'
+    ],
+    ['By {{publisher}}', 'Автор: {{publisher}}'],
+    ['{{agent}} cannot be accessed.', '{{agent}} недоступен.'],
+    [
+      '{{fileName}}: unsupported file — upload a .md file or a .zip / .skill bundle.',
+      '{{fileName}}: неподдерживаемый файл — загрузите файл .md либо пакет .zip или .skill.'
+    ],
+    ['remote commands on {{host}}', 'удалённые команды на {{host}}'],
+    ['e.g. My gateway', 'например, мой шлюз'],
+    ['scheduler', 'планировщик'],
+    ['Cache share', 'Доля кэша'],
+    ['Signing key fingerprint: {{fingerprint}}', 'Отпечаток ключа подписи: {{fingerprint}}'],
+    ['Molecule renderer failed to load', 'Не удалось загрузить визуализатор молекул'],
+    ['Amber', 'Янтарный'],
+    ['Teal', 'Бирюзовый'],
+    ['Slate', 'Сланцевый'],
+    ['Re-detect', 'Проверить снова'],
+    ['Runtime', 'Среда выполнения'],
+    ['SCOPE & FEASIBILITY', 'ОБЛАСТЬ И ОСУЩЕСТВИМОСТЬ'],
+    [
+      'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.',
+      'Удалённые команды выполняются на узле от имени вашей учётной записи без изоляции. Разрешайте выполнение только тех команд, которым доверяете.'
+    ],
+    ['Remote job details', 'Сведения об удалённом задании'],
+    ['Remote job: {{intent}}', 'Удалённое задание: {{intent}}'],
+    [
+      'Test failed: could not reach the endpoint — check the base URL/connection.',
+      'Тест не пройден: не удалось подключиться к конечной точке — проверьте базовый URL или подключение.'
+    ],
+    [
+      'This name is reserved by a built-in Connector.',
+      'Это имя зарезервировано встроенным коннектором.'
+    ],
+    [
+      'This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.',
+      'Этот план отображается как сохранённый снимок. Ход выполнения шагов недоступен для архивных сессий.'
+    ],
+    ['Beaker', 'Лабораторный стакан'],
+    ['Close Provenance', 'Закрыть сведения о происхождении'],
+    ['Open Provenance for {{title}}', 'Открыть сведения о происхождении для {{title}}'],
+    ['Open settings navigation', 'Открыть навигацию по настройкам'],
+    ['Use {{name}}', 'Использовать {{name}}'],
+    ['Go to home folder', 'Перейти в домашнюю папку'],
+    [
+      'Sandbox tools that run without preview',
+      'Инструменты песочницы, которые запускаются без предпросмотра'
+    ],
+    [
+      'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.',
+      'Ваши исследовательские данные находятся в скрытой папке. Перемещение их в видимую папку OpenScience упростит поиск и резервное копирование — настройки и история останутся на прежнем месте.'
+    ],
+    ['System Tags stay first', 'Системные теги всегда остаются в начале'],
+    ['Reorder {{tag}}', 'Изменить порядок тега {{tag}}'],
+    ['Moved {{tag}} to position {{position}}.', 'Тег {{tag}} перемещён на позицию {{position}}.'],
+    ['Could not reorder Tags. Try again.', 'Не удалось изменить порядок тегов. Попробуйте снова.'],
+    [
+      'Could not stop background processes before updating. Please try again.',
+      'Не удалось остановить фоновые процессы перед обновлением. Повторите попытку.'
+    ],
+    [
+      'Could not fully stop background processes before updating. Please try again.',
+      'Не удалось завершить все фоновые процессы перед обновлением. Повторите попытку.'
+    ],
+    [
+      'Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.',
+      'Отмените обновление, затем в разделе «Настройки → Общие → Диагностика» нажмите «Показать», чтобы найти файл журнала. Полностью закройте Open Science, снова откройте приложение и повторите обновление. Если ошибка повторится, проверьте, нет ли в журнале локальных путей к файлам, и передайте его разработчику или <issueLink>создайте обращение на GitHub</issueLink>.'
+    ],
+    ['Why this happened', 'Почему это произошло'],
+    ['How to fix', 'Как исправить'],
+    ['Still stuck? Create an issue for help', 'Проблема не решена? Создать обращение'],
+    [
+      'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.',
+      'На GitHub откроется заранее заполненное обращение с кодом ошибки, версией приложения и стеком вызовов. Личные пути в файловой системе будут скрыты (домашняя папка заменена на ~). Проверьте содержимое перед отправкой. При желании раздел со стеком вызовов можно удалить.'
+    ],
+    ['Skill import menu — 8 states', 'Меню импорта навыков — 8 состояний'],
+    ['Import', 'Импортировать'],
+    ['Upload skills', 'Загрузить навыки'],
+    ['Import from GitHub', 'Импортировать из GitHub'],
+    ['Import installed skills', 'Импортировать установленные навыки'],
+    ['Scan global skill folders', 'Найти навыки в глобальных папках'],
+    [
+      'Could not scan storage usage. Try again.',
+      'Не удалось подсчитать объём занятого места. Повторите попытку.'
+    ],
+    ['Last checked {{time}}', 'Последняя проверка: {{time}}'],
+    ['Last scanned {{time}}', 'Последнее сканирование: {{time}}'],
+    ['Refresh', 'Обновить'],
+    ["Settings panel couldn't be loaded.", 'Не удалось загрузить раздел настроек.'],
+    [
+      'Reload Open Science to try loading this panel again.',
+      'Перезапустите Open Science, чтобы снова попробовать загрузить этот раздел.'
+    ],
+    ['{{count}} more messages_one', 'Ещё {{count}} сообщение'],
+    ['{{count}} more messages_few', 'Ещё {{count}} сообщения'],
+    ['{{count}} more messages_many', 'Ещё {{count}} сообщений'],
+    ['{{count}} more messages_other', 'Ещё {{count}} сообщения'],
+    [
+      'Run jobs on a remote SSH host, or manage hosts.',
+      'Выполнять задания на удалённом узле по SSH или управлять узлами.'
+    ],
+    ['Enable {{name}}', 'Включить {{name}}'],
+    ['Disable {{name}}', 'Отключить {{name}}'],
+    ['Add {{name}} to run targets', 'Добавить {{name}} в список узлов для выполнения заданий'],
+    ['Remove {{name}} from run targets', 'Убрать {{name}} из списка узлов для выполнения заданий'],
+    [
+      'Select as target host to run jobs',
+      'Выбрать в качестве целевого узла для выполнения заданий'
+    ],
+    ['Remove from target hosts', 'Убрать из списка целевых узлов'],
+    ['Selected hosts are used to run jobs.', 'На выбранных узлах выполняются задания.'],
+    ['Open settings for {{name}}', 'Открыть настройки {{name}}'],
+    ['Change execution targets', 'Изменить выбор узлов'],
+    ['Compute execution target: {{name}}', 'Целевой вычислительный узел: {{name}}'],
+    ['Compute execution targets: {{names}}', 'Целевые вычислительные узлы: {{names}}'],
+    ['Client ID', 'Идентификатор клиента'],
+    ['Pre-registered client ID', 'Идентификатор заранее зарегистрированного клиента'],
+    ['Client secret', 'Секрет клиента'],
+    [
+      'Leave blank to keep the saved secret',
+      'Оставьте поле пустым, чтобы сохранить текущий секрет'
+    ],
+    ['Pre-registered client secret', 'Секрет заранее зарегистрированного клиента'],
+    ['The saved client secret will be removed.', 'Сохранённый секрет клиента будет удалён.'],
+    ['A client secret is saved securely.', 'Секрет клиента хранится в защищённом виде.'],
+    ['Keep saved client secret', 'Сохранить текущий секрет клиента'],
+    ['Remove saved client secret', 'Удалить сохранённый секрет клиента'],
+    [
+      'This imported Connector requires a client secret entered locally.',
+      'Для импортированного коннектора необходимо локально ввести секрет клиента.'
+    ],
+    [
+      'Authorization server URL is required for a pre-registered client.',
+      'Для заранее зарегистрированного клиента требуется URL сервера авторизации.'
+    ],
+    [
+      'Client ID is required when a client secret is configured.',
+      'Если настроен секрет клиента, необходимо указать идентификатор клиента.'
+    ],
+    [
+      'Client metadata URL cannot be combined with a pre-registered client.',
+      'URL метаданных клиента нельзя использовать вместе с заранее зарегистрированным клиентом.'
+    ],
+    [
+      'SSH configuration verified and activated. Saved password deleted. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Конфигурация SSH проверена и активирована. Сохранённый пароль удалён. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ],
+    [
+      'Password authentication verified and activated. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Аутентификация по паролю проверена и активирована. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ],
+    [
+      'Username changed. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Имя пользователя изменено. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ],
+    [
+      'Connection settings verified and saved. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Настройки подключения проверены и сохранены. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ]
+  ])('keeps proofread Russian copy for %s', (key, expected) => {
+    expect(catalog('ru')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      'This Connector no longer exists. Your draft has not been saved.',
+      'Этот коннектор больше не существует. Черновик не сохранён.'
+    ],
+    ['Used by', 'Используют'],
+    ['Available to Main Agent', 'Доступен главному агенту'],
+    ['Unavailable to Main Agent', 'Недоступен главному агенту'],
+    ['Filter Connectors by agent', 'Фильтровать коннекторы по агенту'],
+    ['Filter Skills by agent', 'Фильтровать навыки по агенту'],
+    ['All Agents/Specialists', 'Все агенты и специалисты'],
+    ['Export', 'Экспортировать'],
+    ['Remove', 'Удалить'],
+    ['Agents with access', 'Агенты с доступом'],
+    [
+      'Hover to preview. Click to view every agent.',
+      'Наведите курсор для предпросмотра. Нажмите, чтобы увидеть всех агентов.'
+    ],
+    [
+      'This Provider no longer exists. Your draft has not been saved.',
+      'Этот поставщик моделей больше не существует. Черновик не сохранён.'
+    ],
+    ['Deleted {{count}} Skills._one', 'Удалён {{count}} навык.'],
+    ['Deleted {{count}} Skills._few', 'Удалено {{count}} навыка.'],
+    ['Deleted {{count}} Skills._many', 'Удалено {{count}} навыков.'],
+    ['Deleted {{count}} Skills._other', 'Удалено {{count}} навыка.'],
+    [
+      'Some selected Skills could not be deleted. They remain selected.',
+      'Не удалось удалить некоторые выбранные навыки. Они остались выбранными.'
+    ],
+    ['Delete selected ({{selectedCount}})', 'Удалить выбранные ({{selectedCount}})'],
+    ['Delete selected Skills?', 'Удалить выбранные навыки?'],
+    [
+      'Deleted Skills are removed from this device and cannot be recovered.',
+      'Навыки будут удалены с этого устройства без возможности восстановления.'
+    ],
+    ['{{count}} selected Skills can be deleted._one', 'Можно удалить {{count}} выбранный навык.'],
+    ['{{count}} selected Skills can be deleted._few', 'Можно удалить {{count}} выбранных навыка.'],
+    [
+      '{{count}} selected Skills can be deleted._many',
+      'Можно удалить {{count}} выбранных навыков.'
+    ],
+    [
+      '{{count}} selected Skills can be deleted._other',
+      'Можно удалить {{count}} выбранного навыка.'
+    ],
+    ['{{count}} protected Skills will be kept._one', '{{count}} защищённый навык будет сохранён.'],
+    [
+      '{{count}} protected Skills will be kept._few',
+      '{{count}} защищённых навыка будут сохранены.'
+    ],
+    [
+      '{{count}} protected Skills will be kept._many',
+      '{{count}} защищённых навыков будут сохранены.'
+    ],
+    [
+      '{{count}} protected Skills will be kept._other',
+      '{{count}} защищённого навыка будет сохранено.'
+    ],
+    ['Owned by a Specialist.', 'Принадлежит специалисту.'],
+    ['Used by a Specialist.', 'Используется специалистом.'],
+    ['Delete {{count}} Skills_one', 'Удалить {{count}} навык'],
+    ['Delete {{count}} Skills_few', 'Удалить {{count}} навыка'],
+    ['Delete {{count}} Skills_many', 'Удалить {{count}} навыков'],
+    ['Delete {{count}} Skills_other', 'Удалить {{count}} навыка'],
+    [
+      'View Connector availability for {{count}} agents_one',
+      'Показать доступность коннектора для {{count}} агента'
+    ],
+    [
+      'View Connector availability for {{count}} agents_few',
+      'Показать доступность коннектора для {{count}} агентов'
+    ],
+    [
+      'View Connector availability for {{count}} agents_many',
+      'Показать доступность коннектора для {{count}} агентов'
+    ],
+    [
+      'View Connector availability for {{count}} agents_other',
+      'Показать доступность коннектора для {{count}} агентов'
+    ],
+    [
+      'View Skill availability for {{count}} agents_one',
+      'Показать доступность навыка для {{count}} агента'
+    ],
+    [
+      'View Skill availability for {{count}} agents_few',
+      'Показать доступность навыка для {{count}} агентов'
+    ],
+    [
+      'View Skill availability for {{count}} agents_many',
+      'Показать доступность навыка для {{count}} агентов'
+    ],
+    [
+      'View Skill availability for {{count}} agents_other',
+      'Показать доступность навыка для {{count}} агентов'
+    ],
+    ['Used by Agents and Specialists', 'Используется агентами и специалистами'],
+    ['Open {{name}} in Specialist Settings', 'Открыть настройки специалиста {{name}}']
+  ])('keeps native Russian resource-management copy for %s', (key, expected) => {
+    expect(catalog('ru')[key]).toBe(expected)
+  })
+
+  it('does not use literal machine-translation markers in Russian UI copy', () => {
+    const forbidden = [
+      /опциональ/iu,
+      /предварительн\S* просмотр/iu,
+      /рабоч(?:ая|ей|ую|ие|их) зон/iu,
+      /\b(?:Claude|Codex) логин/iu,
+      /\bAPI ключ/iu,
+      /\bMCP инструмент/iu,
+      /Open Science долж(?:ен|на|но|ны)/iu,
+      /несборн/iu,
+      /живые отнош/iu,
+      /шаблон вкладки/iu,
+      /проектн(?:ый|ого) идентификатор/iu,
+      /на поверхности/iu,
+      /повторно обнаруж/iu,
+      /системный ящик/iu,
+      /дистанционн/iu,
+      /кастомн/iu,
+      /JSON файла/iu,
+      /\b(?:удаленн|сохраненн|остается|прервет)\S*/iu,
+      /\bтемная\b/iu,
+      /уровн\S* усили/iu,
+      /с удаленного/iu,
+      /сессионное разрешение/iu,
+      /сохранённое настройки/iu,
+      /настройка аутентификации кандидата/iu,
+      /отклонить (?:неполный набор данных|копию)/iu,
+      /\bв Bulk\b/iu,
+      /разработчиков, которых вы доверяете/iu,
+      /неподвижный ID/iu,
+      /существующего Codex входа/iu,
+      /приходящая версия/iu,
+      /приложени[ея] для рабочего стола/iu,
+      /\bневалидн/iu,
+      /переиспользован/iu,
+      /открытый исходный код/iu,
+      /\bкомпозер/iu,
+      /Codex мост/iu,
+      /идут сюда/iu,
+      /синтаксис Mermaid не может быть отображен/iu,
+      /следующий редактированный сообщение/iu,
+      /нет хостов SSH ещё/iu,
+      /другой ключевое слово/iu,
+      /один предложение/iu,
+      /OAuth диапазонов/iu,
+      /на следующем сканировании/iu,
+      /перезапустите настройки проекта/iu,
+      /перемещ[её]н\S* в сторону/iu,
+      /ошибки проверки блокировки/iu,
+      /системный хранитель/iu,
+      /перед попыткой снова/iu,
+      /тест и (?:обновление|сохранение)/iu,
+      /повторное обнаружение/iu,
+      /показывается данные/iu,
+      /специалиста ZIP/iu,
+      /опции отправки/iu,
+      /Настройки → разрешений/iu,
+      /ключ API/iu,
+      /вход Codex/iu,
+      /журнал ревью/iu,
+      /ревьюер/iu
+    ]
+    const offenders = Object.entries(catalog('ru'))
+      .filter(([, value]) => forbidden.some((pattern) => pattern.test(value)))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses context-appropriate Russian terminology for approvals', () => {
+    const offenders = Object.entries(catalog('ru'))
+      .filter(([key]) => /\bapprov(?:e|ed|es|ing|al|als)\b/i.test(englishOf(key)))
+      .filter(([, value]) => /одобр|согласова|согласи/iu.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+    expect(catalog('ru').Approve).toBe('Утвердить')
+    expect(
+      catalog('ru')[
+        'Choose "Always trust this browser" to skip approval on future visits to the same remote address.'
+      ]
+    ).toContain('разрешение на доступ')
+  })
+
+  it('uses native Russian terminology for reasoning depth', () => {
+    const offenders = Object.entries(catalog('ru'))
+      .filter(([key]) => /reasoning effort/i.test(englishOf(key)))
+      .filter(([, value]) => !/глубин\S* рассуждени/iu.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each([
+    [
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.",
+      'Диалоги, по-прежнему связанные с <name>{{name}}</name>, станут <em>недоступны</em> и <em>не</em> будут автоматически переключены на главного агента. Для каждого затронутого диалога потребуется явно выбрать нового специалиста или главного агента, прежде чем снова можно будет отправлять сообщения.'
+    ],
+    ['FIRST-TIME SETUP', 'ПЕРВОНАЧАЛЬНАЯ НАСТРОЙКА'],
+    ['Identity', 'Профиль'],
+    ['{{name}} scrollable preview', 'Предпросмотр {{name}} с прокруткой'],
+    ['System', 'Системный'],
+    ['System_theme', 'Системная'],
+    ['System_language', 'Как в системе'],
+    ['System_runtime', 'Системная'],
+    [
+      'Pick the agent Open Science drives, then install it. Only this agent needs to be installed to continue.',
+      'Выберите агента, которым будет управлять Open Science, затем установите его. Для продолжения достаточно установить только этого агента.'
+    ],
+    ['Read-only', 'Только чтение'],
+    [
+      'Creates Plans and records decisions you make during review. This Permission Grant never approves a Plan; you must approve each Plan separately.',
+      'Создаёт планы и записывает решения, принятые во время проверки. Это разрешение не утверждает план: каждый план необходимо утверждать отдельно.'
+    ],
+    [
+      'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.',
+      'Remote.It — сторонний сервис. Open Science лишь вызывает установленный пользователем настольный CLI-клиент и не включает его в поставку, не распространяет, не регистрирует и не создаёт для него учётную запись.'
+    ],
+    ['Incomplete data copy found', 'Обнаружена неполная копия данных'],
+    ['Verified data copy found', 'Обнаружена проверенная копия данных'],
+    [
+      'A completed copy from an interrupted move is ready. Finish the move to switch locations and restart, or discard the copy to stay where you are.',
+      'Готова полная копия данных, оставшаяся после прерванного переноса. Завершите перенос, чтобы перейти к новому расположению и перезапустить приложение, или удалите копию, чтобы остаться в текущем расположении.'
+    ],
+    [
+      'A verified copy from an interrupted move was found here. You can finish the move without copying everything again, or discard it.',
+      'Здесь обнаружена проверенная копия данных после прерванного переноса. Можно завершить перенос без повторного копирования всех данных или удалить эту копию.'
+    ],
+    [
+      'An incomplete copy from an interrupted move was found here. Discard it before using this location again.',
+      'Здесь обнаружена неполная копия данных после прерванного переноса. Удалите её перед повторным использованием этого расположения.'
+    ],
+    ['Resolve unfinished move', 'Разобраться с переносом'],
+    ['Finish move', 'Завершить перенос'],
+    [
+      'Restart to switch to the new location. Nothing is changed until you do — choose Keep current location to stay where you are and discard the copy.',
+      'Перезапустите приложение, чтобы перейти к новому расположению. До перезапуска ничего не изменится. Чтобы остаться в текущем расположении и удалить копию, выберите «Оставить текущее расположение».'
+    ],
+    [
+      'This folder already contains Open Science data. It will be <em>used as-is (not merged)</em> — <em>your current data folder is kept, so you can switch back</em>. The app will restart.',
+      'В этой папке уже есть данные Open Science. Она будет <em>использована без изменений (без объединения)</em> — <em>текущая папка с данными останется на месте, поэтому к ней можно будет вернуться</em>. Приложение перезапустится.'
+    ],
+    [
+      "Your data folder <path>{{path}}</path> can't be found. It may have been deleted, or it's on a drive that isn't connected.",
+      'Не найдена папка с данными <path>{{path}}</path>. Возможно, она удалена или находится на неподключённом диске.'
+    ],
+    [
+      'Authentication change blocked. Finish or safely delete active and unharvested Compute Jobs first.',
+      'Изменение способа аутентификации заблокировано. Сначала завершите активные вычислительные задания и задания с несобранными результатами либо безопасно удалите их.'
+    ]
+  ])('keeps reviewed high-risk copy for %s', (key, expected) => {
+    expect(catalog('ru')[key]).toBe(expected)
   })
 })
 
@@ -1464,6 +2226,24 @@ describe('Korean binding terminology', () => {
   })
 })
 
+describe('Russian safety copy', () => {
+  it.each([
+    ['Allow globally', 'Разрешить глобально'],
+    ['Approval applies to this call only.', 'Разрешение действует только для этого вызова.'],
+    ['This call only', 'Только этот вызов'],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      'Отдельные разрешения по-прежнему можно отзывать; действие «Отозвать все» недоступно, пока не известен полный набор.'
+    ],
+    [
+      'This message snapshot was created by a newer version of Open Science. Update the app to view it.',
+      'Этот снимок сообщения создан в более новой версии Open Science. Обновите приложение, чтобы его просмотреть.'
+    ]
+  ])('preserves the scope of %s', (key, expected) => {
+    expect(catalog('ru')[key]).toBe(expected)
+  })
+})
+
 describe('French safety copy', () => {
   it.each([
     ['Allow globally', 'Autoriser pour tous les projets'],
@@ -1544,7 +2324,10 @@ describe('key shape', () => {
       'files',
       'ago',
       'duration',
-      'inUse'
+      'inUse',
+      'theme',
+      'language',
+      'runtime'
     ])
     const offenders = Object.keys(catalog(locale))
       .filter((key) => key.includes('_'))
@@ -2243,7 +3026,8 @@ const VISIBLE_ATTRIBUTES = [
   'aria-description',
   'aria-placeholder',
   'placeholder',
-  'alt'
+  'alt',
+  'hint'
 ]
 
 const bareAttributeValues = (source: string): BareCopy[] => {
@@ -2488,6 +3272,12 @@ describe('bare copy detection', () => {
       { text: 'Dismiss storage warning', line: 1 }
     ])
     expect(bareAttributeValues('<div className="flex items-center gap-2" />')).toEqual([])
+  })
+
+  it('finds bare copy in a user-visible custom hint prop', () => {
+    expect(bareAttributeValues('<MenuRadioItem hint="provider default" />')).toEqual([
+      { text: 'provider default', line: 1 }
+    ])
   })
 
   it('accepts an aria-label already inside t()', () => {

@@ -178,12 +178,9 @@ export const saveIpynbAll = async (
     const { response } = await resolvedDeps.electron.dialog.showMessageBox({
       type: 'question',
       title: translate('Overwrite existing notebooks?'),
-      message: translate(
-        conflicts.length === 1
-          ? '{{count}} notebook already exists in the chosen directory.'
-          : '{{count}} notebooks already exist in the chosen directory.',
-        { count: conflicts.length }
-      ),
+      message: translate('{{count}} notebooks already exist in the chosen directory.', {
+        count: conflicts.length
+      }),
       detail: listing,
       buttons: [translate('Overwrite'), translate('Cancel')],
       defaultId: 1,

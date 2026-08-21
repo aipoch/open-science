@@ -697,10 +697,9 @@ describe('WorkspaceSidebar accessible render', () => {
     )
     const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
     const archiveItems = elements.filter((element) => getTextContent(element).trim() === 'Archive')
-    const markdownItems = elements.filter(
-      (element) => getTextContent(element).trim() === 'Markdown'
+    const exportItems = elements.filter(
+      (element) => getTextContent(element).trim() === 'Export conversation…'
     )
-    const pdfItems = elements.filter((element) => getTextContent(element).trim() === 'PDF')
 
     expect(notebookButton?.props.onClick).toBeTypeOf('function')
     ;(notebookButton?.props.onClick as () => void)()
@@ -714,13 +713,13 @@ describe('WorkspaceSidebar accessible render', () => {
     ;(downloadItems[1]?.props.onSelect as () => void)()
     expect(onDownloadArtifacts).toHaveBeenCalledWith(sessions[1])
 
-    expect(markdownItems[0]?.props.onSelect).toBeTypeOf('function')
-    ;(markdownItems[0]?.props.onSelect as () => void)()
-    expect(onExportSession).toHaveBeenCalledWith(sessions[0], 'markdown')
+    expect(exportItems[0]?.props.onSelect).toBeTypeOf('function')
+    ;(exportItems[0]?.props.onSelect as () => void)()
+    expect(onExportSession).toHaveBeenCalledWith(sessions[0])
 
-    expect(pdfItems[1]?.props.onSelect).toBeTypeOf('function')
-    ;(pdfItems[1]?.props.onSelect as () => void)()
-    expect(onExportSession).toHaveBeenCalledWith(sessions[1], 'pdf')
+    expect(exportItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(exportItems[1]?.props.onSelect as () => void)()
+    expect(onExportSession).toHaveBeenCalledWith(sessions[1])
 
     expect(archiveItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(archiveItems[1]?.props.onSelect as () => void)()
@@ -1216,6 +1215,11 @@ describe('WorkspaceSidebar accessible render', () => {
           status: 'waiting-permission',
           messages: [createMessage()]
         }),
+        createSession({
+          id: 'waiting-plan',
+          status: 'waiting-plan-approval',
+          messages: [createMessage()]
+        }),
         createSession({ id: 'empty', status: 'idle', messages: [] }),
         createSession({ id: 'ready', status: 'idle', messages: [createMessage()] })
       ],
@@ -1243,16 +1247,17 @@ describe('WorkspaceSidebar accessible render', () => {
     })
     const exportTriggers = collectElements(tree).filter(
       (element) =>
-        getTextContent(element).trim() === 'Export conversation' &&
+        getTextContent(element).trim() === 'Export conversation…' &&
         typeof element.props.disabled === 'boolean'
     )
 
-    expect(exportTriggers).toHaveLength(5)
+    expect(exportTriggers).toHaveLength(6)
     expect(exportTriggers[0]?.props.disabled).toBe(true)
     expect(exportTriggers[1]?.props.disabled).toBe(true)
     expect(exportTriggers[2]?.props.disabled).toBe(true)
     expect(exportTriggers[3]?.props.disabled).toBe(true)
-    expect(exportTriggers[4]?.props.disabled).toBe(false)
+    expect(exportTriggers[4]?.props.disabled).toBe(true)
+    expect(exportTriggers[5]?.props.disabled).toBe(false)
   })
 
   it('hides conversation export when the runtime does not expose that capability', async () => {

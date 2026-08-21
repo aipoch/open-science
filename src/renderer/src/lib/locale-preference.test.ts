@@ -86,6 +86,11 @@ describe('resolveInitialLocale', () => {
     expect(resolveInitialLocale()).toBe('ko')
   })
 
+  it('detects Russian from the device when no choice is stored', () => {
+    stubLanguages(['ru-RU', 'ja', 'en'])
+    expect(resolveInitialLocale()).toBe('ru')
+  })
+
   it('falls back to English when the device language is unsupported', () => {
     stubLanguages(['de-DE', 'vi-VN'])
     expect(resolveInitialLocale()).toBe('en')

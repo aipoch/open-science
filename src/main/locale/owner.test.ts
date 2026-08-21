@@ -63,6 +63,7 @@ describe('LocalePreferenceOwner', () => {
     expect(() => owner.setPreference('de')).toThrow('Invalid language preference')
     expect(translateNativeMessage('ja', 'Quit')).toBe('終了')
     expect(translateNativeMessage('ko', 'Quit')).toBe('종료')
+    expect(translateNativeMessage('ru', 'Quit')).toBe('Выйти')
     expect(translateNativeMessage('fr', 'Quit')).toBe('Quitter')
     expect(
       translateNativeMessage(
@@ -73,6 +74,18 @@ describe('LocalePreferenceOwner', () => {
         }
       )
     ).toContain('3')
+    expect(
+      [1, 2, 5, 21].map((count) =>
+        translateNativeMessage('ru', '{{count}} notebooks already exist in the chosen directory.', {
+          count
+        })
+      )
+    ).toEqual([
+      'В выбранной папке уже существует 1 Notebook.',
+      'В выбранной папке уже существуют 2 Notebook.',
+      'В выбранной папке уже существуют 5 Notebook.',
+      'В выбранной папке уже существует 21 Notebook.'
+    ])
   })
 
   it('keeps French high punctuation attached to the preceding text', () => {

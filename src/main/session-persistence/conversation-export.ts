@@ -12,6 +12,7 @@ import {
   type ExportConversationRequest,
   type ExportConversationResult
 } from '../../shared/conversation-export'
+import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
@@ -61,6 +62,7 @@ type ConversationExportService = {
 const assertExportConversationRequest = (
   request: ExportConversationRequest
 ): ExportConversationRequest => {
+  const selectedPromptMessageIds = request?.selectedPromptMessageIds
   if (
     typeof request !== 'object' ||
     request === null ||
@@ -68,7 +70,14 @@ const assertExportConversationRequest = (
     request.projectId.length === 0 ||
     typeof request.sessionId !== 'string' ||
     request.sessionId.length === 0 ||
-    (request.format !== 'markdown' && request.format !== 'pdf')
+    (request.format !== 'markdown' && request.format !== 'pdf') ||
+    (selectedPromptMessageIds !== undefined &&
+      (!Array.isArray(selectedPromptMessageIds) ||
+        selectedPromptMessageIds.length === 0 ||
+        selectedPromptMessageIds.some(
+          (promptMessageId) => typeof promptMessageId !== 'string' || promptMessageId.length === 0
+        ) ||
+        new Set(selectedPromptMessageIds).size !== selectedPromptMessageIds.length))
   ) {
     throw new Error('Invalid conversation export request.')
   }
@@ -112,15 +121,24 @@ const createConversationExportService = (
       if (!session) throw new Error('Conversation not found.')
       if (
         deps.isSessionActive(request.projectId, request.sessionId) ||
+        hasCurrentRunningDelegatedAttempt(session) ||
+        session.runtimeContext?.delegatedWork?.questionRequests?.some(
+          (question) => question.status === 'pending'
+        ) ||
         session.status === 'running' ||
         session.status === 'waiting-for-user' ||
-        session.status === 'waiting-permission'
+        session.status === 'waiting-permission' ||
+        session.status === 'waiting-plan-approval'
       ) {
         throw new Error('Wait for the conversation to finish before exporting it.')
       }
       if (session.messages.length === 0) throw new Error('Conversation has no messages to export.')
 
-      const document = createConversationExportDocument(session, deps.now())
+      const document = createConversationExportDocument(
+        session,
+        deps.now(),
+        request.selectedPromptMessageIds
+      )
       const extension = request.format === 'markdown' ? 'md' : 'pdf'
       const defaultPath = join(
         deps.getDownloadsPath(),

@@ -59,6 +59,18 @@ const startLoop = (
 }
 
 gate('python_loop.py', () => {
+  it('executes non-ASCII source sent over the stdin protocol', async () => {
+    const { child, send } = startLoop(pyBin as string, {})
+    try {
+      const response = await send('\n# Select 8–10 representative candidate factors\nprint(1)')
+
+      expect(response.error).toBeNull()
+      expect(response.stdout).toBe('1\n')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('keeps state across requests, echoes trailing expr, captures stdout, reports errors', async () => {
     const { child, send } = startLoop(pyBin as string, {})
     try {

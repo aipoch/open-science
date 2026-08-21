@@ -2,6 +2,7 @@ import { Marked, Renderer } from 'marked'
 
 import {
   isHiddenControlMessage,
+  isHumanUserMessage,
   type PersistedArtifact,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -14,6 +15,7 @@ export type ExportConversationRequest = {
   projectId: string
   sessionId: string
   format: ConversationExportFormat
+  selectedPromptMessageIds?: string[]
 }
 
 export type ExportConversationResult = {
@@ -43,6 +45,12 @@ export type ConversationExportDocument = {
   updatedAt: number
   exportedAt: number
   messages: ConversationExportMessage[]
+}
+
+export type ConversationExportTurn = {
+  promptMessageId: string
+  prompt: PersistedChatMessage
+  messages: PersistedChatMessage[]
 }
 
 const THINK_BLOCK_PATTERN = /<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/gi
@@ -201,20 +209,67 @@ export const sanitizeExportFilename = (title: string): string => {
   return `${truncated.trimEnd()}${suffix}`
 }
 
+export const createConversationExportTurns = (
+  messages: readonly PersistedChatMessage[]
+): ConversationExportTurn[] => {
+  const visibleMessages = messages.filter((message) => !isHiddenControlMessage(message))
+  const promptIndexes = visibleMessages.flatMap((message, index) =>
+    isHumanUserMessage(message) ? [index] : []
+  )
+
+  return promptIndexes.map((startIndex, turnIndex) => {
+    const prompt = visibleMessages[startIndex]
+    const endIndex = promptIndexes[turnIndex + 1] ?? visibleMessages.length
+
+    return {
+      promptMessageId: prompt.id,
+      prompt,
+      messages: visibleMessages.slice(startIndex, endIndex)
+    }
+  })
+}
+
+const selectConversationExportMessages = (
+  messages: readonly PersistedChatMessage[],
+  selectedPromptMessageIds?: readonly string[]
+): PersistedChatMessage[] => {
+  const visibleMessages = messages.filter((message) => !isHiddenControlMessage(message))
+  if (selectedPromptMessageIds === undefined) return visibleMessages
+
+  const selectedIds = new Set(selectedPromptMessageIds)
+  if (selectedIds.size === 0 || selectedIds.size !== selectedPromptMessageIds.length) {
+    throw new Error('Invalid selected conversation turns.')
+  }
+
+  const turns = createConversationExportTurns(messages)
+  const availablePromptIds = new Set(turns.map((turn) => turn.promptMessageId))
+  if (
+    selectedPromptMessageIds.some((promptMessageId) => !availablePromptIds.has(promptMessageId))
+  ) {
+    throw new Error('Selected conversation turns are no longer available.')
+  }
+
+  return turns
+    .filter((turn) => selectedIds.has(turn.promptMessageId))
+    .flatMap((turn) => turn.messages)
+}
+
 // Projects only the active-branch message view. Internal ids, runtime metadata, paths and tool
 // payloads never enter this stable export contract.
 export const createConversationExportDocument = (
   session: PersistedChatSession,
-  exportedAt: number
+  exportedAt: number,
+  selectedPromptMessageIds?: readonly string[]
 ): ConversationExportDocument => {
   const artifactsById = new Map(
     (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
   )
-  const messages = session.messages.filter((message) => !isHiddenControlMessage(message))
+  const visibleMessages = session.messages.filter((message) => !isHiddenControlMessage(message))
+  const messages = selectConversationExportMessages(session.messages, selectedPromptMessageIds)
 
   return {
     version: 1,
-    title: resolveConversationExportTitle(session, messages),
+    title: resolveConversationExportTitle(session, visibleMessages),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     exportedAt,

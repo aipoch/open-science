@@ -240,7 +240,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
               <MenuRadioItem
                 checked={defaultEffortChecked}
                 onSelect={() => void setReasoningEffort('default')}
-                hint="provider default"
+                hint={t('provider default')}
               >
                 {t('Default')}
               </MenuRadioItem>
