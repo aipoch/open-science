@@ -291,7 +291,7 @@ import {
 } from './storage-root'
 import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
-import { createActiveResearchSafeInstallGate } from './update/strategy'
+import { createActiveResearchSafeInstallGate, createDurableInstallGate } from './update/strategy'
 import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
@@ -326,6 +326,9 @@ type IpcRegistrationOptions = {
   onAppIconVariantChanged?: (variant: AppIconVariant) => void
   // Renders the built-in icon variants to preview data URLs for the Appearance picker.
   listAppIconPreviews?: () => AppIconPreview[]
+  // Flushes renderer-owned Session/Preview state after backend teardown and before an in-place
+  // updater can close the renderer. Desktop startup supplies the late-bound window implementation.
+  confirmUpdateRendererDurability?: () => Promise<boolean>
   // Retained as an explicit startup marker while the app owns the only handoff composition.
   handoffRuntime?: 'production'
 }
@@ -371,7 +374,8 @@ const createApplicationModules = async (
     headless = false,
     translate = englishNativeTranslator,
     onAppIconVariantChanged,
-    listAppIconPreviews
+    listAppIconPreviews,
+    confirmUpdateRendererDurability = () => Promise.resolve(true)
   }: IpcRegistrationOptions,
   modules: ApplicationModuleBuilder
 ): Promise<ApplicationModuleInterfaces> => {
@@ -2363,7 +2367,10 @@ const createApplicationModules = async (
         if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
         return blockers
       },
-      () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+      createDurableInstallGate(
+        () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
+        confirmUpdateRendererDurability
+      )
     )
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)

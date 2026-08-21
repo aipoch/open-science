@@ -404,7 +404,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             { createWebServiceController, buildAuthenticatedWebUrl },
             { routeSecondInstance },
             { createElectronCloseConfirm },
-            { createElectronSessionPersistenceFlush, notifyRendererSessionPersistenceFlushAborted },
+            {
+              createElectronSessionPersistenceFlush,
+              notifyRendererSessionPersistenceFlushAborted,
+              rendererSessionPersistenceFlushBlocksShutdown
+            },
             { createAppIconController, buildAppIconPreviews },
             { RemoteAccessService, registerRemoteAccessIpcHandlers },
             { createDesktopAttentionController, wireDesktopAttention },
@@ -458,6 +462,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
               handoffRuntime: 'production',
               headless: webMode.headless,
+              confirmUpdateRendererDurability: async () => {
+                const getWindow = (): InstanceType<typeof BrowserWindow> | undefined =>
+                  mainWindowGetterBox.current?.()
+                const outcome = await createElectronSessionPersistenceFlush(getWindow)()
+                if (!rendererSessionPersistenceFlushBlocksShutdown(outcome)) return true
+                notifyRendererSessionPersistenceFlushAborted(getWindow)
+                return false
+              },
               onAppIconVariantChanged: (variant) => {
                 appIconControllerBox.current?.setVariant(variant)
                 // Keep the tray glyph on the same variant as the window icon. No-op before the lifecycle

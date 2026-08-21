@@ -1,7 +1,10 @@
 import type { App, BrowserWindow, Tray } from 'electron'
 
 import type { ActiveSessionInfo } from '../shared/storage'
-import type { RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
+import {
+  rendererSessionPersistenceFlushBlocksShutdown,
+  type RendererSessionPersistenceFlushOutcome
+} from './session-persistence/renderer-flush'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
@@ -134,11 +137,6 @@ export const installAppLifecycle = (
     if (outcome === 'renderer-gone') return 'degraded'
     return 'completed'
   }
-  const rendererOutcomeBlocksQuit = (outcome: RendererSessionPersistenceFlushOutcome): boolean =>
-    outcome === 'conflict' ||
-    outcome === 'renderer-failed' ||
-    outcome === 'send-failed' ||
-    outcome === 'timeout'
   const shutdownTrigger = (): ApplicationShutdownTrigger => {
     try {
       return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()
@@ -348,7 +346,10 @@ export const installAppLifecycle = (
         )
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
-        if (rendererOutcomeBlocksQuit(rendererPreflightOutcome)) {
+        if (
+          trigger !== 'update' &&
+          rendererSessionPersistenceFlushBlocksShutdown(rendererPreflightOutcome)
+        ) {
           shutdownAbortedForRendererPersistence = true
           diagnostics?.complete({
             degraded: true,
@@ -382,7 +383,10 @@ export const installAppLifecycle = (
         )
         rendererFlushOutcome = finalFlush.outcome
         rendererFlushResult = finalFlush.result
-        if (rendererOutcomeBlocksQuit(rendererFlushOutcome)) {
+        if (
+          trigger !== 'update' &&
+          rendererSessionPersistenceFlushBlocksShutdown(rendererFlushOutcome)
+        ) {
           shutdownAbortedForRendererPersistence = true
           diagnostics?.complete({
             degraded: true,

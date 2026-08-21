@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Logger } from '../logger'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
-import { createActiveResearchSafeInstallGate } from './strategy'
+import { createActiveResearchSafeInstallGate, createDurableInstallGate } from './strategy'
 import {
   clearApplicationShutdownTrigger,
   currentApplicationShutdownTrigger
@@ -589,19 +589,50 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('apply runs the install gate before quitAndInstall when the teardown is clean', async () => {
     const updater = new FakeUpdater()
-    const gate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const confirmRendererDurability = vi.fn(async () => true)
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
-      installGate: gate
+      installGate: createDurableInstallGate(backendTeardownGate, confirmRendererDurability)
     })
     markUpdateReady(updater)
 
     await strategy.apply()
 
-    expect(gate).toHaveBeenCalledTimes(1)
+    expect(backendTeardownGate).toHaveBeenCalledOnce()
+    expect(confirmRendererDurability).toHaveBeenCalledOnce()
+    expect(backendTeardownGate.mock.invocationCallOrder[0]).toBeLessThan(
+      confirmRendererDurability.mock.invocationCallOrder[0]
+    )
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks restart when renderer durability cannot be confirmed after teardown', async () => {
+    const updater = new FakeUpdater()
+    const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const confirmRendererDurability = vi.fn(async () => false)
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: createDurableInstallGate(backendTeardownGate, confirmRendererDurability)
+    })
+    markUpdateReady(updater)
+
+    const status = await strategy.apply()
+
+    expect(backendTeardownGate).toHaveBeenCalledOnce()
+    expect(confirmRendererDurability).toHaveBeenCalledOnce()
+    expect(backendTeardownGate.mock.invocationCallOrder[0]).toBeLessThan(
+      confirmRendererDurability.mock.invocationCallOrder[0]
+    )
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(status).toMatchObject({
+      state: 'error',
+      error: 'Could not fully stop background processes before updating. Please try again.'
+    })
   })
 
   it('blocks restart before backend teardown when delegated work is running', async () => {

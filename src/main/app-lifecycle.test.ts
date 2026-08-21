@@ -504,6 +504,19 @@ describe('installAppLifecycle', () => {
     }
   )
 
+  it('completes an update handoff after quitAndInstall has already closed the renderer', async () => {
+    markApplicationShutdownTrigger('update')
+    const flushSessionPersistence = vi.fn(async () => 'send-failed' as const)
+    const { app, abortQuitPreparation } = setup({ flushSessionPersistence })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(abortQuitPreparation).not.toHaveBeenCalled()
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
   it('records fixed outcomes for every shutdown step and never reports a degraded shutdown as clean', async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     const { app, closeOpts } = setup({
