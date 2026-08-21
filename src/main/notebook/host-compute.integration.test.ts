@@ -17,13 +17,16 @@ const makeExecutor = (): NotebookKernelExecutor =>
 
 // Minimal stub computeCall RPC endpoint that captures params and returns representative unchanged
 // snake_case result projections.
-const startStub = async (): Promise<{
+const startStub = async (
+  options: { dropFirstSubmitResponse?: boolean } = {}
+): Promise<{
   endpoint: string
   close: () => void
   received: () => Array<{ params?: Record<string, unknown> }>
 }> => {
   const { createServer } = await import('node:http')
   const requests: Array<{ params?: Record<string, unknown> }> = []
+  let droppedFirstSubmitResponse = false
   const server = createServer((req, res) => {
     let body = ''
     req.on('data', (c) => (body += c))
@@ -31,6 +34,11 @@ const startStub = async (): Promise<{
       const request = body ? JSON.parse(body) : {}
       requests.push(request)
       const op = request.params?.op
+      if (op === 'submit_job' && options.dropFirstSubmitResponse && !droppedFirstSubmitResponse) {
+        droppedFirstSubmitResponse = true
+        res.destroy()
+        return
+      }
       const result =
         op === 'submit_job'
           ? { job_id: 'job-1', provider_id: 'ssh:x', status: 'submitted' }
@@ -150,6 +158,7 @@ gate('repl kernel host.compute', () => {
       },
       {
         op: 'submit_job',
+        invocation_id: expect.any(String),
         provider_id: 'ssh:x',
         intent: 'analyze',
         command: 'run',
@@ -168,6 +177,34 @@ gate('repl kernel host.compute', () => {
       { op: 'job_result', provider_id: 'ssh:x', job_id: 'job-1' },
       { op: 'set_concurrency_limit', session_id: 'session-7', limit: 2 }
     ])
+  })
+
+  it('retries a lost submitJob response with the same invocation id', async () => {
+    const stub = await startStub({ dropFirstSubmitResponse: true })
+    const exec = makeExecutor()
+    const result = await exec.execute(
+      baseRequest({
+        code:
+          "const job = await host.compute.create('ssh:x').submitJob('analyze', 'run'); " +
+          'console.log(JSON.stringify(job))',
+        mcpRpcEndpoint: stub.endpoint,
+        mcpRpcToken: 'tok',
+        sessionId: 'session-7',
+        projectId: 'proj-x'
+      })
+    )
+    await exec.shutdown()
+    stub.close()
+
+    expect(result.status).toBe('completed')
+    expect(result.stdout).toContain('"job_id":"job-1"')
+    const submissions = stub
+      .received()
+      .map((request) => request.params)
+      .filter((params) => params?.op === 'submit_job')
+    expect(submissions).toHaveLength(2)
+    expect(submissions[0]?.invocation_id).toEqual(expect.any(String))
+    expect(submissions[1]?.invocation_id).toBe(submissions[0]?.invocation_id)
   })
 
   it('rejects every old compute input key before RPC', async () => {

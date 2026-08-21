@@ -12,6 +12,7 @@ const vm = require('node:vm')
 const readline = require('node:readline')
 const fs = require('node:fs')
 const path = require('node:path')
+const { randomUUID } = require('node:crypto')
 const { fileURLToPath } = require('node:url')
 
 // Protocol output line. console is captured into strings during a run (see run()), so writing the
@@ -2703,11 +2704,19 @@ const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessio
 // token-isolation reasons documented on host.mcp above.
 async function computeRpc(params) {
   if (!RPC_ENDPOINT) throw new Error('host.compute is unavailable: connector RPC endpoint not set')
-  const res = await capturedRpcFetch(RPC_ENDPOINT, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
-    body: JSON.stringify({ method: 'computeCall', params })
-  })
+  const request = () =>
+    capturedRpcFetch(RPC_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+      body: JSON.stringify({ method: 'computeCall', params })
+    })
+  let res
+  try {
+    res = await request()
+  } catch (error) {
+    if (params?.op !== 'submit_job' || typeof params.invocation_id !== 'string') throw error
+    res = await request()
+  }
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
     throw computeError(body.error || 'host.compute HTTP ' + res.status)
@@ -3309,6 +3318,7 @@ const hostCompute = {
         }
         return computeRpc({
           op: 'submit_job',
+          invocation_id: randomUUID(),
           provider_id: providerId,
           intent,
           command,
