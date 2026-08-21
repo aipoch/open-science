@@ -1,3 +1,6 @@
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { findPythonCommand, isPython3Version, resolvePythonCommand } from './python-command'
@@ -29,6 +32,74 @@ describe('resolvePythonCommand', () => {
 
     expect(tried).toEqual(['python3', 'python'])
     expect(result).toEqual({ command: 'python', baseArgs: [] })
+  })
+
+  it('does not execute /usr/bin/python3 during automatic macOS detection', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-python-stub-'))
+    const bin = join(root, 'bin')
+    const marker = join(root, 'python3-invoked')
+    const originalPath = process.env.PATH
+
+    try {
+      await mkdir(bin)
+      await writeFile(
+        join(bin, 'python3'),
+        `#!/bin/sh\nprintf invoked > "${marker}"\nprintf 'Python 3.9.6\\n'\n`
+      )
+      await chmod(join(bin, 'python3'), 0o755)
+      process.env.PATH = bin
+
+      const result = await findPythonCommand({
+        platform: 'darwin',
+        resolveExecutables: async (command) => (command === 'python3' ? ['/usr/bin/python3'] : [])
+      })
+
+      expect(result).toBeUndefined()
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH
+      else process.env.PATH = originalPath
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('still probes a non-Apple python3 on macOS', async () => {
+    const probe = vi.fn().mockResolvedValue(true)
+
+    const result = await findPythonCommand({
+      platform: 'darwin',
+      probe,
+      resolveExecutables: async () => ['/opt/homebrew/bin/python3']
+    })
+
+    expect(result).toEqual({ command: '/opt/homebrew/bin/python3', baseArgs: [] })
+    expect(probe).toHaveBeenCalledOnce()
+  })
+
+  it('finds a later non-Apple python3 when /usr/bin appears first on PATH', async () => {
+    const probe = vi.fn(({ command }) => Promise.resolve(command === '/opt/homebrew/bin/python3'))
+
+    const result = await findPythonCommand({
+      platform: 'darwin',
+      probe,
+      resolveExecutables: async () => ['/usr/bin/python3', '/opt/homebrew/bin/python3']
+    })
+
+    expect(result).toEqual({ command: '/opt/homebrew/bin/python3', baseArgs: [] })
+    expect(probe).not.toHaveBeenCalledWith({ command: '/usr/bin/python3', baseArgs: [] })
+  })
+
+  it('ignores /usr/bin/python3 even when Apple developer tools are available', async () => {
+    const probe = vi.fn(({ command }) => Promise.resolve(command === 'python3'))
+
+    const result = await findPythonCommand({
+      platform: 'darwin',
+      probe,
+      resolveExecutables: async () => ['/usr/bin/python3']
+    })
+
+    expect(result).toBeUndefined()
+    expect(probe).not.toHaveBeenCalledWith({ command: 'python3', baseArgs: [] })
   })
 
   it('prefers the `py -3` launcher on windows', async () => {
