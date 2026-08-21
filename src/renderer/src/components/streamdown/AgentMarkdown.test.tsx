@@ -3,6 +3,11 @@ import { act, type PropsWithChildren } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
+
 const streamdownHarness = vi.hoisted(() => ({
   shouldThrow: true,
   disallowedElements: undefined as readonly string[] | undefined,
@@ -50,6 +55,7 @@ describe('AgentMarkdown renderer recovery', () => {
   let root: Root
 
   beforeEach(() => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     streamdownHarness.shouldThrow = true
     streamdownHarness.disallowedElements = undefined
     streamdownHarness.components = undefined
@@ -379,5 +385,87 @@ describe('AgentMarkdown renderer recovery', () => {
     })
 
     expect(open).toHaveBeenCalledWith('https://example.com/paper', '_blank', 'noreferrer')
+  })
+
+  it('renders a numeric HTTPS link as a citation marker and opens a reusable source preview', async () => {
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://example.com/paper#results" title="Genome study">
+          1
+        </SessionMessageLink>
+      )
+    })
+
+    const citation = container.querySelector<HTMLAnchorElement>('[data-citation-marker]')
+    expect(citation?.tagName).toBe('A')
+    expect(citation?.getAttribute('href')).toBe('https://example.com/paper#results')
+    expect(citation?.getAttribute('role')).toBe('doc-noteref')
+    expect(citation?.getAttribute('aria-label')).toBe('Source 1: Genome study')
+    expect(citation?.className).toContain('rounded-full')
+    expect(citation?.className).toContain('text-primary')
+
+    await act(async () => {
+      citation?.click()
+    })
+
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    const dialog = document.body.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Open external link?"]'
+    )
+    expect(dialog).not.toBeNull()
+    expect(dialog?.textContent).toContain('You are about to preview an external website.')
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    const openPreview = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Open source preview')
+    await act(async () => {
+      openPreview?.click()
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      panelState: 'open',
+      activeItemId: 'source:https://example.com/paper#results',
+      items: [
+        expect.objectContaining({
+          id: 'source:https://example.com/paper#results',
+          type: 'source',
+          title: 'Genome study',
+          url: 'https://example.com/paper#results'
+        })
+      ]
+    })
+  })
+
+  it('keeps a numeric non-HTTPS link on the external-link safety path', async () => {
+    await act(async () => {
+      root.render(<SessionMessageLink href="http://example.com/paper">1</SessionMessageLink>)
+    })
+
+    expect(container.querySelector('[data-citation-marker]')).toBeNull()
+    expect(container.querySelector('[data-session-message-link]')).not.toBeNull()
+  })
+
+  it('routes middle-click citation activation through the safety confirmation', async () => {
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://example.com/paper" title="Genome study">
+          1
+        </SessionMessageLink>
+      )
+    })
+
+    const citation = container.querySelector<HTMLAnchorElement>('[data-citation-marker]')
+    const auxClick = new MouseEvent('auxclick', { bubbles: true, button: 1, cancelable: true })
+    await act(async () => {
+      citation?.dispatchEvent(auxClick)
+    })
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+
+    expect(auxClick.defaultPrevented).toBe(true)
+    expect(
+      document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
+    ).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 })

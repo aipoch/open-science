@@ -81,6 +81,7 @@ const SideChatAssistantMessage = ({
     <PresentedAgentMarkdown
       content={presentation.content}
       isAnimating={presentation.isPresenting}
+      sessionLinks
     />
   )
 }

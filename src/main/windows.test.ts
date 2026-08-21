@@ -13,13 +13,19 @@ import {
 } from '../shared/window-controls'
 
 // Hoisted so the electron mock and the test body share the same spies.
-const { openExternalMock, ipcMainOnMock, ipcMainRemoveListenerMock, showMessageBoxMock } =
-  vi.hoisted(() => ({
-    openExternalMock: vi.fn(),
-    ipcMainOnMock: vi.fn(),
-    ipcMainRemoveListenerMock: vi.fn(),
-    showMessageBoxMock: vi.fn()
-  }))
+const {
+  openExternalMock,
+  ipcMainOnMock,
+  ipcMainRemoveListenerMock,
+  showMessageBoxMock,
+  webFrameMainFromIdMock
+} = vi.hoisted(() => ({
+  openExternalMock: vi.fn(),
+  ipcMainOnMock: vi.fn(),
+  ipcMainRemoveListenerMock: vi.fn(),
+  showMessageBoxMock: vi.fn(),
+  webFrameMainFromIdMock: vi.fn()
+}))
 
 const { windowLogSpies } = vi.hoisted(() => ({
   windowLogSpies: {
@@ -56,6 +62,20 @@ vi.mock('./find-overlay', () => ({
 // target="_blank" click or window.open() from the main app frame.
 type WindowOpenDetails = { url: string; referrer: { url: string } }
 let windowOpenHandler: ((details: WindowOpenDetails) => unknown) | undefined
+type PermissionRequestHandler = (
+  webContents: unknown,
+  permission: string,
+  callback: (granted: boolean) => void,
+  details: { isMainFrame: boolean; requestingUrl: string }
+) => void
+type PermissionCheckHandler = (
+  webContents: unknown,
+  permission: string,
+  requestingOrigin: string,
+  details: { isMainFrame: boolean }
+) => boolean
+let permissionRequestHandler: PermissionRequestHandler | undefined
+let permissionCheckHandler: PermissionCheckHandler | undefined
 
 // The most recently constructed window and its captured handlers, so tests can drive the
 // before-input-event / lifecycle listeners and the 'close' interceptor the way Electron would.
@@ -78,6 +98,7 @@ class FakeBrowserWindow {
   hidden = false
   destroyed = false
   hideCalls = 0
+  mainFrame = { frameTreeNodeId: 1, name: '', url: 'file:///app/index.html', parent: null }
   webContents = {
     setWindowOpenHandler: (handler: (details: WindowOpenDetails) => unknown): void => {
       windowOpenHandler = handler
@@ -86,7 +107,16 @@ class FakeBrowserWindow {
       this.webContentsHandlers.set(event, handler)
     },
     send: (...args: unknown[]): void => this.sendMock(...args),
-    getURL: (): string => 'file:///app/index.html'
+    getURL: (): string => 'file:///app/index.html',
+    mainFrame: this.mainFrame,
+    session: {
+      setPermissionRequestHandler: (handler: PermissionRequestHandler): void => {
+        permissionRequestHandler = handler
+      },
+      setPermissionCheckHandler: (handler: PermissionCheckHandler): void => {
+        permissionCheckHandler = handler
+      }
+    }
   }
 
   on(event: string, handler: (event: CloseEvent) => void): this {
@@ -151,7 +181,8 @@ vi.mock('electron', () => ({
   WebContentsView: class {},
   dialog: { showMessageBox: showMessageBoxMock },
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },
-  shell: { openExternal: openExternalMock }
+  shell: { openExternal: openExternalMock },
+  webFrameMain: { fromId: webFrameMainFromIdMock }
 }))
 
 vi.mock('@electron-toolkit/utils', () => ({ is: { dev: false } }))
@@ -252,41 +283,148 @@ describe('window navigation policy', () => {
     expect(policy?.isAllowedExternalNavigation('file:///Users/example/private.txt')).toBe(false)
   })
 
-  it('keeps subframe navigation inside the managed preview protocol', async () => {
+  it('allows HTTPS source-preview subframes while keeping main-frame navigation constrained', async () => {
     const policy = await import('./navigation-policy').catch(() => undefined)
+    const mainFrame = {
+      frameTreeNodeId: 1,
+      name: '',
+      url: 'file:///app/index.html',
+      parent: null
+    }
+    const guard = policy?.createFrameNavigationGuard(mainFrame)
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: mainFrame
+    }
 
     expect(policy).toBeDefined()
+    expect(guard?.('open-science-preview://resource/report.html', false)).toBe(true)
     expect(
-      policy?.isAllowedFrameNavigation('open-science-preview://resource/report.html', false)
-    ).toBe(true)
-    expect(
-      policy?.isAllowedFrameNavigation(
+      guard?.(
         'open-science-office-preview://runtime/office-preview.html?sessionId=session-1',
         false
       )
     ).toBe(true)
-    expect(policy?.isAllowedFrameNavigation('https://example.com/exfiltrate', false)).toBe(false)
+    expect(guard?.('https://example.com/paper', false)).toBe(false)
+    expect(guard?.('https://example.com/paper', false, '', sourceFrame)).toBe(true)
+
+    const redirectedSourceFrame = {
+      frameTreeNodeId: 2,
+      name: '',
+      url: 'https://example.com/paper',
+      parent: { ...mainFrame }
+    }
+    expect(guard?.('https://example.com/redirected', false, '', redirectedSourceFrame)).toBe(true)
     expect(
-      policy?.isAllowedFrameNavigation(
-        'https://app.example.com/workspace',
-        true,
-        'https://app.example.com/'
-      )
-    ).toBe(true)
-    expect(
-      policy?.isAllowedFrameNavigation(
-        'https://example.com/exfiltrate',
-        true,
-        'https://app.example.com/'
-      )
+      guard?.('open-science-preview://resource/report.html', false, '', redirectedSourceFrame)
     ).toBe(false)
+    const sourceDescendant = {
+      frameTreeNodeId: 3,
+      name: '',
+      url: 'about:blank',
+      parent: redirectedSourceFrame
+    }
+    expect(guard?.('https://static.example.com/embed', false, '', sourceDescendant)).toBe(true)
+
+    const htmlPreviewFrame = {
+      frameTreeNodeId: 4,
+      name: 'open-science-source-preview',
+      url: 'open-science-preview://resource/report.html',
+      parent: mainFrame
+    }
+    expect(guard?.('https://example.com/exfiltrate', false, '', htmlPreviewFrame)).toBe(false)
+    const nestedSpoof = {
+      frameTreeNodeId: 5,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: htmlPreviewFrame
+    }
+    expect(guard?.('https://example.com/exfiltrate', false, '', nestedSpoof)).toBe(false)
+    expect(guard?.('http://example.com/paper', false, '', redirectedSourceFrame)).toBe(false)
+    expect(guard?.('https://app.example.com/workspace', true, 'https://app.example.com/')).toBe(
+      true
+    )
+    expect(guard?.('https://example.com/exfiltrate', true, 'https://app.example.com/')).toBe(false)
+    expect(guard?.('file://remote-host/app/index.html', true, 'file:///app/index.html')).toBe(false)
+  })
+
+  it('applies the source-frame guard to server redirects', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    const initialNavigation = {
+      url: 'https://citation.example/paper',
+      isMainFrame: false,
+      processId: 7,
+      routingId: 8,
+      frame: Object('https://citation.example/paper'),
+      preventDefault: vi.fn()
+    }
+    webFrameMainFromIdMock.mockReturnValue(sourceFrame)
+    window.webContentsHandlers.get('will-frame-navigate')?.(initialNavigation)
+    expect(webFrameMainFromIdMock).toHaveBeenCalledWith(7, 8)
+    expect(initialNavigation.preventDefault).not.toHaveBeenCalled()
+
+    const redirectedFrame = {
+      frameTreeNodeId: 2,
+      name: '',
+      url: 'https://citation.example/paper',
+      parent: { ...window.mainFrame }
+    }
+    const allowedRedirect = {
+      url: 'https://publisher.example/paper',
+      isMainFrame: false,
+      frame: null,
+      preventDefault: vi.fn()
+    }
+    webFrameMainFromIdMock.mockReturnValue(redirectedFrame)
+    const redirectHandler = window.webContentsHandlers.get('will-redirect')
+    redirectHandler?.(allowedRedirect, allowedRedirect.url, false, false, 7, 8)
+    expect(webFrameMainFromIdMock).toHaveBeenCalledWith(7, 8)
+    expect(allowedRedirect.preventDefault).not.toHaveBeenCalled()
+
+    const blockedRedirect = {
+      ...allowedRedirect,
+      url: 'open-science-preview://resource/report.html',
+      preventDefault: vi.fn()
+    }
+    redirectHandler?.(blockedRedirect, blockedRedirect.url, false, false, 7, 8)
+    expect(blockedRedirect.preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('denies every subframe permission request while preserving trusted main-frame checks', () => {
+    createMainWindow()
+
+    expect(permissionRequestHandler).toBeDefined()
+    expect(permissionCheckHandler).toBeDefined()
+    const subframeDecision = vi.fn()
+    permissionRequestHandler?.({}, 'geolocation', subframeDecision, {
+      isMainFrame: false,
+      requestingUrl: 'https://example.com/paper'
+    })
+    expect(subframeDecision).toHaveBeenCalledWith(false)
     expect(
-      policy?.isAllowedFrameNavigation(
-        'file://remote-host/app/index.html',
-        true,
-        'file:///app/index.html'
-      )
+      permissionCheckHandler?.({}, 'geolocation', 'https://example.com', {
+        isMainFrame: false
+      })
     ).toBe(false)
+
+    const mainFrameDecision = vi.fn()
+    permissionRequestHandler?.({}, 'notifications', mainFrameDecision, {
+      isMainFrame: true,
+      requestingUrl: 'file:///app/index.html'
+    })
+    expect(mainFrameDecision).toHaveBeenCalledWith(true)
+    expect(permissionCheckHandler?.({}, 'notifications', 'file://', { isMainFrame: true })).toBe(
+      true
+    )
   })
 })
 

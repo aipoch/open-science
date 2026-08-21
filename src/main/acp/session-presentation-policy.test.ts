@@ -52,6 +52,15 @@ const REMOTE_COMPUTE_AWARENESS_APPEND = [
   '</open_science_remote_compute_awareness>'
 ].join('\n')
 
+const CITATION_APPEND = [
+  '<open_science_citation_instructions>',
+  'When a statement in your final answer relies on web search results, reference materials, or literature, append a standard Markdown citation link immediately after the supported sentence.',
+  'Use sequential numeric labels starting at 1, for example `[1](https://example.org/paper "Source title")`. Reuse the same number when citing the same source again.',
+  'Citations must link directly to the supporting source over HTTPS. Do not cite search result pages, use non-HTTPS URLs, or invent citations.',
+  'Keep the citation label numeric and put a concise source title in the optional Markdown link title when known.',
+  '</open_science_citation_instructions>'
+].join('\n')
+
 const ARTIFACT_FILE_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
@@ -90,6 +99,7 @@ describe('ACP Session presentation policy', () => {
       TURN_CONTINUITY_APPEND,
       LARGE_DATA_FILE_APPEND,
       REMOTE_COMPUTE_AWARENESS_APPEND,
+      CITATION_APPEND,
       ARTIFACT_FILE_APPEND,
       NOTEBOOK_SYSTEM_PROMPT_APPEND,
       SKILL_IMPORT_SYSTEM_PROMPT_APPEND
@@ -108,7 +118,8 @@ describe('ACP Session presentation policy', () => {
       AGENT_BEHAVIOR_APPEND,
       TURN_CONTINUITY_APPEND,
       LARGE_DATA_FILE_APPEND,
-      REMOTE_COMPUTE_AWARENESS_APPEND
+      REMOTE_COMPUTE_AWARENESS_APPEND,
+      CITATION_APPEND
     ])
     expect(appends.join('\n\n')).not.toContain('<open_science_skill_privacy_instructions>')
   })
@@ -211,6 +222,7 @@ describe('ACP Session presentation policy', () => {
       TURN_CONTINUITY_APPEND,
       LARGE_DATA_FILE_APPEND,
       REMOTE_COMPUTE_AWARENESS_APPEND,
+      CITATION_APPEND,
       'Backend connector guidance.',
       'Specialist identity.'
     ].join('\n\n')

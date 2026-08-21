@@ -75,6 +75,7 @@ const DELEGATED_BRANCH_A_NAME = 'Inactive branch child A'
 const DELEGATED_BRANCH_B_NAME = 'Active branch child B1'
 const DELEGATED_BRANCH_B_NAME_TWO = 'Active branch child B2'
 const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
+const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 
 const sessionRoutes = new Map()
 const sessionCancellationResolvers = new Map()
@@ -704,6 +705,9 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = ''
+        } else if (prompt.includes(CITATION_PREVIEW_PROMPT)) {
+          reply =
+            'The fixture evidence supports this claim.[1](https://citation.example/paper "Fixture study")'
         } else if (
           await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
         ) {

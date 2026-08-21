@@ -1,4 +1,7 @@
 import { expect } from '@playwright/test'
+import type { AxeResults } from 'axe-core'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
@@ -8,6 +11,8 @@ const EDITED_USER_MESSAGE = 'Summarize the revised deterministic fixture.'
 const AGENT_REPLY = `Deterministic reply: ${USER_MESSAGE}`
 const PERMISSION_PROMPT = 'Request fixture permission.'
 const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
+const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
+const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 
 const createProject = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'New project' }).click()
@@ -159,6 +164,67 @@ test('shows context compaction loading and completion inside the Session transcr
       true
     )
   }
+})
+
+test('opens a claim citation in the isolated HTTPS source preview tab', async ({
+  app
+}, testInfo) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await page.route('https://citation.example/paper', async (route) => {
+    await route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html><body><main><h1>Fixture source</h1><p>Peer-reviewed evidence.</p></main></body></html>'
+    })
+  })
+  await createProject(page)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const citation = page.getByRole('link', { name: 'Source 1: Fixture study' })
+  await expect(citation).toBeVisible()
+  await page.evaluate(await readFile(AXE_PATH, 'utf8'))
+  const citationAccessibility = (await citation.evaluate(async (element) => {
+    const axe = (
+      globalThis as unknown as {
+        axe: { run: (context: Element, options: unknown) => Promise<unknown> }
+      }
+    ).axe
+
+    return axe.run(element, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }
+    })
+  })) as AxeResults
+  expect(
+    citationAccessibility.violations.filter(
+      ({ impact }) => impact === 'critical' || impact === 'serious'
+    )
+  ).toEqual([])
+  await citation.hover()
+  await expect(page.getByRole('tooltip')).toContainText('citation.example')
+  await citation.click()
+  const safetyDialog = page.getByRole('dialog', { name: 'Open external link?' })
+  await expect(safetyDialog).toContainText('You are about to preview an external website.')
+  await safetyDialog.getByRole('button', { name: 'Open source preview' }).click()
+
+  await expect(page.getByRole('tab', { name: 'Fixture study' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  const sourceFrame = page.locator('[data-source-preview-frame]')
+  await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
+  await expect(sourceFrame).toHaveAttribute('sandbox', 'allow-same-origin allow-scripts')
+  await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
+  await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
+  await expect(page.getByText('Cited URL: citation.example', { exact: true })).toBeVisible()
+  await expect(
+    page.frameLocator('[data-source-preview-frame]').getByRole('heading', {
+      name: 'Fixture source'
+    })
+  ).toBeVisible()
+
+  await page.screenshot({ path: testInfo.outputPath('citation-source-preview.png') })
 })
 
 test('archives a completed session from its mobile sidebar actions', async ({ app }) => {

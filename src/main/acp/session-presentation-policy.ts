@@ -132,6 +132,15 @@ const REMOTE_COMPUTE_AWARENESS_SYSTEM_PROMPT_APPEND = [
   '</open_science_remote_compute_awareness>'
 ].join('\n')
 
+const CITATION_SYSTEM_PROMPT_APPEND = [
+  '<open_science_citation_instructions>',
+  'When a statement in your final answer relies on web search results, reference materials, or literature, append a standard Markdown citation link immediately after the supported sentence.',
+  'Use sequential numeric labels starting at 1, for example `[1](https://example.org/paper "Source title")`. Reuse the same number when citing the same source again.',
+  'Citations must link directly to the supporting source over HTTPS. Do not cite search result pages, use non-HTTPS URLs, or invent citations.',
+  'Keep the citation label numeric and put a concise source title in the optional Markdown link title when known.',
+  '</open_science_citation_instructions>'
+].join('\n')
+
 // Converts runtime-owned prompt facts into provider-specific setup and turn presentation without
 // owning Session state or capability decisions.
 class AcpSessionPresentationPolicy {
@@ -149,6 +158,7 @@ class AcpSessionPresentationPolicy {
       TURN_CONTINUITY_SYSTEM_PROMPT_APPEND,
       LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
       REMOTE_COMPUTE_AWARENESS_SYSTEM_PROMPT_APPEND,
+      CITATION_SYSTEM_PROMPT_APPEND,
       ...(tooling.artifacts ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(tooling.notebook ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : []),
       ...(tooling.skillImport ? [SKILL_IMPORT_SYSTEM_PROMPT_APPEND] : [])
