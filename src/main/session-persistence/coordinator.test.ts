@@ -5567,6 +5567,13 @@ describe('SessionPersistenceCoordinator', () => {
       },
       fileIndex: {
         restoreSession: vi.fn().mockRejectedValue(new Error('file index unavailable'))
+      },
+      computeJobs: {
+        prepareSessionJobDeletion: vi.fn(async () => undefined),
+        commitSessionJobDeletion: vi.fn(async () => undefined),
+        prepareProjectJobDeletion: vi.fn(async () => undefined),
+        commitProjectJobDeletion: vi.fn(async () => undefined),
+        abortSessionJobDeletion: vi.fn(async () => undefined)
       }
     })
 

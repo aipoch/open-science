@@ -425,6 +425,8 @@ class SessionPersistenceDeletionOwner {
       let recoveryPhase: string | undefined
       try {
         if (!jsonDeleted) {
+          let recoveryError: unknown
+          let recoveryFailed = false
           try {
             if (receipt.kind === 'retained') {
               recoveryPhase = 'abort-provenance'
@@ -434,12 +436,20 @@ class SessionPersistenceDeletionOwner {
               recoveryPhase = 'restore-file-index'
               await this.fileIndex.restoreSession(projectId, sessionId, token)
             }
-          } finally {
-            if (computeJobsPrepared) {
-              recoveryPhase = 'abort-compute-cleanup'
+          } catch (restoreError) {
+            recoveryError = restoreError
+            recoveryFailed = true
+          }
+          if (computeJobsPrepared) {
+            try {
               await this.computeJobs?.abortSessionJobDeletion?.(projectId, sessionId)
+            } catch (computeRestoreError) {
+              recoveryPhase = 'abort-compute-cleanup'
+              recoveryError = computeRestoreError
+              recoveryFailed = true
             }
           }
+          if (recoveryFailed) throw recoveryError
         } else {
           this.fileIndex.markReconciliationIncomplete()
         }
