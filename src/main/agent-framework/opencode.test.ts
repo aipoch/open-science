@@ -1,8 +1,57 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { buildOpencodeConfig, opencodeFramework } from './opencode'
+import { buildOpencodeConfig, createOpencodeFramework, opencodeFramework } from './opencode'
+
+const fakeChild = {} as ChildProcessWithoutNullStreams
+
+describe('opencodeFramework spawn seam', () => {
+  it.each([
+    {
+      platform: 'darwin' as const,
+      executablePath: '/runtime/opencode',
+      expectedCommand: '/runtime/opencode',
+      shell: false
+    },
+    {
+      platform: 'win32' as const,
+      executablePath: 'C:\\runtime\\opencode.cmd',
+      expectedCommand: '"C:\\runtime\\opencode.cmd"',
+      shell: true
+    }
+  ])('spawns the $platform executable through the injected process seam', (testCase) => {
+    const spawnProcess = vi.fn().mockReturnValue(fakeChild)
+    const framework = createOpencodeFramework({
+      platform: testCase.platform,
+      sourceEnv: { PATH: '/parent-bin', STALE: 'parent' },
+      spawnProcess
+    })
+
+    expect(
+      framework.spawn({
+        executablePath: testCase.executablePath,
+        env: { XDG_CONFIG_HOME: '/data/opencode/config', STALE: 'app' },
+        args: ['--verbose']
+      })
+    ).toBe(fakeChild)
+    expect(spawnProcess).toHaveBeenCalledWith(
+      testCase.expectedCommand,
+      ['acp', '--verbose'],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          PATH: expect.stringContaining('/parent-bin'),
+          XDG_CONFIG_HOME: '/data/opencode/config',
+          STALE: 'app'
+        }),
+        shell: testCase.shell,
+        stdio: 'pipe',
+        windowsHide: true
+      })
+    )
+  })
+})
 
 describe('opencodeFramework.prepareModelConfig', () => {
   it('writes connector conventions and wires them into opencode.json instructions', () => {
@@ -216,6 +265,65 @@ describe('opencodeFramework.prepareModelConfig', () => {
     })
   })
 
+  it.each([
+    {
+      name: 'no reported limits',
+      limits: {},
+      expected: undefined
+    },
+    {
+      name: 'shared context only',
+      limits: { contextWindow: 128_000 },
+      expected: { context: 128_000, output: 32_000 }
+    },
+    {
+      name: 'independent input cap',
+      limits: { contextWindow: 200_000, maxInputTokens: 160_000 },
+      expected: { context: 200_000, input: 160_000, output: 32_000 }
+    },
+    {
+      name: 'independent output cap',
+      limits: { contextWindow: 200_000, maxOutputTokens: 64_000 },
+      expected: { context: 200_000, output: 64_000 }
+    },
+    {
+      name: 'all provider-reported limits',
+      limits: { contextWindow: 400_000, maxInputTokens: 272_000, maxOutputTokens: 128_000 },
+      expected: { context: 400_000, input: 272_000, output: 128_000 }
+    },
+    {
+      name: 'context smaller than the adapter reserve',
+      limits: { contextWindow: 16_000 },
+      expected: { context: 16_000, output: 16_000 }
+    },
+    {
+      name: 'reported output larger than context',
+      limits: { contextWindow: 64_000, maxOutputTokens: 128_000 },
+      expected: { context: 64_000, output: 64_000 }
+    }
+  ])('projects $name into both authoritative OpenCode config layers', ({ limits, expected }) => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'model-a',
+        key: 'k',
+        ...limits
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const pinnedConfig = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    for (const layer of [fileConfig, pinnedConfig]) {
+      const model = layer.provider.anthropic.models['model-a']
+      if (expected === undefined) expect(model).not.toHaveProperty('limit')
+      else expect(model.limit).toEqual(expected)
+    }
+  })
+
   it('declares image capability in the pinned layer for a multimodal model', () => {
     const config = opencodeFramework.prepareModelConfig(
       {
@@ -402,6 +510,8 @@ describe('opencodeFramework.prepareModelConfig', () => {
             ...activeProvider,
             model: 'deepseek-v3.2',
             contextWindow: 64_000,
+            maxInputTokens: 48_000,
+            maxOutputTokens: 16_000,
             supportsImageInput: true
           },
           reasoningEffort: 'low'
@@ -422,7 +532,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
         attachment: true,
         modalities: { input: ['text', 'image'] },
         options: { reasoningEffort: 'low', thinking: { type: 'enabled' } },
-        limit: { context: 64_000, output: 32_000 }
+        limit: { context: 64_000, input: 48_000, output: 16_000 }
       }
     }
 

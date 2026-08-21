@@ -1,4 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawn,
+  type ChildProcessWithoutNullStreams,
+  type SpawnOptionsWithoutStdio
+} from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { SessionModeState } from '@agentclientprotocol/sdk'
@@ -25,6 +29,18 @@ import type {
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { renderAppMcpToolReferences } from './app-mcp-names'
+
+type SpawnProcess = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptionsWithoutStdio & { stdio: 'pipe' }
+) => ChildProcessWithoutNullStreams
+
+type OpencodeFrameworkDeps = {
+  platform?: NodeJS.Platform
+  sourceEnv?: NodeJS.ProcessEnv
+  spawnProcess?: SpawnProcess
+}
 
 // opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the shapes that differ from Claude
 // are implemented here: model config (a generated opencode.json, not ANTHROPIC_* env), system-prompt
@@ -382,7 +398,11 @@ const buildOpencodeConfig = (
 
 export { buildOpencodeConfig }
 
-export const opencodeFramework: AgentFramework = {
+export const createOpencodeFramework = ({
+  platform = process.platform,
+  sourceEnv = process.env,
+  spawnProcess = spawn as SpawnProcess
+}: OpencodeFrameworkDeps = {}): AgentFramework => ({
   id: 'opencode',
   displayName: 'OpenCode',
   // OpenCode owns automatic compaction using its resolved model limits. Keep the native command for
@@ -408,13 +428,13 @@ export const opencodeFramework: AgentFramework = {
     // Windows an npm-installed opencode is a `opencode.cmd`/`.bat` shim that Node cannot launch without
     // a shell (spawn EINVAL, same as Claude's cli.js shim), so those go through the shell with the
     // path quoted; a native `.exe`/Unix binary spawns directly.
-    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
+    const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
 
-    return spawn(
+    return spawnProcess(
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       ['acp', ...input.args],
       {
-        env: { ...augmentedPathEnv(process.env), ...input.env },
+        env: { ...augmentedPathEnv(sourceEnv), ...input.env },
         stdio: 'pipe',
         windowsHide: true,
         shell: needsShell
@@ -539,4 +559,6 @@ export const opencodeFramework: AgentFramework = {
     // enforces ask/auto/full app-side. That's why Full access is offered even without a native bypass.
     return resolvePermissionProfileApplication(profile, modes, { brokerEnforcesFullAccess: true })
   }
-}
+})
+
+export const opencodeFramework = createOpencodeFramework()

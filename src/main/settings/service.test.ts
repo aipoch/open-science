@@ -61,7 +61,8 @@ const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { netFetch } = await import('../skills/net-fetch')
 const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist-package-adapter')
-const { opencodeTransportProviderId } = await import('../agent-framework/opencode')
+const { opencodeConfigDir, opencodeTransportProviderId } =
+  await import('../agent-framework/opencode')
 const { net: mockedNet } = (await import('electron')) as unknown as {
   net: { fetch: ReturnType<typeof vi.fn> }
 }
@@ -1213,12 +1214,17 @@ describe('SettingsService: providers', () => {
     await service.setActiveProvider(view.id)
     const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const materialized = JSON.parse(
+      await readFile(join(opencodeConfigDir(storageRoot), 'opencode.json'), 'utf8')
+    )
     const agentProviderId = opencodeTransportProviderId(view.id, 'm')
-    expect(content.provider[agentProviderId].models.m.limit).toEqual({
+    const expectedLimit = {
       context: 400_000,
       input: 272_000,
       output: 128_000
-    })
+    }
+    expect(content.provider[agentProviderId].models.m.limit).toEqual(expectedLimit)
+    expect(materialized.provider[agentProviderId].models.m.limit).toEqual(expectedLimit)
   })
 
   it('uses a 200k context default and keeps the OpenCode output reserve adapter-only', async () => {
@@ -1247,10 +1253,17 @@ describe('SettingsService: providers', () => {
     await service.setActiveProvider(view.id)
     const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const materialized = JSON.parse(
+      await readFile(join(opencodeConfigDir(storageRoot), 'opencode.json'), 'utf8')
+    )
     const agentProviderId = opencodeTransportProviderId(view.id, 'm')
     expect(content.provider[agentProviderId].models.m.limit.context).toBe(200_000)
     expect(content.provider[agentProviderId].models.m.limit).not.toHaveProperty('input')
     expect(content.provider[agentProviderId].models.m.limit.output).toBe(32_000)
+    expect(materialized.provider[agentProviderId].models.m.limit).toEqual({
+      context: 200_000,
+      output: 32_000
+    })
   })
 
   it('keeps OpenCode connector details in on-demand skills instead of baseline context', async () => {
