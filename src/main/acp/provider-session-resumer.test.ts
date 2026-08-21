@@ -1,3 +1,4 @@
+import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -42,6 +43,12 @@ const codexBridgeBackend: AcpBackendGenerationView = {
   ...codexResponsesBackend,
   backendId: 'codex:bridge-provider',
   modelRoute: 'codex-bridge'
+}
+
+const codexResponsesCompatibilityBackend: AcpBackendGenerationView = {
+  ...codexResponsesBackend,
+  backendId: 'codex:responses-compatibility-provider',
+  modelRoute: 'codex-responses-compatibility'
 }
 
 const opencodeBackend: AcpBackendGenerationView = {
@@ -640,6 +647,29 @@ describe('AcpProviderSessionResumer', () => {
         providerSessionId,
         previousFrameworkId: 'codex',
         previousBackendId: codexResponsesBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sessionId: providerSessionId })
+    )
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('fresh-adopts a persisted Codex Responses Compatibility Session after an opaque internal resume failure', async () => {
+    const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    const harness = createHarness({
+      initialBackend: codexResponsesCompatibilityBackend,
+      resumeError: acp.RequestError.internalError()
+    })
+
+    await expect(
+      harness.resume({
+        providerSessionId,
+        previousFrameworkId: 'codex',
+        previousBackendId: codexResponsesCompatibilityBackend.backendId
       })
     ).resolves.toMatchObject({ contextReset: true })
 
