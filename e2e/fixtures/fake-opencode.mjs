@@ -34,6 +34,8 @@ const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
 const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
+const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
+  'Run the buffered text tool layout stability journey.'
 const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
 const DELEGATION_INHERITED_SPECIALIST_PROMPT =
   'Run the production inherited Specialist delegation journey.'
@@ -487,7 +489,42 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (
+        if (prompt.includes(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)) {
+          const intentMessageId = `e2e-message-${nextMessageId++}`
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: intentMessageId,
+              content: { type: 'text', text: 'Next step.' }
+            }
+          })
+          // Leave the text fragment as the trailing item long enough for its presentation buffer
+          // to drain while the Thinking row remains visible, matching a real model that pauses
+          // before issuing its tool call.
+          await delay(2_000)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'e2e-buffered-layout-tool',
+              title: 'Buffered layout probe',
+              kind: 'other',
+              status: 'in_progress'
+            }
+          })
+          await delay(2_000)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'e2e-buffered-layout-tool',
+              title: 'Buffered layout probe',
+              status: 'completed'
+            }
+          })
+          reply = ''
+        } else if (
           prompt.includes(TOOL_LAYOUT_SHIFT_PROMPT) ||
           prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)
         ) {
