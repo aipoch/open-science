@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { commonCatalogs } from '../../shared/i18n/common-resources'
+import { common as frCommon } from '../../shared/i18n/locales/fr.json'
 import { SettingsRepository } from '../settings/repository'
 import { LocalePreferenceOwner } from './owner'
 import { translateNativeMessage } from './main-process-messages'
@@ -149,7 +149,7 @@ describe('LocalePreferenceOwner', () => {
   })
 
   it('keeps French high punctuation attached to the preceding text', () => {
-    const keys = [...Object.keys(commonCatalogs.fr), ...Object.keys(nativeCatalogs.fr)].map(
+    const keys = [...Object.keys(frCommon), ...Object.keys(nativeCatalogs.fr)].map(
       (key) => key.split('_')[0]
     )
     const offenders = keys.filter((key) => / [;:?!]/.test(translateNativeMessage('fr', key)))

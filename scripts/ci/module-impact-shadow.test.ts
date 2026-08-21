@@ -110,25 +110,47 @@ describe('module impact shadow', () => {
     expect(report.comparison.coverage).toBe(authoritativeMode === 'full' ? 'covered' : 'gap')
   })
 
-  it.each(['fr.json', 'ja.json', 'ko.json', 'zh-Hans.json', 'zh-Hant.json'])(
+  it.each(['fr.json', 'ja.json', 'ko.json', 'ru.json', 'zh-Hans.json', 'zh-Hant.json'])(
     'owns %s catalog edits as a selective i18n module instead of an unknown full plan',
     (catalog) => {
-      const report = reportFor([
-        { path: `src/renderer/src/locales/${catalog}`, status: 'modified' }
-      ])
+      const report = reportFor([{ path: `src/shared/i18n/locales/${catalog}`, status: 'modified' }])
 
       expect(report.authoritative.mode).toBe('selective')
       expect(report.shadow).toMatchObject({
         mode: 'selective',
-        modules: ['i18n_catalog']
+        modules: ['i18n_catalog', 'i18n_main_adapter', 'i18n_renderer_adapter']
       })
-      expect(report.shadow.testFiles).toEqual(['src/renderer/src/i18n/resources.test.ts'])
+      expect(report.shadow.testFiles).toEqual([
+        'src/main/locale/owner.test.ts',
+        'src/renderer/src/i18n/resources.test.ts'
+      ])
+      expect(report.shadow.fallbackCapabilities).toEqual([
+        'main_runtime',
+        'renderer_view',
+        'shared_contract'
+      ])
       expect(report.comparison.requiredLanes).toContain('i18n')
       expect(report.comparison.selectedLanes).toContain('i18n')
       expect(report.comparison.missingLanes).toEqual([])
       expect(report.comparison.coverage).toBe('covered')
     }
   )
+
+  it.each([
+    ['main', 'src/main/locale/resources.ts', 'i18n_main_adapter', 'main_runtime'],
+    ['renderer', 'src/renderer/src/i18n/resources.ts', 'i18n_renderer_adapter', 'renderer_view']
+  ])('uses the %s process fallback for its i18n adapter', (_process, path, module, fallback) => {
+    const report = reportFor([{ path, status: 'modified' }])
+
+    expect(report.shadow).toMatchObject({
+      mode: 'selective',
+      modules: [module],
+      capabilityOverlays: ['i18n_catalog'],
+      fallbackCapabilities: [fallback]
+    })
+    expect(report.comparison.missingLanes).toEqual([])
+    expect(report.comparison.coverage).toBe('covered')
+  })
 
   it('keeps slash-based macOS and Linux fixtures portable and handles no diff', () => {
     for (const path of [

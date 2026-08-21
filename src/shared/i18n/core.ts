@@ -103,6 +103,16 @@ export const sanitizeCatalog = (
   return (sanitized ?? catalog) as Record<string, string>
 }
 
+export const createNamespacedResource = <Namespace extends string>(
+  catalogs: Readonly<Record<Namespace, Readonly<Record<string, unknown>>>>
+): Record<Namespace, Record<string, string>> =>
+  Object.fromEntries(
+    Object.entries(catalogs).map(([namespace, catalog]) => [
+      namespace,
+      sanitizeCatalog(catalog as Readonly<Record<string, unknown>>)
+    ])
+  ) as Record<Namespace, Record<string, string>>
+
 const fallbackLng: Record<string, string[]> = {
   fr: [DEFAULT_LOCALE],
   ja: [DEFAULT_LOCALE],

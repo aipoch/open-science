@@ -1,11 +1,20 @@
-import { commonCatalogs } from '../../../shared/i18n/common-resources'
-import { COMMON_NAMESPACE, RENDERER_NAMESPACE, sanitizeCatalog } from '../../../shared/i18n/core'
-import fr from '../locales/fr.json'
-import ja from '../locales/ja.json'
-import ko from '../locales/ko.json'
-import ru from '../locales/ru.json'
-import zhHans from '../locales/zh-Hans.json'
-import zhHant from '../locales/zh-Hant.json'
+import {
+  COMMON_NAMESPACE,
+  createNamespacedResource,
+  RENDERER_NAMESPACE
+} from '../../../shared/i18n/core'
+import { common as frCommon, renderer as frRenderer } from '../../../shared/i18n/locales/fr.json'
+import { common as jaCommon, renderer as jaRenderer } from '../../../shared/i18n/locales/ja.json'
+import { common as koCommon, renderer as koRenderer } from '../../../shared/i18n/locales/ko.json'
+import { common as ruCommon, renderer as ruRenderer } from '../../../shared/i18n/locales/ru.json'
+import {
+  common as zhHansCommon,
+  renderer as zhHansRenderer
+} from '../../../shared/i18n/locales/zh-Hans.json'
+import {
+  common as zhHantCommon,
+  renderer as zhHantRenderer
+} from '../../../shared/i18n/locales/zh-Hant.json'
 
 export {
   englishSourceFallbackPostProcessor,
@@ -13,21 +22,31 @@ export {
   sanitizeCatalog
 } from '../../../shared/i18n/core'
 
-const resource = (
-  common: Readonly<Record<string, unknown>>,
-  renderer: Readonly<Record<string, unknown>>
-): { common: Record<string, string>; renderer: Record<string, string> } => ({
-  [COMMON_NAMESPACE]: sanitizeCatalog(common),
-  [RENDERER_NAMESPACE]: sanitizeCatalog(renderer)
-})
-
 export const DEFAULT_NAMESPACE = RENDERER_NAMESPACE
 
 export const resources = {
-  fr: resource(commonCatalogs.fr, fr),
-  ja: resource(commonCatalogs.ja, ja),
-  ko: resource(commonCatalogs.ko, ko),
-  ru: resource(commonCatalogs.ru, ru),
-  'zh-Hans': resource(commonCatalogs['zh-Hans'], zhHans),
-  'zh-Hant': resource(commonCatalogs['zh-Hant'], zhHant)
+  fr: createNamespacedResource({
+    [COMMON_NAMESPACE]: frCommon,
+    [RENDERER_NAMESPACE]: frRenderer
+  }),
+  ja: createNamespacedResource({
+    [COMMON_NAMESPACE]: jaCommon,
+    [RENDERER_NAMESPACE]: jaRenderer
+  }),
+  ko: createNamespacedResource({
+    [COMMON_NAMESPACE]: koCommon,
+    [RENDERER_NAMESPACE]: koRenderer
+  }),
+  ru: createNamespacedResource({
+    [COMMON_NAMESPACE]: ruCommon,
+    [RENDERER_NAMESPACE]: ruRenderer
+  }),
+  'zh-Hans': createNamespacedResource({
+    [COMMON_NAMESPACE]: zhHansCommon,
+    [RENDERER_NAMESPACE]: zhHansRenderer
+  }),
+  'zh-Hant': createNamespacedResource({
+    [COMMON_NAMESPACE]: zhHantCommon,
+    [RENDERER_NAMESPACE]: zhHantRenderer
+  })
 } as const
