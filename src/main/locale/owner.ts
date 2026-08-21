@@ -6,7 +6,11 @@ import {
   type LocalePreferenceSnapshot
 } from '../../shared/locale'
 import type { SettingsRepository } from '../settings/repository'
-import { translateNativeMessage, type NativeMessageKey } from './main-process-messages'
+import {
+  createNativeI18n,
+  type NativeTranslateOptions,
+  type NativeTranslator
+} from './main-process-messages'
 
 type LocalePreferenceListener = (snapshot: LocalePreferenceSnapshot) => void
 
@@ -18,6 +22,7 @@ export class LocalePreferenceOwner {
   private hasPersistedPreference: boolean
   private mutationTail: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<LocalePreferenceListener>()
+  private readonly i18n
 
   constructor(
     private readonly systemLanguageTags: readonly string[],
@@ -26,6 +31,7 @@ export class LocalePreferenceOwner {
   ) {
     this.preference = initialPreference ?? DEFAULT_LANGUAGE_PREFERENCE
     this.hasPersistedPreference = initialPreference !== undefined
+    this.i18n = createNativeI18n(resolveLocale(this.preference, this.systemLanguageTags))
   }
 
   snapshot(): LocalePreferenceSnapshot {
@@ -59,6 +65,7 @@ export class LocalePreferenceOwner {
     this.hasPersistedPreference = true
     const snapshot = this.snapshot()
     if (changed) {
+      await this.i18n.changeLanguage(snapshot.locale)
       for (const listener of this.listeners) listener(snapshot)
     }
     return snapshot
@@ -78,9 +85,9 @@ export class LocalePreferenceOwner {
     return () => this.listeners.delete(listener)
   }
 
-  t(key: NativeMessageKey, values?: Record<string, string | number>): string {
-    return translateNativeMessage(this.snapshot().locale, key, values)
+  t(key: string, options?: NativeTranslateOptions): string {
+    return this.i18n.t(key, options)
   }
 }
 
-export type { NativeTranslator } from './main-process-messages'
+export type { NativeTranslator }

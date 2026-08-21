@@ -4,7 +4,9 @@
 
 The renderer ships six translated locales: **fr** (French), **zh-Hans** (Simplified Chinese),
 **zh-Hant** (Traditional Chinese), **ja** (Japanese), **ko** (Korean), and **ru** (Russian). Every
-user-visible string added to the renderer must have a corresponding entry in all catalog files:
+user-visible string added to the renderer must have a corresponding entry in the `renderer`
+namespace for all translated locales unless the same meaning is intentionally shared with Electron
+main through the `common` namespace:
 
 ```
 src/renderer/src/locales/zh-Hans.json
@@ -14,6 +16,17 @@ src/renderer/src/locales/ko.json
 src/renderer/src/locales/fr.json
 src/renderer/src/locales/ru.json
 ```
+
+Shared and main-only copy lives in process-neutral namespace catalogs:
+
+```text
+src/shared/i18n/locales/<locale>/common.json
+src/shared/i18n/locales/<locale>/native.json
+```
+
+`common` is loaded by main and renderer, `native` only by main, and the renderer files above only by
+the React adapter. Put a key in `common` only when its UI meaning and reviewed translation are the
+same in both processes; an identical English key is not enough.
 
 The guard suite in `src/renderer/src/i18n/resources.test.ts` runs on every `npm test` and **will
 fail the PR** if any of the following are violated.
