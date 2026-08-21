@@ -134,7 +134,10 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
       surfaceHeight: surface.getBoundingClientRect().height
     }
   })
-  expect(bufferedGeometry.surfaceHeight - bufferedGeometry.markdownHeight, bufferedGeometry).toBe(0)
+  expect(
+    bufferedGeometry.surfaceHeight - bufferedGeometry.markdownHeight,
+    JSON.stringify(bufferedGeometry)
+  ).toBe(0)
 
   await expect(toolGroup).toBeVisible()
 
