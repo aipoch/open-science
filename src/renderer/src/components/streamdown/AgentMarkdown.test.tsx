@@ -371,7 +371,11 @@ describe('AgentMarkdown renderer recovery', () => {
   it('renders a numeric HTTPS link as a citation marker and opens a reusable source preview', async () => {
     await act(async () => {
       root.render(
-        <SessionMessageLink href="https://example.com/paper#results" title="Genome study">
+        <SessionMessageLink
+          href="https://example.com/paper#results"
+          title="Genome study"
+          className="size-8 underline hover:underline focus:underline active:underline"
+        >
           1
         </SessionMessageLink>
       )
@@ -384,6 +388,29 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(citation?.getAttribute('aria-label')).toBe('Source 1: Genome study')
     expect(citation?.className).toContain('rounded-full')
     expect(citation?.className).toContain('text-primary')
+    expect(citation?.className).toContain('size-[1em]')
+    expect(citation?.className).not.toContain('size-5')
+    const citationClasses = citation?.className.split(/\s+/) ?? []
+    expect(citationClasses).not.toContain('size-8')
+    expect(citationClasses).toEqual(
+      expect.arrayContaining([
+        'no-underline',
+        'hover:no-underline',
+        'focus:no-underline',
+        'active:no-underline'
+      ])
+    )
+    expect(citationClasses).not.toEqual(
+      expect.arrayContaining([
+        'underline',
+        'hover:underline',
+        'focus:underline',
+        'active:underline'
+      ])
+    )
+    expect(citation?.querySelector<HTMLElement>('[data-citation-number]')?.style.fontSize).toBe(
+      '0.625em'
+    )
 
     await act(async () => {
       citation?.click()
@@ -416,6 +443,28 @@ describe('AgentMarkdown renderer recovery', () => {
         })
       ]
     })
+  })
+
+  it('shrinks longer citation numbers to fit the fixed circular marker', async () => {
+    const renderedScales: number[] = []
+
+    for (const citationNumber of ['1', '12', '123', '1234', '12345']) {
+      await act(async () => {
+        root.render(
+          <SessionMessageLink href={`https://example.com/source-${citationNumber}`}>
+            {citationNumber}
+          </SessionMessageLink>
+        )
+      })
+
+      const number = container.querySelector<HTMLElement>('[data-citation-number]')
+      const scale = Number.parseFloat(number?.style.fontSize ?? '')
+      renderedScales.push(scale)
+      expect(scale).toBeGreaterThan(0)
+      expect(scale * citationNumber.length).toBeLessThanOrEqual(1.35)
+    }
+
+    expect(renderedScales).toEqual([0.625, 0.625, 0.45, 0.3375, 0.27])
   })
 
   it('keeps a numeric non-HTTPS link on the external-link safety path', async () => {

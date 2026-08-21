@@ -178,6 +178,18 @@ test('opens a claim citation in the isolated HTTPS source preview tab', async ({
 
   const citation = page.getByRole('link', { name: 'Source 1: Fixture study' })
   await expect(citation).toBeVisible()
+  const citationMetrics = await citation.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const parentStyle = getComputedStyle(element.parentElement as HTMLElement)
+
+    return {
+      height: element.getBoundingClientRect().height,
+      parentFontSize: Number.parseFloat(parentStyle.fontSize),
+      textDecorationLine: style.textDecorationLine
+    }
+  })
+  expect(citationMetrics.height).toBeLessThanOrEqual(citationMetrics.parentFontSize + 0.5)
+  expect(citationMetrics.textDecorationLine).toBe('none')
   await page.evaluate(await readFile(AXE_PATH, 'utf8'))
   const citationAccessibility = (await citation.evaluate(async (element) => {
     const axe = (
