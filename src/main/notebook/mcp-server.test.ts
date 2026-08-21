@@ -7,6 +7,20 @@ import { z } from 'zod'
 
 import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
 
+// Transport behavior has dedicated integration coverage. Keep this MCP suite on the observable
+// fetch boundary so long-running tool calls can be completed deterministically with fake timers.
+vi.mock('../local-rpc-transport', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../local-rpc-transport')>()
+  return {
+    ...actual,
+    fetchLongLivedLocalRpc: async function fetchLongLivedLocalRpc(
+      ...args: Parameters<typeof actual.fetchLocalRpc>
+    ): ReturnType<typeof actual.fetchLocalRpc> {
+      return actual.fetchLocalRpc(...args)
+    }
+  }
+})
+
 import {
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
@@ -411,10 +425,10 @@ describe('notebook_execute tool', () => {
     }
   )
 
-  it('uses the unbounded transport only for Python/R execution', () => {
+  it('uses the unbounded transport for long-running kernel execution', () => {
     expect(resolveNotebookRpcFetch('execute').name).toBe('fetchLongLivedLocalRpc')
+    expect(resolveNotebookRpcFetch('executeControl').name).toBe('fetchLongLivedLocalRpc')
     expect(resolveNotebookRpcFetch('state').name).toBe('fetchLocalRpc')
-    expect(resolveNotebookRpcFetch('executeControl').name).toBe('fetchLocalRpc')
   })
 
   it.each([

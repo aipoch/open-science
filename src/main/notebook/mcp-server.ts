@@ -346,10 +346,11 @@ const callNotebookRpc = async (
   return payload.result
 }
 
-// Python/R cells are intentionally unbounded. Only their local RPC hop needs the transport that
-// omits Undici's response-headers deadline; short control methods retain the ordinary transport.
+// Python/R cells and control-plane REPL execution are intentionally unbounded. Their local RPC hop
+// needs the transport that omits Undici's response-headers deadline; short methods retain the
+// ordinary transport.
 const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
-  method === 'execute' ? fetchLongLivedLocalRpc : fetchLocalRpc
+  method === 'execute' || method === 'executeControl' ? fetchLongLivedLocalRpc : fetchLocalRpc
 
 // These character caps apply only to serialized MCP replies; full values stay in run.json and the
 // notebook preview.
