@@ -305,7 +305,7 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   id: 'host.collect',
   path: 'host.collect',
   aliases: ['collect'],
-  summary: 'Observe pinned child Attempts until all settle or a deadline expires.',
+  summary: 'Observe pinned Attempts until any/all settle or time expires.',
   call_forms: [
     { signature: 'await host.collect(selectors, options?)', accepts: 'non_empty_selector_array' }
   ],
@@ -328,13 +328,21 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         default: 30,
         range: '0..1800',
         description: 'Observation deadline.'
+      },
+      {
+        name: 'returnWhen',
+        type: 'string',
+        required: false,
+        default: 'all',
+        description: 'all waits for every pinned Attempt; any returns after the first settles.'
       }
     ]
   },
   returns: { type: 'array', item_fields: DELEGATION_CHILD_FIELDS },
   constraints: [
     'Main/root only; only direct children on the active branch are collectible.',
-    'Expiry returns running observations and never stops a child.'
+    'Expiry returns every latest observation and never stops a child.',
+    'To wait for the next settlement with any, first use host.children() and select exact handles for currently running Attempts.'
   ],
   examples: [
     {
@@ -419,6 +427,7 @@ const SUBMIT_OUTPUT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   constraints: [
     'Available only to a running child delegated with outputSchema.',
+    'A configured structured submission is mandatory and supplements rather than replaces the child’s ordinary final response.',
     'The first valid value is durable; equal retry is idempotent and different retry is rejected.'
   ],
   examples: [{ title: 'Submit output', code: 'await host.submitOutput({ answer: 42 })' }],
@@ -536,7 +545,7 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   id: 'host.sendFrameMessage',
   path: 'host.sendFrameMessage',
   aliases: ['sendFrameMessage'],
-  summary: 'Durably queue a reliable message to a direct child or root parent.',
+  summary: 'Queue a running coordination message to a child or parent.',
   call_forms: [
     {
       signature: 'await host.sendFrameMessage(target, message, options?)',
@@ -577,7 +586,8 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     fields: DELIVERY_RECEIPT_FIELDS
   },
   constraints: [
-    'Receipt is delivery evidence, not a reply; same requestId recovers, and uncertain is not auto-retried.'
+    'Receipt is delivery evidence, not a reply; same requestId recovers, and uncertain is not auto-retried.',
+    'A Subagent uses parent messaging only for coordination while its Attempt is running; its final response is already preserved as the canonical terminal result and should not be duplicated here.'
   ],
   examples: [],
   resolveAvailability: messageAvailability('sendFrameMessage')

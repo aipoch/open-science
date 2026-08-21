@@ -1,5 +1,9 @@
 import { DurableDelegatedWorkError } from './durable-delegated-work-error'
-import { currentAttempt, sameSession } from './delegated-work-record-invariants'
+import {
+  currentAttempt,
+  isDelegatedAttemptSettled,
+  sameSession
+} from './delegated-work-record-invariants'
 import { DelegatedWorkProjectionOwner } from './delegated-work-projection'
 import type {
   AuthenticatedDelegateCaller,
@@ -58,6 +62,13 @@ class DelegatedWorkReadModel {
       )
     }
     const timeoutSeconds = options.timeoutSeconds ?? 30
+    const returnWhen = options.returnWhen ?? 'all'
+    if (returnWhen !== 'all' && returnWhen !== 'any') {
+      throw new DurableDelegatedWorkError(
+        'admission_rejection',
+        'collect returnWhen must be all or any'
+      )
+    }
     if (
       typeof timeoutSeconds !== 'number' ||
       !Number.isFinite(timeoutSeconds) ||
@@ -80,7 +91,12 @@ class DelegatedWorkReadModel {
           this.projections.projectSnapshotObservation(snapshot, child, attempt)
         )
       )
-      if (observations.every((observation) => observation.status !== 'running')) {
+      const settled = observations.map((observation) =>
+        observation.status === 'awaiting_user'
+          ? false
+          : isDelegatedAttemptSettled(observation.status)
+      )
+      if (returnWhen === 'all' ? settled.every(Boolean) : settled.some(Boolean)) {
         return observations
       }
       if (timeoutSeconds === 0) return observations

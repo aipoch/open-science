@@ -308,6 +308,8 @@ describe('Host SDK help', () => {
       default: 30,
       range: '0..1800'
     })
+    expect(named(fields(collect.options), 'returnWhen')).toMatchObject({ default: 'all' })
+    expect(collect.constraints.join(' ')).toContain('currently running')
     expect(collect.call_forms[0]?.signature).toBe('await host.collect(selectors, options?)')
     expect(collect.examples[0]?.code).toContain('{ frameId: frame_id, attemptId: attempt_id }')
 
@@ -344,6 +346,8 @@ describe('Host SDK help', () => {
 
     const submitOutput = operation('submitOutput', 'delegate')
     expect(submitOutput.call_forms[0]?.signature).toBe('await host.submitOutput(value)')
+    expect(submitOutput.constraints.join(' ')).toContain('mandatory')
+    expect(submitOutput.constraints.join(' ')).toContain('ordinary final response')
   })
 
   it('describes reliable receipt routes and states without exhaustive unions', () => {

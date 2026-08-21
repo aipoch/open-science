@@ -2979,6 +2979,103 @@ describe('durable delegated work', () => {
     ).resolves.toMatchObject([{ status: 'completed', response: 'later' }])
   })
 
+  it('returns every pinned observation in caller order when any Attempt settles', async () => {
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const work = createDurableDelegatedWork({ execution, records, collectPollIntervalMs: 1 })
+    const dispatched = await work.delegate(
+      caller,
+      [
+        { task: 'first', name: 'first' },
+        { task: 'second', name: 'second' }
+      ],
+      { wait: false }
+    )
+    await expect.poll(() => execution.controls()).toHaveLength(2)
+    for (const control of execution.controls()) control.accept()
+
+    await expect(
+      work.collect(caller, [dispatched.children[1].frameId, dispatched.children[0].frameId], {
+        returnWhen: 'any',
+        timeoutSeconds: 0
+      })
+    ).resolves.toMatchObject([{ status: 'running' }, { status: 'running' }])
+
+    const collecting = work.collect(
+      caller,
+      [dispatched.children[1].frameId, dispatched.children[0].frameId],
+      { returnWhen: 'any', timeoutSeconds: 1 }
+    )
+    execution.controls()[0].complete('first result')
+
+    await expect(collecting).resolves.toMatchObject([
+      { frameId: dispatched.children[1].frameId, status: 'running' },
+      {
+        frameId: dispatched.children[0].frameId,
+        status: 'completed',
+        response: 'first result'
+      }
+    ])
+    await expect(work.children(caller)).resolves.toMatchObject([
+      { status: 'completed' },
+      { status: 'running' }
+    ])
+    execution.controls()[1].complete('second result')
+  })
+
+  it('validates collect returnWhen before observing and defaults to all', async () => {
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const work = createDurableDelegatedWork({ execution, records })
+    const dispatched = await work.delegate(
+      caller,
+      [
+        { task: 'terminal', name: 'terminal' },
+        { task: 'running', name: 'running' }
+      ],
+      { wait: false }
+    )
+    await expect.poll(() => execution.controls()).toHaveLength(2)
+    for (const control of execution.controls()) control.accept()
+    execution.controls()[0].complete('done')
+    await expect
+      .poll(() => work.children(caller))
+      .toMatchObject([{ status: 'completed' }, { status: 'running' }])
+
+    await expect(
+      work.collect(
+        caller,
+        dispatched.children.map(({ frameId }) => frameId),
+        {
+          returnWhen: 'any'
+        }
+      )
+    ).resolves.toMatchObject([{ status: 'completed' }, { status: 'running' }])
+    await expect(
+      work.collect(
+        caller,
+        dispatched.children.map(({ frameId }) => frameId),
+        {
+          timeoutSeconds: 0
+        }
+      )
+    ).resolves.toMatchObject([{ status: 'completed' }, { status: 'running' }])
+    await expect(
+      work.collect(caller, [dispatched.children[0].frameId], {
+        returnWhen: 'first' as 'any'
+      })
+    ).rejects.toMatchObject({ code: 'admission_rejection' })
+    execution.controls()[1].complete('later')
+  })
+
   it('pins explicit Attempt handles and rejects mismatched pairs as one batch', async () => {
     const execution = createDeterministicDelegateExecution()
     const records = createInMemoryDelegatedWorkRecords({
@@ -3006,6 +3103,7 @@ describe('durable delegated work', () => {
 
     await expect(
       work.collect(caller, [{ frameId: handle.frameId, attemptId: handle.attemptId }], {
+        returnWhen: 'any',
         timeoutSeconds: 0
       })
     ).resolves.toEqual([
@@ -3924,9 +4022,26 @@ describe('durable delegated work', () => {
       { task: 'Cancellation', name: 'Cancellation' },
       { wait: false }
     )
-    await expect.poll(() => execution.controls()).toHaveLength(2)
+    const running = await work.delegate(
+      { ...caller, toolInvocationId: 'tool-call-3' },
+      { task: 'Running', name: 'Running' },
+      { wait: false }
+    )
+    await expect.poll(() => execution.controls()).toHaveLength(3)
     execution.controls()[1].accept()
     execution.controls()[1].cancel()
+    execution.controls()[2].accept()
+
+    await expect(
+      work.collect(caller, [failed.children[0].frameId, running.children[0].frameId], {
+        returnWhen: 'any'
+      })
+    ).resolves.toMatchObject([{ status: 'error' }, { status: 'running' }])
+    await expect(
+      work.collect(caller, [running.children[0].frameId, cancelled.children[0].frameId], {
+        returnWhen: 'any'
+      })
+    ).resolves.toMatchObject([{ status: 'running' }, { status: 'cancelled' }])
 
     await expect(
       work.collect(caller, [cancelled.children[0].frameId, failed.children[0].frameId])
@@ -3954,8 +4069,11 @@ describe('durable delegated work', () => {
       code: 'admission_rejection'
     })
     await expect(
-      work.collect(caller, [failed.children[0].frameId, 'unknown-frame'])
+      work.collect(caller, [failed.children[0].frameId, 'unknown-frame'], {
+        returnWhen: 'any'
+      })
     ).rejects.toMatchObject({ code: 'authorization' })
+    execution.controls()[2].complete('later')
     await expect(
       work.collect({ ...caller, session: { ...caller.session, sessionId: 'session-2' } }, [
         failed.children[0].frameId

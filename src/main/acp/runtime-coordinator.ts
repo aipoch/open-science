@@ -1017,13 +1017,41 @@ class AcpRuntimeCoordinator {
     }
     this.activePromptRequests.set(request.sessionId, activePrompt)
     if (retainAsLatestUserPrompt) this.latestPromptRequests.set(request.sessionId, taskRequest)
-    const prompt =
-      operation === 'sendApplicationPrompt'
+    const originatingPromptId = taskRequest.provenanceContext?.promptMessageId
+    let settlementLeaseId: string | undefined
+    const endRootTurn = async (clean: boolean): Promise<void> => {
+      if (!originatingPromptId) return
+      await this.delegatedWork
+        ?.rootTurnEnded?.({
+          sessionId: request.sessionId,
+          originatingPromptId,
+          clean,
+          ...(settlementLeaseId ? { leaseId: settlementLeaseId } : {})
+        })
+        .catch(() => undefined)
+    }
+    const settlementStart = originatingPromptId
+      ? this.delegatedWork
+          ?.rootTurnStarted?.({
+            sessionId: request.sessionId,
+            originatingPromptId
+          })
+          .catch(() => undefined)
+      : undefined
+    const prompt = Promise.resolve(settlementStart).then((leaseId) => {
+      settlementLeaseId = leaseId
+      return operation === 'sendApplicationPrompt'
         ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
         : runtime[operation](taskRequest, attempt.id)
+    })
     onApplicationPromptAdmitted?.(prompt)
     return prompt
-      .catch((error: unknown) => {
+      .then(async (response) => {
+        await endRootTurn(response?.stopReason !== 'cancelled')
+        return response
+      })
+      .catch(async (error: unknown) => {
+        await endRootTurn(false)
         if (
           operation === 'sendPrompt' &&
           this.promptAdmissionClosedForQuit &&

@@ -555,7 +555,7 @@ describe('repl_loop local RPC transport', () => {
         ]
       })
       const secondCell = await send(
-        'return { results: await host.collect(globalThis.pendingDelegation.children.map(({ frame_id, attempt_id }) => ({ frameId: frame_id, attemptId: attempt_id })), { timeoutSeconds: 0 }) }'
+        "return { results: await host.collect(globalThis.pendingDelegation.children.map(({ frame_id, attempt_id }) => ({ frameId: frame_id, attemptId: attempt_id })), { timeoutSeconds: 0, returnWhen: 'any' }) }"
       )
       expect(secondCell.error).toBeNull()
       expect(JSON.parse(secondCell.result ?? '{}')).toEqual({
@@ -596,7 +596,7 @@ describe('repl_loop local RPC transport', () => {
           params: {
             op: 'collect',
             selectors: [{ frame_id: 'child-1', attempt_id: 'attempt-1' }],
-            options: { timeout_seconds: 0 }
+            options: { timeout_seconds: 0, return_when: 'any' }
           }
         }
       ])

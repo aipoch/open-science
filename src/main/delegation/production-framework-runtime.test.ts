@@ -11,7 +11,11 @@ import {
   opencodeFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { createProductionDelegatedFrameworkRuntime } from './production-framework-runtime'
+import {
+  createProductionDelegatedFrameworkRuntime,
+  DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
+  withDelegatedChildContext
+} from './production-framework-runtime'
 
 const safeOpenCodeConfig = JSON.stringify({
   permission: { task: 'deny' },
@@ -140,6 +144,33 @@ const delegatedSession = (frameworkId: AgentFrameworkId): PersistedChatSession =
 })
 
 describe('production delegated framework runtime bridge', () => {
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'adds child-only identity and canonical delivery context for %s without replacing backend rules',
+    (frameworkId) => {
+      const decorated = withDelegatedChildContext({
+        ...backend(frameworkId),
+        systemPromptAppends: ['Keep the existing specialist and safety rules.']
+      })
+      expect(decorated.systemPromptAppends).toEqual([
+        'Keep the existing specialist and safety rules.',
+        DELEGATED_CHILD_SYSTEM_PROMPT_APPEND
+      ])
+      expect(DELEGATED_CHILD_SYSTEM_PROMPT_APPEND).toContain('delegated Attempt for the Main Agent')
+      expect(DELEGATED_CHILD_SYSTEM_PROMPT_APPEND).toContain(
+        'final response is automatically preserved'
+      )
+      expect(DELEGATED_CHILD_SYSTEM_PROMPT_APPEND).toContain(
+        "host.sendFrameMessage('parent', ...) only while the Attempt is still running"
+      )
+      expect(DELEGATED_CHILD_SYSTEM_PROMPT_APPEND).toContain(
+        'submitting it with host.submitOutput(value) remains mandatory'
+      )
+      expect(DELEGATED_CHILD_SYSTEM_PROMPT_APPEND).toContain(
+        'never replaces your ordinary final response'
+      )
+      expect(DELEGATED_CHILD_SYSTEM_PROMPT_APPEND).toContain('Do not duplicate your final response')
+    }
+  )
   it('prepares an admitted Attempt from its transient backend after the provider was deleted', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-framework-deleted-provider-'))
     const workspaceCwd = await mkdtemp(join(tmpdir(), 'delegated-framework-workspace-'))
