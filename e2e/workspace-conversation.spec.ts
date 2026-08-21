@@ -167,7 +167,11 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await page.setViewportSize({ width: 375, height: 900 })
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-  const sessionActions = page.getByRole('menu', { name: 'Session actions' })
+  // Chromium names a popup menu from its trigger, so the computed accessible name is the
+  // session-specific trigger label rather than the content aria-label "Session actions".
+  const sessionActions = page.getByRole('menu', {
+    name: `Open actions for ${USER_MESSAGE}`
+  })
   await expect(sessionActions).toBeVisible()
   expect(await sessionActions.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBe(
     80

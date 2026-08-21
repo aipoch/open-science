@@ -583,6 +583,52 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('aria-label="Open actions for Dataset cleanup"')
   })
 
+  it('labels session action content and raises its stacking only in mobile mode', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const session = createSession({ id: 'session-a', title: 'Notebook review' })
+    const sharedProps = {
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [session],
+      activeSessionId: session.id,
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn()
+    }
+
+    const desktopMenu = collectElements(WorkspaceSidebarView(sharedProps)).find(
+      (element) => element.props['aria-label'] === 'Session actions'
+    )
+    const mobileMenu = collectElements(
+      WorkspaceSidebarView({
+        ...sharedProps,
+        mobileMode: true,
+        isMobileOpen: true,
+        onMobileClose: vi.fn()
+      })
+    ).find((element) => element.props['aria-label'] === 'Session actions')
+
+    expect(desktopMenu).toBeDefined()
+    expect(String(desktopMenu?.props.className ?? '')).not.toContain('z-[80]')
+    expect(mobileMenu).toBeDefined()
+    expect(String(mobileMenu?.props.className ?? '')).toContain('z-[80]')
+  })
+
   it('reveals session actions on interaction without keeping the selected row action visible', async () => {
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
     const desktop = document.createElement('div')
