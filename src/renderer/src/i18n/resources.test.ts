@@ -1369,7 +1369,69 @@ describe('Russian catalog quality', () => {
     ['{{count}} more messages_one', 'Ещё {{count}} сообщение'],
     ['{{count}} more messages_few', 'Ещё {{count}} сообщения'],
     ['{{count}} more messages_many', 'Ещё {{count}} сообщений'],
-    ['{{count}} more messages_other', 'Ещё {{count}} сообщения']
+    ['{{count}} more messages_other', 'Ещё {{count}} сообщения'],
+    [
+      'Run jobs on a remote SSH host, or manage hosts.',
+      'Выполнять задания на удалённом узле по SSH или управлять узлами.'
+    ],
+    ['Enable {{name}}', 'Включить {{name}}'],
+    ['Disable {{name}}', 'Отключить {{name}}'],
+    ['Add {{name}} to run targets', 'Добавить {{name}} в список узлов для выполнения заданий'],
+    ['Remove {{name}} from run targets', 'Убрать {{name}} из списка узлов для выполнения заданий'],
+    [
+      'Select as target host to run jobs',
+      'Выбрать в качестве целевого узла для выполнения заданий'
+    ],
+    ['Remove from target hosts', 'Убрать из списка целевых узлов'],
+    ['Selected hosts are used to run jobs.', 'На выбранных узлах выполняются задания.'],
+    ['Open settings for {{name}}', 'Открыть настройки {{name}}'],
+    ['Change execution targets', 'Изменить выбор узлов'],
+    ['Compute execution target: {{name}}', 'Целевой вычислительный узел: {{name}}'],
+    ['Compute execution targets: {{names}}', 'Целевые вычислительные узлы: {{names}}'],
+    ['Client ID', 'Идентификатор клиента'],
+    ['Pre-registered client ID', 'Идентификатор заранее зарегистрированного клиента'],
+    ['Client secret', 'Секрет клиента'],
+    [
+      'Leave blank to keep the saved secret',
+      'Оставьте поле пустым, чтобы сохранить текущий секрет'
+    ],
+    ['Pre-registered client secret', 'Секрет заранее зарегистрированного клиента'],
+    ['The saved client secret will be removed.', 'Сохранённый секрет клиента будет удалён.'],
+    ['A client secret is saved securely.', 'Секрет клиента хранится в защищённом виде.'],
+    ['Keep saved client secret', 'Сохранить текущий секрет клиента'],
+    ['Remove saved client secret', 'Удалить сохранённый секрет клиента'],
+    [
+      'This imported Connector requires a client secret entered locally.',
+      'Для импортированного коннектора необходимо локально ввести секрет клиента.'
+    ],
+    [
+      'Authorization server URL is required for a pre-registered client.',
+      'Для заранее зарегистрированного клиента требуется URL сервера авторизации.'
+    ],
+    [
+      'Client ID is required when a client secret is configured.',
+      'Если настроен секрет клиента, необходимо указать идентификатор клиента.'
+    ],
+    [
+      'Client metadata URL cannot be combined with a pre-registered client.',
+      'URL метаданных клиента нельзя использовать вместе с заранее зарегистрированным клиентом.'
+    ],
+    [
+      'SSH configuration verified and activated. Saved password deleted. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Конфигурация SSH проверена и активирована. Сохранённый пароль удалён. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ],
+    [
+      'Password authentication verified and activated. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Аутентификация по паролю проверена и активирована. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ],
+    [
+      'Username changed. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Имя пользователя изменено. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ],
+    [
+      'Connection settings verified and saved. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'Настройки подключения проверены и сохранены. В каждой сессии снова выберите этот вычислительный узел для выполнения заданий и предоставьте новые разрешения.'
+    ]
   ])('keeps proofread Russian copy for %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
   })
