@@ -159,7 +159,7 @@ const ConversationExportDialogContent = ({
             </Button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-5">
             <section aria-labelledby="conversation-export-format" className="grid gap-2.5">
               <h2 id="conversation-export-format" className="text-sm font-medium text-text-000">
                 {t('Format')}
@@ -212,8 +212,12 @@ const ConversationExportDialogContent = ({
               >
                 {(
                   [
-                    ['entire', t('Entire conversation'), t('Include every turn in this branch.')],
-                    ['selected', t('Selected turns'), t('Choose only the turns you need.')]
+                    [
+                      'entire',
+                      t('Entire conversation'),
+                      t('Include every message in this branch.')
+                    ],
+                    ['selected', t('Selected messages'), t('Choose only the messages you need.')]
                   ] as const
                 ).map(([value, label, description]) => (
                   <RadioGroup.Item
@@ -224,7 +228,7 @@ const ConversationExportDialogContent = ({
                     <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-border-100 group-data-[state=checked]:border-text-000">
                       <RadioGroup.Indicator className="size-2 rounded-full bg-text-000" />
                     </span>
-                    <span>
+                    <span className="min-w-0">
                       <span className="block text-sm font-medium text-text-000">{label}</span>
                       <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                         {description}
@@ -243,10 +247,10 @@ const ConversationExportDialogContent = ({
                       id="conversation-export-turns"
                       className="text-sm font-medium text-text-000"
                     >
-                      {t('Turns')}
+                      {t('Messages')}
                     </h2>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      {t('{{selected}} of {{total}} turns selected', {
+                      {t('{{selected}} of {{total}} messages selected', {
                         selected: selectedPromptIds.size,
                         total: turns.length
                       })}
@@ -266,11 +270,15 @@ const ConversationExportDialogContent = ({
                         )}
                       </Checkbox.Indicator>
                     </span>
-                    {t('All turns')}
+                    {t('All messages')}
                   </Checkbox.Root>
                 </div>
 
-                <div className="grid gap-2" role="group" aria-label={t('Turns to export')}>
+                <div
+                  className="grid min-w-0 gap-2"
+                  role="group"
+                  aria-label={t('Messages to export')}
+                >
                   {turns.map((turn) => {
                     const selected = selectedPromptIds.has(turn.promptMessageId)
                     const firstResponse = turn.messages.find((message) => message.role === 'agent')
@@ -286,7 +294,7 @@ const ConversationExportDialogContent = ({
                         key={turn.promptMessageId}
                         checked={selected}
                         onCheckedChange={() => toggleTurn(turn.promptMessageId)}
-                        className="group flex min-h-20 w-full items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-100"
+                        className="group flex min-h-20 w-full min-w-0 items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-100"
                       >
                         <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-text-000">
                           <Checkbox.Indicator>
@@ -330,12 +338,12 @@ const ConversationExportDialogContent = ({
                   {t('Wait for the conversation to finish before exporting it.')}
                 </p>
               ) : noSelection ? (
-                <p className="text-muted-foreground">{t('Select at least one turn.')}</p>
+                <p className="text-muted-foreground">{t('Select at least one message.')}</p>
               ) : (
                 <p className="text-muted-foreground">
                   {scope === 'entire'
-                    ? t('All {{total}} turns will be exported.', { total: turns.length })
-                    : t('{{selected}} selected turns will be exported.', {
+                    ? t('All {{total}} messages will be exported.', { total: turns.length })
+                    : t('{{selected}} selected messages will be exported.', {
                         selected: selectedPromptIds.size
                       })}
                 </p>

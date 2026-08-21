@@ -114,7 +114,7 @@ describe('ConversationExportDialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('starts selected turns empty, preserves selection after cancel, and submits in order', async () => {
+  it('starts selected messages empty, preserves selection after cancel, and submits in order', async () => {
     const session = createSession()
     const onClose = vi.fn()
     const onExport = vi
@@ -132,16 +132,16 @@ describe('ConversationExportDialog', () => {
       )
     })
 
-    act(() => findControl('radio', 'Selected turns')?.click())
+    act(() => findControl('radio', 'Selected messages')?.click())
     const confirm = document.body.querySelector<HTMLButtonElement>(
       '[data-testid="conversation-export-confirm"]'
     )
-    expect(document.body.textContent).toContain('0 of 2 turns selected')
+    expect(document.body.textContent).toContain('0 of 2 messages selected')
     expect(confirm?.disabled).toBe(true)
 
     act(() => findControl('checkbox', 'Summarize the limitations')?.click())
     act(() => findControl('checkbox', 'Compare the papers')?.click())
-    expect(findControl('checkbox', 'All turns')?.getAttribute('aria-checked')).toBe('true')
+    expect(findControl('checkbox', 'All messages')?.getAttribute('aria-checked')).toBe('true')
     act(() => findControl('radio', 'Markdown')?.click())
     expect(confirm?.textContent).toContain('Export Markdown')
 
@@ -150,7 +150,7 @@ describe('ConversationExportDialog', () => {
       await Promise.resolve()
     })
     expect(onClose).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('2 of 2 turns selected')
+    expect(document.body.textContent).toContain('2 of 2 messages selected')
     expect(onExport).toHaveBeenLastCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -163,6 +163,49 @@ describe('ConversationExportDialog', () => {
       await Promise.resolve()
     })
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('keeps long message previews inside the vertical scroll surface', () => {
+    const longPrompt = `Compare-${'unbroken'.repeat(80)}`
+    const longResponse = `Result-${'continuous'.repeat(80)}`
+    const session = createSession({
+      messages: createSession().messages.map((message) => {
+        if (message.id === 'prompt-1') return { ...message, content: longPrompt }
+        if (message.id === 'answer-1') return { ...message, content: longResponse }
+        return message
+      })
+    })
+
+    act(() => {
+      root.render(
+        <ConversationExportDialog
+          session={session}
+          currentSession={session}
+          onClose={vi.fn()}
+          onExport={vi.fn().mockResolvedValue({ saved: false })}
+        />
+      )
+    })
+
+    act(() => findControl('radio', 'Selected messages')?.click())
+
+    const scrollSurface = document.body.querySelector('.overflow-y-auto')
+    const messageGroup = document.body.querySelector(
+      '[role="group"][aria-label="Messages to export"]'
+    )
+    const messageOption = findControl('checkbox', longPrompt)
+    const promptPreview = [...document.body.querySelectorAll('span')].find(
+      (element) => element.textContent === longPrompt
+    )
+    const responsePreview = [...document.body.querySelectorAll('span')].find(
+      (element) => element.textContent === longResponse
+    )
+
+    expect(scrollSurface?.classList.contains('overflow-x-hidden')).toBe(true)
+    expect(messageGroup?.classList.contains('min-w-0')).toBe(true)
+    expect(messageOption?.classList.contains('min-w-0')).toBe(true)
+    expect(promptPreview?.classList.contains('truncate')).toBe(true)
+    expect(responsePreview?.classList.contains('truncate')).toBe(true)
   })
 
   it('shows inline failures and disables an outdated preview', async () => {
