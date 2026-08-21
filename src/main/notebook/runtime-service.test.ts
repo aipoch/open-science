@@ -3153,6 +3153,73 @@ describe('notebook runtime service', () => {
     }
   })
 
+  it('keeps root-Frame provenance when renderer state creates the Session owner first', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: 'done\n',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const sessionId = 'codex-session'
+    const rootFrameId = 'root-frame-pending-session-1'
+
+    await service.state({
+      projectId: 'default-project',
+      sessionId,
+      workspaceCwd: '/workspace'
+    })
+    await service.executeControl({
+      projectId: 'default-project',
+      sessionId,
+      workspaceCwd: '/workspace',
+      code: 'await host.mcp("pubmed", "search_articles", {})',
+      executionInvocationId: 'invocation-1',
+      provenanceContext: {
+        rootFrameId,
+        agentFrameId: rootFrameId,
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+
+    const state = await service.state({
+      projectId: 'default-project',
+      sessionId,
+      workspaceCwd: '/workspace'
+    })
+    expect(state.runs).toContainEqual(
+      expect.objectContaining({
+        executionInvocationId: 'invocation-1',
+        agentFrameId: rootFrameId,
+        rootFrameId
+      })
+    )
+
+    const frameSummary = await service.state({
+      projectId: 'default-project',
+      sessionId,
+      workspaceCwd: '/workspace',
+      historySummaryFrameId: rootFrameId
+    })
+    expect(frameSummary.historySummary).toMatchObject({
+      agentFrameId: rootFrameId,
+      runCount: 1
+    })
+  })
+
   it('serializes overlapping runs on the shared interpreter instead of failing the second', async () => {
     const root = await createStorageRoot()
     let active = 0

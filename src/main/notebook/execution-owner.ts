@@ -8,6 +8,7 @@ import type {
   NotebookLanguage,
   NotebookOutput,
   NotebookRunRecord,
+  NotebookRunProvenanceContext,
   NotebookRunSource,
   NotebookRunStatus,
   NotebookWorkingFile,
@@ -123,6 +124,14 @@ const cancelledExecutionResult = (cwd: string): NotebookSessionExecutionResult =
   ...errorToExecutionResult(new Error(CANCELLED_MESSAGE), cwd),
   status: 'cancelled'
 })
+
+// Root runtime ownership is Session-scoped, but every durable Run still belongs to the authenticated
+// conversation Frame that produced it. A renderer state read may have created the shared owner first.
+const runAgentFrameId = (
+  session: NotebookSessionAggregate,
+  provenanceContext: NotebookRunProvenanceContext | undefined
+): string => provenanceContext?.agentFrameId ?? notebookLaneScope(session.lane).agentFrameId
+
 class NotebookExecutionOwner {
   private readonly shellProcess: NotebookShellProcess
   private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
@@ -183,7 +192,7 @@ class NotebookExecutionOwner {
       executionCount,
       environment,
       ...request.provenanceContext,
-      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
+      agentFrameId: runAgentFrameId(session, request.provenanceContext),
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
@@ -385,7 +394,7 @@ class NotebookExecutionOwner {
       startedAt: Date.now(),
       cwdBefore: session.cwd,
       ...request.provenanceContext,
-      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
+      agentFrameId: runAgentFrameId(session, request.provenanceContext),
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
@@ -511,7 +520,7 @@ class NotebookExecutionOwner {
       startedAt: Date.now(),
       cwdBefore: session.cwd,
       ...request.provenanceContext,
-      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
+      agentFrameId: runAgentFrameId(session, request.provenanceContext),
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],

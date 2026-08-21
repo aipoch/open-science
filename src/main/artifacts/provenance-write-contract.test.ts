@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { NotebookRuntimeService, type NotebookExecutionResult } from '../notebook/runtime-service'
 import { createPngBytes } from './artifact-test-fixtures'
 import * as provenanceModule from './provenance-repository'
 import { ArtifactProvenanceRepository } from './provenance-repository'
@@ -308,6 +309,76 @@ const createReadyUploadInput = async (
 }
 
 describe('artifact provenance producer and source validation', () => {
+  it('accepts a root Notebook producer after renderer state creates the Session owner first', async () => {
+    const value = await fixture()
+    const rootFrameId = 'root-frame-pending-session-1'
+    const service = new NotebookRuntimeService({
+      configRoot: value.storageRoot,
+      dataRoot: value.storageRoot,
+      projectId: 'project-1',
+      repository: value.notebookRepository,
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    try {
+      await service.state({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: join(value.storageRoot, 'workspace')
+      })
+      await service.executeControl({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: join(value.storageRoot, 'workspace'),
+        code: 'save_plot("plot.png")',
+        provenanceContext: {
+          rootFrameId,
+          agentFrameId: rootFrameId,
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-segment-1',
+          promptMessageId: 'prompt-1'
+        }
+      })
+      const notebookState = await service.state({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: join(value.storageRoot, 'workspace')
+      })
+      const producerRunId = notebookState.runs.at(-1)?.runId
+      expect(producerRunId).toBeDefined()
+
+      await value.stagePng('producer bytes')
+      const version = await value.repository.createVersion(
+        createArtifactVersionRequest({
+          notebookSessionId: 'session-1',
+          producerRunId,
+          sourceKind: 'inline',
+          rootFrameId,
+          agentFrameId: rootFrameId,
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-segment-1',
+          promptMessageId: 'prompt-1'
+        })
+      )
+
+      await expect(
+        value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+      ).resolves.toMatchObject({ producerRunId })
+    } finally {
+      await service.shutdownAll()
+    }
+  })
+
   it('binds a declared producer only to the exact observed source owner and retries identically', async () => {
     const value = await fixture()
     const observation = await appendNotebookRun(value, {
