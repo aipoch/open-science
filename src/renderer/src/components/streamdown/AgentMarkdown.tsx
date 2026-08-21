@@ -115,6 +115,7 @@ const SessionMessageLink = ({
       title: sourceItem.title
     })
     const hostname = new URL(sourceItem.url).hostname
+    const citationNumberFontScale = Math.min(0.625, 1.35 / citationNumber.length)
 
     return (
       <>
@@ -128,8 +129,9 @@ const SessionMessageLink = ({
                 data-citation-marker=""
                 data-incomplete={dataIncomplete}
                 className={cn(
-                  'mx-0.5 inline-flex size-5 align-text-bottom items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold leading-none text-primary no-underline transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-                  className
+                  'mx-0.5 inline-flex shrink-0 align-text-bottom items-center justify-center rounded-full bg-primary/10 font-semibold leading-none text-primary transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                  className,
+                  'size-[1em] no-underline hover:no-underline focus:no-underline active:no-underline'
                 )}
                 onFocus={(event) => {
                   if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
@@ -144,7 +146,13 @@ const SessionMessageLink = ({
                   setIsOpen(true)
                 }}
               >
-                {citationNumber}
+                <span
+                  data-citation-number=""
+                  className="leading-none tabular-nums"
+                  style={{ fontSize: `${citationNumberFontScale}em` }}
+                >
+                  {citationNumber}
+                </span>
               </a>
             </TooltipTrigger>
             <TooltipContent side="top">
