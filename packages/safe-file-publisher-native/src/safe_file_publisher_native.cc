@@ -1614,6 +1614,13 @@ napi_value ListAnchoredDirectory(napi_env env, napi_callback_info info) {
 }
 
 napi_value Init(napi_env env, napi_value exports) {
+  napi_value supports_anchored_writes;
+#ifdef _WIN32
+  napi_get_boolean(env, false, &supports_anchored_writes);
+#else
+  napi_get_boolean(env, true, &supports_anchored_writes);
+#endif
+  napi_set_named_property(env, exports, "supportsAnchoredWrites", supports_anchored_writes);
   napi_value publish;
   napi_create_function(
       env, "publishNoReplace", NAPI_AUTO_LENGTH, PublishNoReplace, nullptr, &publish);

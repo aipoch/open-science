@@ -177,7 +177,7 @@ export const ArtifactMentionPopup = ({
       setSelectionError(undefined)
       const inspect = window.api.managedFileVersions?.inspect
       if (!inspect) {
-        setSelectionError('File version resolution is unavailable.')
+        setSelectionError(t('File version resolution is unavailable.'))
         return
       }
       try {
@@ -188,14 +188,14 @@ export const ArtifactMentionPopup = ({
         })
         if (revision !== selectionRevisionRef.current) return
         if (!result.ok) {
-          setSelectionError(result.error.message)
+          setSelectionError(t('Could not resolve file version.'))
           return
         }
         const head = result.value.versions.find(
           (version) => version.id === result.value.headVersionId
         )
         if (!head) {
-          setSelectionError('The current file version is unavailable.')
+          setSelectionError(t('The current file version is unavailable.'))
           return
         }
         onSelect({
@@ -207,14 +207,12 @@ export const ArtifactMentionPopup = ({
           mimeType: head.contentType ?? row.mimeType,
           versionId: head.id
         })
-      } catch (error) {
+      } catch {
         if (revision !== selectionRevisionRef.current) return
-        setSelectionError(
-          error instanceof Error ? error.message : 'Could not resolve file version.'
-        )
+        setSelectionError(t('Could not resolve file version.'))
       }
     },
-    [onSelect]
+    [onSelect, t]
   )
 
   useEffect(

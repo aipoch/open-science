@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import type { ChatSession } from '@/stores/session-store'
 import {
   createInitialPreviewWorkbenchState,
@@ -163,6 +164,7 @@ afterEach(() => {
   container.remove()
   Reflect.deleteProperty(window.HTMLElement.prototype, 'scrollIntoView')
   vi.restoreAllMocks()
+  void i18next.changeLanguage('en')
 })
 
 describe('GlobalSearchDialog', () => {
@@ -222,6 +224,7 @@ describe('GlobalSearchDialog', () => {
     ) as HTMLElement
     act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
     const mention = document.body.querySelector<HTMLElement>('[aria-label="Mention sin.png"]')
+    await act(async () => i18next.changeLanguage('zh-Hans'))
 
     await act(async () => {
       mention?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -230,7 +233,8 @@ describe('GlobalSearchDialog', () => {
 
     expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
-    expect(document.body.textContent).toContain('Current file head is unavailable.')
+    expect(document.body.textContent).toContain('无法解析文件版本。')
+    expect(document.body.textContent).not.toContain('Current file head is unavailable.')
   })
 
   it('prioritizes Artifacts and selects the first Artifact for a keyword search', async () => {

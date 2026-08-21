@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { ArtifactMentionPopup } from './ArtifactMentionPopup'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ProjectFileItem } from '../../../../../shared/project-files'
@@ -97,6 +98,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  void i18next.changeLanguage('en')
 })
 
 const options = (): HTMLElement[] =>
@@ -416,6 +418,7 @@ describe('ArtifactMentionPopup', () => {
       error: { code: 'VERSION_NOT_FOUND', message: 'File head unavailable.' }
     })
     await renderPopup({ onSelect })
+    await act(async () => i18next.changeLanguage('zh-Hans'))
 
     await act(async () => {
       options()[0]?.click()
@@ -423,7 +426,8 @@ describe('ArtifactMentionPopup', () => {
     })
 
     expect(onSelect).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('File head unavailable.')
+    expect(document.body.textContent).toContain('无法解析文件版本。')
+    expect(document.body.textContent).not.toContain('File head unavailable.')
     expect(options()).toHaveLength(2)
   })
 

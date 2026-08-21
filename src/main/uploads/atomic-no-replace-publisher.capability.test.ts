@@ -8,39 +8,53 @@ describe('managed file version native capability', () => {
       managedFileVersionNativeCapability(() => {
         throw Object.assign(new Error('native module missing'), { code: 'MODULE_NOT_FOUND' })
       })
-    ).toEqual({ available: false, reason: 'NATIVE_WRITE_REQUIRED' })
+    ).toEqual({
+      available: false,
+      reason: 'NATIVE_WRITE_REQUIRED',
+      readFallbackAvailable: false
+    })
   })
 
-  it('reports NATIVE_WRITE_REQUIRED on unsupported platforms even with a complete binding', () => {
-    const originalPlatform = process.platform
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
-    try {
-      const completeBinding = {
-        publishNoReplace: () => undefined,
-        writeAndPublishNoReplace: () => undefined,
-        readFile: () => Buffer.alloc(0),
-        readFileBounded: () => Buffer.alloc(0),
-        publishVerifiedNoReplace: () => undefined,
-        verifyFile: () => true,
-        statFile: () => ({ sizeBytes: 0 }),
-        removeFile: () => false,
-        listDirectory: () => []
-      }
-      expect(managedFileVersionNativeCapability(() => completeBinding)).toEqual({
-        available: false,
-        reason: 'NATIVE_WRITE_REQUIRED'
-      })
-    } finally {
-      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+  it('reports NATIVE_WRITE_REQUIRED when the native binding cannot publish anchored writes', () => {
+    const completeBinding = {
+      supportsAnchoredWrites: false,
+      publishNoReplace: () => undefined,
+      writeAndPublishNoReplace: () => undefined,
+      readFile: () => Buffer.alloc(0),
+      readFileBounded: () => Buffer.alloc(0),
+      publishVerifiedNoReplace: () => undefined,
+      verifyFile: () => true,
+      statFile: () => ({ sizeBytes: 0 }),
+      removeFile: () => false,
+      listDirectory: () => []
     }
+
+    expect(managedFileVersionNativeCapability(() => completeBinding)).toEqual({
+      available: false,
+      reason: 'NATIVE_WRITE_REQUIRED',
+      readFallbackAvailable: true
+    })
   })
 
   it('rejects a corrupt binding shape instead of reporting partial support', () => {
     expect(managedFileVersionNativeCapability(() => ({ readFile: () => Buffer.alloc(0) }))).toEqual(
       {
         available: false,
-        reason: 'NATIVE_WRITE_REQUIRED'
+        reason: 'NATIVE_WRITE_REQUIRED',
+        readFallbackAvailable: false
       }
+    )
+  })
+
+  it('reports the compiled binding capability for the current platform', () => {
+    expect(managedFileVersionNativeCapability()).toEqual(
+      process.platform === 'win32'
+        ? {
+            available: false,
+            reason: 'NATIVE_WRITE_REQUIRED',
+            readFallbackAvailable: true
+          }
+        : { available: true, readFallbackAvailable: false }
     )
   })
 })

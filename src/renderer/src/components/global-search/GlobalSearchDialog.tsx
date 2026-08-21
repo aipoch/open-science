@@ -500,7 +500,7 @@ export const GlobalSearchDialog = ({
       setActionError(undefined)
       const inspect = window.api.managedFileVersions?.inspect
       if (!inspect) {
-        setActionError('File version resolution is unavailable.')
+        setActionError(t('File version resolution is unavailable.'))
         return
       }
       try {
@@ -511,14 +511,14 @@ export const GlobalSearchDialog = ({
         })
         if (requestVersion !== mentionVersionRef.current) return
         if (!result.ok) {
-          setActionError(result.error.message)
+          setActionError(t('Could not resolve file version.'))
           return
         }
         const head = result.value.versions.find(
           (version) => version.id === result.value.headVersionId
         )
         if (!head) {
-          setActionError('The current file version is unavailable.')
+          setActionError(t('The current file version is unavailable.'))
           return
         }
         requestArtifactMention({
@@ -532,12 +532,12 @@ export const GlobalSearchDialog = ({
           sortAtMs: Date.parse(head.createdAt)
         })
         close()
-      } catch (error) {
+      } catch {
         if (requestVersion !== mentionVersionRef.current) return
-        setActionError(error instanceof Error ? error.message : 'Could not resolve file version.')
+        setActionError(t('Could not resolve file version.'))
       }
     },
-    [canMentionArtifact, close, requestArtifactMention]
+    [canMentionArtifact, close, requestArtifactMention, t]
   )
   const activate = useCallback(
     (row: SelectableRow | undefined, action?: 'mention' | 'preview'): void => {

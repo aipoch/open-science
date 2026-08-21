@@ -610,9 +610,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : undefined)
     const managedControlsInspect =
       managedInspect ?? (mode === 'diff' ? managedNavigationInspect : undefined)
-    // Editing, comparison, and managed version traversal are one text-version toolset. Files that
-    // cannot be edited keep universal preview actions but do not expose partial version controls.
-    const showManagedTextTools = managedControlsInspect?.canEdit === true
+    // Text eligibility controls the version toolset, while current write permission only controls
+    // editing. Read-only projects and hosts keep history and comparison available.
+    const showManagedTextTools = managedControlsInspect?.text !== undefined
     const isSelectedManagedSourceText =
       managedInspect !== undefined && isDiffModeSourceTextVersion(managedInspect)
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
@@ -622,8 +622,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     }
 
     const confirmLeave = useCallback(
-      (): boolean => !isDirty || window.confirm('Discard unsaved changes?'),
-      [isDirty]
+      (): boolean => !isDirty || window.confirm(t('Discard unsaved changes?')),
+      [isDirty, t]
     )
     useImperativeHandle(ref, () => ({ confirmLeave }), [confirmLeave])
 
@@ -836,18 +836,18 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       } catch {
         if (saveGenerationRef.current !== saveGeneration) return
         setSaving(false)
-        setEditError('Changes could not be saved.')
+        setEditError(t('Changes could not be saved.'))
         return
       }
       if (saveGenerationRef.current !== saveGeneration) return
       setSaving(false)
       if (!result.ok) {
-        setEditError(result.error.message)
+        setEditError(t('Changes could not be saved.'))
         return
       }
       if (result.value.kind === 'conflict') {
         setConflictHead(result.value.actualHead)
-        setEditError('This file has a newer version.')
+        setEditError(t('This file has a newer version.'))
         return
       }
       setMode('view')
@@ -893,17 +893,19 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           if (activeDiffRequestId.current !== requestId) return
           activeDiffRequestId.current = undefined
           if (result.ok) setDiffResult(result.value)
-          else if (result.error.code !== 'DIFF_CANCELLED') setDiffError(result.error.message)
+          else if (result.error.code !== 'DIFF_CANCELLED')
+            setDiffError(t('Diff could not be loaded.'))
         })
         .catch(() => {
-          if (activeDiffRequestId.current === requestId) setDiffError('Diff could not be loaded.')
+          if (activeDiffRequestId.current === requestId)
+            setDiffError(t('Diff could not be loaded.'))
         })
       return () => {
         if (activeDiffRequestId.current !== requestId) return
         activeDiffRequestId.current = undefined
         void window.api.managedFileVersions.cancelDiff({ requestId })
       }
-    }, [managedIdentity, managedInspect?.canDiff, managedInspect?.selectedVersionId, mode])
+    }, [managedIdentity, managedInspect?.canDiff, managedInspect?.selectedVersionId, mode, t])
 
     return (
       <div className="flex size-full min-h-0 flex-col overflow-hidden">
@@ -959,26 +961,27 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                 </div>
               ) : (
                 <>
-                  <TooltipProvider delayDuration={200}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-xs"
-                          className={previewHeaderActionClassName}
-                          aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
-                          disabled={!managedInspect?.canEdit}
-                          onClick={beginEdit}
-                        >
-                          <Pencil aria-hidden="true" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent className={tooltipClassName}>
-                        {t('Edit content')}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  {managedInspect?.canEdit ? (
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            className={previewHeaderActionClassName}
+                            aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
+                            onClick={beginEdit}
+                          >
+                            <Pencil aria-hidden="true" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent className={tooltipClassName}>
+                          {t('Edit content')}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
                   <TooltipProvider delayDuration={200}>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -1014,7 +1017,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             ) : undefined
           }
         />
-        {!showProvenance && managedNavigationInspect?.canEdit ? (
+        {!showProvenance && managedNavigationInspect?.text !== undefined ? (
           <ManagedVersionNavigation
             inspect={managedNavigationInspect}
             onSelect={selectManagedVersion}

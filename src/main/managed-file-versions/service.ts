@@ -303,6 +303,7 @@ type ManagedFileVersionServiceOptions = {
   removeAnchored?: typeof removeAnchoredFile
   testFaultAt?: ManagedFileVersionTestFault
   nativeWriteAvailable?: boolean
+  nativeReadFallbackAvailable?: boolean
   diffTaskRunner?: Pick<ManagedTextDiffTaskRunner, 'run' | 'cancel'>
 }
 
@@ -395,6 +396,7 @@ class ManagedFileVersionService {
   private readonly listAnchored: typeof listAnchoredDirectory
   private readonly removeAnchored: typeof removeAnchoredFile
   private readonly nativeWriteAvailable: boolean
+  private readonly nativeReadFallbackAvailable: boolean
   private readonly diffTaskRunner: Pick<ManagedTextDiffTaskRunner, 'run' | 'cancel'>
   private readonly activeDiffs = new Map<string, { cancelled: boolean; workerStarted: boolean }>()
 
@@ -428,8 +430,11 @@ class ManagedFileVersionService {
     this.publishVerified = options.publishVerified ?? publishVerifiedAnchoredFileNoReplace
     this.listAnchored = options.listAnchored ?? listAnchoredDirectory
     this.removeAnchored = options.removeAnchored ?? removeAnchoredFile
-    this.nativeWriteAvailable =
-      options.nativeWriteAvailable ?? managedFileVersionNativeCapability().available
+    const nativeCapability = managedFileVersionNativeCapability()
+    this.nativeWriteAvailable = options.nativeWriteAvailable ?? nativeCapability.available
+    this.nativeReadFallbackAvailable =
+      options.nativeReadFallbackAvailable ??
+      (options.nativeWriteAvailable === undefined ? nativeCapability.readFallbackAvailable : false)
     this.diffTaskRunner = options.diffTaskRunner ?? new ManagedTextDiffTaskRunner()
   }
 
@@ -445,7 +450,7 @@ class ManagedFileVersionService {
     const resolved = await this.resolveRecord(request)
     const versions = await this.listVersions(resolved.logicalFile)
     const writeUnavailableReason = await this.writeUnavailableReason(resolved.logicalFile)
-    if (writeUnavailableReason === 'NATIVE_WRITE_REQUIRED') {
+    if (writeUnavailableReason === 'NATIVE_WRITE_REQUIRED' && !this.nativeReadFallbackAvailable) {
       return {
         source: request.source,
         projectId: request.projectId,
@@ -462,7 +467,7 @@ class ManagedFileVersionService {
         unavailableReason: writeUnavailableReason
       }
     }
-    const eligibility = this.readTextEligibility(resolved.version, resolved.logicalFile.displayName)
+    const eligibility = await this.readTextEligibility(resolved)
 
     return {
       source: request.source,
@@ -504,7 +509,11 @@ class ManagedFileVersionService {
   }
 
   async openResolved(request: ManagedFileVersionResolveRequest): Promise<ManagedFileReadLease> {
-    const resolved = await this.resolve(request)
+    const resolved = await this.resolveRecord(request)
+    if (this.nativeWriteAvailable) this.verifyVersion(resolved.version)
+    else if (!this.nativeReadFallbackAvailable) {
+      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored managed-file access is unavailable.')
+    }
     return openManagedFileReadLease(resolved)
   }
 
@@ -527,8 +536,8 @@ class ManagedFileVersionService {
       const ownedBaseVersionId = baseVersionId as string
       const base = await this.resolveRecord({ ...request, versionId: ownedBaseVersionId })
       assertNotCancelled()
-      const before = this.readTextForDiff(base.version, base.logicalFile.displayName)
-      const after = this.readTextForDiff(selected.version, selected.logicalFile.displayName)
+      const before = await this.readTextForDiff(base)
+      const after = await this.readTextForDiff(selected)
       assertNotCancelled()
       active.workerStarted = true
       const lines = await this.diffTaskRunner.run({ requestId: request.requestId, before, after })
@@ -621,7 +630,11 @@ class ManagedFileVersionService {
     if (basedOn.state !== COMPLETE_STATE[request.source]) {
       operationError('VERSION_NOT_FOUND', 'Base version is not published.')
     }
-    const eligibility = this.readTextEligibility(basedOn, logicalFile.displayName)
+    const eligibility = await this.readTextEligibility({
+      logicalFile,
+      version: basedOn,
+      path: this.resolveStoragePath(basedOn.contentStorageKey)
+    })
     if (!eligibility.editable) {
       throw new ManagedFileVersionError(
         eligibility.reason,
@@ -1033,25 +1046,52 @@ class ManagedFileVersionService {
     }
   }
 
-  private readTextEligibility(
-    version: ManagedFileVersionRecord,
-    displayName: string
-  ): ReturnType<typeof inspectManagedTextEditEligibility> {
-    if (version.sizeBytes > BigInt(MANAGED_TEXT_EDIT_MAX_BYTES)) {
+  private async readTextEligibility(
+    resolved: ResolvedManagedFileVersion
+  ): Promise<ReturnType<typeof inspectManagedTextEditEligibility>> {
+    if (resolved.version.sizeBytes > BigInt(MANAGED_TEXT_EDIT_MAX_BYTES)) {
       return { editable: false, reason: 'EDIT_LIMIT_EXCEEDED' }
     }
-    const { parentPath, name } = this.versionAnchor(version)
-    try {
-      const bytes = this.readAnchoredBounded(
-        this.options.storageRoot,
-        parentPath,
-        name,
-        MANAGED_TEXT_EDIT_MAX_BYTES
-      )
-      if (bytes.byteLength !== Number(version.sizeBytes) || sha256(bytes) !== version.checksum) {
-        throw new Error('checksum or size mismatch')
+    if (this.nativeWriteAvailable) {
+      const { parentPath, name } = this.versionAnchor(resolved.version)
+      try {
+        const bytes = this.readAnchoredBounded(
+          this.options.storageRoot,
+          parentPath,
+          name,
+          MANAGED_TEXT_EDIT_MAX_BYTES
+        )
+        if (
+          bytes.byteLength !== Number(resolved.version.sizeBytes) ||
+          sha256(bytes) !== resolved.version.checksum
+        ) {
+          throw new Error('checksum or size mismatch')
+        }
+        return inspectManagedTextEditEligibility(resolved.logicalFile.displayName, bytes)
+      } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'EFBIG'
+        ) {
+          return { editable: false, reason: 'EDIT_LIMIT_EXCEEDED' }
+        }
+        throw new ManagedFileVersionError(
+          'CONTENT_INTEGRITY_FAILED',
+          'Managed file version content is unavailable or corrupt.',
+          { cause: error }
+        )
       }
-      return inspectManagedTextEditEligibility(displayName, bytes)
+    }
+    if (!this.nativeReadFallbackAvailable) {
+      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored managed-file access is unavailable.')
+    }
+    let lease: ManagedFileReadLease | undefined
+    try {
+      lease = await openManagedFileReadLease(resolved)
+      const bytes = lease.size === 0 ? new Uint8Array() : await lease.readRange(0, lease.size)
+      return inspectManagedTextEditEligibility(resolved.logicalFile.displayName, bytes)
     } catch (error) {
       if (
         typeof error === 'object' &&
@@ -1066,14 +1106,16 @@ class ManagedFileVersionService {
         'Managed file version content is unavailable or corrupt.',
         { cause: error }
       )
+    } finally {
+      await lease?.close().catch(() => undefined)
     }
   }
 
-  private readTextForDiff(version: ManagedFileVersionRecord, displayName: string): string {
-    if (version.sizeBytes > BigInt(MANAGED_DIFF_MAX_INPUT_BYTES)) {
+  private async readTextForDiff(resolved: ResolvedManagedFileVersion): Promise<string> {
+    if (resolved.version.sizeBytes > BigInt(MANAGED_DIFF_MAX_INPUT_BYTES)) {
       operationError('DIFF_INPUT_LIMIT_EXCEEDED', 'Managed file exceeds the diff input limit.')
     }
-    const eligibility = this.readTextEligibility(version, displayName)
+    const eligibility = await this.readTextEligibility(resolved)
     if (!eligibility.editable) {
       if (eligibility.reason === 'EDIT_LIMIT_EXCEEDED') {
         operationError('DIFF_INPUT_LIMIT_EXCEEDED', 'Managed file exceeds the diff input limit.')
@@ -1081,6 +1123,18 @@ class ManagedFileVersionService {
       operationError(eligibility.reason, 'Managed file is not eligible for text diff.')
     }
     return (eligibility as Extract<typeof eligibility, { editable: true }>).text
+  }
+
+  private async verifyResolvedVersion(resolved: ResolvedManagedFileVersion): Promise<void> {
+    if (this.nativeWriteAvailable) {
+      this.verifyVersion(resolved.version)
+      return
+    }
+    if (!this.nativeReadFallbackAvailable) {
+      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored managed-file access is unavailable.')
+    }
+    const lease = await openManagedFileReadLease(resolved)
+    await lease.close()
   }
 
   private async createOperation(
@@ -1778,7 +1832,18 @@ class ManagedFileVersionService {
           createdAt: version.createdAt
         }
         try {
-          this.verifyVersion(record)
+          await this.verifyResolvedVersion({
+            logicalFile: {
+              source: 'artifact',
+              id: file.id,
+              projectId: file.projectId,
+              sessionId: file.sessionId,
+              displayName: file.filename,
+              currentVersionId: file.currentVersionId
+            },
+            version: record,
+            path: this.resolveStoragePath(record.contentStorageKey)
+          })
         } catch {
           integrityErrors.push({
             source: 'artifact',
@@ -1813,7 +1878,18 @@ class ManagedFileVersionService {
           createdAt: version.createdAt ?? version.registeredAt
         }
         try {
-          this.verifyVersion(record)
+          await this.verifyResolvedVersion({
+            logicalFile: {
+              source: 'upload',
+              id: file.id,
+              projectId: file.projectId,
+              sessionId: file.sessionId,
+              displayName: file.originalFilename || file.filename,
+              currentVersionId: file.currentVersionId
+            },
+            version: record,
+            path: this.resolveStoragePath(record.contentStorageKey)
+          })
         } catch {
           integrityErrors.push({
             source: 'upload',

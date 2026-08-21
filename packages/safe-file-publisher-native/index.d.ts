@@ -1,3 +1,5 @@
+export const supportsAnchoredWrites: boolean
+
 export function publishNoReplace(
   rootPath: string,
   relativeParentPath: string,

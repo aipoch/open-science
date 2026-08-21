@@ -11,6 +11,7 @@ import {
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { i18next } from '@/i18n'
 import {
   createInitialSessionState,
   type ChatSession,
@@ -395,6 +396,76 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(diffButton?.disabled).toBe(true)
     expect(diffButton?.className).toContain('disabled:opacity-50')
     expect(diffButton?.className).not.toContain('disabled:opacity-100')
+  })
+
+  it('keeps read-only diff and version navigation for eligible text when writes are unavailable', async () => {
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        canEdit: false,
+        canDiff: true,
+        unavailableReason: 'PROJECT_NOT_WRITABLE' as const
+      }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[aria-label="Edit README.md"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Compare README.md with its source version"]')
+    ).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="managed-preview-version-navigation"]')
+    ).not.toBeNull()
+  })
+
+  it('localizes the dirty-draft confirmation', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const leaveAction = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={managedUploadItem}
+          leaveGuardScope="localized-dirty-draft"
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+
+    expect(previewLeaveGuards.request('localized-dirty-draft', leaveAction)).toBe(false)
+    expect(confirm).toHaveBeenCalledWith('要放弃未保存的更改吗？')
+    expect(leaveAction).not.toHaveBeenCalled()
+
+    await act(async () => i18next.changeLanguage('en'))
+  })
+
+  it('localizes a managed edit save failure', async () => {
+    window.api.managedFileVersions.saveTextEdit = vi
+      .fn()
+      .mockRejectedValue(new Error('save unavailable'))
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    const saveButton = container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    await click(saveButton)
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('无法保存更改。')
+
+    await act(async () => i18next.changeLanguage('en'))
   })
 
   it('preserves a dirty draft on conflict and offers the latest version', async () => {

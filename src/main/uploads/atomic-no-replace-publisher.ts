@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import { isAbsolute, relative, sep } from 'node:path'
 
 type NativePublisherBinding = {
+  supportsAnchoredWrites: boolean
   publishNoReplace: (
     rootPath: string,
     relativeParentPath: string,
@@ -75,17 +76,20 @@ type NativeBindingLoader = () => unknown
 const isNativePublisherBinding = (candidate: unknown): candidate is NativePublisherBinding => {
   if (!candidate || typeof candidate !== 'object') return false
   const value = candidate as Record<string, unknown>
-  return [
-    'publishNoReplace',
-    'writeAndPublishNoReplace',
-    'readFile',
-    'readFileBounded',
-    'publishVerifiedNoReplace',
-    'verifyFile',
-    'statFile',
-    'removeFile',
-    'listDirectory'
-  ].every((name) => typeof value[name] === 'function')
+  return (
+    typeof value.supportsAnchoredWrites === 'boolean' &&
+    [
+      'publishNoReplace',
+      'writeAndPublishNoReplace',
+      'readFile',
+      'readFileBounded',
+      'publishVerifiedNoReplace',
+      'verifyFile',
+      'statFile',
+      'removeFile',
+      'listDirectory'
+    ].every((name) => typeof value[name] === 'function')
+  )
 }
 
 const assertNativePublisherBinding = (candidate: unknown): NativePublisherBinding => {
@@ -99,13 +103,27 @@ const assertNativePublisherBinding = (candidate: unknown): NativePublisherBindin
 
 export const managedFileVersionNativeCapability = (
   loader: NativeBindingLoader = loadBinding
-): { available: true } | { available: false; reason: 'NATIVE_WRITE_REQUIRED' } => {
-  if (process.platform === 'win32') return { available: false, reason: 'NATIVE_WRITE_REQUIRED' }
+):
+  | { available: true; readFallbackAvailable: false }
+  | {
+      available: false
+      reason: 'NATIVE_WRITE_REQUIRED'
+      readFallbackAvailable: boolean
+    } => {
   try {
-    assertNativePublisherBinding(loader())
-    return { available: true }
+    return assertNativePublisherBinding(loader()).supportsAnchoredWrites
+      ? { available: true, readFallbackAvailable: false }
+      : {
+          available: false,
+          reason: 'NATIVE_WRITE_REQUIRED',
+          readFallbackAvailable: true
+        }
   } catch {
-    return { available: false, reason: 'NATIVE_WRITE_REQUIRED' }
+    return {
+      available: false,
+      reason: 'NATIVE_WRITE_REQUIRED',
+      readFallbackAvailable: false
+    }
   }
 }
 

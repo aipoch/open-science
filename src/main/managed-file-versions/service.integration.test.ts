@@ -2060,18 +2060,52 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     ).resolves.toMatchObject({ canEdit: false, unavailableReason: 'UNSAFE_FILENAME' })
   })
 
-  it('fails closed with NATIVE_WRITE_REQUIRED when anchored writes are unavailable', async () => {
+  it('keeps trusted reads available when anchored writes are unavailable', async () => {
     const fixture = await createFixture('upload')
     const service = new ManagedFileVersionService({
       storageRoot,
       writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      nativeWriteAvailable: false
+      nativeWriteAvailable: false,
+      nativeReadFallbackAvailable: true,
+      readAnchored: () => {
+        throw Object.assign(new Error('anchored reads unavailable'), { code: 'ENOTSUP' })
+      },
+      verifyAnchored: () => {
+        throw Object.assign(new Error('anchored verification unavailable'), { code: 'ENOTSUP' })
+      }
     })
 
     await expect(
       service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
-    ).resolves.toMatchObject({ canEdit: false, unavailableReason: 'NATIVE_WRITE_REQUIRED' })
+    ).resolves.toMatchObject({
+      canEdit: false,
+      canDiff: true,
+      text: 'second\n',
+      unavailableReason: 'NATIVE_WRITE_REQUIRED'
+    })
+    const lease = await service.openResolved({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: fixture.fileId
+    })
+    await expect(lease.readRange(0, lease.size)).resolves.toEqual(
+      new Uint8Array(Buffer.from('second\n'))
+    )
+    await lease.close()
+    await expect(
+      service.diffText({
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        versionId: fixture.versionIds[1],
+        requestId: 'native-read-fallback'
+      })
+    ).resolves.toMatchObject({
+      baseVersionId: fixture.versionIds[0],
+      selectedVersionId: fixture.versionIds[1]
+    })
+    await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([])
     const currentPath = await service.resolvePath({
       source: 'upload',
       projectId: 'project-1',
@@ -2090,6 +2124,44 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         expectedHeadVersionId: fixture.versionIds[1],
         content: 'blocked native write\n',
         operationId: 'native-write-unavailable'
+      })
+    ).rejects.toMatchObject({ code: 'NATIVE_WRITE_REQUIRED' })
+  })
+
+  it('fails closed when the native binding is unavailable rather than explicitly read-only', async () => {
+    const fixture = await createFixture('upload')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      writeAndPublish: testWriteAndPublish,
+      getClient: () => Promise.resolve(client),
+      nativeWriteAvailable: false,
+      nativeReadFallbackAvailable: false
+    })
+
+    await expect(
+      service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
+    ).resolves.toMatchObject({
+      canEdit: false,
+      canDiff: false,
+      unavailableReason: 'NATIVE_WRITE_REQUIRED'
+    })
+    await expect(
+      service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
+    ).resolves.not.toHaveProperty('text')
+    await expect(
+      service.openResolved({
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      })
+    ).rejects.toMatchObject({ code: 'NATIVE_WRITE_REQUIRED' })
+    await expect(
+      service.diffText({
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        versionId: fixture.versionIds[1],
+        requestId: 'missing-native-binding'
       })
     ).rejects.toMatchObject({ code: 'NATIVE_WRITE_REQUIRED' })
   })
