@@ -122,6 +122,9 @@ type WorkspaceMessageItemProps = {
   onPresentationChange?: (messageId: string, presenting: boolean) => void
   presentationSourceOpen?: boolean
   presentationAnimateOnMount?: boolean
+  // A trailing buffered reply can reserve the loading-row geometry it replaces. When another
+  // live row remains below it, the message keeps only its natural text-line height.
+  reserveLoadingRowHeight?: boolean
   // True only while this application-authored correction is the current live Agent prompt and no
   // Agent response has appeared. Historical/reloaded rows stay settled and motionless.
   reviewerCorrectionActive?: boolean
@@ -1121,6 +1124,7 @@ const WorkspaceMessageItemImpl = ({
   onPresentationChange,
   presentationSourceOpen,
   presentationAnimateOnMount = true,
+  reserveLoadingRowHeight = true,
   reviewerCorrectionActive = false
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -1450,9 +1454,9 @@ const WorkspaceMessageItemImpl = ({
             className={cn(
               assistantMessageSurfaceClassName,
               'select-text overflow-visible',
-              // Match the tallest loading row while initial content is buffered so replacing it
-              // cannot collapse the workspace scroll extent. Side chat keeps its natural geometry.
-              isAssistantPresenting && 'min-h-14'
+              // Reserve the tallest loading-row geometry only when this reply replaces that row.
+              // If Thinking or a live tool remains below, the buffered message stays at line height.
+              isAssistantPresenting && (reserveLoadingRowHeight ? 'min-h-14' : 'min-h-5')
             )}
           >
             {message.content ? (
@@ -1555,7 +1559,8 @@ const areWorkspaceMessageItemPropsEqual = (
   areRevisionNavigationsEqual(previous.revisionNavigation, next.revisionNavigation) &&
   previous.onPresentationChange === next.onPresentationChange &&
   (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
-  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true)
+  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true) &&
+  (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true)
 
 const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
 WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'
