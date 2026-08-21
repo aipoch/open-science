@@ -1221,7 +1221,7 @@ describe('SettingsService: providers', () => {
     })
   })
 
-  it('uses a 200k context default without inventing input or output caps', async () => {
+  it('uses a 200k context default and keeps the OpenCode output reserve adapter-only', async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
     await repository.setAgentFramework('opencode')
     const service = createService(undefined, {
@@ -1250,7 +1250,7 @@ describe('SettingsService: providers', () => {
     const agentProviderId = opencodeTransportProviderId(view.id, 'm')
     expect(content.provider[agentProviderId].models.m.limit.context).toBe(200_000)
     expect(content.provider[agentProviderId].models.m.limit).not.toHaveProperty('input')
-    expect(content.provider[agentProviderId].models.m.limit).not.toHaveProperty('output')
+    expect(content.provider[agentProviderId].models.m.limit.output).toBe(32_000)
   })
 
   it('keeps OpenCode connector details in on-demand skills instead of baseline context', async () => {
@@ -2713,7 +2713,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(content.provider[agentProviderId].models['kimi-k3']).toEqual({
       attachment: true,
       modalities: { input: ['text', 'image'] },
-      limit: { context: 1_000_000 }
+      limit: { context: 1_000_000, output: 32_000 }
     })
     expect(backend.args).toEqual(['--port', '42424', '--hostname', '127.0.0.1'])
     expect(backend.opencodeUsageApi).toEqual({
