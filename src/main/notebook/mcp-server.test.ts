@@ -6,6 +6,10 @@ import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
 
 import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
+import {
+  memoryAgentRememberRequestSchema,
+  memoryAgentSearchRequestSchema
+} from '../../shared/memory'
 
 // Transport behavior has dedicated integration coverage. Keep this MCP suite on the observable
 // fetch boundary so long-running tool calls can be completed deterministically with fake timers.
@@ -47,6 +51,7 @@ import {
   createNotebookMcpEnvironmentFromProcess,
   createNotebookMcpServer,
   createNotebookMcpServerConfig,
+  notebookRpcToolsForEnvironment,
   resolveNotebookRpcFetch,
   serializeNotebookToolResult
 } from './mcp-server'
@@ -62,7 +67,8 @@ describe('notebook MCP server config', () => {
       token: 'secret-token',
       projectId: 'default-project',
       sessionId: 'session-1',
-      workspaceCwd: '/workspace'
+      workspaceCwd: '/workspace',
+      memoryTools: true
     })
 
     expect(config).toEqual({
@@ -75,7 +81,8 @@ describe('notebook MCP server config', () => {
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: 'session-1' },
-        { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' }
+        { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' },
+        { name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS', value: '1' }
       ]
     })
   })
@@ -111,13 +118,38 @@ describe('notebook MCP server config', () => {
       token: 'secret-token',
       projectId: 'default-project',
       sessionId: 'session-1',
-      workspaceCwd: 'C:\\workspace'
+      workspaceCwd: 'C:\\workspace',
+      memoryTools: false
     })
 
     expect(config.env).toContainEqual({
       name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH',
       value: '\\\\.\\pipe\\open-science-notebook'
     })
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+      value: '0'
+    })
+  })
+
+  it('advertises memory tools only to an eligible main-agent environment', () => {
+    const base = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'token',
+      projectId: 'project',
+      sessionId: 'session',
+      workspaceCwd: '/workspace'
+    }
+    expect(
+      notebookRpcToolsForEnvironment({ ...base, memoryTools: true }).map(({ name }) => name)
+    ).toEqual(
+      expect.arrayContaining(['list_memory_categories', 'search_memories', 'remember_memory'])
+    )
+    expect(
+      notebookRpcToolsForEnvironment({ ...base, memoryTools: false }).map(({ name }) => name)
+    ).not.toEqual(
+      expect.arrayContaining(['list_memory_categories', 'search_memories', 'remember_memory'])
+    )
   })
 
   it('keeps notebook instructions scoped to the notebook tools', () => {
@@ -218,8 +250,28 @@ describe('notebook MCP server config', () => {
       'notebook_shutdown',
       'inspect_packages',
       'manage_packages',
-      'manage_environments'
+      'manage_environments',
+      'list_memory_categories',
+      'search_memories',
+      'remember_memory'
     ])
+  })
+
+  it('exposes bounded memory discovery, search, and append-only agent tools', () => {
+    const tools = Object.fromEntries(NOTEBOOK_RPC_TOOLS.map((tool) => [tool.name, tool]))
+
+    expect(tools.list_memory_categories?.method).toBe('memoryListCategories')
+    expect(tools.search_memories?.method).toBe('memorySearch')
+    expect(tools.remember_memory?.method).toBe('memoryRemember')
+    expect(tools.remember_memory?.description).toContain('durable')
+    expect(tools.search_memories?.inputSchema).toBe(memoryAgentSearchRequestSchema.shape)
+    expect(tools.remember_memory?.inputSchema).toBe(memoryAgentRememberRequestSchema.shape)
+    expect(tools.list_memory_categories?.mapResult).toBeUndefined()
+    expect(tools.search_memories?.mapResult).toBeUndefined()
+    expect(tools.remember_memory?.mapResult).toBeUndefined()
+    expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining(['update_memory', 'forget_memory', 'set_memory_enabled'])
+    )
   })
 
   it('exposes manage_environments and explains named environments are separate namespaces', () => {
@@ -949,10 +1001,10 @@ describe('compactManagePackagesResult', () => {
 })
 
 describe('notebook control tool results', () => {
-  it('gives every notebook tool a purpose-specific projection and a global result budget', () => {
+  it('gives every notebook tool a global result budget and projects only results that need it', () => {
     for (const tool of NOTEBOOK_RPC_TOOLS) {
-      expect(tool.mapResult, tool.name).toBeTypeOf('function')
       expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
+      if (!tool.name.includes('memor')) expect(tool.mapResult, tool.name).toBeTypeOf('function')
     }
   })
 

@@ -482,6 +482,51 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     PRIMARY KEY ("tagId", "resourceType", "resourceId"),
     CONSTRAINT "TagAssignment_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "Tag" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "TagAssignment_resourceId_check" CHECK (length(trim("resourceId")) BETWEEN 1 AND 256)
+);`,
+  `CREATE TABLE IF NOT EXISTS "MemorySettings" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "enabled" BOOLEAN NOT NULL DEFAULT false,
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "MemorySettings_id_check" CHECK ("id" = 'memory-settings'),
+    CONSTRAINT "MemorySettings_enabled_check" CHECK ("enabled" IN (false, true)),
+    CONSTRAINT "MemorySettings_revision_check" CHECK ("revision" >= 0)
+);`,
+  `CREATE TABLE IF NOT EXISTS "MemoryCategory" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "systemKey" TEXT,
+    "name" TEXT,
+    "nameKey" TEXT,
+    "guidance" TEXT NOT NULL DEFAULT '',
+    "autoRecall" BOOLEAN NOT NULL DEFAULT false,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "MemoryCategory_shape_check" CHECK ((("systemKey" = 'about-you' AND "name" IS NULL AND "nameKey" IS NULL AND "guidance" = '' AND "autoRecall" = true) OR ("systemKey" IS NULL AND "name" IS NOT NULL AND "nameKey" IS NOT NULL))),
+    CONSTRAINT "MemoryCategory_name_check" CHECK ("name" IS NULL OR length(trim("name")) BETWEEN 1 AND 64),
+    CONSTRAINT "MemoryCategory_nameKey_check" CHECK ("nameKey" IS NULL OR length("nameKey") BETWEEN 1 AND 64),
+    CONSTRAINT "MemoryCategory_guidance_check" CHECK (length("guidance") <= 1000),
+    CONSTRAINT "MemoryCategory_autoRecall_check" CHECK ("autoRecall" IN (false, true)),
+    CONSTRAINT "MemoryCategory_revision_check" CHECK ("revision" >= 1)
+);`,
+  `CREATE TABLE IF NOT EXISTS "MemoryEntry" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "categoryId" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "contentKey" TEXT NOT NULL,
+    "origin" TEXT NOT NULL,
+    "sourceSessionId" TEXT,
+    "sourceAgentId" TEXT,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "MemoryEntry_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "MemoryCategory" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "MemoryEntry_content_check" CHECK (length(trim("content")) BETWEEN 1 AND 4000),
+    CONSTRAINT "MemoryEntry_contentKey_check" CHECK (length("contentKey") BETWEEN 1 AND 4000),
+    CONSTRAINT "MemoryEntry_origin_check" CHECK ("origin" IN ('user', 'agent')),
+    CONSTRAINT "MemoryEntry_source_check" CHECK (("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL)),
+    CONSTRAINT "MemoryEntry_revision_check" CHECK ("revision" >= 1)
 );`
 ] as const
 
@@ -540,7 +585,10 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_systemKey_key" ON "Tag"("systemKey");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_nameKey_key" ON "Tag"("nameKey");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_sortOrder_key" ON "Tag"("sortOrder");`,
-  `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`
+  `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_systemKey_key" ON "MemoryCategory"("systemKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_nameKey_key" ON "MemoryCategory"("nameKey");`,
+  `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -576,7 +624,10 @@ const RUNTIME_SCHEMA_TABLES = [
   'ComputeAuthOperation',
   'GrantedLocalRoot',
   'Tag',
-  'TagAssignment'
+  'TagAssignment',
+  'MemorySettings',
+  'MemoryCategory',
+  'MemoryEntry'
 ] as const
 
 export {

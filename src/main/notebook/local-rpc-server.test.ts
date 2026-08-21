@@ -77,6 +77,101 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('routes memory search through a main-only capability after trusted session binding', async () => {
+    const memoryResult = {
+      id: 'entry-1',
+      categoryId: 'category-1',
+      categoryName: 'Research',
+      content: 'trusted result',
+      revision: 1,
+      provenance: { origin: 'agent' as const, agentId: 'specialist-1' },
+      updatedAt: 1
+    }
+    const memorySearch = vi.fn(async () => [memoryResult])
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      memoryService: {
+        listCategoriesForAgent: vi.fn(async () => []),
+        searchForAgent: memorySearch,
+        rememberForAgent: vi.fn(async () => ({ ...memoryResult, content: 'saved' }))
+      }
+    })
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'project-1',
+      'root-frame-trusted-session'
+    )
+    server.registerSessionSpecialist('trusted-session', 'specialist-1')
+
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${control.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'memorySearch',
+          params: { query: 'microscopy', limit: 4, sessionId: 'forged' }
+        })
+      })
+
+      expect(response.status).toBe(200)
+      expect(memorySearch).toHaveBeenCalledWith({
+        query: 'microscopy',
+        categoryIds: undefined,
+        limit: 4
+      })
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
+  it('does not authorize memory tools for delegated control capabilities', async () => {
+    const memoryResult = {
+      id: 'entry-1',
+      categoryId: 'category-1',
+      categoryName: 'Research',
+      content: 'saved',
+      revision: 1,
+      provenance: { origin: 'agent' as const },
+      updatedAt: 1
+    }
+    const memorySearch = vi.fn(async () => [])
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      memoryService: {
+        listCategoriesForAgent: vi.fn(async () => []),
+        searchForAgent: memorySearch,
+        rememberForAgent: vi.fn(async () => memoryResult)
+      }
+    })
+    const control = await server.issueControlConnection(
+      'delegate-session',
+      'project-1',
+      'delegate-frame',
+      { role: 'delegate', attemptId: 'attempt-1' }
+    )
+
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${control.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'memorySearch', params: { query: 'private' } })
+      })
+
+      expect(response.status).toBe(403)
+      expect(memorySearch).not.toHaveBeenCalled()
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
   it('rejects an authenticated request body above the local RPC budget', async () => {
     const server = new NotebookLocalRpcServer({} as never, {
       transport: 'tcp',

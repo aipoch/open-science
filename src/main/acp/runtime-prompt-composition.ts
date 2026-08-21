@@ -140,6 +140,7 @@ const composeAcpRuntimePromptOwners = (
     selectBridgeSkills: async (text, catalog, signal) =>
       (await base.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
     authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
+    memory: options.memory,
     ...(options.notebook
       ? {
           notebook: {
