@@ -1,11 +1,10 @@
 import type { TFunction } from 'i18next'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { FieldHelp } from '@/components/FieldHelp'
-import { EditableNumberCombobox } from '@/components/ui/editable-number-combobox'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -188,7 +187,8 @@ const TokenLimitField = ({
 
 // Provider fields switch by type: pick a type first, then reveal its options. Custom exposes an
 // Anthropic-compatible gateway/key/model; an official vendor exposes a key (+ region) and picks a
-// model from the registry catalog. No plaintext key is rendered.
+// model from the registry catalog. Stored plaintext keys are never rendered; users can reveal only
+// a replacement key currently held in this form draft.
 const ProviderForm = ({
   value,
   onChange,
@@ -205,7 +205,7 @@ const ProviderForm = ({
   showClaudeIsolated = false,
   defaultCustomApiEndpoint = 'anthropic'
 }: ProviderFormProps): React.JSX.Element => {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
@@ -218,6 +218,7 @@ const ProviderForm = ({
       Boolean(value.maxInputTokens.trim()) ||
       Boolean(value.maxOutputTokens.trim())
   )
+  const [keyVisible, setKeyVisible] = useState(false)
   const advancedVisible =
     advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
 
@@ -251,21 +252,38 @@ const ProviderForm = ({
           </ExternalTextLink>
         ) : null}
       </div>
-      <Input
-        id="provider-key"
-        aria-label={t('API key')}
-        type="password"
-        value={value.key}
-        disabled={disabled}
-        placeholder={
-          hasStoredKey
-            ? t('{{masked}} — leave blank to keep', {
-                masked: maskedKey ?? t('stored key')
-              })
-            : t('Paste API key')
-        }
-        onChange={(event) => onChange({ key: event.target.value })}
-      />
+      <div className="relative">
+        <Input
+          id="provider-key"
+          aria-label={t('API key')}
+          type={keyVisible ? 'text' : 'password'}
+          value={value.key}
+          disabled={disabled}
+          placeholder={
+            hasStoredKey
+              ? t('{{masked}} — leave blank to keep', {
+                  masked: maskedKey ?? t('stored key')
+                })
+              : t('Paste API key')
+          }
+          className="pe-9"
+          onChange={(event) => onChange({ key: event.target.value })}
+        />
+        <button
+          type="button"
+          aria-label={keyVisible ? t('Hide API key') : t('Show API key')}
+          aria-pressed={keyVisible}
+          disabled={disabled}
+          onClick={() => setKeyVisible((visible) => !visible)}
+          className="absolute inset-y-0 end-0 flex w-9 items-center justify-center rounded-e-lg text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none"
+        >
+          {keyVisible ? (
+            <EyeOff className="size-4" aria-hidden="true" />
+          ) : (
+            <Eye className="size-4" aria-hidden="true" />
+          )}
+        </button>
+      </div>
       {needsKey ? (
         <p className={fieldErrorClassName} role="alert">
           {t('The stored key could not be decrypted. Enter it again to continue.')}
@@ -529,7 +547,7 @@ const ProviderForm = ({
               aria-label={t('Model')}
               value={value.model}
               disabled={disabled}
-              placeholder={t('Model ID from provider documentation')}
+              placeholder={t('e.g. deepseek-v4-flash')}
               onChange={(event) => onChange({ model: event.target.value })}
             />
             {errors.model ? (
@@ -539,31 +557,17 @@ const ProviderForm = ({
             ) : null}
           </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1">
-              <label className={fieldLabelClassName} htmlFor="provider-context-window">
-                {t('Context window')}
-              </label>
-              <FieldHelp content={t('Total tokens shared by the request and response.')} />
-            </div>
-            <EditableNumberCombobox
-              id="provider-context-window"
-              ariaLabel={t('Context window')}
-              value={value.contextWindow}
-              presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
-              locale={i18n.language}
-              disabled={disabled}
-              placeholder={t('Use provider default')}
-              status={errors.contextWindow ? 'error' : 'idle'}
-              describedBy={errors.contextWindow ? 'provider-context-window-error' : undefined}
-              onValueChange={(contextWindow) => onChange({ contextWindow })}
-            />
-            {errors.contextWindow ? (
-              <p id="provider-context-window-error" className={fieldErrorClassName} role="alert">
-                {t(errors.contextWindow)}
-              </p>
-            ) : null}
-          </div>
+          <TokenLimitField
+            id="provider-context-window"
+            label={t('Context window')}
+            help={t('Total tokens shared by the request and response.')}
+            value={value.contextWindow}
+            presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
+            disabled={disabled}
+            error={errors.contextWindow}
+            onValueChange={(contextWindow) => onChange({ contextWindow })}
+            t={t}
+          />
 
           <div>
             <button
@@ -624,15 +628,42 @@ const ProviderForm = ({
 
                 {value.reasoningEffortPreset !== 'unsupported' ? (
                   <div className="space-y-3 border-t border-border-200 pt-3">
-                    <p className="text-xs text-muted-foreground">
-                      {t(
-                        'Open Science maps five relative strengths onto the exact levels accepted by this model.'
+                    <div
+                      className={cn(
+                        'grid gap-3',
+                        value.apiEndpoint === 'openai' && 'sm:grid-cols-2'
                       )}
-                    </p>
-
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    >
                       <div className="space-y-1.5">
-                        <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
+                        <div className="flex items-center gap-1">
+                          <span className={fieldLabelClassName}>
+                            {t('Supported effort levels')}
+                          </span>
+                          <FieldHelp
+                            content={
+                              <>
+                                <span className="block">
+                                  {t(
+                                    'Open Science maps five relative strengths onto the exact levels accepted by this model.'
+                                  )}
+                                </span>
+                                {value.apiEndpoint === 'anthropic' ? (
+                                  <span className="mt-1 block">
+                                    {t(
+                                      "Messages API uses the framework's Anthropic-compatible thinking request automatically."
+                                    )}
+                                  </span>
+                                ) : value.apiEndpoint === 'responses' ? (
+                                  <span className="mt-1 block">
+                                    {t(
+                                      'Responses API uses its native reasoning request automatically.'
+                                    )}
+                                  </span>
+                                ) : null}
+                              </>
+                            }
+                          />
+                        </div>
                         <Select
                           value={value.reasoningEffortPreset}
                           disabled={disabled}
@@ -709,15 +740,7 @@ const ProviderForm = ({
                             </SelectContent>
                           </Select>
                         </div>
-                      ) : (
-                        <p className="self-end pb-2 text-xs text-muted-foreground">
-                          {value.apiEndpoint === 'anthropic'
-                            ? t(
-                                "Messages API uses the framework's Anthropic-compatible thinking request automatically."
-                              )
-                            : t('Responses API uses its native reasoning request automatically.')}
-                        </p>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 ) : null}

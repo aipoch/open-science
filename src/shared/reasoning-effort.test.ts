@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CUSTOM_REASONING_EFFORT_PRESETS,
   isReasoningEffortPresetSetting,
   reasoningEffortProfile,
   resolveReasoningEffortValue,
@@ -8,6 +9,16 @@ import {
   resolveReasoningEffortControl,
   projectReasoningEffortIntent
 } from './reasoning-effort'
+
+describe('CUSTOM_REASONING_EFFORT_PRESETS', () => {
+  it('puts provider-guided presets before unlabeled level combinations', () => {
+    expect(CUSTOM_REASONING_EFFORT_PRESETS.slice(0, 3).map(({ id }) => id)).toEqual([
+      'standard-5',
+      'high-max',
+      'none-high'
+    ])
+  })
+})
 
 describe('isReasoningEffortPresetSetting', () => {
   it('accepts supported presets and the explicit unsupported setting', () => {

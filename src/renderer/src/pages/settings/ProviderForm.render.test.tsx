@@ -67,13 +67,15 @@ describe('ProviderForm field switching', () => {
       'Paste API key'
     )
     expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.placeholder).toBe(
-      'Model ID from provider documentation'
+      'e.g. deepseek-v4-flash'
     )
     const contextWindow = container.querySelector<HTMLInputElement>('[aria-label="Context window"]')
     expect(contextWindow?.placeholder).toBe('Use provider default')
-    expect(contextWindow?.getAttribute('role')).toBe('combobox')
-    expect(contextWindow?.getAttribute('aria-autocomplete')).toBe('none')
-    expect(contextWindow?.getAttribute('list')).toBeNull()
+    expect(contextWindow?.getAttribute('role')).toBeNull()
+    expect(
+      container.querySelector('[role="group"][aria-labelledby="provider-context-window-label"]')
+        ?.textContent
+    ).toBe('32K64K128K200K256K1M')
     expect(container.querySelector('[aria-label="Maximum input tokens"]')).toBeNull()
     expect(container.querySelector('[aria-label="Maximum output tokens"]')).toBeNull()
 
@@ -115,8 +117,13 @@ describe('ProviderForm field switching', () => {
     ).toBe('272000')
   })
 
-  it('keeps context presets in its menu and shows input/output presets as inline shortcuts', () => {
+  it('shows context and input/output presets as inline shortcuts', () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
+
+    expect(
+      container.querySelector('[role="group"][aria-labelledby="provider-context-window-label"]')
+        ?.textContent
+    ).toBe('32K64K128K200K256K1M')
 
     act(() => {
       Array.from(container.querySelectorAll('button'))
@@ -124,19 +131,6 @@ describe('ProviderForm field switching', () => {
         ?.click()
     })
 
-    const contextInput = container.querySelector<HTMLInputElement>(
-      'input[aria-label="Context window"]'
-    )
-    act(() => {
-      contextInput?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-    })
-    const listboxId = contextInput?.getAttribute('aria-controls')
-    const listbox = listboxId ? document.getElementById(listboxId) : null
-    expect(
-      Array.from(listbox?.querySelectorAll('[role="option"]') ?? []).map(
-        (option) => option.textContent ?? ''
-      )
-    ).toEqual(['32,000', '64,000', '128,000', '200,000', '256,000', '1,000,000'])
     expect(
       container.querySelector('[role="group"][aria-labelledby="provider-max-input-tokens-label"]')
         ?.textContent
@@ -248,7 +242,7 @@ describe('ProviderForm field switching', () => {
     )
   })
 
-  it('lets a custom model declare its reasoning effort group', () => {
+  it('lets a custom model declare its reasoning effort group', async () => {
     render(
       createEmptyProviderFormValue({
         type: 'custom',
@@ -264,7 +258,12 @@ describe('ProviderForm field switching', () => {
     expect(
       container.querySelector('[aria-label="Reasoning effort levels"]')?.textContent
     ).toContain('None / High')
-    expect(container.textContent).toContain('exact levels accepted by this model')
+    expect(container.textContent).not.toContain('exact levels accepted by this model')
+    const effortHelp = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
+    ).find((button) => button.parentElement?.textContent?.includes('Supported effort levels'))
+    await act(async () => effortHelp?.focus())
+    expect(document.body.textContent).toContain('exact levels accepted by this model')
     expect(
       container.querySelector('[aria-label="Reasoning effort request format"]')?.textContent
     ).toContain('DeepSeek — thinking + reasoning_effort')
@@ -300,7 +299,7 @@ describe('ProviderForm field switching', () => {
       "Messages API uses the framework's Anthropic-compatible thinking request automatically."
     ],
     ['responses' as const, 'Responses API uses its native reasoning request automatically.']
-  ])('does not ask for a separate reasoning request format on %s', (apiEndpoint, copy) => {
+  ])('does not ask for a separate reasoning request format on %s', async (apiEndpoint, copy) => {
     render(
       createEmptyProviderFormValue({
         type: 'custom',
@@ -309,8 +308,13 @@ describe('ProviderForm field switching', () => {
       })
     )
 
-    expect(container.textContent).toContain(copy)
+    expect(container.textContent).not.toContain(copy)
     expect(container.querySelector('[aria-label="Reasoning effort request format"]')).toBeNull()
+    const effortHelp = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
+    ).find((button) => button.parentElement?.textContent?.includes('Supported effort levels'))
+    await act(async () => effortHelp?.focus())
+    expect(document.body.textContent).toContain(copy)
   })
 
   it('describes existing Codex authentication as a one-time import', () => {
@@ -425,6 +429,25 @@ describe('ProviderForm field switching', () => {
 
     expect(keyInput?.getAttribute('type')).toBe('password')
     expect(keyInput?.value).toBe('')
+  })
+
+  it('lets the user reveal and hide only the API key in the current draft', () => {
+    render(createEmptyProviderFormValue({ type: 'custom', key: 'draft-secret' }))
+    const keyInput = container.querySelector<HTMLInputElement>('[aria-label="API key"]')
+
+    expect(keyInput?.type).toBe('password')
+    expect(keyInput?.value).toBe('draft-secret')
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Show API key"]')?.click()
+    })
+    expect(keyInput?.type).toBe('text')
+    expect(container.querySelector('[aria-label="Hide API key"]')).not.toBeNull()
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Hide API key"]')?.click()
+    })
+    expect(keyInput?.type).toBe('password')
   })
 
   it('moves custom-provider descriptions into generic field-help tooltips', async () => {
