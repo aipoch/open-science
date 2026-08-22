@@ -3,18 +3,20 @@ import { describe, expect, it } from 'vitest'
 import type { ConfiguredModelCatalogEntry } from '../../../../shared/configured-model-catalog'
 import {
   isConfigurationSelectable,
+  resolveSelectableConfiguration,
   resolveSessionAgentConfiguration
 } from './session-agent-configuration'
 
 const option = (
   providerId: string,
   model: string,
-  selectable = true
+  selectable = true,
+  providerType: ConfiguredModelCatalogEntry['providerType'] = 'custom'
 ): ConfiguredModelCatalogEntry => ({
   key: JSON.stringify([providerId, model]),
   providerId,
   providerName: providerId,
-  providerType: 'custom',
+  providerType,
   model,
   label: model || providerId,
   selectable,
@@ -56,6 +58,65 @@ describe('Session agent configuration', () => {
         reasoningEffort: 'high'
       },
       changed: false
+    })
+  })
+
+  it('keeps an omitted Codex subscription model as the account-owned default', () => {
+    const configuration = { providerId: 'codex', reasoningEffort: 'high' as const }
+    const catalog = [
+      option('codex', 'gpt-5.4', true, 'codex-shared'),
+      option('codex', 'gpt-5', true, 'codex-shared'),
+      option('active', 'new')
+    ]
+
+    expect(isConfigurationSelectable(configuration, catalog)).toBe(true)
+    expect(resolveSelectableConfiguration(catalog, 'codex', undefined, 'default')).toEqual({
+      providerId: 'codex',
+      reasoningEffort: 'default'
+    })
+    expect(
+      resolveSessionAgentConfiguration({
+        session: { agentConfiguration: configuration },
+        catalog,
+        activeProviderId: 'active',
+        activeModel: 'new',
+        activeReasoningEffort: 'low'
+      })
+    ).toEqual({ status: 'ready', configuration, changed: false })
+  })
+
+  it('keeps an omitted Claude subscription model as the account-owned default', () => {
+    const configuration = { providerId: 'claude', reasoningEffort: 'default' as const }
+    const catalog = [
+      option('claude', 'claude-opus-4-6', true, 'claude-shared'),
+      option('claude', 'claude-sonnet-4-6', true, 'claude-shared')
+    ]
+
+    expect(
+      resolveSessionAgentConfiguration({
+        session: { agentConfiguration: configuration },
+        catalog,
+        activeProviderId: 'claude',
+        activeModel: 'claude-sonnet-4-6',
+        activeReasoningEffort: 'low'
+      })
+    ).toEqual({ status: 'ready', configuration, changed: false })
+  })
+
+  it('materializes a Codex historical Session without pinning the first catalog model', () => {
+    expect(
+      resolveSessionAgentConfiguration({
+        session: { agentBackendId: 'codex:codex' },
+        catalog: [
+          option('codex', 'gpt-5.4', true, 'codex-shared'),
+          option('codex', 'gpt-5', true, 'codex-shared')
+        ],
+        activeReasoningEffort: 'xhigh'
+      })
+    ).toEqual({
+      status: 'ready',
+      configuration: { providerId: 'codex', reasoningEffort: 'xhigh' },
+      changed: true
     })
   })
 

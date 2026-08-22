@@ -324,7 +324,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     try {
       agentTarget = await options.resolveSessionAgentTarget?.(session)
       if (!session.agentConfiguration && agentTarget && options.saveSessionAgentConfiguration) {
-        session = await options.saveSessionAgentConfiguration(
+        await options.saveSessionAgentConfiguration(
           session,
           toSessionAgentConfiguration(agentTarget)
         )

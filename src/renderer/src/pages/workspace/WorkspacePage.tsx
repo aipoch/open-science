@@ -330,7 +330,9 @@ const WorkspacePage = ({
   const activeModelOption = configuredModelCatalog.find(
     (option) =>
       option.providerId === activeAgentConfiguration?.providerId &&
-      option.model === (activeAgentConfiguration?.model ?? '')
+      (activeAgentConfiguration?.model === undefined
+        ? option.selectable
+        : option.model === activeAgentConfiguration.model)
   )
   const supportsImageInput = activeModelOption?.supportsImageInput === true || visionRelayAvailable
   // Starter history is only consumed when no session is active, so this subscription collapses to
