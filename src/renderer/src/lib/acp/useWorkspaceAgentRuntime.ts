@@ -374,12 +374,19 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
-      lifecycleOwner.recordPromptPlanAuthority(input)
-      const selected = resolveRuntimeSelection(input.agentConfiguration)
+      const agentConfiguration =
+        input.agentConfiguration ??
+        (input.sessionId
+          ? useSessionStore.getState().sessions.find((session) => session.id === input.sessionId)
+              ?.agentConfiguration
+          : undefined)
+      const resolvedInput = { ...input, agentConfiguration }
+      lifecycleOwner.recordPromptPlanAuthority(resolvedInput)
+      const selected = resolveRuntimeSelection(agentConfiguration)
       return sendWorkspaceMessage(
         runtime,
         {
-          ...input,
+          ...resolvedInput,
           supportsImageInput: selected.supportsImageInput,
           supportsImageRelay: visionRelayAvailable,
           agentFrameworkId: selected.agentFrameworkId,

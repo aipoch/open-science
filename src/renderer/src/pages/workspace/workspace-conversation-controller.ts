@@ -319,6 +319,7 @@ const useWorkspaceConversationController = (
             cwd: activeSession?.cwd,
             projectId: activeSession?.projectId ?? current.projectId,
             permissionProfile: current.permissionProfile,
+            agentConfiguration: current.agentConfiguration,
             forcedSkillIds,
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
             specialistId: draftSpecialistId,

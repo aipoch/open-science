@@ -384,7 +384,8 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-a',
-        text: 'hello'
+        text: 'hello',
+        agentConfiguration: input.agentConfiguration
       })
     )
   })
@@ -716,6 +717,7 @@ describe('workspace conversation controller', () => {
     expect(input.setAutoReviewEnabled).toHaveBeenCalledWith('pending-session', true)
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        agentConfiguration: input.agentConfiguration,
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab']
       })
