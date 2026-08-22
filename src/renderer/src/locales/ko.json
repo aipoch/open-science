@@ -2880,6 +2880,7 @@
   "Queued message moved to the composer for editing.": "대기 중인 메시지를 편집할 수 있도록 작성창으로 이동했습니다.",
   "Stopping the current run before sending the queued message.": "대기열에 있는 메시지를 보내기 전에 현재 실행을 중지합니다.",
   "Sending the queued message into the current run.": "대기 중 메시지를 현재 실행에 보내는 중입니다.",
+  "Queued message will send after the current run finishes.": "대기 중 메시지는 현재 실행이 끝난 뒤에 보내집니다.",
   "Category breakdown is unavailable for this run.": "이 실행에서는 카테고리 분석을 사용할 수 없습니다.",
   "Category breakdown is unavailable for this snapshot.": "이 스냅샷에는 카테고리 분석을 사용할 수 없습니다.",
   "One bar per terminal run; hover or focus to preview, then select to keep details visible.": "터미널 실행당 하나의 막대; 미리보기에 마우스를 올리거나 초점을 맞춘 다음 선택하여 세부정보를 계속 표시하세요.",

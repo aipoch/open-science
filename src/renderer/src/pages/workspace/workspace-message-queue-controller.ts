@@ -617,20 +617,15 @@ const useWorkspaceMessageQueueController = (
       if (!queue) return
       const item = queue.items.find((candidate) => candidate.id === itemId)
       if (!item) return
-      const canSteer =
-        Boolean(item.text.trim()) &&
-        item.attachmentCount === 0 &&
-        item.forcedSkillIds.length === 0 &&
-        Boolean(owner.resolveOptions(optionsRef.current).runtime.steerFollowUp)
+      const hasPayload =
+        Boolean(item.text.trim()) ||
+        item.attachmentCount > 0 ||
+        item.forcedSkillIds.length > 0 ||
+        docToArtifactRefs(item.snapshot.doc).length > 0
       owner.queues.set(queue.sessionId, [
-        { ...item, phase: canSteer ? 'sending' : 'interrupting', error: undefined },
+        { ...item, phase: 'queued', error: undefined },
         ...queue.items.filter((candidate) => candidate.id !== itemId)
       ])
-      emit(
-        canSteer
-          ? 'Sending the queued message into the current run.'
-          : 'Stopping the current run before sending the queued message.'
-      )
       try {
         const displacedDispatch = owner.dispatches.get(queue.sessionId)
         if (displacedDispatch && displacedDispatch.itemId !== itemId) {
@@ -649,11 +644,22 @@ const useWorkspaceMessageQueueController = (
           liveSession?.status === 'running' ||
           liveSession?.status === 'waiting-for-user' ||
           liveSession?.status === 'waiting-permission'
-        if (liveTurn && canSteer && current.runtime.steerFollowUp) {
+        const referencedArtifacts = docToArtifactRefs(item.snapshot.doc)
+        if (liveTurn && hasPayload && current.runtime.steerFollowUp) {
+          replaceItem(queue.sessionId, itemId, { phase: 'sending', error: undefined })
+          emit('Sending the queued message into the current run.')
           try {
-            const steered = await current.runtime.steerFollowUp(queue.sessionId, item.text)
+            const steered = await current.runtime.steerFollowUp({
+              sessionId: queue.sessionId,
+              text: item.text,
+              ...(item.snapshot.attachments.length > 0
+                ? { attachments: item.snapshot.attachments }
+                : {}),
+              ...(referencedArtifacts.length > 0 ? { referencedArtifacts } : {}),
+              ...(item.forcedSkillIds.length > 0 ? { forcedSkillIds: item.forcedSkillIds } : {}),
+              ...(item.snapshot.doc.nodes.length > 0 ? { parts: item.snapshot.doc.nodes } : {})
+            })
             if (steered.injected) {
-              current.composer.discardSnapshot(item.snapshot)
               const latest = itemsFor(queue.sessionId)
               const remaining = latest.filter((candidate) => candidate.id !== item.id)
               if (remaining.length === 0) owner.queues.delete(queue.sessionId)
@@ -665,13 +671,15 @@ const useWorkspaceMessageQueueController = (
               return
             }
           } catch {
-            // Native follow-up is fail-closed. Interrupt and send as a new turn.
+            // Native follow-up is fail-closed. Keep the current run and send after it finishes.
           }
-          replaceItem(queue.sessionId, itemId, { phase: 'interrupting', error: undefined })
-          emit('Stopping the current run before sending the queued message.')
+          replaceItem(queue.sessionId, itemId, { phase: 'queued', error: undefined })
+          emit('Queued message will send after the current run finishes.')
+          return
         }
         if (liveTurn) {
-          await current.runtime.cancelRun(queue.sessionId)
+          emit('Queued message will send after the current run finishes.')
+          return
         }
         if (owner.dispatches.get(queue.sessionId) === displacedDispatch) {
           owner.dispatches.delete(queue.sessionId)

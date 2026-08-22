@@ -12,6 +12,8 @@ type RuntimeChatMessageEvent = AcpRuntimeEvent & {
   role: RuntimeChatRole
   text?: string
   image?: AcpMessageImage
+  uploads?: AcpRuntimeEvent['uploads']
+  parts?: AcpRuntimeEvent['parts']
 }
 
 type AssistantRuntimeChatMessageEvent = RuntimeChatMessageEvent & {
@@ -27,7 +29,10 @@ const isRuntimeChatRole = (role: AcpRuntimeEvent['role']): role is RuntimeChatRo
 const isRuntimeChatMessageEvent = (event: AcpRuntimeEvent): event is RuntimeChatMessageEvent =>
   event.kind === 'message' &&
   isRuntimeChatRole(event.role) &&
-  (Boolean(getAcpRuntimeEventText(event)) || Boolean(getAcpRuntimeEventImage(event)))
+  (Boolean(getAcpRuntimeEventText(event)) ||
+    Boolean(getAcpRuntimeEventImage(event)) ||
+    Boolean(event.uploads && event.uploads.length > 0) ||
+    Boolean(event.parts && event.parts.length > 0))
 
 // Identifies assistant text events that can update the workspace conversation.
 const isAssistantRuntimeChatMessageEvent = (

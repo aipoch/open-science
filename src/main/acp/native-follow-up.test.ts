@@ -5,6 +5,7 @@ import {
   STEERING_IDLE_BEHAVIOR,
   buildAcpSteeringParams,
   buildOpenCodeHttpFollowUpBody,
+  contentBlocksToOpenCodeFollowUpParts,
   interpretSteerOutcome,
   parseOpenCodeHttpFollowUp,
   parseSteerOutcome,
@@ -117,7 +118,27 @@ describe('native follow-up compatibility layer', () => {
         text: 'focus on tests',
         hasAttachments: true
       })
-    ).toEqual({ transport: 'unsupported', reason: 'attachments' })
+    ).toEqual({ transport: 'acp-steering' })
+    expect(
+      resolveNativeFollowUpRoute({
+        advertisedSteering: true,
+        hasLivePrompt: true,
+        frameworkId: 'claude-code',
+        hasOpenCodeHttp: false,
+        text: '   ',
+        hasAttachments: true
+      })
+    ).toEqual({ transport: 'acp-steering' })
+    expect(
+      resolveNativeFollowUpRoute({
+        advertisedSteering: true,
+        hasLivePrompt: true,
+        frameworkId: 'claude-code',
+        hasOpenCodeHttp: false,
+        text: '   ',
+        hasForcedSkills: true
+      })
+    ).toEqual({ transport: 'acp-steering' })
     expect(
       resolveNativeFollowUpRoute({
         advertisedSteering: true,
@@ -130,16 +151,25 @@ describe('native follow-up compatibility layer', () => {
   })
 
   it('builds ACP steering params with host-owned idle promptRequired', () => {
-    expect(buildAcpSteeringParams('sess_1', 'focus on tests')).toEqual({
+    expect(buildAcpSteeringParams('sess_1', [{ type: 'text', text: 'focus on tests' }])).toEqual({
       sessionId: 'sess_1',
       prompt: [{ type: 'text', text: 'focus on tests' }],
       _meta: { steering: { idleBehavior: STEERING_IDLE_BEHAVIOR } }
     })
     expect(ACP_STEERING_METHOD).toBe('_session/steering')
-    expect(buildOpenCodeHttpFollowUpBody('http-steer')).toEqual({
+    expect(buildOpenCodeHttpFollowUpBody([{ type: 'text', text: 'http-steer' }])).toEqual({
       parts: [{ type: 'text', text: 'http-steer' }],
       noReply: true
     })
+    expect(
+      contentBlocksToOpenCodeFollowUpParts([
+        { type: 'text', text: 'see this' },
+        { type: 'image', data: 'abc', mimeType: 'image/png' }
+      ])
+    ).toEqual([
+      { type: 'text', text: 'see this' },
+      { type: 'file', mime: 'image/png', url: 'data:image/png;base64,abc', filename: 'image' }
+    ])
   })
 
   it('accepts a persisted v1 user message and rejects a v2 inbox admission', () => {
@@ -169,7 +199,7 @@ describe('native follow-up compatibility layer', () => {
     expect(parseOpenCodeHttpFollowUp({ ok: true }, 'http-steer')).toBe(false)
   })
 
-  it('fail-closes empty, startedNewTurn, and unknown steering outcomes', () => {
+  it('fail-closes empty and unknown steering outcomes, and treats startedNewTurn as injected', () => {
     expect(interpretSteerOutcome(parseSteerOutcome({ outcome: 'injected' }))).toEqual({
       kind: 'injected',
       transport: 'acp-steering'
@@ -179,8 +209,8 @@ describe('native follow-up compatibility layer', () => {
       reason: 'unrecognized-success'
     })
     expect(interpretSteerOutcome(parseSteerOutcome({ outcome: 'startedNewTurn' }))).toEqual({
-      kind: 'refused',
-      reason: 'started-new-turn'
+      kind: 'injected',
+      transport: 'acp-steering'
     })
     expect(
       interpretSteerOutcome(

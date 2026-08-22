@@ -1,6 +1,6 @@
+import type { ClientConnection, ContentBlock } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
-import type { ClientConnection } from '@agentclientprotocol/sdk'
 import { createLogger } from '../logger'
 
 import type {
@@ -8,7 +8,9 @@ import type {
   AcpSteerFollowUpRequest,
   AcpSteerFollowUpResult
 } from '../../shared/acp'
+import type { MessagePart } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { toPersistedUploadedAttachment, type PersistedUploadedAttachment } from '../../shared/uploads'
 import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
 import type { AcpConnectionCapabilities } from './connection-resource-owner'
 import {
@@ -16,13 +18,25 @@ import {
   OPENCODE_HTTP_STEER_TIMEOUT_MS,
   buildAcpSteeringParams,
   buildOpenCodeHttpFollowUpBody,
+  contentBlocksToOpenCodeFollowUpParts,
+  firstOpenCodeFollowUpText,
   interpretSteerOutcome,
   openCodeHttpFollowUpPath,
   parseOpenCodeHttpFollowUp,
   parseSteerOutcome,
   resolveNativeFollowUpRoute,
-  type NativeFollowUpTransport
+  steeringPromptFromText,
+  type NativeFollowUpTransport,
+  type OpenCodeHttpFollowUpPart
 } from './native-follow-up'
+
+type NativeFollowUpUserMessage = Readonly<{
+  sessionId: string
+  messageId: string
+  text: string
+  uploads?: readonly PersistedUploadedAttachment[]
+  parts?: readonly MessagePart[]
+}>
 
 type NativeFollowUpWorkflowOptions = Readonly<{
   connection: () => ClientConnection | undefined
@@ -32,7 +46,8 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   activeProviderSessionId: (appSessionId: string) => string | undefined
   hasLivePrompt: (appSessionId: string) => boolean
   sessionCwd: (appSessionId: string) => string | undefined
-  publishUserMessage: (input: { sessionId: string; messageId: string; text: string }) => void
+  publishUserMessage: (input: NativeFollowUpUserMessage) => void
+  prepareFollowUp?: (request: AcpSteerFollowUpRequest) => Promise<readonly ContentBlock[]>
   createMessageId?: () => string
   fetchImpl?: typeof fetch
 }>
@@ -49,14 +64,18 @@ class AcpNativeFollowUpWorkflow {
   constructor(private readonly options: NativeFollowUpWorkflowOptions) {}
 
   async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
-    const text = request.text.trim()
+    const text = typeof request.text === 'string' ? request.text : ''
+    const attachments = request.attachments ?? []
+    const forcedSkillIds = request.forcedSkillIds ?? []
     const openCodeUsageApi = this.options.openCodeUsageApi()
     const route = resolveNativeFollowUpRoute({
       advertisedSteering: this.options.capabilities().steering,
       hasLivePrompt: this.options.hasLivePrompt(request.sessionId),
       frameworkId: this.options.frameworkId(),
       hasOpenCodeHttp: Boolean(openCodeUsageApi),
-      text
+      text,
+      hasAttachments: attachments.length > 0 || (request.referencedArtifacts?.length ?? 0) > 0,
+      hasForcedSkills: forcedSkillIds.length > 0
     })
     if (route.transport === 'unsupported') {
       log.info('native follow-up refused', {
@@ -79,12 +98,34 @@ class AcpNativeFollowUpWorkflow {
       return refused('no-live-turn')
     }
 
+    let prompt: readonly ContentBlock[]
+    try {
+      prompt = this.options.prepareFollowUp
+        ? await this.options.prepareFollowUp(request)
+        : steeringPromptFromText(text)
+    } catch {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'dispatch-failed',
+        transport: route.transport
+      })
+      return refused('dispatch-failed')
+    }
+    if (prompt.length === 0) {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'empty-text',
+        transport: route.transport
+      })
+      return refused('empty-text')
+    }
+
     if (route.transport === 'acp-steering') {
       let result: unknown
       try {
         result = await connection.agent.request(
           ACP_STEERING_METHOD,
-          buildAcpSteeringParams(providerSessionId, text)
+          buildAcpSteeringParams(providerSessionId, prompt)
         )
       } catch {
         log.info('native follow-up refused', {
@@ -112,10 +153,19 @@ class AcpNativeFollowUpWorkflow {
         })
         return refused('not-advertised')
       }
+      const parts = contentBlocksToOpenCodeFollowUpParts(prompt)
+      if (parts.length === 0) {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: 'empty-text',
+          transport: route.transport
+        })
+        return refused('empty-text')
+      }
       const accepted = await this.postOpenCodeSteer(
         openCodeUsageApi,
         providerSessionId,
-        text,
+        parts,
         this.options.sessionCwd(request.sessionId)
       )
       if (!accepted) {
@@ -130,10 +180,14 @@ class AcpNativeFollowUpWorkflow {
     }
 
     const messageId = this.options.createMessageId?.() ?? `message-${randomUUID()}`
+    const uploads = attachments.map(toPersistedUploadedAttachment)
+    const parts = request.parts ?? []
     this.options.publishUserMessage({
       sessionId: request.sessionId,
       messageId,
-      text
+      text,
+      ...(uploads.length > 0 ? { uploads } : {}),
+      ...(parts.length > 0 ? { parts } : {})
     })
     log.info('native follow-up injected', {
       sessionId: request.sessionId,
@@ -146,7 +200,7 @@ class AcpNativeFollowUpWorkflow {
   private async postOpenCodeSteer(
     api: AcpOpenCodeUsageApi,
     providerSessionId: string,
-    text: string,
+    parts: readonly OpenCodeHttpFollowUpPart[],
     cwd: string | undefined
   ): Promise<boolean> {
     const fetchImpl = this.options.fetchImpl ?? fetch
@@ -160,7 +214,7 @@ class AcpNativeFollowUpWorkflow {
           authorization: api.authorization,
           'content-type': 'application/json'
         },
-        body: JSON.stringify(buildOpenCodeHttpFollowUpBody(text)),
+        body: JSON.stringify(buildOpenCodeHttpFollowUpBody(parts)),
         signal: AbortSignal.timeout(OPENCODE_HTTP_STEER_TIMEOUT_MS)
       })
       if (!response.ok) return false
@@ -170,7 +224,7 @@ class AcpNativeFollowUpWorkflow {
       } catch {
         return false
       }
-      return parseOpenCodeHttpFollowUp(result, text)
+      return parseOpenCodeHttpFollowUp(result, firstOpenCodeFollowUpText(parts))
     } catch {
       return false
     }
@@ -178,4 +232,4 @@ class AcpNativeFollowUpWorkflow {
 }
 
 export { AcpNativeFollowUpWorkflow }
-export type { NativeFollowUpWorkflowOptions }
+export type { NativeFollowUpUserMessage, NativeFollowUpWorkflowOptions }

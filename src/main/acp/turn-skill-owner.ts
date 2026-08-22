@@ -104,6 +104,36 @@ class AcpTurnSkillOwner {
       forcedSkillIds: Object.freeze([...(this.forced?.selectedSkillIds ?? [])])
     })
   }
+  // Mid-turn inject must not force-load disabled Skills: that reconnects the session.
+  // Prefix names / attach Codex skill-inputs on the steered prompt instead.
+  async presentFollowUp(input: {
+    frameworkId: AgentFrameworkId
+    text: string
+    selectedSkillIds: readonly string[]
+    codexHome?: string
+  }): Promise<ProviderPreparation> {
+    try {
+      return await this.prepareProvider(
+        { selectedSkillIds: Object.freeze([...input.selectedSkillIds]) },
+        {
+          frameworkId: input.frameworkId,
+          selectionText: input.text,
+          promptText: input.text,
+          ...(input.frameworkId === 'codex'
+            ? {
+                codex: {
+                  home: input.codexHome,
+                  bridgeSkillsAvailable: false,
+                  selectSkills: async () => []
+                }
+              }
+            : {})
+        }
+      )
+    } catch {
+      return Object.freeze({ text: input.text, codexSkillInputs: Object.freeze([]) })
+    }
+  }
   private close(state: Authorization, outcome: TurnSkillOutcome): void {
     if (state.outcome) return
     state.outcome = outcome

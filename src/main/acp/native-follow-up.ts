@@ -1,3 +1,5 @@
+import type { ContentBlock } from '@agentclientprotocol/sdk'
+
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AcpConnectionCapabilities } from './connection-resource-owner'
 
@@ -13,6 +15,10 @@ import type { AcpConnectionCapabilities } from './connection-resource-owner'
 // Overlapping `session/prompt` is not a Send now path: it is queue-and-handoff
 // (Claude 0.60), admit-and-join-runner (OpenCode), or replace-and-interrupt
 // (Codex ACP 1.1.4). This layer never opens a second prompt interaction.
+// Claude/Codex steering and OpenCode v1 message parts accept the same prompt blocks as
+// a normal turn (text, image, resource). Skill chips are presented in those blocks
+// without reconnecting. Idle `startedNewTurn` consumed the prompt, so the host treats
+// it as injected rather than resending.
 
 export const ACP_STEERING_METHOD = '_session/steering'
 export const STEERING_IDLE_BEHAVIOR = 'promptRequired' as const
@@ -57,14 +63,18 @@ export type NativeFollowUpDispatchResult =
 
 export type AcpSteeringParams = Readonly<{
   sessionId: string
-  prompt: ReadonlyArray<{ type: 'text'; text: string }>
+  prompt: readonly ContentBlock[]
   _meta: Readonly<{
     steering: Readonly<{ idleBehavior: typeof STEERING_IDLE_BEHAVIOR }>
   }>
 }>
 
+export type OpenCodeHttpFollowUpPart =
+  | Readonly<{ type: 'text'; text: string }>
+  | Readonly<{ type: 'file'; mime: string; url: string; filename?: string }>
+
 export type OpenCodeHttpFollowUpBody = Readonly<{
-  parts: ReadonlyArray<{ type: 'text'; text: string }>
+  parts: readonly OpenCodeHttpFollowUpPart[]
   noReply: typeof OPENCODE_HTTP_FOLLOW_UP_NO_REPLY
 }>
 
@@ -106,6 +116,13 @@ export const retainInitializeCapabilities = (initialize: unknown): AcpConnection
   })
 }
 
+export const hasNativeFollowUpPayload = (input: {
+  text: string
+  hasAttachments?: boolean
+  hasForcedSkills?: boolean
+}): boolean =>
+  Boolean(input.text.trim()) || Boolean(input.hasAttachments) || Boolean(input.hasForcedSkills)
+
 export const resolveNativeFollowUpRoute = (input: {
   advertisedSteering: boolean
   hasLivePrompt: boolean
@@ -113,11 +130,9 @@ export const resolveNativeFollowUpRoute = (input: {
   hasOpenCodeHttp: boolean
   text: string
   hasAttachments?: boolean
+  hasForcedSkills?: boolean
 }): NativeFollowUpRoute => {
-  if (input.hasAttachments) {
-    return Object.freeze({ transport: 'unsupported', reason: 'attachments' })
-  }
-  if (!input.text.trim()) {
+  if (!hasNativeFollowUpPayload(input)) {
     return Object.freeze({ transport: 'unsupported', reason: 'empty-text' })
   }
   if (!input.hasLivePrompt) {
@@ -132,20 +147,83 @@ export const resolveNativeFollowUpRoute = (input: {
   return Object.freeze({ transport: 'unsupported', reason: 'not-advertised' })
 }
 
-export const buildAcpSteeringParams = (sessionId: string, text: string): AcpSteeringParams =>
+export const steeringPromptFromText = (text: string): ContentBlock[] =>
+  text.trim() ? [{ type: 'text', text }] : []
+
+export const buildAcpSteeringParams = (
+  sessionId: string,
+  prompt: readonly ContentBlock[]
+): AcpSteeringParams =>
   Object.freeze({
     sessionId,
-    prompt: Object.freeze([{ type: 'text' as const, text }]),
+    prompt: Object.freeze([...prompt]),
     _meta: Object.freeze({
       steering: Object.freeze({ idleBehavior: STEERING_IDLE_BEHAVIOR })
     })
   })
 
-export const buildOpenCodeHttpFollowUpBody = (text: string): OpenCodeHttpFollowUpBody =>
+const dataUrl = (mimeType: string, data: string): string => `data:${mimeType};base64,${data}`
+
+export const contentBlocksToOpenCodeFollowUpParts = (
+  blocks: readonly ContentBlock[]
+): OpenCodeHttpFollowUpPart[] => {
+  const parts: OpenCodeHttpFollowUpPart[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      if (block.text.trim()) parts.push({ type: 'text', text: block.text })
+      continue
+    }
+    if (block.type === 'image') {
+      parts.push({
+        type: 'file',
+        mime: block.mimeType,
+        url: dataUrl(block.mimeType, block.data),
+        filename: 'image'
+      })
+      continue
+    }
+    if (block.type === 'resource_link') {
+      parts.push({
+        type: 'file',
+        mime: block.mimeType ?? 'application/octet-stream',
+        url: block.uri,
+        ...(block.name ? { filename: block.name } : {})
+      })
+      continue
+    }
+    if (block.type !== 'resource') continue
+    const resource = block.resource
+    if ('text' in resource && typeof resource.text === 'string' && resource.text.trim()) {
+      parts.push({ type: 'text', text: resource.text })
+      continue
+    }
+    if ('blob' in resource && typeof resource.blob === 'string') {
+      const mime = resource.mimeType ?? 'application/octet-stream'
+      parts.push({
+        type: 'file',
+        mime,
+        url: dataUrl(mime, resource.blob),
+        ...(resource.uri ? { filename: resource.uri } : {})
+      })
+    }
+  }
+  return parts
+}
+
+export const buildOpenCodeHttpFollowUpBody = (
+  parts: readonly OpenCodeHttpFollowUpPart[]
+): OpenCodeHttpFollowUpBody =>
   Object.freeze({
-    parts: Object.freeze([{ type: 'text' as const, text }]),
+    parts: Object.freeze([...parts]),
     noReply: OPENCODE_HTTP_FOLLOW_UP_NO_REPLY
   })
+
+export const firstOpenCodeFollowUpText = (
+  parts: readonly OpenCodeHttpFollowUpPart[]
+): string | undefined => {
+  const textPart = parts.find((part) => part.type === 'text')
+  return textPart?.type === 'text' ? textPart.text : undefined
+}
 
 export const openCodeHttpFollowUpPath = (sessionId: string): string =>
   `/session/${encodeURIComponent(sessionId)}/message`
@@ -157,13 +235,14 @@ const followUpRecord = (value: unknown): Record<string, unknown> | undefined => 
   return recordValue(record.data) ?? record
 }
 
-export const parseOpenCodeHttpFollowUp = (result: unknown, text: string): boolean => {
+export const parseOpenCodeHttpFollowUp = (result: unknown, text?: string): boolean => {
   const record = followUpRecord(result)
   if (!record) return false
   const info = recordValue(record.info)
   if (info?.role !== 'user') return false
   const parts = record.parts
-  if (!Array.isArray(parts)) return false
+  if (!Array.isArray(parts) || parts.length === 0) return false
+  if (!text) return true
   return parts.some((part) => {
     const item = recordValue(part)
     return item?.type === 'text' && item.text === text
@@ -172,8 +251,8 @@ export const parseOpenCodeHttpFollowUp = (result: unknown, text: string): boolea
 
 // Some adapters answer unknown extension methods with `{}` instead of method-not-found.
 // Treating that as injected would drop the user's message. Empty and outcome-less
-// objects are therefore rejected. Idle `startedNewTurn` is a detached adapter turn
-// the host does not own.
+// objects are therefore rejected. Idle `startedNewTurn` consumed the prompt into a
+// detached adapter turn; claiming inject avoids a duplicate send.
 export const parseSteerOutcome = (result: unknown): SteerOutcome => {
   const record = recordValue(result)
   if (!record) {
@@ -216,11 +295,8 @@ export const parseSteerOutcome = (result: unknown): SteerOutcome => {
 }
 
 export const interpretSteerOutcome = (outcome: SteerOutcome): NativeFollowUpDispatchResult => {
-  if (outcome.kind === 'injected') {
+  if (outcome.kind === 'injected' || outcome.kind === 'started-new-turn') {
     return Object.freeze({ kind: 'injected', transport: 'acp-steering' })
-  }
-  if (outcome.kind === 'started-new-turn') {
-    return Object.freeze({ kind: 'refused', reason: 'started-new-turn' })
   }
   if (outcome.kind === 'prompt-required') {
     return Object.freeze({ kind: 'refused', reason: 'prompt-required' })
