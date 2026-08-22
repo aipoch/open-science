@@ -1114,7 +1114,7 @@ describe('ACP runtime migration write-gate', () => {
           _meta: { 'api-key': { apiKey: 'test-only-key' } }
         },
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer local-token' }
@@ -1129,7 +1129,7 @@ describe('ACP runtime migration write-gate', () => {
     ])
     expect(fakeAgent.providerConfigurations).toEqual([
       {
-        providerId: 'custom-gateway',
+        providerId: 'openai',
         apiType: 'openai',
         baseUrl: 'http://127.0.0.1:1234/v1',
         headers: { authorization: 'Bearer local-token' }
@@ -1182,7 +1182,7 @@ describe('ACP runtime migration write-gate', () => {
         env: {},
         authentication: { methodId: 'api-key' },
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: {}
@@ -1234,7 +1234,7 @@ describe('ACP runtime migration write-gate', () => {
         env: {},
         authentication: { methodId: 'api-key' },
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: {}
@@ -1386,7 +1386,7 @@ describe('ACP runtime migration write-gate', () => {
             _meta: { 'api-key': { apiKey: 'test-only-key' } }
           },
           providerConfiguration: {
-            providerId: 'custom-gateway',
+            providerId: 'openai',
             apiType: 'openai',
             baseUrl: 'http://127.0.0.1:1234/v1',
             headers: { authorization: 'Bearer test-only-token' }
@@ -9417,7 +9417,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer bridge-token' }
@@ -9457,7 +9457,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer bridge-token' }
@@ -17073,7 +17073,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer bridge' }
@@ -18711,7 +18711,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1/v1',
           headers: { authorization: 'Bearer bridge' }

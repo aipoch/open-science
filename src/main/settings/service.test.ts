@@ -2829,7 +2829,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.sessionEffort).toBe('none')
     expect(backend.contextWindow).toBe(1_000_000)
     expect(backend.providerConfiguration).toEqual({
-      providerId: 'custom-gateway',
+      providerId: 'openai',
       apiType: 'openai',
       baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/),
       headers: { authorization: expect.stringMatching(/^Bearer [a-f0-9]+$/) }
@@ -3132,7 +3132,7 @@ describe('SettingsService: preflight & spawn config', () => {
     const backend = await resolveActiveBackend(service)
 
     expect(backend.providerConfiguration).toEqual({
-      providerId: 'custom-gateway',
+      providerId: 'openai',
       apiType: 'openai',
       baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/),
       headers: { authorization: expect.stringMatching(/^Bearer [a-f0-9]+$/) }

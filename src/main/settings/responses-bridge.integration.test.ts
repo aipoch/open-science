@@ -479,7 +479,7 @@ it.runIf(runLiveContract)(
             clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } }
           })
           await ctx.request(acp.methods.agent.providers.set, {
-            providerId: 'custom-gateway',
+            providerId: 'openai',
             apiType: 'openai',
             baseUrl: connection.baseUrl,
             headers: { authorization: `Bearer ${connection.token}` }
@@ -790,7 +790,7 @@ it.runIf(runLiveContract)(
             clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } }
           })
           await ctx.request(acp.methods.agent.providers.set, {
-            providerId: 'custom-gateway',
+            providerId: 'openai',
             apiType: 'openai',
             baseUrl: connection.baseUrl,
             headers: { authorization: `Bearer ${connection.token}` }
