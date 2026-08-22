@@ -26,9 +26,14 @@ import {
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import { resolveModelContextWindow } from '../../../../shared/provider-registry'
+import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
-import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
+import {
+  selectFrameworkApiEndpoints,
+  selectVisionRelayAvailable,
+  useSettingsStore
+} from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import {
   resolveHistoryReplayTarget,
@@ -169,15 +174,40 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
   const providers = useSettingsStore((state) => state.providers)
+  const claudeSubscriptionProviderId = useSettingsStore(
+    (state) => state.claudeSubscriptionProviderId
+  )
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const configuredModelCatalog = useMemo(
+    () =>
+      buildConfiguredModelCatalog({
+        providers,
+        activeProviderId: activeProvider?.id,
+        claudeSubscriptionProviderId,
+        frameworkId: agentFrameworkId,
+        frameworkEndpoints
+      }),
+    [
+      activeProvider?.id,
+      agentFrameworkId,
+      claudeSubscriptionProviderId,
+      frameworkEndpoints,
+      providers
+    ]
+  )
   const resolveRuntimeSelection = useCallback(
     (configuration: SessionAgentConfiguration | undefined): WorkspaceSessionRuntimeSelection => {
       const provider = configuration
         ? providers.find((candidate) => candidate.id === configuration.providerId)
         : activeProvider
       const model = configuration?.model ?? provider?.model ?? provider?.models[0]
+      const modelOption = configuredModelCatalog.find(
+        (option) => option.providerId === provider?.id && option.model === (model ?? '')
+      )
       return {
-        supportsImageInput: provider?.supportsImageInput === true,
+        supportsImageInput:
+          modelOption?.supportsImageInput ?? provider?.supportsImageInput === true,
         supportsImageRelay: visionRelayAvailable,
         agentFrameworkId,
         agentBackendId: provider ? `${agentFrameworkId}:${provider.id}` : undefined,
@@ -193,7 +223,14 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         } satisfies HistoryReplayDescriptor
       }
     },
-    [activeProvider, agentFramework, agentFrameworkId, providers, visionRelayAvailable]
+    [
+      activeProvider,
+      agentFramework,
+      agentFrameworkId,
+      configuredModelCatalog,
+      providers,
+      visionRelayAvailable
+    ]
   )
   const getSessionRuntimeSelection = useCallback(
     (sessionId: string) => {

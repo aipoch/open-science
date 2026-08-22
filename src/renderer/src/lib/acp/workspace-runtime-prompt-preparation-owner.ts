@@ -194,6 +194,10 @@ const prepareExistingWorkspacePrompt = async (
       currentSession?.agentBackendId &&
       request.selectedRuntime.backendId !== currentSession.agentBackendId)
   )
+  const selectedModelChanged = Boolean(
+    request.selectedRuntime.agentConfiguration?.model &&
+    request.selectedRuntime.agentConfiguration.model !== currentSession?.agentModel
+  )
   const runtimeDetached = !runtime.state.sessionIds.includes(sessionId)
   // An explicit Session target must pass through resume even when the aggregate coordinator snapshot
   // still shows this app Session as attached. A provider/model/effort change can keep the same backend
@@ -206,7 +210,7 @@ const prepareExistingWorkspacePrompt = async (
     request.replay.cutMessageId || currentSession?.branchContextResetRequired
   )
   const resumeNeedsImageFiltering =
-    runtimeMustAdoptSession &&
+    (selectedRuntimeChanged || selectedModelChanged || runtimeDetached) &&
     request.selectedRuntime.supportsImageInput === false &&
     hasHistoryImages(currentSession?.messages ?? [])
   const replaySupportsImageInput = supportsReplayImages(request.selectedRuntime)

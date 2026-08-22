@@ -287,6 +287,51 @@ describe('workspace Agent Runtime hook contract', () => {
     })
   })
 
+  it('resolves image input support from the Session-selected official model', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'deepseek',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'deepseek',
+          type: 'official',
+          vendorId: 'deepseek',
+          name: 'DeepSeek',
+          apiEndpoints: ['anthropic'],
+          model: 'deepseek-v4-pro',
+          models: ['deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect the image.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentConfiguration: {
+        providerId: 'deepseek',
+        model: 'deepseek-v4-flash-vision-exp',
+        reasoningEffort: 'default'
+      }
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(latest.resolveSessionRuntimeSelection('session-1').supportsImageInput).toBe(true)
+  })
+
   it('routes live events into Workspace before snapshot reconciliation', async () => {
     const pending = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
