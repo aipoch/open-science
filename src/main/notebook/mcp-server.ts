@@ -26,7 +26,7 @@ const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
-  "Host SDK discovery (use from `repl_execute`): `await host.help()` is the role-aware catalog. Query only the operation you plan to call; each topic returns concise parameter and result field descriptions. Main/root agents can use `await host.help('delegate')` when delegation guidance is needed; do not prefetch all Help topics. Delegate agents should use the same catalog for messaging and structured-output operations; unavailable root-only topics remain visible with a reason."
+  "Host SDK discovery (use from `repl_execute`): `await host.help()` is the role-aware catalog. Query only the planned operation; each topic returns concise field descriptions. Main/root agents can use `await host.help('delegate')` when needed; do not prefetch all Help topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools.
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
@@ -37,10 +37,10 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun it. Python/R data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL and read that path from Python/R.',
   HOST_SDK_DISCOVERY_GUIDANCE,
   'Each runtime is a separate persistent namespace. Create named runtimes with `manage_environments`, select them with the bind/switch tools, and use files to move data across runtimes. Memory is lost on restart or app reopen; run history and files survive.',
-  'The notebook already runs inside a writable session workspace. The cwd is already the session data dir; use plain relative paths for normal inputs and outputs. The connector handoff directory is outside that cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
+  'The notebook already runs inside a writable session workspace. cwd is the session data dir; use plain relative paths. Connector handoff is outside cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
   'MCP execution replies include bounded output for the next step; use it directly when sufficient. Full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
-  'Dependency metadata in notebook tool results describes execution order, not an execution verdict: `clear` means no later tracked dependency change was found, `stale` means a tracked dependency changed after that run, and `unknown` means variable changes could not be fully tracked. `stale` does not mean the run failed or its captured output is incorrect; rerun only when the task requires output from the current variable state.',
+  'Dependency metadata describes execution order, not an execution verdict: `clear` means no later tracked change, `stale` means a tracked dependency changed after that run, and `unknown` means tracking was incomplete. `stale` does not mean the run failed or its captured output is incorrect; rerun only when the task requires the current variable state.',
   'For a final user-facing file, call `write_artifact_file` from the `open-science-artifacts` server before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
