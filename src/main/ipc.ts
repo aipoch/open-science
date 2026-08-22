@@ -280,6 +280,7 @@ import {
   type AppIconVariant,
   type RespondApprovalRequest
 } from '../shared/settings'
+import type { AcpSessionAgentTarget } from '../shared/acp'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
@@ -430,6 +431,15 @@ const createApplicationModules = async (
       (await settingsService.getSettingsView()).agentFrameworkId,
       configuration
     )
+  }
+  const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
+    const target = await settingsService.captureActiveExplicitAgentBackendTarget()
+    return {
+      frameworkId: target.frameworkId,
+      providerId: target.providerId,
+      ...(target.model.kind === 'required' ? { model: target.model.id } : {}),
+      reasoningEffort: target.reasoningEffort
+    }
   }
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
@@ -2241,7 +2251,8 @@ const createApplicationModules = async (
     createSessionWorkflow,
     taskNotifications,
     archiveCoordinator,
-    resolveSessionAgentTarget
+    resolveSessionAgentTarget,
+    resolveDefaultSessionAgentTarget
   )
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those

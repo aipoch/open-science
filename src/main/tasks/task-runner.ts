@@ -83,6 +83,7 @@ type TaskAgentSession = {
   frameworkId?: AgentFrameworkId
   backendId?: string
   contextReset?: boolean
+  agentConfiguration?: SessionAgentConfiguration
 }
 
 type TaskAgentCreateSessionRequest = {
@@ -857,7 +858,7 @@ class TaskRunner {
 
     if (existing) {
       const attachedSessionIds = await this.dependencies.agent.listAttachedSessionIds()
-      if (attachedSessionIds.includes(existing.id)) {
+      if (attachedSessionIds.includes(existing.id) && !existing.agentConfiguration) {
         if (request.permissionProfile && request.permissionProfile !== existing.permissionProfile) {
           await this.dependencies.agent.setPermissionProfile(existing.id, request.permissionProfile)
         }
@@ -928,6 +929,7 @@ class TaskRunner {
           agentBackendId: sessionInfo.backendId,
           providerSessionId: sessionInfo.providerSessionId,
           providerContinuityToken: sessionInfo.providerContinuityToken,
+          agentConfiguration: sessionInfo.agentConfiguration,
           ...(request.computeHostIds !== undefined
             ? {
                 enabledComputeHosts: request.computeHostIds,

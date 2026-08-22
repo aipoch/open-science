@@ -5,11 +5,23 @@ type SessionAgentTargetResolver = (
   configuration?: SessionAgentConfiguration
 ) => Promise<AcpSessionAgentTarget | undefined>
 
+type DefaultSessionAgentTargetResolver = () => Promise<AcpSessionAgentTarget>
+
 const toAcpSessionAgentTarget = (
   frameworkId: AgentFrameworkId,
   configuration?: SessionAgentConfiguration
 ): AcpSessionAgentTarget | undefined =>
   configuration ? { frameworkId, ...configuration } : undefined
 
-export { toAcpSessionAgentTarget }
-export type { SessionAgentTargetResolver }
+const toSessionAgentConfiguration = ({
+  providerId,
+  model,
+  reasoningEffort
+}: AcpSessionAgentTarget): SessionAgentConfiguration => ({
+  providerId,
+  ...(model ? { model } : {}),
+  reasoningEffort
+})
+
+export { toAcpSessionAgentTarget, toSessionAgentConfiguration }
+export type { DefaultSessionAgentTargetResolver, SessionAgentTargetResolver }
