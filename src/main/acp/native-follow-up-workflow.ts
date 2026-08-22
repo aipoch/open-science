@@ -15,9 +15,10 @@ import {
   ACP_STEERING_METHOD,
   OPENCODE_HTTP_STEER_TIMEOUT_MS,
   buildAcpSteeringParams,
-  buildOpenCodeHttpSteerBody,
+  buildOpenCodeHttpFollowUpBody,
   interpretSteerOutcome,
-  openCodeHttpSteerPath,
+  openCodeHttpFollowUpPath,
+  parseOpenCodeHttpFollowUp,
   parseSteerOutcome,
   resolveNativeFollowUpRoute,
   type NativeFollowUpTransport
@@ -121,7 +122,8 @@ class AcpNativeFollowUpWorkflow {
         log.info('native follow-up refused', {
           sessionId: request.sessionId,
           reason: 'dispatch-failed',
-          transport: route.transport
+          transport: route.transport,
+          providerSessionId
         })
         return refused('dispatch-failed')
       }
@@ -150,7 +152,7 @@ class AcpNativeFollowUpWorkflow {
     const fetchImpl = this.options.fetchImpl ?? fetch
     try {
       const base = api.baseUrl.endsWith('/') ? api.baseUrl : `${api.baseUrl}/`
-      const url = new URL(openCodeHttpSteerPath(providerSessionId).replace(/^\//, ''), base)
+      const url = new URL(openCodeHttpFollowUpPath(providerSessionId).replace(/^\//, ''), base)
       if (cwd) url.searchParams.set('directory', cwd)
       const response = await fetchImpl(url, {
         method: 'POST',
@@ -158,10 +160,17 @@ class AcpNativeFollowUpWorkflow {
           authorization: api.authorization,
           'content-type': 'application/json'
         },
-        body: JSON.stringify(buildOpenCodeHttpSteerBody(text)),
+        body: JSON.stringify(buildOpenCodeHttpFollowUpBody(text)),
         signal: AbortSignal.timeout(OPENCODE_HTTP_STEER_TIMEOUT_MS)
       })
-      return response.ok
+      if (!response.ok) return false
+      let result: unknown
+      try {
+        result = await response.json()
+      } catch {
+        return false
+      }
+      return parseOpenCodeHttpFollowUp(result, text)
     } catch {
       return false
     }

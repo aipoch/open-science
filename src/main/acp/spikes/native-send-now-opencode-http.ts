@@ -6,8 +6,12 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 
 // OpenCode ACP starts an HTTP server on --port. The host already uses that
-// loopback for usage snapshots. Live probe: POST /api/session/{id}/prompt
-// with delivery=steer is accepted on the ACP session without _session/steering.
+// loopback for usage snapshots. Live probe 2026-08-22: POST
+// /api/session/{id}/prompt with delivery=steer returns 200 `{ data:
+// { admittedSeq, delivery: "steer", prompt } }` — v2 inbox admission, not a
+// v1 session user message. GET /session/{id}/message does not contain the
+// text, so the ACP SessionPrompt loop never sees it. Production Send now
+// therefore persists with POST /session/{id}/message `{ parts, noReply: true }`.
 
 export const OPENCODE_HTTP_STEER_PATH = '/api/session/{sessionID}/prompt'
 export const OPENCODE_HTTP_STEER_DELIVERY = 'steer' as const

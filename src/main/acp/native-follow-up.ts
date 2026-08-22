@@ -4,15 +4,19 @@ import type { AcpConnectionCapabilities } from './connection-resource-owner'
 // Host compatibility layer for mid-turn Send now.
 //
 // Claude Agent ACP and Codex ACP advertise unofficial `_session/steering` and inject
-// into the live prompt. OpenCode ACP never advertises that method; the same process
-// exposes HTTP POST `/api/session/{id}/prompt` with `delivery: "steer"`.
+// into the live prompt. OpenCode ACP never advertises that method. ACP `session/prompt`
+// drives the v1 SessionPrompt loop. HTTP POST `/api/session/{id}/prompt` with
+// `delivery: "steer"` only admits to the v2 inbox (`admittedSeq`) and never appears
+// in v1 `/session/{id}/message`, so the live ACP turn cannot see it. Persist into that
+// v1 session with POST `/session/{id}/message` `{ parts, noReply: true }` instead —
+// `noReply` skips Runner.ensureRunning so the HTTP abort cannot cancel the ACP turn.
 // Overlapping `session/prompt` is not a Send now path: it is queue-and-handoff
 // (Claude 0.60), admit-and-join-runner (OpenCode), or replace-and-interrupt
 // (Codex ACP 1.1.4). This layer never opens a second prompt interaction.
 
 export const ACP_STEERING_METHOD = '_session/steering'
 export const STEERING_IDLE_BEHAVIOR = 'promptRequired' as const
-export const OPENCODE_HTTP_STEER_DELIVERY = 'steer' as const
+export const OPENCODE_HTTP_FOLLOW_UP_NO_REPLY = true as const
 export const OPENCODE_HTTP_STEER_TIMEOUT_MS = 8_000
 
 export type NativeFollowUpTransport = 'acp-steering' | 'opencode-http'
@@ -59,9 +63,9 @@ export type AcpSteeringParams = Readonly<{
   }>
 }>
 
-export type OpenCodeHttpSteerBody = Readonly<{
-  delivery: typeof OPENCODE_HTTP_STEER_DELIVERY
-  prompt: Readonly<{ text: string }>
+export type OpenCodeHttpFollowUpBody = Readonly<{
+  parts: ReadonlyArray<{ type: 'text'; text: string }>
+  noReply: typeof OPENCODE_HTTP_FOLLOW_UP_NO_REPLY
 }>
 
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
@@ -137,14 +141,34 @@ export const buildAcpSteeringParams = (sessionId: string, text: string): AcpStee
     })
   })
 
-export const buildOpenCodeHttpSteerBody = (text: string): OpenCodeHttpSteerBody =>
+export const buildOpenCodeHttpFollowUpBody = (text: string): OpenCodeHttpFollowUpBody =>
   Object.freeze({
-    delivery: OPENCODE_HTTP_STEER_DELIVERY,
-    prompt: Object.freeze({ text })
+    parts: Object.freeze([{ type: 'text' as const, text }]),
+    noReply: OPENCODE_HTTP_FOLLOW_UP_NO_REPLY
   })
 
-export const openCodeHttpSteerPath = (sessionId: string): string =>
-  `/api/session/${encodeURIComponent(sessionId)}/prompt`
+export const openCodeHttpFollowUpPath = (sessionId: string): string =>
+  `/session/${encodeURIComponent(sessionId)}/message`
+
+const followUpRecord = (value: unknown): Record<string, unknown> | undefined => {
+  const record = recordValue(value)
+  if (!record) return undefined
+  if (recordValue(record.info)) return record
+  return recordValue(record.data) ?? record
+}
+
+export const parseOpenCodeHttpFollowUp = (result: unknown, text: string): boolean => {
+  const record = followUpRecord(result)
+  if (!record) return false
+  const info = recordValue(record.info)
+  if (info?.role !== 'user') return false
+  const parts = record.parts
+  if (!Array.isArray(parts)) return false
+  return parts.some((part) => {
+    const item = recordValue(part)
+    return item?.type === 'text' && item.text === text
+  })
+}
 
 // Some adapters answer unknown extension methods with `{}` instead of method-not-found.
 // Treating that as injected would drop the user's message. Empty and outcome-less

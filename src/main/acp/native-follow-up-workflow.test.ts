@@ -88,10 +88,16 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published).toEqual([])
   })
 
-  it('posts OpenCode HTTP steer when ACP steering is not advertised', async () => {
+  it('posts OpenCode HTTP follow-up into the v1 session when ACP steering is not advertised', async () => {
     const fetchImpl = vi.fn(
       async (_url: string | URL | Request, _init?: RequestInit): Promise<Response> =>
-        ({ ok: true }) as Response
+        ({
+          ok: true,
+          json: async () => ({
+            info: { id: 'msg_1', role: 'user', sessionID: 'provider-1' },
+            parts: [{ type: 'text', text: 'http-steer' }]
+          })
+        }) as Response
     )
     const { request, workflow } = createWorkflow({
       advertised: false,
@@ -110,15 +116,47 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
     const call = fetchImpl.mock.calls[0]
     expect(call).toBeDefined()
-    expect(String(call?.[0])).toContain('/api/session/provider-1/prompt')
+    expect(String(call?.[0])).toContain('/session/provider-1/message')
+    expect(String(call?.[0])).not.toContain('/api/session/')
     expect(String(call?.[0])).toContain('directory=')
     expect(call?.[1]).toEqual(
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ delivery: 'steer', prompt: { text: 'http-steer' } })
+        body: JSON.stringify({
+          parts: [{ type: 'text', text: 'http-steer' }],
+          noReply: true
+        })
       })
     )
     expect(published).toHaveLength(1)
+  })
+
+  it('refuses OpenCode v2 inbox admission that never lands in the ACP session', async () => {
+    const fetchImpl = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit): Promise<Response> =>
+        ({
+          ok: true,
+          json: async () => ({
+            data: {
+              admittedSeq: 7,
+              id: 'msg_1',
+              sessionID: 'provider-1',
+              prompt: { text: 'http-steer' },
+              delivery: 'steer'
+            }
+          })
+        }) as Response
+    )
+    const { workflow } = createWorkflow({
+      advertised: false,
+      frameworkId: 'opencode',
+      openCodeHttp: true,
+      fetchImpl
+    })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'http-steer' })
+    ).resolves.toEqual({ injected: false, reason: 'dispatch-failed' })
+    expect(published).toEqual([])
   })
 
   it('does not lift the prompt lock when steering is unavailable', async () => {
