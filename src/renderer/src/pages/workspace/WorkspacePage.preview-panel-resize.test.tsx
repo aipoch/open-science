@@ -697,6 +697,57 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
   })
 
+  it('refreshes an existing notebook entry without reopening or activating it', async () => {
+    selectSession('session-1', 'project-1')
+    await renderPage(false)
+
+    const notebook: NotebookSessionReference = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace/project-1',
+      notebookSessionRoot: '/notebooks/project-1/session-1/root',
+      dataRoot: '/notebooks/project-1/session-1/root/data',
+      runtimeRoot: '/notebooks/project-1/session-1/root/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/root/run.json'
+    }
+    await act(async () => notebookAvailableListener?.(notebook))
+
+    const fileItem: PreviewFileItem = {
+      id: 'file:session-1:/workspace/project-1/report.md',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'report.md',
+      path: '/workspace/project-1/report.md',
+      format: 'markdown',
+      name: 'report.md'
+    }
+    act(() => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(fileItem)
+      usePreviewWorkbenchStore.getState().collapsePanel()
+    })
+
+    const delegatedNotebook = {
+      ...notebook,
+      notebookSessionRoot: '/notebooks/project-1/session-1/delegated',
+      dataRoot: '/notebooks/project-1/session-1/delegated/data',
+      runtimeRoot: '/notebooks/project-1/session-1/delegated/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/delegated/run.json'
+    }
+    await act(async () => notebookAvailableListener?.(delegatedNotebook))
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: fileItem.id,
+      panelState: 'collapsed',
+      items: [
+        expect.objectContaining({
+          id: 'tool:session-1:notebook',
+          notebook: delegatedNotebook
+        }),
+        expect.objectContaining({ id: fileItem.id })
+      ]
+    })
+  })
+
   it('hosts a cross-Project file dialog without creating or activating a Files tab', async () => {
     const fileDialogItem = {
       id: 'artifact-b',

@@ -135,9 +135,6 @@ const WorkspacePage = ({
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
-  const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
-    (state) => state.upsertAndActivateItem
-  )
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const projectFormDialog = useProjectFormDialog()
   // Drives the sidebar project menu's Download artifacts… disabled state. An incomplete index
@@ -672,13 +669,17 @@ const WorkspacePage = ({
         [notebook.sessionId]: notebook
       }))
       if (notebook.projectId !== scopedProjectId || notebook.sessionId !== activeSessionId) return
-      upsertAndActivatePreviewItem(createNotebookPreviewItem(notebook))
+      const preview = usePreviewWorkbenchStore.getState()
+      const previewItem = createNotebookPreviewItem(notebook)
+      preview.items.some(({ id }) => id === previewItem.id)
+        ? preview.upsertItem(previewItem)
+        : preview.upsertAndActivateItem(previewItem)
     })
 
     return () => {
       removeNotebookAvailableListener()
     }
-  }, [activeSessionId, scopedProjectId, upsertAndActivatePreviewItem])
+  }, [activeSessionId, scopedProjectId])
 
   // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
   useEffect(() => {
@@ -905,14 +906,14 @@ const WorkspacePage = ({
 
   // Opens the right preview on demand instead of stealing focus when the agent first uses notebook.
   const openNotebookPreview = (notebook: NotebookSessionReference): void => {
-    upsertAndActivatePreviewItem(createNotebookPreviewItem(notebook))
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createNotebookPreviewItem(notebook))
   }
 
   // Opens the project file library as a stable preview workbench tool tab.
   const openFilesPreview = (): void => {
     if (!isSessionPersistenceReady) return
 
-    upsertAndActivatePreviewItem(createProjectFilesPreviewItem())
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
   }
 
   return (
