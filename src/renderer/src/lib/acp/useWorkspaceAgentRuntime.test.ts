@@ -5713,6 +5713,73 @@ describe('resuming an interrupted session on demand', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
   })
 
+  it('does not replace a newer Session preference with a send-time snapshot', async () => {
+    const snapshot = {
+      providerId: 'provider-1',
+      model: 'queued-model',
+      reasoningEffort: 'default'
+    } as const
+    const preferred = {
+      providerId: 'provider-1',
+      model: 'preferred-model',
+      reasoningEffort: 'high'
+    } as const
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First turn',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'queued-model',
+      agentConfiguration: snapshot
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().setAgentConfiguration('session-1', preferred)
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      frameworkId: 'codex',
+      backendId: 'codex:provider-1'
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession,
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'queued follow-up',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'queued-model',
+      agentConfiguration: snapshot,
+      supportsImageInput: true
+    })
+    await flushRuntimeTasks()
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      'codex',
+      'codex:provider-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { frameworkId: 'codex', ...snapshot }
+    )
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].agentConfiguration).toEqual(preferred)
+  })
+
   it('resets text-only context when replay budgeting omits an older image turn', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

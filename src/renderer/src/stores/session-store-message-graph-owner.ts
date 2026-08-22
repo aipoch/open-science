@@ -275,7 +275,11 @@ export const createSessionMessageGraphOwner = <
                     }
                   : {}),
                 agentModel: normalizedAgentModel,
-                ...(agentConfiguration ? { agentConfiguration } : {}),
+                // Existing Sessions keep their Composer preference. Fill only when none is stored
+                // so a send-time snapshot cannot replace a newer picker selection.
+                ...(agentConfiguration && !session.agentConfiguration
+                  ? { agentConfiguration }
+                  : {}),
                 agentStatus: undefined,
                 error: undefined,
                 errorReportable: undefined,

@@ -207,6 +207,48 @@ describe('workspace message queue controller', () => {
     expect(workspace.result.current.lifecycle.blocksImmediateSend(currentSession.id)).toBe(false)
   })
 
+  it('dispatches queued messages with the agentConfiguration captured at enqueue', async () => {
+    const queuedConfiguration = {
+      providerId: 'anthropic',
+      model: 'claude-sonnet-4-5',
+      reasoningEffort: 'medium' as const
+    }
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      }
+    })
+    const workspace = renderController(input)
+    mounted.push(workspace)
+
+    act(() => workspace.result.current.lifecycle.enqueue(admission('queued with snapshot')))
+
+    currentSession = {
+      ...session('idle'),
+      agentConfiguration: {
+        providerId: 'openai',
+        model: 'gpt-5',
+        reasoningEffort: 'high'
+      }
+    }
+    act(() => notifySessionChanged?.())
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'queued with snapshot',
+        agentConfiguration: queuedConfiguration
+      })
+    )
+  })
+
   it('resumes background draining when a Specialist barrier settles', async () => {
     let currentSession = session()
     let notifySessionChanged: (() => void) | undefined
