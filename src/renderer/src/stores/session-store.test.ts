@@ -4628,6 +4628,7 @@ describe('session store public contract', () => {
         'reviseSessionFromElicitation',
         'selectSession',
         'setActivePlanProjection',
+        'setAgentConfiguration',
         'setAgentPromptInFlight',
         'setAgentStatus',
         'setAutoReviewEnabled',
