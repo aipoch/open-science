@@ -58,21 +58,27 @@ const loadLanguage = async (language: NotebookParserLanguage): Promise<Language 
   return loaded
 }
 
-type ParsedNotebookSource =
-  | { state: 'parsed'; tree: Tree; source: string }
-  | { state: 'error'; reason: 'parse-error' | 'parser-unavailable' }
+type ParsedNotebookSource<T> =
+  { state: 'ok'; value: T } | { state: 'error'; reason: 'parse-error' | 'parser-unavailable' }
 
-const parseNotebookSource = async (
+const withParsedNotebookSource = async <T>(
   language: NotebookParserLanguage,
-  source: string
-): Promise<ParsedNotebookSource> => {
+  source: string,
+  analyze: (root: Node) => T
+): Promise<ParsedNotebookSource<T>> => {
   const grammar = await loadLanguage(language)
   if (!grammar) return { state: 'error', reason: 'parser-unavailable' }
   const parser = new Parser()
-  parser.setLanguage(grammar)
-  const tree = parser.parse(source)
-  if (!tree || tree.rootNode.hasError) return { state: 'error', reason: 'parse-error' }
-  return { state: 'parsed', tree, source }
+  let tree: Tree | null = null
+  try {
+    parser.setLanguage(grammar)
+    tree = parser.parse(source)
+    if (!tree || tree.rootNode.hasError) return { state: 'error', reason: 'parse-error' }
+    return { state: 'ok', value: analyze(tree.rootNode) }
+  } finally {
+    tree?.delete()
+    parser.delete()
+  }
 }
 
 const fieldChild = (node: Node | null | undefined, field: string): Node | null =>
@@ -88,5 +94,5 @@ const fieldChildren = (node: Node, field: string): Node[] => {
   return children
 }
 
-export { fieldChild, fieldChildren, parseNotebookSource }
+export { fieldChild, fieldChildren, withParsedNotebookSource }
 export type { Node, ParsedNotebookSource, Tree }

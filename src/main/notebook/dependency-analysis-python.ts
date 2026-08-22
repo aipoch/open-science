@@ -2,7 +2,7 @@ import { PYTHON_LIBRARY_EFFECTS, type PythonLibraryMethodEffect } from './python
 import {
   fieldChild,
   fieldChildren,
-  parseNotebookSource,
+  withParsedNotebookSource,
   type Node
 } from './dependency-analysis-parser'
 import type {
@@ -144,6 +144,12 @@ type PyNode = {
   annotation?: PyNode | null
   slice?: PyNode
   children?: PyNode[]
+  left?: PyNode
+  right?: PyNode
+  alternate?: PyNode
+  context_expr?: PyNode
+  optional_vars?: PyNode
+  items?: PyNode[]
 }
 
 const isPyNode = (value: unknown): value is PyNode =>
@@ -606,11 +612,11 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
             test: test
               ? convertExpr(test, 'Load')
               : py('Constant', { value: false, constKind: 'bool' }, []),
-            orelse: orelse
+            alternate: orelse
               ? convertExpr(orelse, 'Load')
               : py('Constant', { value: null, constKind: 'none' }, [])
           },
-          ['body', 'test', 'orelse']
+          ['body', 'test', 'alternate']
         )
       )
     }
@@ -2013,8 +2019,8 @@ class Analyzer extends NodeVisitor {
       value?.type === 'IfExp'
         ? new Set(
             [
-              this.visibleRootName(value.body as PyNode),
-              this.visibleRootName(value.orelse as PyNode)
+              this.visibleRootName(isPyNode(value.body) ? value.body : undefined),
+              this.visibleRootName(value.alternate)
             ].filter((name): name is string => Boolean(name))
           )
         : new Set<string>()
@@ -2610,12 +2616,10 @@ const analyzePythonSources = async (
 ): Promise<NotebookRunDependencyFacts[]> => {
   const results: NotebookRunDependencyFacts[] = []
   for (const source of sources) {
-    const parsed = await parseNotebookSource('python', source)
-    if (parsed.state === 'error') {
-      results.push({ state: 'unknown', reasons: [parsed.reason] })
-      continue
-    }
-    results.push(analyzePythonTree(parsed.tree.rootNode))
+    const parsed = await withParsedNotebookSource('python', source, analyzePythonTree)
+    results.push(
+      parsed.state === 'ok' ? parsed.value : { state: 'unknown', reasons: [parsed.reason] }
+    )
   }
   return results
 }

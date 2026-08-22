@@ -1,7 +1,7 @@
 import {
   fieldChild,
   fieldChildren,
-  parseNotebookSource,
+  withParsedNotebookSource,
   type Node
 } from './dependency-analysis-parser'
 import type {
@@ -1152,7 +1152,8 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
       for (let index = 0; index < slots.args.length; index += 1) {
         const label = slots.names[index]
         if (!label) continue
-        const slotType = isCharacter(slots.args[index]) ? slots.args[index].value : 'ANY'
+        const slot = slots.args[index]
+        const slotType = isCharacter(slot) ? slot.value : 'ANY'
         const relationship =
           slotType === 'environment'
             ? 'reference'
@@ -1882,12 +1883,10 @@ const analyzeRSources = async (
 ): Promise<NotebookRunDependencyFacts[]> => {
   const results: NotebookRunDependencyFacts[] = []
   for (const source of sources) {
-    const parsed = await parseNotebookSource('r', source)
-    if (parsed.state === 'error') {
-      results.push({ state: 'unknown', reasons: [parsed.reason] })
-      continue
-    }
-    results.push(analyzeRSource(parsed.tree.rootNode))
+    const parsed = await withParsedNotebookSource('r', source, analyzeRSource)
+    results.push(
+      parsed.state === 'ok' ? parsed.value : { state: 'unknown', reasons: [parsed.reason] }
+    )
   }
   return results
 }
