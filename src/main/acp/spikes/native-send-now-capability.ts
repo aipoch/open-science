@@ -3,33 +3,52 @@ import type { AgentModelRoute } from '../../agent-framework/types'
 
 // Spike: native mid-turn Send now without `session/cancel`.
 //
-// ACP v1 has no `session/inject`. The only standard mid-turn lever is
-// `session/cancel` plus a fresh `session/prompt`. Frameworks expose two unofficial
-// substitutes:
-//   - `_session/steering` when advertised on initialize `_meta`
-//   - a second in-flight `session/prompt` that some adapters queue themselves
-// This module is the fail-closed decoder for those substitutes. Production Send now
-// still interrupts; nothing here is wired into the prompt turn workflow.
+// The "already running" throw is project-defined. ACP v1 does not forbid a second
+// `session/prompt` while one is outstanding. Lifting that throw is still not enough:
+// the host stores one interaction per session, stamps every session/update with
+// `current()`, and drains a single `ActiveSession.nextUpdate()` consumer.
+// Production Send now still interrupts; nothing here is wired into the prompt turn.
 
 export const ACP_STEERING_METHOD = '_session/steering'
 
 export const SHIPPED_CLAUDE_AGENT_ACP_VERSION = '0.60.0'
 export const SHIPPED_CODEX_ACP_VERSION = '1.1.4'
 
-// Host still rejects a second `session/prompt` while an interaction is active.
-// Native queued-prompt therefore cannot be dispatched until that guard is lifted.
+// Production policy. A second `session/prompt` is rejected before it reaches the agent.
 export const HOST_CONCURRENT_PROMPT_POLICY = 'reject' as const
+
+export const PRODUCTION_HOST_FOLLOW_UP_BLOCKERS = Object.freeze([
+  'single-interaction',
+  'single-update-consumer',
+  'single-executor-observation'
+] as const)
 
 export type NativeSendNowKind = 'steering-extension' | 'queued-prompt' | 'none'
 
 export type NativeSendNowDelivery = 'safe-breakpoint' | 'next-model-pause' | 'unavailable'
 
+export type HostFollowUpBlocker =
+  | (typeof PRODUCTION_HOST_FOLLOW_UP_BLOCKERS)[number]
+  | 'no-steering-side-band'
+  | 'framework-unsupported'
+
 export type NativeSendNowCapability = Readonly<{
   kind: NativeSendNowKind
   delivery: NativeSendNowDelivery
   method?: typeof ACP_STEERING_METHOD
+  frameworkCanDispatch: boolean
   hostCanDispatch: boolean
+  usesSecondSessionPrompt: boolean
+  hostBlockers: readonly HostFollowUpBlocker[]
 }>
+
+export type SecondSessionPromptAdmission =
+  | Readonly<{ allowed: true; mode: 'queued-prompt-adopt-after-stop' }>
+  | Readonly<{
+      allowed: false
+      reason: 'framework-unsupported' | 'wrong-mechanism' | 'host-not-ready'
+      hostBlockers: readonly HostFollowUpBlocker[]
+    }>
 
 export type SteeringAdvertisement = Readonly<{
   supported: boolean
@@ -112,41 +131,85 @@ export const parseSteerOutcome = (result: unknown): SteerOutcome => {
   return Object.freeze({ kind: 'rejected', reason: 'unknown-outcome', raw: result })
 }
 
-const cannotDispatch = (
-  kind: NativeSendNowKind,
-  delivery: NativeSendNowDelivery,
-  method?: typeof ACP_STEERING_METHOD
+const withHostBlockers = (
+  capability: Omit<NativeSendNowCapability, 'hostCanDispatch' | 'hostBlockers'>,
+  hostBlockers: readonly HostFollowUpBlocker[]
 ): NativeSendNowCapability =>
   Object.freeze({
-    kind,
-    delivery,
-    ...(method ? { method } : {}),
-    hostCanDispatch: false
+    ...capability,
+    hostCanDispatch: false,
+    hostBlockers
   })
 
 const advertisedSteering = (): NativeSendNowCapability =>
-  Object.freeze({
-    kind: 'steering-extension',
-    delivery: 'safe-breakpoint',
-    method: ACP_STEERING_METHOD,
-    // The host still owns one prompt interaction at a time. Steering is a side-band
-    // and is not dispatchable until that owner grows an inject path.
-    hostCanDispatch: false
-  })
+  withHostBlockers(
+    {
+      kind: 'steering-extension',
+      delivery: 'safe-breakpoint',
+      method: ACP_STEERING_METHOD,
+      frameworkCanDispatch: true,
+      usesSecondSessionPrompt: false
+    },
+    ['no-steering-side-band']
+  )
 
 // Advertisement always wins. Without it, only the shipped Claude adapter is known to
-// queue a second `session/prompt`. Codex `turn/steer` and OpenCode pending-steer stay
-// off ACP unless they advertise. Codex-response and Codex-bridge share that adapter.
+// queue a second `session/prompt`. Codex-response and Codex-bridge share one adapter.
 export const resolveShippedNativeSendNowCapability = (
   lookup: NativeSendNowLookup
 ): NativeSendNowCapability => {
   if (lookup.advertisement?.supported) return advertisedSteering()
 
   if (lookup.frameworkId === 'claude-code') {
-    return cannotDispatch('queued-prompt', 'next-model-pause')
+    return withHostBlockers(
+      {
+        kind: 'queued-prompt',
+        delivery: 'next-model-pause',
+        frameworkCanDispatch: true,
+        usesSecondSessionPrompt: true
+      },
+      PRODUCTION_HOST_FOLLOW_UP_BLOCKERS
+    )
   }
 
-  return cannotDispatch('none', 'unavailable')
+  return withHostBlockers(
+    {
+      kind: 'none',
+      delivery: 'unavailable',
+      frameworkCanDispatch: false,
+      usesSecondSessionPrompt: false
+    },
+    ['framework-unsupported']
+  )
+}
+
+// A second `session/prompt` is the Claude queued-prompt mechanism. Steering uses a
+// different method and must not lift the prompt interaction lock.
+export const admitSecondSessionPrompt = (
+  capability: NativeSendNowCapability
+): SecondSessionPromptAdmission => {
+  if (capability.kind === 'steering-extension') {
+    return Object.freeze({
+      allowed: false,
+      reason: 'wrong-mechanism',
+      hostBlockers: capability.hostBlockers
+    })
+  }
+  if (!capability.usesSecondSessionPrompt || !capability.frameworkCanDispatch) {
+    return Object.freeze({
+      allowed: false,
+      reason: 'framework-unsupported',
+      hostBlockers: capability.hostBlockers
+    })
+  }
+  if (capability.hostBlockers.length > 0) {
+    return Object.freeze({
+      allowed: false,
+      reason: 'host-not-ready',
+      hostBlockers: capability.hostBlockers
+    })
+  }
+  return Object.freeze({ allowed: true, mode: 'queued-prompt-adopt-after-stop' })
 }
 
 export type { AgentFrameworkId, AgentModelRoute }
