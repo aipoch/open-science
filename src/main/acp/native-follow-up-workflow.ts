@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ClientConnection } from '@agentclientprotocol/sdk'
+import { createLogger } from '../logger'
 
 import type {
   AcpSteerFollowUpRefuseReason,
@@ -35,6 +36,8 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   fetchImpl?: typeof fetch
 }>
 
+const log = createLogger('acp')
+
 const refused = (reason: AcpSteerFollowUpRefuseReason): AcpSteerFollowUpResult =>
   Object.freeze({ injected: false, reason })
 
@@ -54,11 +57,26 @@ class AcpNativeFollowUpWorkflow {
       hasOpenCodeHttp: Boolean(openCodeUsageApi),
       text
     })
-    if (route.transport === 'unsupported') return refused(route.reason)
+    if (route.transport === 'unsupported') {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: route.reason,
+        advertisedSteering: this.options.capabilities().steering,
+        frameworkId: this.options.frameworkId()
+      })
+      return refused(route.reason)
+    }
 
     const connection = this.options.connection()
     const providerSessionId = this.options.activeProviderSessionId(request.sessionId)
-    if (!connection || !providerSessionId) return refused('no-live-turn')
+    if (!connection || !providerSessionId) {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'no-live-turn',
+        transport: route.transport
+      })
+      return refused('no-live-turn')
+    }
 
     if (route.transport === 'acp-steering') {
       let result: unknown
@@ -68,19 +86,45 @@ class AcpNativeFollowUpWorkflow {
           buildAcpSteeringParams(providerSessionId, text)
         )
       } catch {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: 'dispatch-failed',
+          transport: route.transport
+        })
         return refused('dispatch-failed')
       }
       const dispatched = interpretSteerOutcome(parseSteerOutcome(result))
-      if (dispatched.kind !== 'injected') return refused(dispatched.reason)
+      if (dispatched.kind !== 'injected') {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: dispatched.reason,
+          transport: route.transport
+        })
+        return refused(dispatched.reason)
+      }
     } else {
-      if (!openCodeUsageApi) return refused('not-advertised')
+      if (!openCodeUsageApi) {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: 'not-advertised',
+          transport: route.transport
+        })
+        return refused('not-advertised')
+      }
       const accepted = await this.postOpenCodeSteer(
         openCodeUsageApi,
         providerSessionId,
         text,
         this.options.sessionCwd(request.sessionId)
       )
-      if (!accepted) return refused('dispatch-failed')
+      if (!accepted) {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: 'dispatch-failed',
+          transport: route.transport
+        })
+        return refused('dispatch-failed')
+      }
     }
 
     const messageId = this.options.createMessageId?.() ?? `message-${randomUUID()}`
@@ -88,6 +132,11 @@ class AcpNativeFollowUpWorkflow {
       sessionId: request.sessionId,
       messageId,
       text
+    })
+    log.info('native follow-up injected', {
+      sessionId: request.sessionId,
+      transport: route.transport,
+      messageId
     })
     return injected(route.transport, messageId)
   }
