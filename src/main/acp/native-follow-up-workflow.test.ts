@@ -48,7 +48,9 @@ const createWorkflow = (
             })
           : undefined,
       activeProviderSessionId: () =>
-        overrides.providerSessionId === undefined ? 'provider-1' : (overrides.providerSessionId ?? undefined),
+        overrides.providerSessionId === undefined
+          ? 'provider-1'
+          : (overrides.providerSessionId ?? undefined),
       hasLivePrompt: () => overrides.livePrompt ?? true,
       sessionCwd: () => '/workspace',
       publishUserMessage: (input) => {
@@ -219,7 +221,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
 
   it('posts OpenCode HTTP follow-up into the v1 session when ACP steering is not advertised', async () => {
     const fetchImpl = vi.fn(
-      async (_url: string | URL | Request, _init?: RequestInit): Promise<Response> =>
+      async (): Promise<Response> =>
         ({
           ok: true,
           json: async () => ({
@@ -262,7 +264,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
 
   it('refuses OpenCode v2 inbox admission that never lands in the ACP session', async () => {
     const fetchImpl = vi.fn(
-      async (_url: string | URL | Request, _init?: RequestInit): Promise<Response> =>
+      async (): Promise<Response> =>
         ({
           ok: true,
           json: async () => ({
