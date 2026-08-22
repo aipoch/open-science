@@ -135,7 +135,6 @@ const WorkspacePage = ({
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
-  const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
   const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
     (state) => state.upsertAndActivateItem
   )
@@ -665,20 +664,20 @@ const WorkspacePage = ({
     if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
   }, [pendingCustomizePrefill, consumeCustomizePrefill])
 
-  // The first agent-side notebook call promotes a notebook entry into the composer status bar.
+  // The first agent-side notebook call reveals the new notebook entry and its preview together.
   useEffect(() => {
     const removeNotebookAvailableListener = window.api.notebook.onAvailable((notebook) => {
       setNotebookReferences((references) => ({
         ...references,
         [notebook.sessionId]: notebook
       }))
-      upsertPreviewItem(createNotebookPreviewItem(notebook))
+      upsertAndActivatePreviewItem(createNotebookPreviewItem(notebook))
     })
 
     return () => {
       removeNotebookAvailableListener()
     }
-  }, [upsertPreviewItem])
+  }, [upsertAndActivatePreviewItem])
 
   // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
   useEffect(() => {

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
 
 import {
   createInitialPreviewWorkbenchState,
@@ -263,6 +264,7 @@ const { WorkspacePage } = await import('./WorkspacePage')
 describe('WorkspacePage preview panel resize sync', () => {
   let container: HTMLDivElement
   let root: Root
+  let notebookAvailableListener: ((notebook: NotebookSessionReference) => void) | undefined
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
@@ -280,6 +282,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.previewOnResize = undefined
     workspacePageHarness.previewPanelRef = undefined
     filePreviewDialogHarness.item = undefined
+    notebookAvailableListener = undefined
     vi.clearAllMocks()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0)
@@ -299,7 +302,10 @@ describe('WorkspacePage preview panel resize sync', () => {
     window.api = {
       platform: 'linux',
       notebook: {
-        onAvailable: vi.fn(() => vi.fn()),
+        onAvailable: vi.fn((listener: (notebook: NotebookSessionReference) => void) => {
+          notebookAvailableListener = listener
+          return vi.fn()
+        }),
         getReference: vi.fn(() => Promise.resolve(null))
       },
       reviewer: {
@@ -612,6 +618,36 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(container.querySelector('[data-testid="workspace-preview-toggle"]')).toBeNull()
     expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+  })
+
+  it('opens and activates the notebook preview when its entry first becomes available', async () => {
+    await renderPage(false)
+
+    const notebook: NotebookSessionReference = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace/project-1',
+      notebookSessionRoot: '/notebooks/project-1/session-1',
+      dataRoot: '/notebooks/project-1/session-1/data',
+      runtimeRoot: '/notebooks/project-1/session-1/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/run.json'
+    }
+
+    await act(async () => {
+      notebookAvailableListener?.(notebook)
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'tool:session-1:notebook',
+      panelState: 'open',
+      items: [
+        expect.objectContaining({
+          id: 'tool:session-1:notebook',
+          toolKind: 'notebook',
+          notebook
+        })
+      ]
+    })
   })
 
   it('hosts a cross-Project file dialog without creating or activating a Files tab', async () => {
