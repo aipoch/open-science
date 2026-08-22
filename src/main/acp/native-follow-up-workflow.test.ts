@@ -8,6 +8,8 @@ import { ACP_STEERING_METHOD } from './native-follow-up'
 
 const published: NativeFollowUpUserMessage[] = []
 
+type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
 const createWorkflow = (
   overrides: {
     advertised?: boolean
@@ -220,7 +222,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
   })
 
   it('posts OpenCode HTTP follow-up into the v1 session when ACP steering is not advertised', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(
+    const fetchImpl = vi.fn<FetchImpl>(
       async () =>
         ({
           ok: true,
@@ -263,7 +265,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
   })
 
   it('refuses OpenCode v2 inbox admission that never lands in the ACP session', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(
+    const fetchImpl = vi.fn<FetchImpl>(
       async () =>
         ({
           ok: true,
