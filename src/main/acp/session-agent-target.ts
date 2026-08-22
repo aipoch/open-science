@@ -1,9 +1,12 @@
 import type { AcpSessionAgentTarget } from '../../shared/acp'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import { resolveSessionAgentConfiguration } from '../../shared/session-agent-configuration'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   canonicalSessionProviderId,
   type AgentFrameworkId,
-  type SessionAgentConfiguration
+  type SessionAgentConfiguration,
+  type SettingsSnapshot
 } from '../../shared/settings'
 
 type SessionAgentTargetSource = Pick<
@@ -51,8 +54,54 @@ const toSessionAgentConfiguration = ({
   reasoningEffort
 })
 
+const SESSION_AGENT_TARGET_UNAVAILABLE = 'Session agent target is unavailable'
+
+const shouldPersistSessionAgentConfiguration = (
+  current: SessionAgentConfiguration | undefined,
+  target: AcpSessionAgentTarget
+): boolean => {
+  const next = toSessionAgentConfiguration(target)
+  return (
+    current?.providerId !== next.providerId ||
+    current?.model !== next.model ||
+    current?.reasoningEffort !== next.reasoningEffort
+  )
+}
+
+const resolveValidatedSessionAgentTarget = (
+  source: SessionAgentTargetSource,
+  settings: SettingsSnapshot
+): AcpSessionAgentTarget => {
+  const framework = settings.agentFrameworks.find(
+    (candidate) => candidate.id === settings.agentFrameworkId
+  )
+  const catalog = buildConfiguredModelCatalog({
+    providers: settings.providers,
+    activeProviderId: settings.activeProviderId,
+    claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
+    includeAllClaudeSubscriptions: true,
+    frameworkId: settings.agentFrameworkId,
+    frameworkEndpoints: framework?.supportedApiTypes ?? ['anthropic']
+  })
+  const resolution = resolveSessionAgentConfiguration({
+    session: source,
+    catalog,
+    activeProviderId: settings.activeProviderId,
+    activeModel: settings.activeModel,
+    activeReasoningEffort: settings.reasoningEffort
+  })
+  if (resolution.status !== 'ready') {
+    throw new Error(SESSION_AGENT_TARGET_UNAVAILABLE)
+  }
+  const target = toAcpSessionAgentTarget(settings.agentFrameworkId, resolution.configuration)
+  if (!target) throw new Error(SESSION_AGENT_TARGET_UNAVAILABLE)
+  return target
+}
+
 export {
   materializeSessionAgentConfiguration,
+  resolveValidatedSessionAgentTarget,
+  shouldPersistSessionAgentConfiguration,
   toAcpSessionAgentTarget,
   toSessionAgentConfiguration
 }

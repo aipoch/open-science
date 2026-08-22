@@ -44,8 +44,8 @@ import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import {
-  materializeSessionAgentConfiguration,
-  toAcpSessionAgentTarget,
+  resolveValidatedSessionAgentTarget,
+  shouldPersistSessionAgentConfiguration,
   toSessionAgentConfiguration,
   type SessionAgentTargetResolver
 } from './acp/session-agent-target'
@@ -429,13 +429,8 @@ const createApplicationModules = async (
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
   }))
-  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) => {
-    const settings = await settingsService.getSettingsView()
-    return toAcpSessionAgentTarget(
-      settings.agentFrameworkId,
-      materializeSessionAgentConfiguration(source, settings.reasoningEffort)
-    )
-  }
+  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) =>
+    resolveValidatedSessionAgentTarget(source, await settingsService.getSettingsView())
   const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
     const target = await settingsService.captureActiveExplicitAgentBackendTarget()
     return {
@@ -1679,7 +1674,10 @@ const createApplicationModules = async (
                   )
                 }
                 const agentTarget = await resolveSessionAgentTarget(latest)
-                if (!latest.agentConfiguration && agentTarget) {
+                if (
+                  agentTarget &&
+                  shouldPersistSessionAgentConfiguration(latest.agentConfiguration, agentTarget)
+                ) {
                   latest = await sessionPersistenceCoordinator.saveSession({
                     ...latest,
                     agentConfiguration: toSessionAgentConfiguration(agentTarget)

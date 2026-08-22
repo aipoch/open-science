@@ -145,7 +145,7 @@ const ComposerModelPicker = ({
       <button
         type="button"
         onClick={() => openSettings()}
-        className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm text-amber-700 hover:bg-amber-50 transition-colors dark:text-amber-400 dark:hover:bg-amber-950/30"
+        className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm text-status-warning-foreground transition-colors hover:bg-status-warning-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface"
         aria-label={t('No model available — open settings')}
       >
         <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -195,7 +195,7 @@ const ComposerModelPicker = ({
           className={cn(
             triggerClassName,
             (unavailable || !hasUsable) &&
-              'text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400'
+              'text-status-warning-foreground hover:text-status-warning-foreground dark:text-status-warning-dark-foreground dark:hover:text-status-warning-dark-foreground'
           )}
           aria-label={
             unavailable

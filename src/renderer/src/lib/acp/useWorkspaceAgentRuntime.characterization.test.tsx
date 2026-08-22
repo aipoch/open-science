@@ -399,6 +399,113 @@ describe('workspace Agent Runtime hook contract', () => {
     })
   })
 
+  it('falls back to the Settings Active Model instead of the provider base model', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'custom',
+      activeModel: 'settings-selected',
+      reasoningEffort: 'low',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'custom',
+          type: 'custom',
+          name: 'Custom',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'provider-base',
+          models: ['provider-base', 'settings-selected'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the restored chat.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:deleted-provider',
+      agentModel: 'gone'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(latest.resolveSessionRuntimeSelection('session-1')).toMatchObject({
+      agentBackendId: 'claude-code:custom',
+      agentModel: 'settings-selected',
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'custom',
+        model: 'settings-selected',
+        reasoningEffort: 'low'
+      }
+    })
+  })
+
+  it('does not auto-send when the Session target is unavailable', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'incompatible',
+      activeModel: 'other',
+      reasoningEffort: 'low',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'incompatible',
+          type: 'custom',
+          name: 'Incompatible',
+          apiEndpoints: ['openai'],
+          baseUrl: 'https://example.test/v1',
+          model: 'other',
+          models: ['other'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Earlier turn',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentConfiguration: {
+        providerId: 'deleted',
+        model: 'gone',
+        reasoningEffort: 'low'
+      }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = createRuntime(createSnapshot())
+    runtimeMock.current = runtime
+    await render()
+
+    await expect(
+      latest.sendMessage({ sessionId: 'session-1', text: 'Job analysis' })
+    ).resolves.toBeUndefined()
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('routes live events into Workspace before snapshot reconciliation', async () => {
     const pending = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -535,6 +642,31 @@ describe('workspace Agent Runtime hook contract', () => {
   })
 
   it('publishes runtime adoption as preparation and releases it before opening the prompt', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'session-provider',
+          type: 'custom',
+          name: 'Session',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'session-model',
+          models: ['session-model'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Earlier turn',

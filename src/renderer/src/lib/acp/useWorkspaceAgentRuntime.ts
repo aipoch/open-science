@@ -40,7 +40,10 @@ import {
   resolveSessionHistoryReplayDescriptor,
   type HistoryReplayDescriptor
 } from './history-preamble'
-import { resolveSessionAgentConfiguration } from './session-agent-configuration'
+import {
+  isConfigurationSelectable,
+  resolveSessionAgentConfiguration
+} from './session-agent-configuration'
 import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
@@ -70,22 +73,16 @@ import {
   createPermissionResponseAttemptOwner,
   pendingWorkspacePermissions
 } from './workspace-permission-response-attempt-owner'
-import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
+import {
+  useWorkspaceRuntimeSaveAsSkillOwner,
+  type WorkspaceSessionRuntimeSelection
+} from './workspace-runtime-save-as-skill-owner'
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'setPermissionProfile'
 >
 type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
-type WorkspaceSessionRuntimeSelection = Readonly<{
-  supportsImageInput: boolean
-  supportsImageRelay: boolean
-  agentFrameworkId: AcpSessionAgentTarget['frameworkId']
-  agentBackendId?: string
-  agentModel?: string
-  agentTarget?: AcpSessionAgentTarget
-  historyReplayDescriptor: HistoryReplayDescriptor
-}>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 const setWorkspacePermissionProfile = async (
@@ -175,6 +172,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
   const providers = useSettingsStore((state) => state.providers)
+  const activeModel = useSettingsStore((state) => state.activeModel)
   const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
@@ -224,8 +222,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       visionRelayAvailable
     ]
   )
-  const resolveStoredSessionConfiguration = useCallback(
-    (sessionId: string | undefined): SessionAgentConfiguration | undefined => {
+  const resolveStoredSessionResolution = useCallback(
+    (sessionId: string | undefined) => {
       if (!sessionId) return undefined
       const session = useSessionStore
         .getState()
@@ -235,20 +233,28 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         session,
         catalog: configuredModelCatalog,
         activeProviderId: activeProvider?.id,
-        activeModel: activeProvider?.model,
+        activeModel,
         activeReasoningEffort: reasoningEffort
-      }).configuration
+      })
     },
-    [activeProvider, configuredModelCatalog, reasoningEffort]
+    [activeModel, activeProvider, configuredModelCatalog, reasoningEffort]
+  )
+  const resolveStoredSessionConfiguration = useCallback(
+    (sessionId: string | undefined): SessionAgentConfiguration | undefined =>
+      resolveStoredSessionResolution(sessionId)?.configuration,
+    [resolveStoredSessionResolution]
   )
   const getSessionRuntimeSelection = useCallback(
     (sessionId: string) => resolveRuntimeSelection(resolveStoredSessionConfiguration(sessionId)),
     [resolveRuntimeSelection, resolveStoredSessionConfiguration]
   )
   const getSessionAgentTarget = useCallback(
-    (sessionId: string): AcpSessionAgentTarget | undefined =>
-      getSessionRuntimeSelection(sessionId).agentTarget,
-    [getSessionRuntimeSelection]
+    (sessionId: string): AcpSessionAgentTarget | undefined => {
+      const resolution = resolveStoredSessionResolution(sessionId)
+      if (resolution?.status !== 'ready') return undefined
+      return resolveRuntimeSelection(resolution.configuration).agentTarget
+    },
+    [resolveRuntimeSelection, resolveStoredSessionResolution]
   )
   const getSessionSupportsImageInput = useCallback(
     (sessionId: string): boolean => getSessionRuntimeSelection(sessionId).supportsImageInput,
@@ -415,8 +421,20 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
-      const agentConfiguration =
-        input.agentConfiguration ?? resolveStoredSessionConfiguration(input.sessionId)
+      const storedResolution = input.agentConfiguration
+        ? undefined
+        : resolveStoredSessionResolution(input.sessionId)
+      const agentConfiguration = input.agentConfiguration
+        ? isConfigurationSelectable(input.agentConfiguration, configuredModelCatalog)
+          ? input.agentConfiguration
+          : undefined
+        : storedResolution?.status === 'ready'
+          ? storedResolution.configuration
+          : undefined
+      if (!agentConfiguration) return Promise.resolve(undefined)
+      if (storedResolution?.status === 'ready' && storedResolution.changed && input.sessionId) {
+        useSessionStore.getState().setAgentConfiguration(input.sessionId, agentConfiguration)
+      }
       const resolvedInput = { ...input, agentConfiguration }
       const selected = resolveRuntimeSelection(agentConfiguration)
       lifecycleOwner.recordPromptPlanAuthority({
@@ -441,11 +459,12 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       )
     },
     [
+      configuredModelCatalog,
       lifecycleOwner,
       runtime,
       visionRelayAvailable,
       resolveRuntimeSelection,
-      resolveStoredSessionConfiguration,
+      resolveStoredSessionResolution,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]
@@ -453,7 +472,9 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   const resendEditedMessage = useCallback(
     (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> => {
-      const configuration = resolveStoredSessionConfiguration(sessionId)
+      const resolution = resolveStoredSessionResolution(sessionId)
+      if (resolution?.status !== 'ready') return Promise.resolve(false)
+      const configuration = resolution.configuration
       const selected = resolveRuntimeSelection(configuration)
       return resendEditedWorkspaceMessage(
         runtime,
@@ -475,7 +496,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       runtime,
       visionRelayAvailable,
       resolveRuntimeSelection,
-      resolveStoredSessionConfiguration,
+      resolveStoredSessionResolution,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]

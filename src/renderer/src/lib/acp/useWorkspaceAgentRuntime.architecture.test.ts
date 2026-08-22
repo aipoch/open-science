@@ -472,7 +472,8 @@ const hookKeys = [
   'resumeInterruptedSession',
   'respondToPermission',
   'setPermissionProfile',
-  'revokePermissionGrant'
+  'revokePermissionGrant',
+  'resolveSessionRuntimeSelection'
 ] as const
 const sendIntentKeys = [
   'sessionId',
@@ -490,7 +491,8 @@ const sendIntentKeys = [
   'parts',
   'specialistId',
   'enabledComputeHosts',
-  'selectedComputeHosts'
+  'selectedComputeHosts',
+  'agentConfiguration'
 ] as const
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))

@@ -27,6 +27,7 @@ import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
 import {
+  shouldPersistSessionAgentConfiguration,
   toSessionAgentConfiguration,
   type SessionAgentTargetResolver
 } from '../acp/session-agent-target'
@@ -323,7 +324,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     let agentTarget
     try {
       agentTarget = await options.resolveSessionAgentTarget?.(session)
-      if (!session.agentConfiguration && agentTarget && options.saveSessionAgentConfiguration) {
+      if (
+        agentTarget &&
+        options.saveSessionAgentConfiguration &&
+        shouldPersistSessionAgentConfiguration(session.agentConfiguration, agentTarget)
+      ) {
         await options.saveSessionAgentConfiguration(
           session,
           toSessionAgentConfiguration(agentTarget)
