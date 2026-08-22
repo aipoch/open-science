@@ -1,21 +1,11 @@
 import { useCallback, useRef, useState } from 'react'
 
-import type { AcpSaveAsSkillRequest, AcpSessionAgentTarget } from '../../../../shared/acp'
+import type { AcpSaveAsSkillRequest } from '../../../../shared/acp'
 import { useSessionStore } from '../../stores/session-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
-import type { HistoryReplayDescriptor } from './history-preamble'
 import { prepareExistingWorkspacePrompt } from './workspace-runtime-prompt-preparation-owner'
-
-type WorkspaceSessionRuntimeSelection = Readonly<{
-  supportsImageInput: boolean
-  supportsImageRelay: boolean
-  agentFrameworkId: AcpSessionAgentTarget['frameworkId']
-  agentBackendId?: string
-  agentModel?: string
-  agentTarget?: AcpSessionAgentTarget
-  historyReplayDescriptor: HistoryReplayDescriptor
-}>
+import type { WorkspaceSessionRuntimeSelection } from './workspace-runtime-selection-owner'
 
 type WorkspaceSaveAsSkillOwnerOptions = {
   runtime: ReturnType<typeof useAcpRuntime>
@@ -148,4 +138,3 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
 }
 
 export { useWorkspaceRuntimeSaveAsSkillOwner }
-export type { WorkspaceSessionRuntimeSelection }

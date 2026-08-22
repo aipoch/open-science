@@ -3,8 +3,6 @@ import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import type { SessionAgentConfiguration } from '../../../../shared/settings'
-import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   pendingWorkspaceElicitations,
@@ -14,11 +12,7 @@ import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persist
 import { deleteSession } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
-import {
-  selectFrameworkApiEndpoints,
-  selectVisionRelayAvailable,
-  useSettingsStore
-} from '@/stores/settings-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
@@ -74,11 +68,7 @@ import { useWorkspaceBranchSwitchGuard } from './use-workspace-branch-switch-gua
 import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
-import {
-  isConfigurationSelectable,
-  resolveSelectableConfiguration,
-  resolveSessionAgentConfiguration
-} from '@/lib/acp/session-agent-configuration'
+import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -114,15 +104,6 @@ const WorkspacePage = ({
   const goHome = useNavigationStore((state) => state.goHome)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
-  const activeModel = useSettingsStore((state) => state.activeModel)
-  const activeReasoningEffort = useSettingsStore((state) => state.reasoningEffort)
-  const providers = useSettingsStore((state) => state.providers)
-  const claudeSubscriptionProviderId = useSettingsStore(
-    (state) => state.claudeSubscriptionProviderId
-  )
-  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
-  const visionRelayAvailable = useSettingsStore(selectVisionRelayAvailable)
   const activeProviderType = useSettingsStore(
     (state) => state.providers.find((provider) => provider.id === activeProviderId)?.type
   )
@@ -143,7 +124,6 @@ const WorkspacePage = ({
   const currentDraftKey = selectedSessionId ?? newConversationDraftKey
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
-  const setAgentConfiguration = useSessionStore((state) => state.setAgentConfiguration)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   const previewItems = usePreviewWorkbenchStore((state) => state.items)
@@ -239,8 +219,6 @@ const WorkspacePage = ({
   useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage: runtime.sendMessage })
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(defaultPermissionProfile)
-  const [newConversationAgentConfiguration, setNewConversationAgentConfiguration] =
-    useState<SessionAgentConfiguration>()
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session through the Conversation submit transaction.
@@ -268,73 +246,13 @@ const WorkspacePage = ({
     }
     return selected
   })
-  const includeAllClaudeSubscriptions = activeSession !== undefined
-  const configuredModelCatalog = useMemo(
-    () =>
-      buildConfiguredModelCatalog({
-        providers,
-        activeProviderId,
-        claudeSubscriptionProviderId,
-        includeAllClaudeSubscriptions,
-        frameworkId: agentFrameworkId,
-        frameworkEndpoints
-      }),
-    [
-      activeProviderId,
-      agentFrameworkId,
-      claudeSubscriptionProviderId,
-      frameworkEndpoints,
-      includeAllClaudeSubscriptions,
-      providers
-    ]
-  )
-  const defaultAgentConfiguration = useMemo<SessionAgentConfiguration | undefined>(
-    () =>
-      resolveSelectableConfiguration(
-        configuredModelCatalog,
-        activeProviderId,
-        activeModel,
-        activeReasoningEffort
-      ),
-    [activeModel, activeProviderId, activeReasoningEffort, configuredModelCatalog]
-  )
-  const sessionAgentConfiguration = useMemo(
-    () =>
-      activeSession
-        ? resolveSessionAgentConfiguration({
-            session: activeSession,
-            catalog: configuredModelCatalog,
-            activeProviderId,
-            activeModel,
-            activeReasoningEffort
-          })
-        : undefined,
-    [activeModel, activeProviderId, activeReasoningEffort, activeSession, configuredModelCatalog]
-  )
-  useEffect(() => {
-    if (
-      !activeSession ||
-      sessionAgentConfiguration?.status !== 'ready' ||
-      !sessionAgentConfiguration.changed
-    ) {
-      return
-    }
-    setAgentConfiguration(activeSession.id, sessionAgentConfiguration.configuration)
-  }, [activeSession, sessionAgentConfiguration, setAgentConfiguration])
-  const activeAgentConfiguration = activeSession
-    ? sessionAgentConfiguration?.configuration
-    : (newConversationAgentConfiguration ?? defaultAgentConfiguration)
-  const agentConfigurationUnavailable = activeSession
-    ? sessionAgentConfiguration?.status === 'unavailable'
-    : !isConfigurationSelectable(activeAgentConfiguration, configuredModelCatalog)
-  const activeModelOption = configuredModelCatalog.find(
-    (option) =>
-      option.providerId === activeAgentConfiguration?.providerId &&
-      (activeAgentConfiguration?.model === undefined
-        ? option.selectable
-        : option.model === activeAgentConfiguration.model)
-  )
-  const supportsImageInput = activeModelOption?.supportsImageInput === true || visionRelayAvailable
+  const {
+    activeAgentConfiguration,
+    agentConfigurationUnavailable,
+    supportsImageInput,
+    changeAgentConfiguration,
+    resetNewConversationConfiguration
+  } = useWorkspaceSessionAgentConfiguration(activeSession)
   // Starter history is only consumed when no session is active, so this subscription collapses to
   // a stable empty list while a session is selected — background session updates then never
   // re-render the page through it.
@@ -590,7 +508,7 @@ const WorkspacePage = ({
       setNewConversationAutoReviewEnabled(false)
       setNewConversationEnabledComputeHosts([])
       setNewConversationSelectedComputeHosts([])
-      setNewConversationAgentConfiguration(undefined)
+      resetNewConversationConfiguration()
     },
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
@@ -862,7 +780,7 @@ const WorkspacePage = ({
     setNewConversationAutoReviewEnabled(false)
     setNewConversationEnabledComputeHosts([])
     setNewConversationSelectedComputeHosts([])
-    setNewConversationAgentConfiguration(undefined)
+    resetNewConversationConfiguration()
     useNavigationStore.getState().recordUserNavigation()
     sessionController.actions.resetNewConversationSpecialist()
     clearSelection()
@@ -870,6 +788,7 @@ const WorkspacePage = ({
     clearSelection,
     defaultPermissionProfile,
     isSessionPersistenceReady,
+    resetNewConversationConfiguration,
     sessionController.actions,
     setAttachmentError
   ])
@@ -938,14 +857,6 @@ const WorkspacePage = ({
     }
 
     setAutoReviewEnabled(activeSession.id, enabled)
-  }
-
-  const changeAgentConfiguration = (configuration: SessionAgentConfiguration): void => {
-    if (activeSession) {
-      setAgentConfiguration(activeSession.id, configuration)
-      return
-    }
-    setNewConversationAgentConfiguration(configuration)
   }
 
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the

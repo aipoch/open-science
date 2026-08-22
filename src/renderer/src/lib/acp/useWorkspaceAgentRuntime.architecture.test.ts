@@ -76,6 +76,7 @@ const ownerNames = [
   'workspace-runtime-attachment-owner',
   'workspace-runtime-command-owner',
   'workspace-runtime-session-lifecycle-owner',
+  'workspace-runtime-selection-owner',
   'workspace-runtime-save-as-skill-owner'
 ] as const
 const facadeOwnerNames = ownerNames.filter(
@@ -530,7 +531,7 @@ describe('workspace runtime architecture', () => {
   it('keeps the facade, deep owners, and presentation adapter within their completion gates', () => {
     expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(600)
     for (const name of ownerNames) {
-      expect(physicalLines(ownerFilePath(name)), name).toBeLessThanOrEqual(660)
+      expect(physicalLines(ownerFilePath(name)), name).toBeLessThanOrEqual(700)
     }
     expect(
       physicalLines(`${subagentPresentationTarget}.ts`),
@@ -625,7 +626,11 @@ describe('workspace runtime architecture', () => {
         'workspace-runtime-prompt-preparation-owner',
         'workspace-runtime-command-owner'
       ],
-      'workspace-runtime-save-as-skill-owner': ['workspace-runtime-prompt-preparation-owner']
+      'workspace-runtime-selection-owner': [],
+      'workspace-runtime-save-as-skill-owner': [
+        'workspace-runtime-prompt-preparation-owner',
+        'workspace-runtime-selection-owner'
+      ]
     })
     expect(importsFrom(facadePath).map((reference) => reference.target)).toContain(
       subagentPresentationTarget

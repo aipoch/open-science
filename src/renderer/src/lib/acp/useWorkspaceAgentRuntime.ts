@@ -17,33 +17,16 @@ import {
   type AcpPermissionGrant,
   type AcpPermissionRequest,
   type AcpPermissionResponse,
-  type AcpSaveAsSkillRequest,
-  type AcpSessionAgentTarget
+  type AcpSaveAsSkillRequest
 } from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import { resolveModelContextWindow } from '../../../../shared/provider-registry'
-import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
-import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
-import {
-  selectFrameworkApiEndpoints,
-  selectVisionRelayAvailable,
-  useSettingsStore
-} from '../../stores/settings-store'
+import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
-import {
-  resolveHistoryReplayTarget,
-  resolveSessionHistoryReplayDescriptor,
-  type HistoryReplayDescriptor
-} from './history-preamble'
-import {
-  isConfigurationSelectable,
-  resolveSessionAgentConfiguration
-} from './session-agent-configuration'
 import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
@@ -73,10 +56,11 @@ import {
   createPermissionResponseAttemptOwner,
   pendingWorkspacePermissions
 } from './workspace-permission-response-attempt-owner'
+import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
 import {
-  useWorkspaceRuntimeSaveAsSkillOwner,
+  useWorkspaceRuntimeSelectionOwner,
   type WorkspaceSessionRuntimeSelection
-} from './workspace-runtime-save-as-skill-owner'
+} from './workspace-runtime-selection-owner'
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
@@ -163,117 +147,15 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     void restoredPermissionProjectionKey
     return useSessionStore.getState().sessions
   }, [restoredPermissionProjectionKey])
-  const activeProvider = useSettingsStore((state) =>
-    state.providers.find((candidate) => candidate.id === state.activeProviderId)
-  )
   const visionRelayAvailable = useSettingsStore(selectVisionRelayAvailable)
-  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFramework = useSettingsStore((state) =>
-    state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
-  )
-  const providers = useSettingsStore((state) => state.providers)
-  const activeModel = useSettingsStore((state) => state.activeModel)
-  const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
-  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const configuredModelCatalog = useMemo(
-    () =>
-      buildConfiguredModelCatalog({
-        providers,
-        includeAllClaudeSubscriptions: true,
-        frameworkId: agentFrameworkId,
-        frameworkEndpoints
-      }),
-    [agentFrameworkId, frameworkEndpoints, providers]
-  )
-  const resolveRuntimeSelection = useCallback(
-    (configuration: SessionAgentConfiguration | undefined): WorkspaceSessionRuntimeSelection => {
-      const provider = configuration
-        ? providers.find((candidate) => candidate.id === configuration.providerId)
-        : activeProvider
-      const model = configuration?.model ?? provider?.model ?? provider?.models[0]
-      const modelOption = configuredModelCatalog.find(
-        (option) => option.providerId === provider?.id && option.model === (model ?? '')
-      )
-      return {
-        supportsImageInput:
-          modelOption?.supportsImageInput ?? provider?.supportsImageInput === true,
-        supportsImageRelay: visionRelayAvailable,
-        agentFrameworkId,
-        agentBackendId: provider ? `${agentFrameworkId}:${provider.id}` : undefined,
-        agentModel: model,
-        agentTarget: configuration
-          ? ({ frameworkId: agentFrameworkId, ...configuration } satisfies AcpSessionAgentTarget)
-          : undefined,
-        historyReplayDescriptor: {
-          target: resolveHistoryReplayTarget(agentFrameworkId, provider, agentFramework),
-          contextWindow: provider?.vendorId
-            ? resolveModelContextWindow(provider.vendorId, model)
-            : provider?.contextWindow
-        } satisfies HistoryReplayDescriptor
-      }
-    },
-    [
-      activeProvider,
-      agentFramework,
-      agentFrameworkId,
-      configuredModelCatalog,
-      providers,
-      visionRelayAvailable
-    ]
-  )
-  const resolveStoredSessionResolution = useCallback(
-    (sessionId: string | undefined) => {
-      if (!sessionId) return undefined
-      const session = useSessionStore
-        .getState()
-        .sessions.find((candidate) => candidate.id === sessionId)
-      if (!session) return undefined
-      return resolveSessionAgentConfiguration({
-        session,
-        catalog: configuredModelCatalog,
-        activeProviderId: activeProvider?.id,
-        activeModel,
-        activeReasoningEffort: reasoningEffort
-      })
-    },
-    [activeModel, activeProvider, configuredModelCatalog, reasoningEffort]
-  )
-  const resolveStoredSessionConfiguration = useCallback(
-    (sessionId: string | undefined): SessionAgentConfiguration | undefined =>
-      resolveStoredSessionResolution(sessionId)?.configuration,
-    [resolveStoredSessionResolution]
-  )
-  const getSessionRuntimeSelection = useCallback(
-    (sessionId: string) => resolveRuntimeSelection(resolveStoredSessionConfiguration(sessionId)),
-    [resolveRuntimeSelection, resolveStoredSessionConfiguration]
-  )
-  const getSessionAgentTarget = useCallback(
-    (sessionId: string): AcpSessionAgentTarget | undefined => {
-      const resolution = resolveStoredSessionResolution(sessionId)
-      if (resolution?.status !== 'ready') return undefined
-      return resolveRuntimeSelection(resolution.configuration).agentTarget
-    },
-    [resolveRuntimeSelection, resolveStoredSessionResolution]
-  )
-  const getSessionSupportsImageInput = useCallback(
-    (sessionId: string): boolean => getSessionRuntimeSelection(sessionId).supportsImageInput,
-    [getSessionRuntimeSelection]
-  )
-  const getSessionHistoryReplayDescriptor = useCallback(
-    (sessionId: string): HistoryReplayDescriptor => {
-      const session = useSessionStore
-        .getState()
-        .sessions.find((candidate) => candidate.id === sessionId)
-      if (session?.agentConfiguration) {
-        return resolveRuntimeSelection(session.agentConfiguration).historyReplayDescriptor
-      }
-      return session
-        ? resolveSessionHistoryReplayDescriptor(session, providers, agentFrameworks)
-        : { target: 'codex-bridge' }
-    },
-    [agentFrameworks, providers, resolveRuntimeSelection]
-  )
+  const {
+    resolveRuntimeSelection,
+    getSessionRuntimeSelection,
+    getSessionAgentTarget,
+    getSessionSupportsImageInput,
+    getSessionHistoryReplayDescriptor,
+    admitSendConfiguration
+  } = useWorkspaceRuntimeSelectionOwner()
   const [lifecycleOwner] = useState(createWorkspaceRuntimeSessionLifecycleOwner)
   const liveRuntimeEvents = useWorkspaceRuntimeEventIngest(
     runtime,
@@ -421,20 +303,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
-      const storedResolution = input.agentConfiguration
-        ? undefined
-        : resolveStoredSessionResolution(input.sessionId)
-      const agentConfiguration = input.agentConfiguration
-        ? isConfigurationSelectable(input.agentConfiguration, configuredModelCatalog)
-          ? input.agentConfiguration
-          : undefined
-        : storedResolution?.status === 'ready'
-          ? storedResolution.configuration
-          : undefined
+      const agentConfiguration = admitSendConfiguration(input)
       if (!agentConfiguration) return Promise.resolve(undefined)
-      if (storedResolution?.status === 'ready' && storedResolution.changed && input.sessionId) {
-        useSessionStore.getState().setAgentConfiguration(input.sessionId, agentConfiguration)
-      }
       const resolvedInput = { ...input, agentConfiguration }
       const selected = resolveRuntimeSelection(agentConfiguration)
       lifecycleOwner.recordPromptPlanAuthority({
@@ -459,22 +329,20 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       )
     },
     [
-      configuredModelCatalog,
-      lifecycleOwner,
-      runtime,
-      visionRelayAvailable,
-      resolveRuntimeSelection,
-      resolveStoredSessionResolution,
+      admitSendConfiguration,
+      drainRuntimeEvents,
       handleSendPreparationStateChange,
-      drainRuntimeEvents
+      lifecycleOwner,
+      resolveRuntimeSelection,
+      runtime,
+      visionRelayAvailable
     ]
   )
 
   const resendEditedMessage = useCallback(
     (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> => {
-      const resolution = resolveStoredSessionResolution(sessionId)
-      if (resolution?.status !== 'ready') return Promise.resolve(false)
-      const configuration = resolution.configuration
+      const configuration = admitSendConfiguration({ sessionId })
+      if (!configuration) return Promise.resolve(false)
       const selected = resolveRuntimeSelection(configuration)
       return resendEditedWorkspaceMessage(
         runtime,
@@ -493,12 +361,12 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       )
     },
     [
-      runtime,
-      visionRelayAvailable,
-      resolveRuntimeSelection,
-      resolveStoredSessionResolution,
+      admitSendConfiguration,
+      drainRuntimeEvents,
       handleSendPreparationStateChange,
-      drainRuntimeEvents
+      resolveRuntimeSelection,
+      runtime,
+      visionRelayAvailable
     ]
   )
 

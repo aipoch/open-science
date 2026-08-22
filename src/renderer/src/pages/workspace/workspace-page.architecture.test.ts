@@ -33,7 +33,11 @@ const ownerPaths = {
   messageQueue: resolve(workspaceDirectory, 'workspace-message-queue-controller.ts'),
   branchSwitchGuard: resolve(workspaceDirectory, 'use-workspace-branch-switch-guard.ts'),
   sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
-  session: resolve(workspaceDirectory, 'workspace-session-controller.ts')
+  session: resolve(workspaceDirectory, 'workspace-session-controller.ts'),
+  sessionAgentConfiguration: resolve(
+    workspaceDirectory,
+    'workspace-session-agent-configuration-controller.ts'
+  )
 } as const
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
@@ -140,8 +144,8 @@ const conversationPanelPropNames = (): string[] => {
 
 describe('workspace page architecture', () => {
   it('keeps the page and extracted owners within their completion gates', () => {
-    // History-replay follow-on gates add wiring without adding a page-owned behavior.
-    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_214)
+    // Session-model fallback adds page wiring for the extracted configuration owner.
+    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_230)
     for (const ownerPath of [
       ownerPaths.layout,
       ownerPaths.composer,
@@ -149,7 +153,8 @@ describe('workspace page architecture', () => {
       ownerPaths.messageQueue,
       ownerPaths.branchSwitchGuard,
       ownerPaths.sideChat,
-      ownerPaths.session
+      ownerPaths.session,
+      ownerPaths.sessionAgentConfiguration
     ]) {
       expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(700)
     }
@@ -172,6 +177,9 @@ describe('workspace page architecture', () => {
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
+    ])
+    expect(importersOf(ownerPaths.sessionAgentConfiguration)).toEqual([
+      'pages/workspace/WorkspacePage.tsx'
     ])
     expect(importersOf(ownerPaths.conversation)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
