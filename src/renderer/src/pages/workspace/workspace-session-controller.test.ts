@@ -3,7 +3,10 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SpecialistListItem } from '../../../../shared/specialist'
+import type {
+  CompletionHandoffLifecycleEvent,
+  SpecialistListItem
+} from '../../../../shared/specialist'
 import type { SessionDeletionResult } from '../../../../shared/session-persistence'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
@@ -463,6 +466,54 @@ describe('workspace session controller', () => {
     hook.rerender(session({ id: active.id }))
 
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+  })
+
+  it('discards an idle Specialist failure after an authoritative handoff', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const authoritative = specialist('specialist-c', 'Specialist C')
+    let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const setSessionSpecialist = vi.fn().mockRejectedValue(new Error('switch rejected'))
+    window.api = {
+      specialist: {
+        setSessionSpecialist,
+        resolveSessionSpecialist: vi.fn().mockResolvedValue({
+          kind: 'bound',
+          profile: authoritative
+        }),
+        onHandoffLifecycleEvent: vi.fn((listener) => {
+          handoffListener = listener
+          return () => undefined
+        })
+      }
+    } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [specialist('specialist-b', 'Specialist B'), authoritative]
+    })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+    await act(async () => {
+      handoffListener?.({
+        id: 'handoff-1',
+        sessionId: active.id,
+        sequence: 1,
+        observedAt: 1,
+        phase: 'continuation-start',
+        target: 'Specialist C',
+        provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+      })
+      await Promise.resolve()
+    })
+
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-c')
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+    expect(hook.result.current.actions.retrySpecialistSelection()).toBe(false)
+    expect(setSessionSpecialist).toHaveBeenCalledOnce()
   })
 
   it('keeps recovery available when switching back to Main Agent rejects', async () => {

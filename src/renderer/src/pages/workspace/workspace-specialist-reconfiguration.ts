@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useState, type Dispatch, type SetStateAction } from 'react'
 
 import type {
   CompletionHandoffLifecycleEvent,
@@ -59,14 +59,14 @@ const useWorkspaceSpecialistReconfiguration = (
     sessionId: string | undefined
   ): WorkspaceSpecialistReconfigureError | null =>
     sessionId ? (idleFailures[sessionId]?.error ?? null) : null
-  const clearIdleRetry = (sessionId: string): void => {
+  const clearIdleRetry = useCallback((sessionId: string): void => {
     setIdleFailures((current) => {
       if (!Object.hasOwn(current, sessionId)) return current
       const next = { ...current }
       delete next[sessionId]
       return next
     })
-  }
+  }, [])
   const recordIdleFailure = (
     sessionId: string,
     specialistId: string | undefined,
