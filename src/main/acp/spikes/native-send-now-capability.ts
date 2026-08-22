@@ -27,6 +27,19 @@ export const LATEST_CLAUDE_AGENT_ACP_VERSION = '0.70.0'
 export const LATEST_CODEX_ACP_VERSION = '1.6.2'
 export const LATEST_OPENCODE_VERSION = '1.18.3'
 
+// Live ACP probe 2026-08-22 against isolated latest adapters. Codex 1.6.2 was
+// spawned with the shipped native CLI 0.144.6. OpenCode used local 1.18.3.
+export const LIVE_LATEST_IDLE_STEER = Object.freeze({
+  claude: Object.freeze({ kind: 'prompt-required', reason: 'noRunningTurn' }),
+  codex: Object.freeze({ kind: 'started-new-turn' }),
+  opencode: Object.freeze({ kind: 'method-not-found' })
+})
+
+export const LIVE_LATEST_INJECT_STEER = Object.freeze({
+  claude: Object.freeze({ kind: 'injected' }),
+  codex: Object.freeze({ kind: 'injected' })
+})
+
 // Production policy. A second `session/prompt` is rejected before it reaches the agent.
 export const HOST_CONCURRENT_PROMPT_POLICY = 'reject' as const
 

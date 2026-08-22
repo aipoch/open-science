@@ -10,6 +10,8 @@ import {
   LATEST_CLAUDE_AGENT_ACP_VERSION,
   LATEST_CODEX_ACP_VERSION,
   LATEST_OPENCODE_VERSION,
+  LIVE_LATEST_IDLE_STEER,
+  LIVE_LATEST_INJECT_STEER,
   SHIPPED_CLAUDE_AGENT_ACP_VERSION,
   SHIPPED_CODEX_ACP_VERSION,
   SHIPPED_OPENCODE_VERSION,
@@ -31,6 +33,15 @@ describe('native Send now capability spike', () => {
     expect(LATEST_CLAUDE_AGENT_ACP_VERSION).toBe('0.70.0')
     expect(LATEST_CODEX_ACP_VERSION).toBe('1.6.2')
     expect(LATEST_OPENCODE_VERSION).toBe('1.18.3')
+    expect(LIVE_LATEST_IDLE_STEER).toEqual({
+      claude: { kind: 'prompt-required', reason: 'noRunningTurn' },
+      codex: { kind: 'started-new-turn' },
+      opencode: { kind: 'method-not-found' }
+    })
+    expect(LIVE_LATEST_INJECT_STEER).toEqual({
+      claude: { kind: 'injected' },
+      codex: { kind: 'injected' }
+    })
     expect(ACP_STEERING_METHOD).toBe('_session/steering')
     expect(HOST_CONCURRENT_PROMPT_POLICY).toBe('reject')
   })
