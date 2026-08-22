@@ -110,6 +110,43 @@ describe('ComposerMessageQueue', () => {
     expect(actions.sendNow).toHaveBeenCalledWith('queued-a')
   })
 
+  it('shows a wait-until-idle hint on a deferred queued row', () => {
+    container = document.createElement('div')
+    root = createRoot(container)
+    act(() =>
+      root.render(
+        <QueueHarness
+          items={[
+            {
+              id: 'queued-a',
+              text: 'Follow up after this run',
+              attachmentCount: 0,
+              phase: 'queued',
+              deferredUntilIdle: true
+            }
+          ]}
+          announcement="Queued message will send after the current run finishes."
+          actions={{
+            move: vi.fn(),
+            moveTo: vi.fn(),
+            remove: vi.fn(),
+            edit: vi.fn(),
+            sendNow: vi.fn(async () => undefined)
+          }}
+        />
+      )
+    )
+    click(container.querySelector('[data-testid="composer-queue-trigger"]')!)
+    const row = container.querySelector('[data-testid="composer-queue-item"]')!
+    expect(row.textContent).toContain('Queued message will send after the current run finishes.')
+    expect(row.querySelector('[role="alert"]')).toBeNull()
+    expect(
+      Array.from(row.querySelectorAll('button')).some((button) =>
+        button.textContent?.includes('Send now')
+      )
+    ).toBe(true)
+  })
+
   it('maps arrow keys on the drag handle to keyboard reordering', () => {
     container = document.createElement('div')
     root = createRoot(container)

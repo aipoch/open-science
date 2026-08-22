@@ -654,7 +654,11 @@ describe('workspace message queue controller', () => {
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
     expect(order).toEqual([])
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()
-    expect(hook.result.current.items[0]).toMatchObject({ text: 'wait', phase: 'queued' })
+    expect(hook.result.current.items[0]).toMatchObject({
+      text: 'wait',
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
 
     currentSession = session('idle')
     hook.rerender(
@@ -747,7 +751,8 @@ describe('workspace message queue controller', () => {
     expect(hook.result.current.items).toHaveLength(1)
     expect(hook.result.current.items[0]).toMatchObject({
       text: 'keep me',
-      phase: 'queued'
+      phase: 'queued',
+      deferredUntilIdle: true
     })
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
@@ -843,7 +848,11 @@ describe('workspace message queue controller', () => {
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
-    expect(hook.result.current.items[0]).toMatchObject({ text: 'fallback', phase: 'queued' })
+    expect(hook.result.current.items[0]).toMatchObject({
+      text: 'fallback',
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
 
     currentSession = session('idle')
     hook.rerender(

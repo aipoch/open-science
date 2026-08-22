@@ -267,6 +267,10 @@ const ComposerMessageQueueContent = ({
                       <p className="mt-0.5 text-[11px] leading-4 text-red-400" role="alert">
                         {queueErrorText(t, item.error)}
                       </p>
+                    ) : item.deferredUntilIdle ? (
+                      <p className="mt-0.5 text-[11px] leading-4 text-text-300">
+                        {t('Queued message will send after the current run finishes.')}
+                      </p>
                     ) : null}
                   </div>
 

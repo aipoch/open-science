@@ -55,11 +55,12 @@ type MessageQueueItem = {
   cwd: string | undefined
   phase: MessageQueuePhase
   error?: MessageQueueError
+  deferredUntilIdle?: boolean
 }
 
 type MessageQueueItemView = Pick<
   MessageQueueItem,
-  'id' | 'text' | 'attachmentCount' | 'phase' | 'error'
+  'id' | 'text' | 'attachmentCount' | 'phase' | 'error' | 'deferredUntilIdle'
 >
 
 type MessageQueueAdmission = {
@@ -386,7 +387,7 @@ const useWorkspaceMessageQueueController = (
     (
       sessionId: string,
       itemId: string,
-      update: Partial<Pick<MessageQueueItem, 'phase' | 'error'>>
+      update: Partial<Pick<MessageQueueItem, 'phase' | 'error' | 'deferredUntilIdle'>>
     ): void => {
       const items = itemsFor(sessionId)
       const index = items.findIndex((item) => item.id === itemId)
@@ -433,13 +434,21 @@ const useWorkspaceMessageQueueController = (
       if (!item || item.phase === 'sending' || item.phase === 'error') return
       const contextError = queueItemContextError(session, item)
       if (contextError) {
-        replaceItem(sessionId, item.id, { phase: 'error', error: contextError })
+        replaceItem(sessionId, item.id, {
+          phase: 'error',
+          error: contextError,
+          deferredUntilIdle: false
+        })
         return
       }
       if (!current.isSpecialistReady(sessionId)) return
       if (!queueSessionIsSendable(current, session)) return
 
-      replaceItem(sessionId, item.id, { phase: 'sending', error: undefined })
+      replaceItem(sessionId, item.id, {
+        phase: 'sending',
+        error: undefined,
+        deferredUntilIdle: false
+      })
       let resolveCompletion!: () => void
       const activeDispatch: MessageQueueDispatch = {
         itemId: item.id,
@@ -484,7 +493,8 @@ const useWorkspaceMessageQueueController = (
           }
           replaceItem(sessionId, item.id, {
             phase: 'error',
-            error: { kind: 'send', detail: errorMessage(error) }
+            error: { kind: 'send', detail: errorMessage(error) },
+            deferredUntilIdle: false
           })
         } finally {
           activeDispatch.settled = true
@@ -603,7 +613,8 @@ const useWorkspaceMessageQueueController = (
       if (!optionsRef.current.composer.restoreQueuedDraft(item.snapshot)) {
         replaceItem(queue.sessionId, itemId, {
           phase: 'error',
-          error: { kind: 'edit' }
+          error: { kind: 'edit' },
+          deferredUntilIdle: false
         })
         return
       }
@@ -646,10 +657,19 @@ const useWorkspaceMessageQueueController = (
         if (liveSession) {
           const contextError = queueItemContextError(liveSession, item)
           if (contextError) {
-            replaceItem(queue.sessionId, itemId, { phase: 'error', error: contextError })
+            replaceItem(queue.sessionId, itemId, {
+              phase: 'error',
+              error: contextError,
+              deferredUntilIdle: false
+            })
             return
           }
           if (!current.isSpecialistReady(queue.sessionId)) {
+            replaceItem(queue.sessionId, itemId, {
+              phase: 'queued',
+              error: undefined,
+              deferredUntilIdle: true
+            })
             emit('Queued message will send after the current run finishes.')
             return
           }
@@ -660,7 +680,11 @@ const useWorkspaceMessageQueueController = (
           liveSession?.status === 'waiting-permission'
         const referencedArtifacts = docToArtifactRefs(item.snapshot.doc)
         if (liveTurn && hasPayload && current.runtime.steerFollowUp) {
-          replaceItem(queue.sessionId, itemId, { phase: 'sending', error: undefined })
+          replaceItem(queue.sessionId, itemId, {
+            phase: 'sending',
+            error: undefined,
+            deferredUntilIdle: false
+          })
           emit('Sending the queued message into the current run.')
           try {
             const steered = await current.runtime.steerFollowUp({
@@ -697,10 +721,20 @@ const useWorkspaceMessageQueueController = (
             drainQueues()
             return
           }
+          replaceItem(queue.sessionId, itemId, {
+            phase: 'queued',
+            error: undefined,
+            deferredUntilIdle: true
+          })
           emit('Queued message will send after the current run finishes.')
           return
         }
         if (liveTurn) {
+          replaceItem(queue.sessionId, itemId, {
+            phase: 'queued',
+            error: undefined,
+            deferredUntilIdle: true
+          })
           emit('Queued message will send after the current run finishes.')
           return
         }
@@ -711,7 +745,8 @@ const useWorkspaceMessageQueueController = (
       } catch (error) {
         replaceItem(queue.sessionId, itemId, {
           phase: 'error',
-          error: { kind: 'cancel', detail: errorMessage(error) }
+          error: { kind: 'cancel', detail: errorMessage(error) },
+          deferredUntilIdle: false
         })
       }
     },
@@ -730,12 +765,13 @@ const useWorkspaceMessageQueueController = (
   return {
     lifecycle: { enqueue, blocksImmediateSend },
     actions: { move, moveTo, remove, edit, sendNow },
-    items: activeItems.map(({ id, text, attachmentCount, phase, error }) => ({
+    items: activeItems.map(({ id, text, attachmentCount, phase, error, deferredUntilIdle }) => ({
       id,
       text,
       attachmentCount,
       phase,
-      error
+      error,
+      ...(deferredUntilIdle ? { deferredUntilIdle: true } : {})
     })),
     announcement
   }
