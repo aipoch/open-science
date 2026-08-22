@@ -12,6 +12,8 @@ import type {
   AcpPermissionResponse,
   ElicitationResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
@@ -1027,6 +1029,13 @@ class AcpRuntimeCoordinator {
           this.activePromptRequests.delete(request.sessionId)
         }
       })
+  }
+
+  async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
+    this.assertPromptAdmissionOpen()
+    await this.waitForInitialization()
+    this.assertPromptAdmissionOpen()
+    return this.runtimeForSession(request.sessionId).steerFollowUp(request)
   }
 
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {

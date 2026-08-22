@@ -36,14 +36,14 @@ import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
 import { terminateProcessTree } from '../process-tree'
 
-export const CODEX_ACP_VERSION = '1.1.4'
+export const CODEX_ACP_VERSION = '1.6.2'
 export const CODEX_VERSION = '0.144.6'
 
 const log = createLogger('managed-codex')
 const MAX_INITIALIZE_DIAGNOSTIC_CHARS = 4 * 1024
 
 export const CODEX_ACP_INTEGRITY =
-  'sha512-DzusIpGwlQwMWuHgJhU8FWMsyQvzjenB93IEzQATkdbNulo5Rd9GKOz8+B+/C9iWWxmyXgtgmjzaL+iRFyDryQ=='
+  'sha512-2eF1mbs1gTqkZJSLYOun/pFDx37sYa7W63HOPezC37b/R8AYms5O1nfQu8lrqFSGDrwDZkASVORymLcqjCNqyA=='
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':

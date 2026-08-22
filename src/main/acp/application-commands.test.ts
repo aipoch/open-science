@@ -48,6 +48,10 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     resetSessionContext: vi.fn(async () => ({ ...sessionResponse, contextReset: true })),
     compactSession: vi.fn(async () => snapshot),
     cancelPrompt: vi.fn(async () => snapshot),
+    steerFollowUp: vi.fn(async () => ({
+      injected: false as const,
+      reason: 'not-advertised' as const
+    })),
     deleteSession: vi.fn(async () => snapshot),
     respondToPermission: vi.fn(async () => snapshot),
     respondToElicitation: vi.fn(async () => snapshot),
@@ -128,7 +132,8 @@ describe('ACP application commands', () => {
       'acp:revoke-permission-grant',
       'acp:save-as-skill',
       'acp:send-prompt',
-      'acp:set-permission-profile'
+      'acp:set-permission-profile',
+      'acp:steer-follow-up'
     ])
     expect(router.dispatcher.commandNames()).toEqual(
       acpApplicationCommands.commands.map(({ name }) => name).sort()

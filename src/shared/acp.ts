@@ -820,6 +820,36 @@ export type AcpPromptRequest = {
   }
 }
 
+export type AcpSteerFollowUpRequest = {
+  sessionId: string
+  text: string
+}
+
+export type AcpSteerFollowUpTransport = 'acp-steering' | 'opencode-http'
+
+export type AcpSteerFollowUpRefuseReason =
+  | 'empty-text'
+  | 'attachments'
+  | 'no-live-turn'
+  | 'not-advertised'
+  | 'started-new-turn'
+  | 'prompt-required'
+  | 'unrecognized-success'
+  | 'missing-outcome'
+  | 'unknown-outcome'
+  | 'dispatch-failed'
+
+export type AcpSteerFollowUpResult =
+  | {
+      injected: true
+      transport: AcpSteerFollowUpTransport
+      messageId: string
+    }
+  | {
+      injected: false
+      reason: AcpSteerFollowUpRefuseReason
+    }
+
 export type AcpCancelPromptRequest = {
   sessionId: string
   scope?: 'turn' | 'subagents'

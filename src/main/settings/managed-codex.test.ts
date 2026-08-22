@@ -242,7 +242,7 @@ describe('managed Codex paths and platform resolution', () => {
     const root = '/data/open-science'
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
 
-    expect(CODEX_ACP_VERSION).toBe('1.1.4')
+    expect(CODEX_ACP_VERSION).toBe('1.6.2')
     expect(CODEX_VERSION).toBe('0.144.6')
     expect(CODEX_ACP_INTEGRITY).toMatch(/^sha512-/)
     expect(Object.keys(CODEX_INTEGRITIES).sort()).toEqual([
@@ -520,7 +520,7 @@ describe('installManagedCodex', () => {
       codexVersion: '0.144.6'
     })
     expect(metadataUrls).toEqual([
-      'https://reg/@agentclientprotocol%2fcodex-acp/1.1.4',
+      'https://reg/@agentclientprotocol%2fcodex-acp/1.6.2',
       'https://reg/@openai%2fcodex/0.144.6-darwin-arm64'
     ])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('codex-acp')

@@ -11,6 +11,7 @@ import type {
   AcpConnectionResourceOwner,
   AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
+import { retainInitializeCapabilities } from './native-follow-up'
 
 type LifecycleEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
 type TransferredConnection = ReturnType<AcpAgentConnectionCandidate['transferTo']>
@@ -165,16 +166,13 @@ class AcpConnectionLifecycleWorkflow {
         attempt.assertCurrent()
       }
 
-      const handle = attempt.publish({
-        close: Boolean(initResult.agentCapabilities?.sessionCapabilities?.close),
-        delete: Boolean(initResult.agentCapabilities?.sessionCapabilities?.delete),
-        resume: Boolean(initResult.agentCapabilities?.sessionCapabilities?.resume)
-      })
+      const handle = attempt.publish(retainInitializeCapabilities(initResult))
       log.info('agent initialized', {
         protocolVersion: initResult.protocolVersion,
         supportsSessionClose: handle.capabilities.close,
         supportsSessionDelete: handle.capabilities.delete,
-        supportsSessionResume: handle.capabilities.resume
+        supportsSessionResume: handle.capabilities.resume,
+        supportsSteering: handle.capabilities.steering
       })
       this.options.pushEvent({
         kind: 'system',

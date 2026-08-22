@@ -112,6 +112,7 @@ type WorkspaceAgentRuntime = {
     input: ResendEditedMessageInput
   ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
+  steerFollowUp: ReturnType<typeof useAcpRuntime>['steerFollowUp']
   resumeInterruptedSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
@@ -551,6 +552,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     sendMessage,
     resendEditedMessage,
     cancelRun,
+    steerFollowUp: runtime.steerFollowUp,
     resumeInterruptedSession,
     respondToPermission,
     setPermissionProfile,

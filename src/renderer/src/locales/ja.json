@@ -2870,6 +2870,7 @@
   "Queued message removed.": "キューに入れられたメッセージが削除されました。",
   "Queued message moved to the composer for editing.": "キューに入れられたメッセージは編集のためにコンポーザーに移動されました。",
   "Stopping the current run before sending the queued message.": "キューに入れられたメッセージを送信する前に、現在の実行を停止します。",
+  "Sending the queued message into the current run.": "キューのメッセージを現在の実行に送信しています。",
   "Category breakdown is unavailable for this run.": "この実行ではカテゴリの内訳は利用できません。",
   "Category breakdown is unavailable for this snapshot.": "このスナップショットではカテゴリの内訳は利用できません。",
   "One bar per terminal run; hover or focus to preview, then select to keep details visible.": "ターミナルの実行ごとに 1 つのバー。ホバーまたはフォーカスしてプレビューし、選択して詳細を表示したままにします。",

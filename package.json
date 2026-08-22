@@ -55,7 +55,7 @@
     "predev": "node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "^0.60.0",
+    "@agentclientprotocol/claude-agent-acp": "^0.70.0",
     "@agentclientprotocol/sdk": "^1.2.1",
     "@aipoch/safe-file-publisher-native": "file:packages/safe-file-publisher-native",
     "@anthropic-ai/tokenizer": "^0.0.4",
