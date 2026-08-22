@@ -112,6 +112,7 @@
     "workspace_page": {
       "ownerPaths": [
         "src/renderer/src/pages/workspace/WorkspacePage.tsx",
+        "src/renderer/src/pages/workspace/notebook-preview-availability.ts",
         "src/renderer/src/pages/workspace/workspace-panel-layout.tsx",
         "src/renderer/src/pages/workspace/workspace-composer-controller.ts",
         "src/renderer/src/pages/workspace/workspace-conversation-controller.ts",
