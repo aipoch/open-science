@@ -10,7 +10,7 @@ import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-run
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type ExternalWebAccess, type RunningWebServer } from './http-server'
-import { projectTaskRuntimeEvent } from './application-event-projections'
+import { projectTaskRuntimeEvents } from './application-event-projections'
 import { HeadlessTaskApi } from './task-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 
@@ -111,8 +111,7 @@ const createWebServiceController = (
     {
       subscribeEvents: (listener) =>
         applicationEvents.subscribe((event) => {
-          const runtimeEvent = projectTaskRuntimeEvent(event)
-          if (runtimeEvent) listener(runtimeEvent)
+          for (const runtimeEvent of projectTaskRuntimeEvents(event)) listener(runtimeEvent)
         })
     }
   )

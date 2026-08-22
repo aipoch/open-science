@@ -450,7 +450,7 @@ export interface OpenScienceAPI {
     revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot>
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
     onAgentRuntimeUpdate(listener: AcpListener<AcpAgentRuntimeUpdate>): RemoveListener
-    onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
+    onEvent(listener: AcpListener<readonly AcpRuntimeEvent[]>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
   }
   sideChat: {

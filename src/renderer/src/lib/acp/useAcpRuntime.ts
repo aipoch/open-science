@@ -173,9 +173,9 @@ const useAcpRuntime = (): {
       hasPushedSnapshot = true
       applyMountedSnapshot(snapshot)
     })
-    const removeEventListener = onRuntimeEvent?.((event: AcpRuntimeEvent) => {
+    const removeEventListener = onRuntimeEvent?.((events: readonly AcpRuntimeEvent[]) => {
       if (!isMounted) return
-      runtimeEventOwner.observeEvent(event)
+      runtimeEventOwner.observeEvents(events)
     })
 
     void loadInitialState()

@@ -320,14 +320,14 @@ describe('renderer surface compatibility matrix', () => {
   it('passes complete terminal metadata through Electron, Web, and Task without recomputation', () => {
     const event: ApplicationEvent<'acp:event'> = {
       channel: 'acp:event',
-      payload: TERMINAL_EVENT_FIXTURE
+      payload: [TERMINAL_EVENT_FIXTURE]
     }
     const webEvent = projectWebRendererEvent(event)
     expect(webEvent).toMatchObject({ protocolVersion: 1, channel: 'acp:event' })
     const projected = projectThroughRendererAdapters('acp.onEvent', 'acp:event', webEvent?.payload)
 
-    expect(projected.electronPayload).toEqual(TERMINAL_EVENT_FIXTURE)
-    expect(projected.webPayload).toEqual(TERMINAL_EVENT_FIXTURE)
+    expect(projected.electronPayload).toEqual([TERMINAL_EVENT_FIXTURE])
+    expect(projected.webPayload).toEqual([TERMINAL_EVENT_FIXTURE])
     expect(projectTaskRuntimeEvent(event)).toEqual(TERMINAL_EVENT_FIXTURE)
     expect(projectPublicTaskEvent(event)).toEqual({
       type: 'run.event',

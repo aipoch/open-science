@@ -19,7 +19,7 @@ import {
 
 type AcpRuntimeApi = ReturnType<typeof useAcpRuntime>
 type OnStateListener = (snapshot: AcpStateSnapshot) => void
-type OnEventListener = (event: AcpRuntimeEvent) => void
+type OnEventListener = (events: readonly AcpRuntimeEvent[]) => void
 
 // Minimal renderHook so we can exercise the real hook without pulling in @testing-library/react,
 // which the repo does not depend on. A null-rendering harness captures each render's return value.
@@ -472,7 +472,7 @@ describe('useAcpRuntime state subscription', () => {
     expect(acpApi.onEvent.mock.invocationCallOrder[0]).toBeLessThan(
       acpApi.getState.mock.invocationCallOrder[0]
     )
-    act(() => capturedEventListener?.(event))
+    act(() => capturedEventListener?.([event]))
 
     expect(delivered).toHaveBeenCalledWith([event], undefined)
     expect(result.current.currentRuntimeEvents()).toEqual([event])
@@ -499,7 +499,7 @@ describe('useAcpRuntime state subscription', () => {
       text: 'newer live output'
     }
 
-    act(() => capturedEventListener?.(event))
+    act(() => capturedEventListener?.([event]))
     await act(async () => {
       initial.resolve(createSnapshot({ revision: 1, events: [] }))
       await initial.promise

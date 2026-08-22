@@ -517,14 +517,16 @@ describe('startWebHttpServer', () => {
     await new Promise<void>((resolve) => publicSocket.once('open', resolve))
     const publicMessages: unknown[] = []
     publicSocket.on('message', (data) => publicMessages.push(JSON.parse(data.toString())))
-    applicationEvents.publish('acp:event', {
-      id: 'event-1',
-      timestamp: 1,
-      level: 'info',
-      sessionId: 'session-1',
-      kind: 'message',
-      text: 'Hi'
-    })
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-1',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'session-1',
+        kind: 'message',
+        text: 'Hi'
+      }
+    ])
     applicationEvents.publish('acp:permission-request', {
       sessionId: 'session-1',
       requestId: 'permission-1',
