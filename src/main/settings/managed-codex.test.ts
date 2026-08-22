@@ -1725,9 +1725,9 @@ describe('patchCodexAcpTurnUsageSource', () => {
 
     expect(() => patchCodexAcpTurnUsageSource(adapter162)).not.toThrow()
     const patched = patchCodexAcpTurnUsageSource(adapter162)
-    expect(patched.split('usage: this.buildPromptUsage(\n  sessionState.lastTokenUsage\n),').length - 1).toBe(
-      4
-    )
+    expect(
+      patched.split('usage: this.buildPromptUsage(\n  sessionState.lastTokenUsage\n),').length - 1
+    ).toBe(4)
     expect(patched).toContain('promptTokenUsageObserved')
   })
 
