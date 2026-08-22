@@ -178,6 +178,66 @@ describe('settings Connectors slice', () => {
     expect(commands.listConnectors).toHaveBeenCalledTimes(2)
   })
 
+  it('notices when runtime invalidates a previously authenticated OAuth Connector', async () => {
+    let runtimeChanged: (() => void) | undefined
+    const authenticated = {
+      ...server('oauth'),
+      displayName: 'OAuth MCP',
+      transport: 'streamable_http' as const,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: true }
+    }
+    const unauthenticated = {
+      ...authenticated,
+      enabled: false,
+      availability: 'unauthenticated' as const
+    }
+    const runtimeCommands: ConnectorCommands = {
+      ...createCommands(),
+      listConnectors: vi
+        .fn()
+        .mockResolvedValueOnce(snapshot([], [authenticated]))
+        .mockResolvedValueOnce(snapshot([], [unauthenticated]))
+        .mockResolvedValueOnce(snapshot([], [unauthenticated])),
+      onConnectorRuntimeChanged: vi.fn((listener: () => void) => {
+        runtimeChanged = listener
+        return () => undefined
+      })
+    }
+    ;({ store, commands } = createHarness(runtimeCommands))
+
+    await store.getState().loadConnectors()
+    runtimeChanged?.()
+
+    await vi.waitFor(() =>
+      expect(store.getState().connectorAuthNotice).toEqual({
+        id: 'oauth',
+        displayName: 'OAuth MCP'
+      })
+    )
+    store.getState().dismissConnectorAuthNotice()
+    runtimeChanged?.()
+    await vi.waitFor(() => expect(commands.listConnectors).toHaveBeenCalledTimes(3))
+    expect(store.getState().connectorAuthNotice).toBeUndefined()
+  })
+
+  it('does not treat initial or mutation-owned unauthenticated state as token expiry', async () => {
+    const unauthenticated = {
+      ...server('oauth'),
+      transport: 'streamable_http' as const,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: false },
+      availability: 'unauthenticated' as const
+    }
+    vi.mocked(commands.listConnectors).mockResolvedValue(snapshot([], [unauthenticated]))
+    vi.mocked(commands.authenticateCustomServer).mockResolvedValue(snapshot([], [unauthenticated]))
+
+    await store.getState().loadConnectors()
+    await store.getState().authenticateCustomServer({ id: 'oauth' })
+
+    expect(store.getState().connectorAuthNotice).toBeUndefined()
+  })
+
   it('does not let an older runtime snapshot overwrite a newer mutation', async () => {
     let runtimeChanged: (() => void) | undefined
     let settleRuntimeSnapshot!: (result: ConnectorsSnapshot) => void
@@ -399,12 +459,14 @@ describe('settings Connectors slice', () => {
       .setNcbiCredentials({ contactEmail: 'science@example.test', apiKey: 'secret' })
     expect(store.getState().ncbi).toEqual(withCredentials.ncbi)
 
-    await store.getState().addCustomServer({
-      name: 'created',
-      displayName: 'Created',
-      transport: 'stdio',
-      command: 'npx'
-    })
+    await expect(
+      store.getState().addCustomServer({
+        name: 'created',
+        displayName: 'Created',
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).resolves.toEqual(created)
     expect(store.getState().customServers).toEqual([created])
 
     await store.getState().updateCustomServer({

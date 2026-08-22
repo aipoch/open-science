@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
+import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
 import { isCustomConnectorName, toCustomConnectorName } from '../../../../shared/custom-connector'
 import {
   RESOURCE_ID_MAX_LENGTH,
@@ -265,6 +266,7 @@ export function ConnectorAddForm({
   const [trusted, setTrusted] = useState(isEdit)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
   // A generated-ID collision must remain visible instead of leaving the disabled submit button as
   // the only sign that something needs attention.
   const advancedVisible =
@@ -376,6 +378,7 @@ export function ConnectorAddForm({
           }
         }
         await updateCustomServer(request)
+        onDone()
       } else {
         const request: AddCustomServerRequest = {
           ...(submittedId ? { id: submittedId } : {}),
@@ -392,9 +395,10 @@ export function ConnectorAddForm({
             ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {})
           }
         }
-        await addCustomServer(request)
+        const created = await addCustomServer(request)
+        if (request.oauth) setOAuthSignInServer(created)
+        else onDone()
       }
-      onDone()
     } catch (err) {
       const message = err instanceof Error ? err.message : undefined
       const localizedMessage =
@@ -959,10 +963,23 @@ export function ConnectorAddForm({
                 : t('Adding…')
               : isEdit
                 ? t('Save changes')
-                : t('Add connector')}
+                : mode === 'remote' && remoteAuth === 'oauth'
+                  ? t('Add and sign in')
+                  : t('Add connector')}
           </Button>
         </div>
       </div>
+      <ConnectorOAuthSignInDialog
+        server={oauthSignInServer}
+        onAuthenticated={() => {
+          setOAuthSignInServer(undefined)
+          onDone()
+        }}
+        onFinish={() => {
+          setOAuthSignInServer(undefined)
+          onDone()
+        }}
+      />
     </div>
   )
 }

@@ -2838,7 +2838,6 @@
   "OAuth configuration only; tokens excluded": "Configuration OAuth uniquement ; jetons exclus",
   "Names only: {{names}}": "Noms uniquement : {{names}}",
   "Save configuration": "Enregistrer la configuration",
-  "Connecting…": "Connexion…",
   "GitHub token · {{mask}}": "Jeton GitHub · {{mask}}",
   "GitHub token": "Jeton GitHub",
   "Setup incomplete": "Configuration incomplète",
@@ -3462,5 +3461,12 @@
   "This imported Connector requires a client secret entered locally.": "Ce connecteur importé nécessite un secret client saisi localement.",
   "Authorization server URL is required for a pre-registered client.": "L’URL du serveur d’autorisation est requise pour un client préenregistré.",
   "Client ID is required when a client secret is configured.": "L’ID client est requis lorsqu’un secret client est configuré.",
-  "Client metadata URL cannot be combined with a pre-registered client.": "L’URL des métadonnées client ne peut pas être combinée avec un client préenregistré."
+  "Client metadata URL cannot be combined with a pre-registered client.": "L’URL des métadonnées client ne peut pas être combinée avec un client préenregistré.",
+  "Add and sign in": "Ajouter et se connecter",
+  "Sign in to {{name}}": "Se connecter à {{name}}",
+  "Complete authorization in your browser. This dialog will update when sign-in finishes.": "Terminez l’autorisation dans votre navigateur. Cette boîte de dialogue sera mise à jour une fois la connexion terminée.",
+  "Finish later": "Terminer plus tard",
+  "{{name}} needs sign-in": "{{name}} nécessite une connexion",
+  "Authorization expired or was revoked. Sign in again to keep this Connector available.": "L’autorisation a expiré ou a été révoquée. Reconnectez-vous pour que ce Connecteur reste disponible.",
+  "Open Connectors": "Ouvrir les Connecteurs"
 }

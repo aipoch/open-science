@@ -2930,7 +2930,6 @@
   "OAuth configuration only; tokens excluded": "Только настройки OAuth; токены исключены",
   "Names only: {{names}}": "Только имена: {{names}}",
   "Save configuration": "Сохранить настройки",
-  "Connecting…": "Соединение…",
   "GitHub token · {{mask}}": "Токен GitHub · {{mask}}",
   "GitHub token": "Токен GitHub",
   "Setup incomplete": "Настройка не завершена",
@@ -3573,5 +3572,12 @@
   "This imported Connector requires a client secret entered locally.": "Для импортированного коннектора необходимо локально ввести секрет клиента.",
   "Authorization server URL is required for a pre-registered client.": "Для заранее зарегистрированного клиента требуется URL сервера авторизации.",
   "Client ID is required when a client secret is configured.": "Если настроен секрет клиента, необходимо указать идентификатор клиента.",
-  "Client metadata URL cannot be combined with a pre-registered client.": "URL метаданных клиента нельзя использовать вместе с заранее зарегистрированным клиентом."
+  "Client metadata URL cannot be combined with a pre-registered client.": "URL метаданных клиента нельзя использовать вместе с заранее зарегистрированным клиентом.",
+  "Add and sign in": "Добавить и войти",
+  "Sign in to {{name}}": "Войти в {{name}}",
+  "Complete authorization in your browser. This dialog will update when sign-in finishes.": "Завершите авторизацию в браузере. После входа это диалоговое окно обновится.",
+  "Finish later": "Завершить позже",
+  "{{name}} needs sign-in": "Для {{name}} требуется вход",
+  "Authorization expired or was revoked. Sign in again to keep this Connector available.": "Авторизация истекла или была отозвана. Войдите снова, чтобы этот Коннектор оставался доступным.",
+  "Open Connectors": "Открыть Коннекторы"
 }

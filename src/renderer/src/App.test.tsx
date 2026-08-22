@@ -236,6 +236,9 @@ vi.mock('@/components/LegacyDataMoveDialog', () => ({
 vi.mock('@/components/LifecycleToast', () => ({
   LifecycleToast: (): React.JSX.Element => <div data-testid="lifecycle-toast" />
 }))
+vi.mock('@/components/ConnectorAuthToast', () => ({
+  ConnectorAuthToast: (): React.JSX.Element => <div data-testid="connector-auth-toast" />
+}))
 vi.mock('@/components/NotificationLiveToast', () => ({
   NotificationLiveToast: (): React.JSX.Element => <div data-testid="notification-live-toast" />
 }))
@@ -637,6 +640,11 @@ describe('App startup routing', () => {
     ).not.toBeNull()
     expect(
       container.querySelector('[data-testid="lifecycle-toast"]')?.closest('[aria-hidden="true"]')
+    ).not.toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="connector-auth-toast"]')
+        ?.closest('[aria-hidden="true"]')
     ).not.toBeNull()
     expect(
       container.querySelector('[data-testid="permission-undo"]')?.closest('[aria-hidden="true"]')

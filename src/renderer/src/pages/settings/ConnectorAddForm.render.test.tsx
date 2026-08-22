@@ -58,8 +58,8 @@ const checkTrust = (): void => {
 }
 
 const addButton = (): HTMLButtonElement | undefined =>
-  Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (button) => button.textContent?.trim() === 'Add connector'
+  Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+    ['Add connector', 'Add and sign in'].includes(button.textContent?.trim() ?? '')
   )
 
 const advancedButton = (): HTMLButtonElement | null =>
@@ -372,10 +372,23 @@ describe('ConnectorAddForm (remote server)', () => {
   })
 
   it('adds a remote OAuth server with scopes and discovery overrides', async () => {
+    const created = {
+      id: 'oauth-mcp',
+      name: 'oauth-mcp',
+      displayName: 'OAuth MCP',
+      transport: 'streamable_http' as const,
+      enabled: false,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: false }
+    }
+    const onDone = vi.fn()
+    useSettingsStore.setState({
+      addCustomServer: vi.fn().mockResolvedValue(created),
+      authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
+      cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
+    })
     act(() => {
-      root.render(
-        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
-      )
+      root.render(<ConnectorAddForm initialTransport="remote" onDone={onDone} onCancel={vi.fn()} />)
     })
 
     setValue('Display name', 'OAuth MCP')
@@ -399,6 +412,7 @@ describe('ConnectorAddForm (remote server)', () => {
       ).not.toBeNull()
     }
     checkTrust()
+    expect(addButton()?.textContent).toContain('Add and sign in')
 
     await act(async () => {
       addButton()?.click()
@@ -416,6 +430,10 @@ describe('ConnectorAddForm (remote server)', () => {
         clientMetadataUrl: 'https://client.example.test/metadata.json'
       }
     })
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
+    })
+    expect(onDone).toHaveBeenCalledOnce()
   })
 
   it('requires an imported OAuth client secret locally and submits pre-registered credentials', async () => {

@@ -808,12 +808,11 @@ describe('ConnectorsPanel (groups)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'anonymous-remote' })
   })
 
-  it('keeps a waiting OAuth sign-in disabled until it settles', async () => {
-    let finishAuthentication!: () => void
+  it('shows a cancellable dialog while OAuth sign-in is waiting', async () => {
     const authenticateCustomServer = vi.fn(
       () =>
-        new Promise<void>((resolve) => {
-          finishAuthentication = resolve
+        new Promise<void>(() => {
+          // Settled by cancellation in the main process.
         })
     )
     useSettingsStore.setState({
@@ -836,74 +835,18 @@ describe('ConnectorsPanel (groups)', () => {
     })
 
     clickButtonByText('Sign in')
-    const connecting = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Connecting…'
+    expect(document.body.textContent).toContain('Waiting for authorization…')
+    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Cancel'
     )
-    expect(connecting?.disabled).toBe(true)
-    expect(document.body.textContent).not.toContain('Cancel')
-    act(() => connecting?.click())
     expect(authenticateCustomServer).toHaveBeenCalledOnce()
-    expect(useSettingsStore.getState().cancelCustomServerAuthentication).not.toHaveBeenCalled()
-
-    await act(async () => finishAuthentication())
-  })
-
-  it('keeps concurrent OAuth sign-ins independently disabled', async () => {
-    const finishAuthentications = new Map<string, () => void>()
-    const authenticateCustomServer = vi.fn(
-      ({ id }: { id: string }) =>
-        new Promise<void>((resolve) => {
-          finishAuthentications.set(id, resolve)
-        })
-    )
-    useSettingsStore.setState({
-      authenticateCustomServer,
-      customServers: [
-        {
-          id: 'oauth-a',
-          name: 'oauth-a',
-          displayName: 'OAuth A',
-          transport: 'streamable_http',
-          enabled: false,
-          url: 'https://a.example.test',
-          oauth: { hasTokens: false }
-        },
-        {
-          id: 'oauth-b',
-          name: 'oauth-b',
-          displayName: 'OAuth B',
-          transport: 'streamable_http',
-          enabled: false,
-          url: 'https://b.example.test',
-          oauth: { hasTokens: false }
-        }
-      ]
+    act(() => cancel?.click())
+    expect(useSettingsStore.getState().cancelCustomServerAuthentication).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
     })
-    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
-    const row = (name: string): HTMLLIElement | undefined =>
-      Array.from(document.body.querySelectorAll<HTMLLIElement>('li')).find((item) =>
-        item.textContent?.includes(name)
-      )
-    const clickRowAction = (name: string, action: string): void => {
-      const button = Array.from(
-        row(name)?.querySelectorAll<HTMLButtonElement>('button') ?? []
-      ).find((candidate) => candidate.textContent?.trim() === action)
-      button?.click()
-    }
-
-    act(() => clickRowAction('OAuth A', 'Sign in'))
-    act(() => clickRowAction('OAuth B', 'Sign in'))
-    expect(row('OAuth A')?.textContent).toContain('Connecting…')
-    expect(row('OAuth B')?.textContent).toContain('Connecting…')
-
-    await act(async () => finishAuthentications.get('oauth-a')?.())
-    expect(row('OAuth A')?.textContent).toContain('Sign in')
-    expect(row('OAuth B')?.textContent).toContain('Connecting…')
-
-    await act(async () => finishAuthentications.get('oauth-b')?.())
   })
 
-  it('uses the Settings danger banner for OAuth errors', async () => {
+  it('keeps OAuth errors in the retryable sign-in dialog', async () => {
     useSettingsStore.setState({
       authenticateCustomServer: vi.fn().mockRejectedValue(new Error('Authorization denied')),
       customServers: [
@@ -924,7 +867,8 @@ describe('ConnectorsPanel (groups)', () => {
 
     const alert = document.body.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Authorization denied')
-    expect(alert?.className).toContain('border-danger-000/30')
+    expect(document.body.textContent).toContain('Try again')
+    expect(document.body.textContent).toContain('Finish later')
   })
 
   it('shows an empty-state line when there are no custom servers', () => {

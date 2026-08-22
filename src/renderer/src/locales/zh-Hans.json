@@ -2661,7 +2661,6 @@
   "OAuth configuration only; tokens excluded": "仅包含 OAuth 配置；不包含令牌",
   "Names only: {{names}}": "仅名称：{{names}}",
   "Save configuration": "保存配置",
-  "Connecting…": "正在连接…",
   "GitHub token · {{mask}}": "GitHub 令牌 · {{mask}}",
   "GitHub token": "GitHub 令牌",
   "Setup incomplete": "设置未完成",
@@ -3190,5 +3189,12 @@
   "This imported Connector requires a client secret entered locally.": "此导入的连接器需要在本地输入客户端密钥。",
   "Authorization server URL is required for a pre-registered client.": "预注册客户端必须提供授权服务器 URL。",
   "Client ID is required when a client secret is configured.": "配置客户端密钥时必须提供客户端 ID。",
-  "Client metadata URL cannot be combined with a pre-registered client.": "客户端元数据 URL 不能与预注册客户端同时使用。"
+  "Client metadata URL cannot be combined with a pre-registered client.": "客户端元数据 URL 不能与预注册客户端同时使用。",
+  "Add and sign in": "添加并登录",
+  "Sign in to {{name}}": "登录 {{name}}",
+  "Complete authorization in your browser. This dialog will update when sign-in finishes.": "请在浏览器中完成授权。登录完成后，此对话框将更新。",
+  "Finish later": "稍后完成",
+  "{{name}} needs sign-in": "{{name}} 需要登录",
+  "Authorization expired or was revoked. Sign in again to keep this Connector available.": "授权已过期或被撤销。请重新登录以保持此连接器可用。",
+  "Open Connectors": "打开连接器"
 }

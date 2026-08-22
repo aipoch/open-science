@@ -21,9 +21,15 @@ type SettingsConnectorsProjection = {
   ncbi: NcbiCredentialsView
 }
 
+export type ConnectorAuthNotice = Readonly<{
+  id: string
+  displayName: string
+}>
+
 export type SettingsConnectorsState = SettingsConnectorsProjection & {
   connectorsLoaded: boolean
   pendingApprovals: ConnectorApprovalRequest[]
+  connectorAuthNotice?: ConnectorAuthNotice
 }
 
 export type SettingsConnectorsActions = {
@@ -32,13 +38,14 @@ export type SettingsConnectorsActions = {
   setConnectorAutoAllow: (id: string, autoAllow: boolean) => Promise<void>
   setToolPermission: (toolId: string, permission: ToolPermission) => Promise<ConnectorDetailView>
   setNcbiCredentials: (request: SetNcbiCredentialsRequest) => Promise<void>
-  addCustomServer: (request: AddCustomServerRequest) => Promise<void>
+  addCustomServer: (request: AddCustomServerRequest) => Promise<CustomServerView>
   updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
   authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
   cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
   retryCustomServer: (id: string) => Promise<void>
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   removeCustomServer: (id: string) => Promise<void>
+  dismissConnectorAuthNotice: () => void
   enqueueApproval: (request: ConnectorApprovalRequest) => void
   dismissApproval: (id: string) => void
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
@@ -78,6 +85,7 @@ export const createInitialSettingsConnectorsState = (): SettingsConnectorsState 
   reservedCustomServerIds: [],
   connectorsLoaded: false,
   pendingApprovals: [],
+  connectorAuthNotice: undefined,
   ncbi: { hasApiKey: false }
 })
 
@@ -118,16 +126,41 @@ export const createSettingsConnectorsSlice = ({
   })
   let reconcileGeneration = 0
   const reconcile = async (
-    command: () => Promise<SettingsConnectorsProjection>
+    command: () => Promise<SettingsConnectorsProjection>,
+    source: 'load' | 'mutation' | 'runtime' = 'mutation'
   ): Promise<SettingsConnectorsProjection> => {
     const generation = ++reconcileGeneration
     const projectionGeneration = toggleWrites.beginProjection()
     const projection = await command()
-    if (generation === reconcileGeneration)
-      setState({
-        ...projectOptimisticToggles(projection, projectionGeneration),
-        connectorsLoaded: true
+    if (generation === reconcileGeneration) {
+      const projected = projectOptimisticToggles(projection, projectionGeneration)
+      setState((state) => {
+        const connectorAuthNotice =
+          source === 'runtime'
+            ? projected.customServers.find((server) => {
+                const previous = state.customServers.find(({ id }) => id === server.id)
+                return Boolean(
+                  server.oauth &&
+                  previous?.oauth?.hasTokens &&
+                  previous.availability !== 'unauthenticated' &&
+                  (server.availability === 'unauthenticated' || !server.oauth.hasTokens)
+                )
+              })
+            : undefined
+        return {
+          ...projected,
+          connectorsLoaded: true,
+          ...(connectorAuthNotice
+            ? {
+                connectorAuthNotice: {
+                  id: connectorAuthNotice.id,
+                  displayName: connectorAuthNotice.displayName
+                }
+              }
+            : {})
+        }
       })
+    }
     return projection
   }
   let mutationsInFlight = 0
@@ -137,7 +170,7 @@ export const createSettingsConnectorsSlice = ({
       runtimeRefreshPending = true
       return
     }
-    void reconcile(() => getCommands().listConnectors()).catch(() => undefined)
+    void reconcile(() => getCommands().listConnectors(), 'runtime').catch(() => undefined)
   }
   const runMutation = async <Result>(mutation: () => Promise<Result>): Promise<Result> => {
     mutationsInFlight += 1
@@ -174,7 +207,7 @@ export const createSettingsConnectorsSlice = ({
         await catalogLoadRequest
         return
       }
-      const request = reconcile(() => getCommands().listConnectors()).then(() => undefined)
+      const request = reconcile(() => getCommands().listConnectors(), 'load').then(() => undefined)
       const trackedRequest = request.finally(() => {
         if (catalogLoadRequest === trackedRequest) catalogLoadRequest = undefined
       })
@@ -261,7 +294,14 @@ export const createSettingsConnectorsSlice = ({
       getCommands().setToolPermission({ toolId, permission }),
     setNcbiCredentials: (request) =>
       reconcileMutation(() => getCommands().setNcbiCredentials(request)),
-    addCustomServer: (request) => reconcileMutation(() => getCommands().addCustomServer(request)),
+    addCustomServer: async (request) => {
+      const projection = await runMutation(() =>
+        reconcile(() => getCommands().addCustomServer(request))
+      )
+      const created = projection.customServers.find((server) => server.name === request.name.trim())
+      if (!created) throw new Error('Added Connector was missing from the saved settings.')
+      return created
+    },
     updateCustomServer: (request) =>
       reconcileMutation(() => getCommands().updateCustomServer(request)),
     authenticateCustomServer: (request) =>
@@ -317,6 +357,7 @@ export const createSettingsConnectorsSlice = ({
       }
     },
     removeCustomServer: (id) => reconcileMutation(() => getCommands().removeCustomServer({ id })),
+    dismissConnectorAuthNotice: () => setState({ connectorAuthNotice: undefined }),
     enqueueApproval: (request) => {
       setState((state) =>
         state.pendingApprovals.some(({ id }) => id === request.id)

@@ -2590,7 +2590,6 @@
   "OAuth configuration only; tokens excluded": "OAuth 構成のみ。除外されたトークン",
   "Names only: {{names}}": "名前のみ：{{names}}",
   "Save configuration": "設定の保存",
-  "Connecting…": "接続中…",
   "GitHub token · {{mask}}": "GitHub トークン · {{mask}}",
   "GitHub token": "GitHub トークン",
   "Setup incomplete": "セットアップが不完全",
@@ -3190,5 +3189,12 @@
   "This imported Connector requires a client secret entered locally.": "このインポートされたコネクタには、ローカルで入力するクライアントシークレットが必要です。",
   "Authorization server URL is required for a pre-registered client.": "事前登録済みクライアントには認可サーバー URL が必要です。",
   "Client ID is required when a client secret is configured.": "クライアントシークレットを設定する場合はクライアント ID が必要です。",
-  "Client metadata URL cannot be combined with a pre-registered client.": "クライアントメタデータ URL を事前登録済みクライアントと併用することはできません。"
+  "Client metadata URL cannot be combined with a pre-registered client.": "クライアントメタデータ URL を事前登録済みクライアントと併用することはできません。",
+  "Add and sign in": "追加してサインイン",
+  "Sign in to {{name}}": "{{name}} にサインイン",
+  "Complete authorization in your browser. This dialog will update when sign-in finishes.": "ブラウザーで認証を完了してください。サインインが完了すると、このダイアログが更新されます。",
+  "Finish later": "後で完了",
+  "{{name}} needs sign-in": "{{name}} へのサインインが必要です",
+  "Authorization expired or was revoked. Sign in again to keep this Connector available.": "認証の有効期限が切れたか、取り消されました。このコネクタを引き続き使用するには、もう一度サインインしてください。",
+  "Open Connectors": "コネクタを開く"
 }
