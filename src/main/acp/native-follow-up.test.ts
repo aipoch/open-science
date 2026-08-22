@@ -4,8 +4,9 @@ import {
   ACP_STEERING_METHOD,
   STEERING_IDLE_BEHAVIOR,
   buildAcpSteeringParams,
-  buildOpenCodeHttpSteerBody,
+  buildOpenCodeHttpFollowUpBody,
   interpretSteerOutcome,
+  parseOpenCodeHttpFollowUp,
   parseSteerOutcome,
   readSteeringAdvertisement,
   resolveNativeFollowUpRoute,
@@ -135,10 +136,37 @@ describe('native follow-up compatibility layer', () => {
       _meta: { steering: { idleBehavior: STEERING_IDLE_BEHAVIOR } }
     })
     expect(ACP_STEERING_METHOD).toBe('_session/steering')
-    expect(buildOpenCodeHttpSteerBody('http-steer')).toEqual({
-      delivery: 'steer',
-      prompt: { text: 'http-steer' }
+    expect(buildOpenCodeHttpFollowUpBody('http-steer')).toEqual({
+      parts: [{ type: 'text', text: 'http-steer' }],
+      noReply: true
     })
+  })
+
+  it('accepts a persisted v1 user message and rejects a v2 inbox admission', () => {
+    expect(
+      parseOpenCodeHttpFollowUp(
+        {
+          info: { id: 'msg_1', role: 'user', sessionID: 'ses_1' },
+          parts: [{ type: 'text', text: 'http-steer' }]
+        },
+        'http-steer'
+      )
+    ).toBe(true)
+    expect(
+      parseOpenCodeHttpFollowUp(
+        {
+          data: {
+            admittedSeq: 7,
+            id: 'msg_1',
+            sessionID: 'ses_1',
+            prompt: { text: 'http-steer' },
+            delivery: 'steer'
+          }
+        },
+        'http-steer'
+      )
+    ).toBe(false)
+    expect(parseOpenCodeHttpFollowUp({ ok: true }, 'http-steer')).toBe(false)
   })
 
   it('fail-closes empty, startedNewTurn, and unknown steering outcomes', () => {

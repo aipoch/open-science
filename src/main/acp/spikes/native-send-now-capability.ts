@@ -246,8 +246,9 @@ export const resolveShippedNativeSendNowCapability = (
         delivery: 'unavailable',
         overlappingPrompt: 'admit-and-join-runner',
         nativeCliHasMidTurnInput: true,
-        // ACP overlapping prompt is not Send now. HTTP `delivery: steer` on the
-        // same `opencode acp --port` process is the native side-band.
+        // ACP overlapping prompt is not Send now. HTTP POST `/session/{id}/message`
+        // `{ parts, noReply: true }` persists into the live v1 ACP session. v2
+        // `/api/session/{id}/prompt` `delivery: steer` only admits to inbox.
         frameworkCanDispatch: true,
         usesSecondSessionPrompt: false
       },
