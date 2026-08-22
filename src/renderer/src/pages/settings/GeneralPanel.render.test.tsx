@@ -171,6 +171,18 @@ describe('GeneralPanel command line tool', () => {
   })
 })
 
+describe('GeneralPanel About', () => {
+  it('keeps low-frequency app information at the end of General settings', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const sections = Array.from(container.querySelectorAll('[data-slot="settings-section"]'))
+    expect(sections.at(-1)?.querySelector('h3')?.textContent).toBe('About')
+  })
+})
+
 describe('GeneralPanel notifications', () => {
   it('toggles task notifications off via the settings API', async () => {
     await act(async () => {

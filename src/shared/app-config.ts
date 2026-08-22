@@ -12,6 +12,7 @@ export const APP = {
   githubRepo: GITHUB_REPO,
   links: {
     website: 'https://www.aipoch.com/open-science',
+    docs: 'https://www.aipoch.com/docs/',
     githubRepo: GITHUB_REPO_URL,
     githubReleases: `${GITHUB_REPO_URL}/releases`,
     githubApi: `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`,

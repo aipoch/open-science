@@ -56,15 +56,21 @@ describe('AppVersionSection', () => {
     expect(container.textContent).toContain('About')
     expect(container.textContent).toContain('Check now')
     expect(container.textContent).toContain('You are on the latest version')
+    expect(container.textContent).toContain('Help Center')
+    expect(container.textContent).toContain('Release notes')
 
     switchTo('zh-Hans')
     expect(container.textContent).toContain('关于')
     expect(container.textContent).toContain('立即检查')
     expect(container.textContent).toContain('已是最新版本')
+    expect(container.textContent).toContain('帮助中心')
+    expect(container.textContent).toContain('发布说明')
 
     switchTo('zh-Hant')
     expect(container.textContent).toContain('關於')
     expect(container.textContent).toContain('立即檢查')
+    expect(container.textContent).toContain('說明中心')
+    expect(container.textContent).toContain('版本資訊')
   })
 
   it('interpolates the version into the available status and the update button', () => {
