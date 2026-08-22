@@ -1009,11 +1009,13 @@ export function ConnectorsPanel({
           </AlertDialog.Content>
         </AlertDialog.Portal>
       </AlertDialog.Root>
-      <ConnectorOAuthSignInDialog
-        server={oauthSignInServer}
-        onAuthenticated={() => setOAuthSignInServer(undefined)}
-        onFinish={() => setOAuthSignInServer(undefined)}
-      />
+      {oauthSignInServer ? (
+        <ConnectorOAuthSignInDialog
+          server={oauthSignInServer}
+          onAuthenticated={() => setOAuthSignInServer(undefined)}
+          onFinish={() => setOAuthSignInServer(undefined)}
+        />
+      ) : null}
     </div>
   )
 }

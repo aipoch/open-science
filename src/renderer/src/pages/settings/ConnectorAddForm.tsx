@@ -969,17 +969,19 @@ export function ConnectorAddForm({
           </Button>
         </div>
       </div>
-      <ConnectorOAuthSignInDialog
-        server={oauthSignInServer}
-        onAuthenticated={() => {
-          setOAuthSignInServer(undefined)
-          onDone()
-        }}
-        onFinish={() => {
-          setOAuthSignInServer(undefined)
-          onDone()
-        }}
-      />
+      {oauthSignInServer ? (
+        <ConnectorOAuthSignInDialog
+          server={oauthSignInServer}
+          onAuthenticated={() => {
+            setOAuthSignInServer(undefined)
+            onDone()
+          }}
+          onFinish={() => {
+            setOAuthSignInServer(undefined)
+            onDone()
+          }}
+        />
+      ) : null}
     </div>
   )
 }

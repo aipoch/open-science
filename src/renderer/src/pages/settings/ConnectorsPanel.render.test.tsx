@@ -847,8 +847,12 @@ describe('ConnectorsPanel (groups)', () => {
   })
 
   it('keeps OAuth errors in the retryable sign-in dialog', async () => {
+    const authenticateCustomServer = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Authorization denied'))
+      .mockReturnValueOnce(new Promise<void>(() => undefined))
     useSettingsStore.setState({
-      authenticateCustomServer: vi.fn().mockRejectedValue(new Error('Authorization denied')),
+      authenticateCustomServer,
       customServers: [
         {
           id: 'oauth-mcp',
@@ -869,6 +873,13 @@ describe('ConnectorsPanel (groups)', () => {
     expect(alert?.textContent).toContain('Authorization denied')
     expect(document.body.textContent).toContain('Try again')
     expect(document.body.textContent).toContain('Finish later')
+
+    clickButtonByText('Finish later')
+    clickButtonByText('Sign in')
+
+    expect(authenticateCustomServer).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(document.body.textContent).toContain('Waiting for authorization…')
   })
 
   it('shows an empty-state line when there are no custom servers', () => {

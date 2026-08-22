@@ -21,7 +21,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import type { CustomServerView } from '../../../../shared/settings'
 
 type ConnectorOAuthSignInDialogProps = {
-  server?: CustomServerView
+  server: CustomServerView
   onAuthenticated: () => void
   onFinish: () => void
 }
@@ -32,7 +32,7 @@ const ConnectorOAuthSignInDialog = ({
   server,
   onAuthenticated,
   onFinish
-}: ConnectorOAuthSignInDialogProps): React.JSX.Element | null => {
+}: ConnectorOAuthSignInDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
   const cancelCustomServerAuthentication = useSettingsStore(
@@ -45,7 +45,6 @@ const ConnectorOAuthSignInDialog = ({
   const handleAuthenticated = useEffectEvent(onAuthenticated)
 
   useEffect(() => {
-    if (!server) return
     const generation = ++generationRef.current
     pendingRef.current = true
 
@@ -69,8 +68,6 @@ const ConnectorOAuthSignInDialog = ({
       void cancelCustomServerAuthentication({ id: server.id })
     }
   }, [attempt, authenticateCustomServer, cancelCustomServerAuthentication, server, t])
-
-  if (!server) return null
 
   const finish = (): void => {
     generationRef.current += 1
