@@ -174,27 +174,17 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
   const providers = useSettingsStore((state) => state.providers)
-  const claudeSubscriptionProviderId = useSettingsStore(
-    (state) => state.claudeSubscriptionProviderId
-  )
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const configuredModelCatalog = useMemo(
     () =>
       buildConfiguredModelCatalog({
         providers,
-        activeProviderId: activeProvider?.id,
-        claudeSubscriptionProviderId,
+        includeAllClaudeSubscriptions: true,
         frameworkId: agentFrameworkId,
         frameworkEndpoints
       }),
-    [
-      activeProvider?.id,
-      agentFrameworkId,
-      claudeSubscriptionProviderId,
-      frameworkEndpoints,
-      providers
-    ]
+    [agentFrameworkId, frameworkEndpoints, providers]
   )
   const resolveRuntimeSelection = useCallback(
     (configuration: SessionAgentConfiguration | undefined): WorkspaceSessionRuntimeSelection => {

@@ -1730,6 +1730,7 @@ const ConversationPanel = ({
                         <ComposerModelPicker
                           configuration={modelConfiguration}
                           unavailable={modelUnavailable}
+                          includeAllClaudeSubscriptions={activeSession !== undefined}
                           onChange={changeModelConfiguration}
                         />
 

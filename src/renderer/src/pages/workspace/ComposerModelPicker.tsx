@@ -71,6 +71,7 @@ const MenuRadioItem = ({
 type ComposerModelPickerProps = Readonly<{
   configuration: SessionAgentConfiguration | undefined
   unavailable: boolean
+  includeAllClaudeSubscriptions?: boolean
   onChange: (configuration: SessionAgentConfiguration) => void
 }>
 
@@ -79,6 +80,7 @@ type ComposerModelPickerProps = Readonly<{
 const ComposerModelPicker = ({
   configuration,
   unavailable,
+  includeAllClaudeSubscriptions = false,
   onChange
 }: ComposerModelPickerProps): React.JSX.Element | null => {
   // Only the shared incompatibility copy is translated here; the rest of this picker's strings belong
@@ -129,6 +131,7 @@ const ComposerModelPicker = ({
     providers,
     activeProviderId,
     claudeSubscriptionProviderId,
+    includeAllClaudeSubscriptions,
     frameworkId: agentFrameworkId,
     frameworkEndpoints
   })
