@@ -453,6 +453,41 @@ describe('ProviderForm field switching', () => {
     expect(keyInput?.type).toBe('password')
   })
 
+  it('masks the API key again when the provider kind or record changes', () => {
+    render(createEmptyProviderFormValue({ type: 'custom', key: 'draft-secret' }))
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Show API key"]')?.click()
+    })
+    expect(container.querySelector<HTMLInputElement>('[aria-label="API key"]')?.type).toBe('text')
+
+    render(
+      createEmptyProviderFormValue({
+        type: 'official',
+        vendorId: 'deepseek',
+        key: 'draft-secret'
+      })
+    )
+    expect(container.querySelector<HTMLInputElement>('[aria-label="API key"]')?.type).toBe(
+      'password'
+    )
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Show API key"]')?.click()
+    })
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'deepseek', key: '' }))
+    render(
+      createEmptyProviderFormValue({
+        type: 'official',
+        vendorId: 'deepseek',
+        key: 'next-draft-secret'
+      })
+    )
+    expect(container.querySelector<HTMLInputElement>('[aria-label="API key"]')?.type).toBe(
+      'password'
+    )
+  })
+
   it('moves custom-provider descriptions into generic field-help tooltips', async () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
     const helpButtons = Array.from(

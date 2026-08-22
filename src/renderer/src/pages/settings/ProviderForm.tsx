@@ -218,11 +218,18 @@ const ProviderForm = ({
       Boolean(value.maxInputTokens.trim()) ||
       Boolean(value.maxOutputTokens.trim())
   )
-  const [keyVisible, setKeyVisible] = useState(false)
+  const selectedKey = selectedKindKey(value)
+  // Scope reveal state to the exact provider kind and draft value. Input events advance that scope
+  // only while already revealed, so an externally replaced provider record starts masked.
+  const [revealedKeyDraft, setRevealedKeyDraft] = useState<{
+    kind: string
+    key: string
+  }>()
+  const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
+
   const advancedVisible =
     advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
 
-  const selectedKey = selectedKindKey(value)
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
   const apiKeyUrl =
@@ -267,14 +274,20 @@ const ProviderForm = ({
               : t('Paste API key')
           }
           className="pe-9"
-          onChange={(event) => onChange({ key: event.target.value })}
+          onChange={(event) => {
+            const key = event.target.value
+            setRevealedKeyDraft(keyVisible ? { kind: selectedKey, key } : undefined)
+            onChange({ key })
+          }}
         />
         <button
           type="button"
           aria-label={keyVisible ? t('Hide API key') : t('Show API key')}
           aria-pressed={keyVisible}
           disabled={disabled}
-          onClick={() => setKeyVisible((visible) => !visible)}
+          onClick={() =>
+            setRevealedKeyDraft(keyVisible ? undefined : { kind: selectedKey, key: value.key })
+          }
           className="absolute inset-y-0 end-0 flex w-9 items-center justify-center rounded-e-lg text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none"
         >
           {keyVisible ? (
