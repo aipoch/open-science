@@ -37,11 +37,11 @@ export const CUSTOM_REASONING_EFFORT_TRANSPORTS: ReadonlyArray<{
   id: CustomReasoningEffortTransport
   label: string
 }> = [
-  { id: 'reasoning-effort', label: 'OpenAI-compatible reasoning_effort' },
-  { id: 'deepseek', label: 'DeepSeek thinking + effort' },
-  { id: 'minimax', label: 'MiniMax adaptive thinking' },
-  { id: 'xiaomimimo', label: 'MiMo thinking switch' },
-  { id: 'openrouter', label: 'OpenRouter reasoning object' }
+  { id: 'reasoning-effort', label: 'GPT / OpenAI-compatible — reasoning_effort' },
+  { id: 'deepseek', label: 'DeepSeek — thinking + reasoning_effort' },
+  { id: 'minimax', label: 'MiniMax — adaptive thinking' },
+  { id: 'xiaomimimo', label: 'MiMo — thinking on / off' },
+  { id: 'openrouter', label: 'OpenRouter — reasoning object' }
 ]
 
 const CUSTOM_REASONING_EFFORT_TRANSPORT_IDS = new Set<string>(
@@ -57,7 +57,7 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
   id: ReasoningEffortPresetId
   label: string
 }> = [
-  { id: 'standard-5', label: 'Low / Medium / High / XHigh / Max' },
+  { id: 'standard-5', label: 'Low / Medium / High / XHigh / Max — GPT / Claude' },
   { id: 'low-medium-xhigh', label: 'Low / Medium / XHigh' },
   { id: 'low-medium-high-xhigh-ultra', label: 'Low / Medium / High / XHigh / Ultra' },
   { id: 'low-medium-high-max', label: 'Low / Medium / High / Max' },
@@ -70,8 +70,8 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
   { id: 'none-high-max', label: 'None / High / Max' },
   { id: 'none-high-xhigh', label: 'None / High / XHigh' },
   { id: 'low-high-max', label: 'Low / High / Max' },
-  { id: 'high-max', label: 'High / Max' },
-  { id: 'none-high', label: 'None / High' },
+  { id: 'high-max', label: 'High / Max — DeepSeek' },
+  { id: 'none-high', label: 'None / High — MiniMax / MiMo' },
   { id: 'low-high', label: 'Low / High' }
 ]
 

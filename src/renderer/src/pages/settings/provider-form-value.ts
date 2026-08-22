@@ -63,7 +63,7 @@ export const createEmptyProviderFormValue = (
   apiEndpoint: 'anthropic',
   providerFormTouched: false,
   supportsImageInput: false,
-  reasoningEffortPreset: 'standard-5',
+  reasoningEffortPreset: 'unsupported',
   reasoningEffortTransport: 'reasoning-effort',
   key: '',
   ...overrides

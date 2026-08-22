@@ -151,6 +151,7 @@ describe('ProviderStep', () => {
   it('preserves any user-edited custom draft when the active framework changes', async () => {
     await renderStep()
 
+    await clickButton(/Advanced settings/)
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="Supports image input"]')?.click()
     })

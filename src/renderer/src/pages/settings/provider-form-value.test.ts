@@ -33,6 +33,12 @@ describe('defaultCustomApiEndpoint', () => {
 })
 
 describe('getProviderFormErrors', () => {
+  it('leaves optional thinking controls off for a new custom provider', () => {
+    expect(createEmptyProviderFormValue({ type: 'custom' }).reasoningEffortPreset).toBe(
+      'unsupported'
+    )
+  })
+
   it('flags every missing required field for a new custom provider', () => {
     const errors = getProviderFormErrors(createEmptyProviderFormValue({ type: 'custom' }))
 

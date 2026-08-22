@@ -8,6 +8,7 @@ import { FieldHelp } from '@/components/FieldHelp'
 import { EditableNumberCombobox } from '@/components/ui/editable-number-combobox'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { cn } from '@/lib/utils'
 import {
   Select,
   SelectContent,
@@ -82,9 +83,9 @@ const CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS = [
 // locale and stay out of the catalog — translating `Messages API (/v1/messages)` would make it harder
 // to match against a gateway's own documentation.
 const API_FORMAT_LABELS: Record<ProviderFormValue['apiEndpoint'], string> = {
-  openai: 'Chat Completions API (/v1/chat/completions)',
-  anthropic: 'Messages API (/v1/messages)',
-  responses: 'Responses API (/v1/responses)'
+  openai: 'Chat Completions (/v1/chat/completions) — GPT / DeepSeek / OpenAI-compatible',
+  anthropic: 'Messages (/v1/messages) — Claude / Anthropic-compatible',
+  responses: 'Responses (/v1/responses) — GPT / OpenAI'
 }
 
 // Custom gateways declare exactly one protocol. Official vendors may serve several endpoints; that
@@ -106,6 +107,83 @@ const RequiredMark = (): React.JSX.Element => (
   <span aria-hidden="true" className="ml-0.5 text-destructive">
     *
   </span>
+)
+
+const tokenPresetLabel = (value: number): string =>
+  value >= 1_000_000 && value % 1_000_000 === 0
+    ? `${value / 1_000_000}M`
+    : value >= 1_000 && value % 1_000 === 0
+      ? `${value / 1_000}K`
+      : String(value)
+
+type TokenLimitFieldProps = {
+  id: string
+  label: string
+  help: string
+  value: string
+  presets: readonly number[]
+  disabled: boolean
+  error?: ProviderFormErrors['maxInputTokens']
+  onValueChange: (value: string) => void
+  t: TFunction
+}
+
+const TokenLimitField = ({
+  id,
+  label,
+  help,
+  value,
+  presets,
+  disabled,
+  error,
+  onValueChange,
+  t
+}: TokenLimitFieldProps): React.JSX.Element => (
+  <div className="space-y-1.5">
+    <div className="flex items-center gap-1">
+      <label id={`${id}-label`} className={fieldLabelClassName} htmlFor={id}>
+        {label}
+      </label>
+      <FieldHelp content={help} />
+    </div>
+    <Input
+      id={id}
+      aria-label={label}
+      aria-describedby={error ? `${id}-error` : undefined}
+      aria-invalid={Boolean(error) || undefined}
+      inputMode="numeric"
+      value={value}
+      disabled={disabled}
+      placeholder={t('Use provider default')}
+      onChange={(event) => onValueChange(event.target.value)}
+      className="tabular-nums"
+    />
+    <div role="group" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-1">
+      {presets.map((preset) => {
+        const selected = value === String(preset)
+        return (
+          <button
+            key={preset}
+            type="button"
+            aria-pressed={selected}
+            disabled={disabled}
+            onClick={() => onValueChange(String(preset))}
+            className={cn(
+              'min-h-7 rounded-md border border-transparent px-2 text-xs tabular-nums text-muted-foreground outline-none transition-[color,background-color,border-color,transform] duration-150 motion-reduce:transition-none active:translate-y-px disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-3 focus-visible:ring-ring/50 [@media(hover:hover)]:hover:bg-muted [@media(hover:hover)]:hover:text-foreground',
+              selected && 'border-border bg-muted text-foreground'
+            )}
+          >
+            {tokenPresetLabel(preset)}
+          </button>
+        )
+      })}
+    </div>
+    {error ? (
+      <p id={`${id}-error`} className={fieldErrorClassName} role="alert">
+        {t(error)}
+      </p>
+    ) : null}
+  </div>
 )
 
 // Provider fields switch by type: pick a type first, then reveal its options. Custom exposes an
@@ -134,7 +212,11 @@ const ProviderForm = ({
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
   const [advancedOpen, setAdvancedOpen] = useState(
-    () => Boolean(value.maxInputTokens.trim()) || Boolean(value.maxOutputTokens.trim())
+    () =>
+      value.supportsImageInput ||
+      value.reasoningEffortPreset !== 'unsupported' ||
+      Boolean(value.maxInputTokens.trim()) ||
+      Boolean(value.maxOutputTokens.trim())
   )
   const advancedVisible =
     advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
@@ -410,13 +492,9 @@ const ProviderForm = ({
             <div className="flex items-center gap-1">
               <span className={fieldLabelClassName}>{t('API format')}</span>
               <FieldHelp
-                content={
-                  <Trans
-                    t={t}
-                    i18nKey="Which chat API this gateway speaks. Claude Code uses <code>/v1/messages</code>, OpenCode accepts Messages or Chat Completions, and Codex uses <code>/v1/responses</code>. A provider is only selectable under an agent framework that supports its format."
-                    components={{ code: <code /> }}
-                  />
-                }
+                content={t(
+                  'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
+                )}
               />
             </div>
             <Select
@@ -437,111 +515,6 @@ const ProviderForm = ({
                 ))}
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="flex items-center justify-between gap-4 border-t border-border-200 pt-3">
-            <label className="space-y-0.5" htmlFor="provider-image-input">
-              <span className="block text-xs font-medium">{t('Image input')}</span>
-              <span className="block text-xs text-muted-foreground">
-                {t('Enable only when this gateway and model accept image content.')}
-              </span>
-            </label>
-            <Switch
-              id="provider-image-input"
-              aria-label={t('Supports image input')}
-              checked={value.supportsImageInput}
-              disabled={disabled}
-              onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
-            />
-          </div>
-
-          <div className="space-y-3 border-t border-border-200 pt-3">
-            <div className="flex items-center justify-between gap-4">
-              <label className="space-y-0.5" htmlFor="provider-reasoning-effort">
-                <span className="block text-xs font-medium">{t('Reasoning effort')}</span>
-                <span className="block text-xs text-muted-foreground">
-                  {t(
-                    'Choose the exact effort levels accepted by this model. Open Science maps five relative strengths onto them, then sends the selected level using the request format below. Disable when the model does not accept an effort parameter.'
-                  )}
-                </span>
-              </label>
-              <Switch
-                id="provider-reasoning-effort"
-                aria-label={t('Supports reasoning effort')}
-                checked={value.reasoningEffortPreset !== 'unsupported'}
-                disabled={disabled}
-                onCheckedChange={(supported) =>
-                  onChange({
-                    reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
-                  })
-                }
-              />
-            </div>
-
-            {value.reasoningEffortPreset !== 'unsupported' ? (
-              <div className="space-y-3">
-                <Select
-                  value={value.reasoningEffortPreset}
-                  disabled={disabled}
-                  onValueChange={(reasoningEffortPreset) =>
-                    onChange({
-                      reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label={t('Reasoning effort levels')} disabled={disabled}>
-                    <span>
-                      {
-                        CUSTOM_REASONING_EFFORT_PRESETS.find(
-                          (preset) => preset.id === value.reasoningEffortPreset
-                        )?.label
-                      }
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
-                      <SelectItem key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <div className="space-y-1.5">
-                  <span className="block text-xs font-medium">{t('Request format')}</span>
-                  <Select
-                    value={value.reasoningEffortTransport}
-                    disabled={disabled}
-                    onValueChange={(reasoningEffortTransport) =>
-                      onChange({
-                        reasoningEffortTransport:
-                          reasoningEffortTransport as CustomReasoningEffortTransport
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label={t('Reasoning effort request format')}
-                      disabled={disabled}
-                    >
-                      <span>
-                        {
-                          CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
-                            (transport) => transport.id === value.reasoningEffortTransport
-                          )?.label
-                        }
-                      </span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
-                        <SelectItem key={transport.id} value={transport.id}>
-                          {transport.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            ) : null}
           </div>
 
           {keyField}
@@ -596,7 +569,7 @@ const ProviderForm = ({
             <button
               type="button"
               aria-expanded={advancedVisible}
-              aria-controls="provider-model-limit-advanced-settings"
+              aria-controls="provider-advanced-settings"
               onClick={() => setAdvancedOpen((open) => !open)}
               className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
             >
@@ -610,67 +583,168 @@ const ProviderForm = ({
             </button>
 
             {advancedVisible ? (
-              <div id="provider-model-limit-advanced-settings" className="mt-3 flex flex-col gap-4">
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1">
-                    <label className={fieldLabelClassName} htmlFor="provider-max-input-tokens">
-                      {t('Maximum input tokens')}
+              <div id="provider-advanced-settings" className="mt-3 flex flex-col gap-4">
+                <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <label className="space-y-0.5" htmlFor="provider-image-input">
+                      <span className="block text-xs font-medium">{t('Image input')}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {t('The gateway and model accept image content.')}
+                      </span>
                     </label>
-                    <FieldHelp content={t('Optional provider-reported input cap.')} />
+                    <Switch
+                      id="provider-image-input"
+                      aria-label={t('Supports image input')}
+                      checked={value.supportsImageInput}
+                      disabled={disabled}
+                      onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
+                    />
                   </div>
-                  <EditableNumberCombobox
-                    id="provider-max-input-tokens"
-                    ariaLabel={t('Maximum input tokens')}
-                    value={value.maxInputTokens}
-                    presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
-                    locale={i18n.language}
-                    disabled={disabled}
-                    status={errors.maxInputTokens ? 'error' : 'idle'}
-                    describedBy={
-                      errors.maxInputTokens ? 'provider-max-input-tokens-error' : undefined
-                    }
-                    onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
-                  />
-                  {errors.maxInputTokens ? (
-                    <p
-                      id="provider-max-input-tokens-error"
-                      className={fieldErrorClassName}
-                      role="alert"
-                    >
-                      {t(errors.maxInputTokens)}
-                    </p>
-                  ) : null}
+
+                  <div className="flex items-start justify-between gap-3">
+                    <label className="space-y-0.5" htmlFor="provider-thinking-mode">
+                      <span className="block text-xs font-medium">{t('Thinking mode')}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {t('The gateway and model accept thinking or effort controls.')}
+                      </span>
+                    </label>
+                    <Switch
+                      id="provider-thinking-mode"
+                      aria-label={t('Supports thinking mode')}
+                      checked={value.reasoningEffortPreset !== 'unsupported'}
+                      disabled={disabled}
+                      onCheckedChange={(supported) =>
+                        onChange({
+                          reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
+                        })
+                      }
+                    />
+                  </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1">
-                    <label className={fieldLabelClassName} htmlFor="provider-max-output-tokens">
-                      {t('Maximum output tokens')}
-                    </label>
-                    <FieldHelp content={t('Optional provider-reported output cap.')} />
+                {value.reasoningEffortPreset !== 'unsupported' ? (
+                  <div className="space-y-3 border-t border-border-200 pt-3">
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        'Open Science maps five relative strengths onto the exact levels accepted by this model.'
+                      )}
+                    </p>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
+                        <Select
+                          value={value.reasoningEffortPreset}
+                          disabled={disabled}
+                          onValueChange={(reasoningEffortPreset) =>
+                            onChange({
+                              reasoningEffortPreset:
+                                reasoningEffortPreset as ReasoningEffortPresetId
+                            })
+                          }
+                        >
+                          <SelectTrigger
+                            aria-label={t('Reasoning effort levels')}
+                            disabled={disabled}
+                          >
+                            <span>
+                              {
+                                CUSTOM_REASONING_EFFORT_PRESETS.find(
+                                  (preset) => preset.id === value.reasoningEffortPreset
+                                )?.label
+                              }
+                            </span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
+                              <SelectItem key={preset.id} value={preset.id}>
+                                {preset.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {value.apiEndpoint === 'openai' ? (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-1">
+                            <span className={fieldLabelClassName}>
+                              {t('Reasoning request format')}
+                            </span>
+                            <FieldHelp
+                              content={t(
+                                'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
+                                { parameter: 'reasoning_effort' }
+                              )}
+                            />
+                          </div>
+                          <Select
+                            value={value.reasoningEffortTransport}
+                            disabled={disabled}
+                            onValueChange={(reasoningEffortTransport) =>
+                              onChange({
+                                reasoningEffortTransport:
+                                  reasoningEffortTransport as CustomReasoningEffortTransport
+                              })
+                            }
+                          >
+                            <SelectTrigger
+                              aria-label={t('Reasoning effort request format')}
+                              disabled={disabled}
+                            >
+                              <span>
+                                {
+                                  CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
+                                    (transport) => transport.id === value.reasoningEffortTransport
+                                  )?.label
+                                }
+                              </span>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
+                                <SelectItem key={transport.id} value={transport.id}>
+                                  {transport.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : (
+                        <p className="self-end pb-2 text-xs text-muted-foreground">
+                          {value.apiEndpoint === 'anthropic'
+                            ? t(
+                                "Messages API uses the framework's Anthropic-compatible thinking request automatically."
+                              )
+                            : t('Responses API uses its native reasoning request automatically.')}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <EditableNumberCombobox
+                ) : null}
+
+                <div className="grid gap-4 border-t border-border-200 pt-3 sm:grid-cols-2">
+                  <TokenLimitField
+                    id="provider-max-input-tokens"
+                    label={t('Maximum input tokens')}
+                    help={t('Optional provider-reported input cap.')}
+                    value={value.maxInputTokens}
+                    presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
+                    disabled={disabled}
+                    error={errors.maxInputTokens}
+                    onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
+                    t={t}
+                  />
+                  <TokenLimitField
                     id="provider-max-output-tokens"
-                    ariaLabel={t('Maximum output tokens')}
+                    label={t('Maximum output tokens')}
+                    help={t('Optional provider-reported output cap.')}
                     value={value.maxOutputTokens}
                     presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
-                    locale={i18n.language}
                     disabled={disabled}
-                    status={errors.maxOutputTokens ? 'error' : 'idle'}
-                    describedBy={
-                      errors.maxOutputTokens ? 'provider-max-output-tokens-error' : undefined
-                    }
+                    error={errors.maxOutputTokens}
                     onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
+                    t={t}
                   />
-                  {errors.maxOutputTokens ? (
-                    <p
-                      id="provider-max-output-tokens-error"
-                      className={fieldErrorClassName}
-                      role="alert"
-                    >
-                      {t(errors.maxOutputTokens)}
-                    </p>
-                  ) : null}
                 </div>
               </div>
             ) : null}
