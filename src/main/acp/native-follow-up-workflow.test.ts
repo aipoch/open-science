@@ -14,7 +14,7 @@ const createWorkflow = (
     livePrompt?: boolean
     frameworkId?: 'claude-code' | 'opencode' | 'codex'
     openCodeHttp?: boolean
-    providerSessionId?: string | undefined
+    providerSessionId?: string | null
     request?: (method: string, params: unknown) => Promise<unknown>
     fetchImpl?: typeof fetch
     prepareFollowUp?: ConstructorParameters<typeof AcpNativeFollowUpWorkflow>[0]['prepareFollowUp']
@@ -48,7 +48,7 @@ const createWorkflow = (
             })
           : undefined,
       activeProviderSessionId: () =>
-        overrides.providerSessionId === undefined ? 'provider-1' : overrides.providerSessionId,
+        overrides.providerSessionId === undefined ? 'provider-1' : (overrides.providerSessionId ?? undefined),
       hasLivePrompt: () => overrides.livePrompt ?? true,
       sessionCwd: () => '/workspace',
       publishUserMessage: (input) => {
@@ -75,7 +75,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
       ACP_STEERING_METHOD,
       expect.objectContaining({
         sessionId: 'provider-1',
-        prompt: [{ type: 'text', text: 'focus on tests' }]
+        prompt: [{ type: 'text', text: 'focus on tests' }],
+        _meta: { steering: { idleBehavior: 'promptRequired' } }
       })
     )
     expect(published).toEqual([
@@ -284,6 +285,35 @@ describe('AcpNativeFollowUpWorkflow', () => {
     await expect(
       workflow.steerFollowUp({ sessionId: 'app-1', text: 'http-steer' })
     ).resolves.toEqual({ injected: false, reason: 'dispatch-failed' })
+    expect(published).toEqual([])
+  })
+
+  it('refuses an empty steering success instead of treating it as injected', async () => {
+    const { workflow } = createWorkflow({
+      request: vi.fn(async () => ({}))
+    })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
+    ).resolves.toEqual({ injected: false, reason: 'unrecognized-success' })
+    expect(published).toEqual([])
+  })
+
+  it('refuses idle promptRequired without persisting a user message', async () => {
+    const { workflow } = createWorkflow({
+      request: vi.fn(async () => ({ outcome: 'promptRequired', reason: 'noRunningTurn' }))
+    })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
+    ).resolves.toEqual({ injected: false, reason: 'prompt-required' })
+    expect(published).toEqual([])
+  })
+
+  it('refuses when the provider session is gone', async () => {
+    const { request, workflow } = createWorkflow({ providerSessionId: null })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
+    ).resolves.toEqual({ injected: false, reason: 'no-live-turn' })
+    expect(request).not.toHaveBeenCalled()
     expect(published).toEqual([])
   })
 
