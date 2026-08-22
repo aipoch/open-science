@@ -40,6 +40,18 @@ describe('native follow-up compatibility layer', () => {
       steering: true
     })
     expect(retainInitializeCapabilities(CODEX_STEERING_INITIALIZE).steering).toBe(true)
+    expect(
+      readSteeringAdvertisement({
+        protocolVersion: 1,
+        agentCapabilities: { _meta: { steering: { modes: ['queue', 'steer'] } } }
+      })
+    ).toEqual({ supported: true })
+    expect(
+      readSteeringAdvertisement({
+        protocolVersion: 1,
+        _meta: { steering: { modes: ['queue'] } }
+      })
+    ).toEqual({ supported: false })
     expect(readSteeringAdvertisement({ protocolVersion: 1, agentCapabilities: {} })).toEqual({
       supported: false
     })
@@ -197,6 +209,17 @@ describe('native follow-up compatibility layer', () => {
       )
     ).toBe(false)
     expect(parseOpenCodeHttpFollowUp({ ok: true }, 'http-steer')).toBe(false)
+    expect(
+      parseOpenCodeHttpFollowUp(
+        {
+          data: {
+            info: { id: 'msg_1', role: 'user', sessionID: 'ses_1' },
+            parts: [{ type: 'text', text: 'http-steer' }]
+          }
+        },
+        'http-steer'
+      )
+    ).toBe(true)
   })
 
   it('fail-closes empty and unknown steering outcomes, and treats startedNewTurn as injected', () => {
@@ -220,6 +243,16 @@ describe('native follow-up compatibility layer', () => {
     expect(interpretSteerOutcome(parseSteerOutcome(null))).toEqual({
       kind: 'refused',
       reason: 'missing-outcome'
+    })
+    expect(parseSteerOutcome({ turnId: 'turn_456' })).toEqual({
+      kind: 'rejected',
+      reason: 'missing-outcome',
+      raw: { turnId: 'turn_456' }
+    })
+    expect(parseSteerOutcome({ outcome: 'failed' })).toEqual({
+      kind: 'rejected',
+      reason: 'unknown-outcome',
+      raw: { outcome: 'failed' }
     })
   })
 })
