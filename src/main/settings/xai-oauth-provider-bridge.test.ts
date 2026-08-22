@@ -53,7 +53,7 @@ describe('xAI OAuth provider bridge', () => {
       method: 'POST',
       headers: { 'x-api-key': connection.token, 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'ignored',
+        model: 'claude-sonnet-5',
         max_tokens: 128,
         stream: true,
         messages: [{ role: 'user', content: 'Hello' }]
@@ -62,6 +62,7 @@ describe('xAI OAuth provider bridge', () => {
     const stream = await response.text()
 
     expect(response.headers.get('content-type')).toContain('text/event-stream')
+    expect(stream).toContain('"model":"claude-sonnet-5"')
     expect(stream).toContain('"type":"text_delta","text":"Hello from Grok"')
     expect(stream).toContain('"type":"input_json_delta"')
     expect(getAccessToken).toHaveBeenNthCalledWith(1, false)
@@ -74,6 +75,59 @@ describe('xAI OAuth provider bridge', () => {
       model: 'grok-4.6',
       max_output_tokens: 128,
       stream: false
+    })
+  })
+
+  it('lists registered Anthropic models so Claude Code can resolve grok-4.6', async () => {
+    const bridge = createXaiOAuthProviderBridge(
+      [
+        { id: 'active', model: 'grok-4.6' },
+        { id: 'other', model: 'grok-4.5' }
+      ],
+      'active',
+      'anthropic',
+      vi.fn(async () => 'access-token'),
+      vi.fn<typeof fetch>()
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const headers = { authorization: `Bearer ${connection.token}` }
+
+    const list = await fetch(`${connection.baseUrl}/v1/models`, { headers })
+    expect(list.status).toBe(200)
+    expect(await list.json()).toMatchObject({
+      has_more: false,
+      data: expect.arrayContaining([
+        { id: 'grok-4.6', type: 'model', display_name: 'grok-4.6' },
+        { id: 'grok-4.5', type: 'model', display_name: 'grok-4.5' },
+        { id: 'claude-sonnet-5', type: 'model', display_name: 'claude-sonnet-5' },
+        { id: 'sonnet', type: 'model', display_name: 'sonnet' }
+      ])
+    })
+
+    const found = await fetch(`${connection.baseUrl}/v1/models/grok-4.6`, { headers })
+    expect(found.status).toBe(200)
+    expect(await found.json()).toEqual({
+      id: 'grok-4.6',
+      type: 'model',
+      display_name: 'grok-4.6'
+    })
+
+    const alias = await fetch(`${connection.baseUrl}/v1/models/claude-sonnet-4-6`, { headers })
+    expect(alias.status).toBe(200)
+    expect(await alias.json()).toEqual({
+      id: 'claude-sonnet-4-6',
+      type: 'model',
+      display_name: 'claude-sonnet-4-6'
+    })
+
+    const future = await fetch(`${connection.baseUrl}/v1/models/claude-sonnet-6`, { headers })
+    expect(future.status).toBe(200)
+    const learned = await fetch(`${connection.baseUrl}/v1/models`, { headers })
+    expect(await learned.json()).toMatchObject({
+      data: expect.arrayContaining([
+        { id: 'claude-sonnet-6', type: 'model', display_name: 'claude-sonnet-6' }
+      ])
     })
   })
 
@@ -93,7 +147,7 @@ describe('xAI OAuth provider bridge', () => {
       method: 'POST',
       headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'ignored',
+        model: 'openai-request-model',
         messages: [{ role: 'user', content: 'Hello' }]
       })
     })
@@ -101,7 +155,7 @@ describe('xAI OAuth provider bridge', () => {
 
     expect(completion).toMatchObject({
       object: 'chat.completion',
-      model: 'grok-4.6',
+      model: 'openai-request-model',
       choices: [{ finish_reason: 'tool_calls' }]
     })
     expect(JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))).toMatchObject({

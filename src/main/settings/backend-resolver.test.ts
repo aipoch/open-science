@@ -165,6 +165,7 @@ type HarnessOptions = {
   anthropicProviderBridgeBuilder?: (index: number) => AnthropicProviderBridgeDouble
   openAiProviderBridgeBuilder?: (index: number) => OpenAiProviderBridgeDouble
   nextGenerationId?: () => string
+  getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
 }
 
 // The inferred return preserves each Vitest mock's concrete call signature for assertions below.
@@ -317,7 +318,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
     createAnthropicProviderBridge,
     createOpenAiProviderBridge,
     ensureCodexSubscriptionHome,
-    nextGenerationId
+    nextGenerationId,
+    ...(options.getXaiOAuthAccessToken
+      ? { getXaiOAuthAccessToken: options.getXaiOAuthAccessToken }
+      : {})
   })
 
   return {
@@ -556,6 +560,64 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       }
     )
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
+  })
+
+  it('keeps Claude Code on a recognized alias while the xAI loopback pins grok-4.6', async () => {
+    const provider: StoredProvider = {
+      id: 'builtin-xai-subscription',
+      type: 'xai-subscription',
+      name: 'xAI (Grok) OAuth',
+      apiEndpoints: ['anthropic', 'openai', 'responses'],
+      model: 'grok-4.6'
+    }
+    const harness = makeHarness({
+      settings: makeSettings({
+        providers: [provider],
+        activeProviderId: provider.id,
+        activeModel: provider.model,
+        agentFrameworkId: 'claude-code'
+      }),
+      getXaiOAuthAccessToken: vi.fn(async () => 'xai-access'),
+      targetOverride: () => ({
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        provider: {
+          type: 'xai-subscription',
+          vendorId: 'xai',
+          apiEndpoints: ['anthropic', 'openai', 'responses'],
+          model: 'grok-4.6',
+          key: undefined
+        }
+      })
+    })
+    harness.resolveRuntimeModelCatalog.mockImplementation((storedProvider, framework) =>
+      ['grok-4.6', 'grok-4.5'].map((model) =>
+        harness.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+      )
+    )
+
+    const backend = await harness.resolver.resolveActiveBackend()
+    try {
+      expect((backend.sessionOptions as { settings?: unknown })?.settings).toEqual({
+        skipWebFetchPreflight: true,
+        permissions: { ask: ['WebFetch'] }
+      })
+      expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
+        harness.getSettings(),
+        new Set(),
+        null
+      )
+      expect(backend.env).toMatchObject({
+        ANTHROPIC_MODEL: 'sonnet',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'sonnet',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'opus',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'haiku',
+        ANTHROPIC_DEFAULT_FABLE_MODEL: 'fable',
+        ANTHROPIC_BASE_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/)
+      })
+      expect(backend.env).not.toHaveProperty('ANTHROPIC_CUSTOM_MODEL_OPTION')
+    } finally {
+      await backend.anthropicBridgeLease?.release()
+    }
   })
 
   it.each([
@@ -1260,7 +1322,10 @@ describe('AgentBackendResolver runtime delegation', () => {
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
         harness.getSettings(),
         new Set(['forced-skill']),
-        null
+        {
+          availableModels: ['model-a'],
+          modelOverrides: { 'model-a': 'model-a' }
+        }
       )
       expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
       expect(harness.runtime.materializeAgentConfigFiles).not.toHaveBeenCalled()

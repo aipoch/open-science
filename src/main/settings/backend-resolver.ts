@@ -5,7 +5,8 @@ import type { ReasoningEffort } from '../../shared/settings'
 import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_REASONING_EFFORT,
-  isCodexSubscriptionProvider
+  isCodexSubscriptionProvider,
+  usesAppProviderTransport
 } from '../../shared/settings'
 import {
   buildActiveModelIncompatibleMessage,
@@ -539,7 +540,7 @@ export class AgentBackendResolver {
             settings: runtimeConfig.privateSettings,
             ...skillProjectionOptions
           }
-        : provider.type === 'custom'
+        : usesAppProviderTransport(provider.type)
           ? {
               settings: {
                 skipWebFetchPreflight: true,

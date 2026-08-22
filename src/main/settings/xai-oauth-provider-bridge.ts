@@ -1,4 +1,5 @@
 import type { ServerResponse } from 'node:http'
+import { createLogger } from '../logger'
 import { netFetchStandard } from '../skills/net-fetch'
 
 import {
@@ -19,9 +20,42 @@ type Wire = 'anthropic' | 'openai'
 export type XaiOAuthBridgeTarget = Readonly<{ id: string; model: string }>
 export type XaiOAuthBridgeConnection = Readonly<{ baseUrl: string; token: string }>
 
+const log = createLogger('xai-oauth-bridge')
+
+// Stable Claude Code aliases. These names do not change when Anthropic ships a new default Sonnet.
+const CLAUDE_CODE_STABLE_ALIASES = Object.freeze([
+  'default',
+  'sonnet',
+  'opus',
+  'haiku',
+  'best',
+  'fable',
+  'opusplan'
+])
+
+// Snapshot of versioned ids current Claude Code may resolve aliases into. GET /v1/models/:id also
+// learns any newer id at runtime so a Claude upgrade does not require a matching app release.
+const CLAUDE_CODE_COMPAT_MODEL_IDS = Object.freeze([
+  'claude-sonnet-5',
+  'claude-opus-5',
+  'claude-fable-5',
+  'claude-sonnet-4-6',
+  'claude-opus-4-6',
+  'claude-opus-4-7',
+  'claude-opus-4-8',
+  'claude-sonnet-4-5',
+  'claude-opus-4-5',
+  'claude-haiku-4-5',
+  'claude-haiku-4-5-20251001'
+])
+
+const anthropicModel = (id: string): Readonly<{ id: string; type: 'model'; display_name: string }> =>
+  Object.freeze({ id, type: 'model', display_name: id })
+
 export class XaiOAuthProviderBridge {
   private readonly targets: ReadonlyMap<string, XaiOAuthBridgeTarget>
   private target: XaiOAuthBridgeTarget
+  private readonly advertisedIds: Set<string>
   private readonly host: ProviderLoopbackHttpHost<XaiOAuthBridgeConnection>
 
   constructor(
@@ -35,6 +69,12 @@ export class XaiOAuthProviderBridge {
     const initial = this.targets.get(initialTargetId)
     if (!initial) throw new Error('The initial xAI OAuth bridge target is not registered.')
     this.target = initial
+    this.advertisedIds = new Set(
+      this.wire === 'anthropic'
+        ? [...CLAUDE_CODE_STABLE_ALIASES, ...CLAUDE_CODE_COMPAT_MODEL_IDS]
+        : []
+    )
+    for (const target of targets) this.advertisedIds.add(target.model)
     this.host = new ProviderLoopbackHttpHost({
       credentialMode: 'bearer-or-api-key',
       createConnection: (origin, token) => ({ baseUrl: origin, token }),
@@ -70,16 +110,32 @@ export class XaiOAuthProviderBridge {
     request: ProviderLoopbackHttpRequest,
     response: ServerResponse
   ): Promise<void> {
+    const pathname = request.url.pathname
+    if (
+      request.method === 'GET' &&
+      (pathname === '/v1/models' || pathname.startsWith('/v1/models/'))
+    ) {
+      log.info('loopback models', { wire: this.wire, path: pathname })
+      return this.writeModels(response, pathname)
+    }
     if (request.method !== 'POST')
       return json(response, 405, { error: { message: 'Method not allowed' } })
     const expected = this.wire === 'anthropic' ? '/v1/messages' : '/v1/chat/completions'
-    if (this.wire === 'anthropic' && request.path === '/v1/messages/count_tokens') {
+    if (this.wire === 'anthropic' && pathname === '/v1/messages/count_tokens') {
       return json(response, 200, {
         input_tokens: countAnthropicInputTokens(await request.readJsonObject())
       })
     }
-    if (request.path !== expected) return json(response, 404, { error: { message: 'Not found' } })
+    if (pathname !== expected) return json(response, 404, { error: { message: 'Not found' } })
     const body = await request.readJsonObject()
+    const requestModel = typeof body.model === 'string' && body.model ? body.model : this.target.model
+    this.advertise(requestModel)
+    log.info('loopback request', {
+      wire: this.wire,
+      path: pathname,
+      requestModel,
+      upstreamModel: this.target.model
+    })
     const wantsStream = body.stream === true
     const upstreamBody =
       this.wire === 'anthropic'
@@ -88,15 +144,60 @@ export class XaiOAuthProviderBridge {
     let upstream = await this.request(upstreamBody, request, false)
     if (upstream.status === 401) upstream = await this.request(upstreamBody, request, true)
     const payload = (await upstream.json()) as Record<string, unknown>
-    if (!upstream.ok) return json(response, upstream.status, payload)
+    if (!upstream.ok) {
+      log.info('loopback upstream error', {
+        wire: this.wire,
+        path: pathname,
+        status: upstream.status,
+        requestModel,
+        upstreamModel: this.target.model
+      })
+      return json(response, upstream.status, payload)
+    }
     const translated =
       this.wire === 'anthropic'
-        ? responsesToAnthropic(payload, this.target.model)
-        : responsesToChat(payload, this.target.model)
+        ? responsesToAnthropic(payload, requestModel)
+        : responsesToChat(payload, requestModel)
     if (!wantsStream) return json(response, 200, translated)
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
     if (this.wire === 'anthropic') this.writeAnthropicStream(response, translated)
     else this.writeChatStream(response, translated)
+  }
+
+  private advertise(id: string): void {
+    if (id) this.advertisedIds.add(id)
+  }
+
+  private writeModels(response: ServerResponse, pathname: string): void {
+    if (pathname === '/v1/models') {
+      const models = [...this.advertisedIds].map((id) =>
+        this.wire === 'anthropic' ? anthropicModel(id) : { id, object: 'model', owned_by: 'xai' }
+      )
+      return json(
+        response,
+        200,
+        this.wire === 'anthropic'
+          ? { data: models, has_more: false }
+          : { object: 'list', data: models }
+      )
+    }
+    const id = decodeURIComponent(pathname.slice('/v1/models/'.length))
+    if (!id) {
+      return json(response, 404, {
+        error: { type: 'not_found_error', message: 'Model not found' }
+      })
+    }
+    if (this.wire === 'anthropic' || this.advertisedIds.has(id)) {
+      this.advertise(id)
+      return json(
+        response,
+        200,
+        this.wire === 'anthropic' ? anthropicModel(id) : { id, object: 'model', owned_by: 'xai' }
+      )
+    }
+    return json(response, 404, {
+      error: { type: 'not_found_error', message: `Model ${id} not found` }
+    })
   }
 
   private async request(
@@ -177,6 +278,24 @@ export class XaiOAuthProviderBridge {
     response.end('data: [DONE]\n\n')
   }
 }
+
+export const claudeCodeLoopbackEnv = (
+  connection: XaiOAuthBridgeConnection,
+  xai = false
+): Record<string, string> => ({
+  ANTHROPIC_BASE_URL: connection.baseUrl,
+  ANTHROPIC_AUTH_TOKEN: connection.token,
+  ANTHROPIC_API_KEY: connection.token,
+  ...(xai
+    ? {
+        ANTHROPIC_MODEL: 'sonnet',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'sonnet',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'opus',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'haiku',
+        ANTHROPIC_DEFAULT_FABLE_MODEL: 'fable'
+      }
+    : {})
+})
 
 export const createXaiOAuthProviderBridge = (
   targets: readonly XaiOAuthBridgeTarget[],

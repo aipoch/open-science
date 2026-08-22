@@ -212,7 +212,7 @@ class BackendRoutePlanner {
       input.effortIntent
     )
     const claudeModelConfig =
-      input.frameworkId === 'claude-code' && usesAppProviderTransport(input.target.provider.type)
+      input.frameworkId === 'claude-code' && input.target.provider.type === 'custom'
         ? this.claudeModelConfig(routeCandidates)
         : undefined
     return Object.freeze({
@@ -487,7 +487,7 @@ class BackendRoutePlanner {
         candidates.map((candidate) => candidate.effectiveModel ?? candidate.provider.model)
       )
     ].filter((model): model is string => Boolean(model))
-    return models.length < 2
+    return models.length === 0
       ? undefined
       : Object.freeze({
           availableModels: Object.freeze(models),

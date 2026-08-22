@@ -29,7 +29,7 @@ import {
 } from './native-responses-compatibility'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import { xaiNativeResponsesTargetFields } from './xai-protocol'
-import { createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
+import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
 
 type ResponsesBridgePort = Pick<
   ResponsesBridge,
@@ -391,9 +391,10 @@ class ProviderTransportOwner {
       }
       return Object.freeze({
         environment: {
-          ANTHROPIC_BASE_URL: connection.baseUrl,
-          ANTHROPIC_AUTH_TOKEN: connection.token,
-          ANTHROPIC_API_KEY: connection.token,
+          ...claudeCodeLoopbackEnv(
+            connection,
+            input.activeTarget.provider.type === 'xai-subscription'
+          ),
           ...loopbackProxyBypassEnvironment(process.env)
         },
         anthropicBridgeLease: {
