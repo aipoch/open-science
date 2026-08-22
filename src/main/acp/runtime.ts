@@ -1114,6 +1114,8 @@ class AcpRuntime {
       frameworkId: this.framework.id,
       text: request.text,
       selectedSkillIds: request.forcedSkillIds ?? [],
+      specialistId: this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot()
+        .specialistId,
       codexHome: this.backendGeneration.current.adapter.codexHome
     })
     const prepared = await this.promptContent.prepare({

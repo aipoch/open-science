@@ -753,6 +753,44 @@ describe('workspace message queue controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
+  it('rejects Send now when the queued item no longer matches the live session', async () => {
+    let currentSession = session()
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'message-steer'
+    }))
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(),
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('steer me')))
+
+    currentSession = { ...currentSession, specialistId: 'specialist-b' }
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        getSession: () => currentSession
+      })
+    )
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      text: 'steer me',
+      phase: 'error',
+      error: { kind: 'send' }
+    })
+  })
+
   it('injects Send now through native follow-up without interrupting', async () => {
     const steerFollowUp = vi.fn(async () => ({
       injected: true as const,

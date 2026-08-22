@@ -326,6 +326,18 @@ const queueBranchMatches = (session: ChatSession, item: MessageQueueItem): boole
   )
 }
 
+const queueItemContextError = (
+  session: ChatSession,
+  item: MessageQueueItem
+): MessageQueueError | undefined => {
+  if (!queueBranchMatches(session, item)) return { kind: 'branch' }
+  if ((session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE) !== item.permissionProfile) {
+    return { kind: 'send' }
+  }
+  if (session.specialistId !== item.specialistId) return { kind: 'send' }
+  return undefined
+}
+
 const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
   session: ChatSession
@@ -419,22 +431,9 @@ const useWorkspaceMessageQueueController = (
       }
       const item = itemsFor(sessionId)[0]
       if (!item || item.phase === 'sending' || item.phase === 'error') return
-      if (!queueBranchMatches(session, item)) {
-        replaceItem(sessionId, item.id, {
-          phase: 'error',
-          error: { kind: 'branch' }
-        })
-        return
-      }
-      if ((session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE) !== item.permissionProfile) {
-        replaceItem(sessionId, item.id, { phase: 'error', error: { kind: 'send' } })
-        return
-      }
-      if (session.specialistId !== item.specialistId) {
-        replaceItem(sessionId, item.id, {
-          phase: 'error',
-          error: { kind: 'send' }
-        })
+      const contextError = queueItemContextError(session, item)
+      if (contextError) {
+        replaceItem(sessionId, item.id, { phase: 'error', error: contextError })
         return
       }
       if (!current.isSpecialistReady(sessionId)) return
@@ -644,6 +643,17 @@ const useWorkspaceMessageQueueController = (
           })
         }
         const liveSession = current.getSession(queue.sessionId)
+        if (liveSession) {
+          const contextError = queueItemContextError(liveSession, item)
+          if (contextError) {
+            replaceItem(queue.sessionId, itemId, { phase: 'error', error: contextError })
+            return
+          }
+          if (!current.isSpecialistReady(queue.sessionId)) {
+            emit('Queued message will send after the current run finishes.')
+            return
+          }
+        }
         const liveTurn =
           liveSession?.status === 'running' ||
           liveSession?.status === 'waiting-for-user' ||

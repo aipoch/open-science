@@ -101,7 +101,12 @@ describe('AcpConnectionResourceOwner', () => {
 
     await attached.promise
     expect(owner.connection).toBeUndefined()
-    expect(owner.capabilities).toEqual({ close: false, delete: false, resume: false, steering: false })
+    expect(owner.capabilities).toEqual({
+      close: false,
+      delete: false,
+      resume: false,
+      steering: false
+    })
 
     canPublish.resolve()
     const handle = await pending

@@ -110,11 +110,32 @@ class AcpTurnSkillOwner {
     frameworkId: AgentFrameworkId
     text: string
     selectedSkillIds: readonly string[]
+    specialistId?: string
     codexHome?: string
   }): Promise<ProviderPreparation> {
+    const selected = Object.freeze([...input.selectedSkillIds])
+    let scope: EffectiveSpecialistSkills | undefined
+    if (input.specialistId && this.options.resolveSpecialistSkills) {
+      try {
+        scope = await this.options.resolveSpecialistSkills(input.specialistId)
+      } catch {
+        throw new Error('The bound specialist is unavailable.')
+      }
+      if (scope.kind === 'unavailable') throw new Error(scope.reason)
+      if (scope.kind === 'specialist') {
+        const allowedIds = scope.skillIds
+        const allowedNames = scope.frameworkNames
+        const rejected = selected.find(
+          (id) => !allowedIds.includes(id) && !(id.startsWith('mcp-') && allowedNames.includes(id))
+        )
+        if (rejected) {
+          throw new Error(`Skill "${rejected}" is not available to the active specialist.`)
+        }
+      }
+    }
     try {
       return await this.prepareProvider(
-        { selectedSkillIds: Object.freeze([...input.selectedSkillIds]) },
+        { selectedSkillIds: selected, ...(scope ? { scope } : {}) },
         {
           frameworkId: input.frameworkId,
           selectionText: input.text,

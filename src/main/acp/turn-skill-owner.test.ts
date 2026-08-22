@@ -231,6 +231,34 @@ describe('AcpTurnSkillOwner', () => {
     expect(presented.text).toBe('Use the following skill(s) for this task: Research.\n\nfind papers')
   })
 
+  it('rejects out-of-scope follow-up Skills without force-loading', async () => {
+    const needForceLoad = vi.fn(async (ids: string[]) => [...ids])
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist' as const,
+        skillIds: ['current-skill'],
+        frameworkNames: ['Current Skill'],
+        missingSkillIds: []
+      }),
+      skills: {
+        needForceLoad,
+        namesForIds: async () => ['Stale']
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    await expect(
+      owner.presentFollowUp({
+        frameworkId: opencodeFramework.id,
+        text: 'find papers',
+        selectedSkillIds: ['stale-skill'],
+        specialistId: 'specialist-1'
+      })
+    ).rejects.toThrow('Skill "stale-skill" is not available to the active specialist.')
+    expect(needForceLoad).not.toHaveBeenCalled()
+    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
+  })
+
   it('prepares an explicit Codex Skill as native input without changing prompt text', async () => {
     const namesForIds = vi.fn(async (ids: readonly string[]) => [...ids])
     const descriptorsForIds = vi.fn(async () => [
