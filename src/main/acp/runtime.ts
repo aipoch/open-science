@@ -1109,7 +1109,7 @@ class AcpRuntime {
 
   private async prepareNativeFollowUpContent(
     request: AcpSteerFollowUpRequest
-  ): Promise<ContentBlock[]> {
+  ): Promise<{ prompt: ContentBlock[]; uploads: UploadedAttachment[] }> {
     const presented = await this.turnSkills.presentFollowUp({
       frameworkId: this.framework.id,
       text: request.text,
@@ -1129,9 +1129,15 @@ class AcpRuntime {
       skillImportEnabled: false
     })
     if (typeof prepared.content === 'string') {
-      return prepared.content.trim() ? [{ type: 'text', text: prepared.content }] : []
+      return {
+        prompt: prepared.content.trim() ? [{ type: 'text', text: prepared.content }] : [],
+        uploads: [...(prepared.turnInputs?.uploads ?? [])]
+      }
     }
-    return prepared.content
+    return {
+      prompt: prepared.content,
+      uploads: [...(prepared.turnInputs?.uploads ?? [])]
+    }
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
