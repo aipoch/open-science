@@ -2951,6 +2951,33 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionUnavailable).toHaveBeenCalledWith('detached-session')
   })
 
+  it('retires a targeted runtime after deleting its last detached session', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession({
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'high'
+      }
+    })
+    created[1].setStateSilently({ sessionId: undefined, sessionIds: [] })
+    created[1].deleteSession.mockResolvedValueOnce(emptySnapshot())
+
+    await coordinator.deleteSession({ sessionId: session.sessionId })
+
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+  })
+
   it('preserves a session adopted by a new generation while the old delete is in flight', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const onSessionUnavailable = vi.fn()
