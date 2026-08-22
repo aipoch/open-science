@@ -47,6 +47,7 @@ type PrepareExistingWorkspacePromptRequest = {
   selectedRuntime: {
     frameworkId?: AgentFrameworkId
     backendId?: string
+    agentModel?: string
     agentConfiguration?: SessionAgentConfiguration
     supportsImageInput?: boolean
     supportsImageRelay?: boolean
@@ -195,8 +196,8 @@ const prepareExistingWorkspacePrompt = async (
       request.selectedRuntime.backendId !== currentSession.agentBackendId)
   )
   const selectedModelChanged = Boolean(
-    request.selectedRuntime.agentConfiguration?.model &&
-    request.selectedRuntime.agentConfiguration.model !== currentSession?.agentModel
+    request.selectedRuntime.agentConfiguration &&
+    request.selectedRuntime.agentModel !== currentSession?.agentModel
   )
   const runtimeDetached = !runtime.state.sessionIds.includes(sessionId)
   // An explicit Session target must pass through resume even when the aggregate coordinator snapshot
