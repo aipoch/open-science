@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs'
 
-import type { NotebookLanguage } from '../../shared/notebook'
+import {
+  parseNotebookLanguage,
+  parseOptionalNotebookLanguage,
+  type NotebookLanguage
+} from '../../shared/notebook'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
   logStartupGateFailure,
@@ -64,10 +68,13 @@ const createUnavailableLifecycle = (
       version: DEFAULT_ENV_VERSION,
       provisioning: false
     }),
-  provision: (language, operationId) =>
-    runUnavailableOperation(deps, 'provision', language, operationId),
-  repair: (language, operationId) => runUnavailableOperation(deps, 'repair', language, operationId),
-  cancel: () => undefined,
+  provision: async (language, operationId) =>
+    runUnavailableOperation(deps, 'provision', parseNotebookLanguage(language), operationId),
+  repair: async (language, operationId) =>
+    runUnavailableOperation(deps, 'repair', parseNotebookLanguage(language), operationId),
+  cancel: (language) => {
+    parseOptionalNotebookLanguage(language)
+  },
   startup: () => Promise.resolve()
 })
 
@@ -84,45 +91,54 @@ const createNotebookEnvironmentLifecycle = (
       return provisioner.status()
     })
 
-  const provision = (language: NotebookLanguage, operationId?: string): Promise<void> =>
-    runLoggedRuntimeOperation(
+  const provision = async (language: NotebookLanguage, operationId?: string): Promise<void> => {
+    const parsedLanguage = parseNotebookLanguage(language)
+    return runLoggedRuntimeOperation(
       'provision',
-      language,
+      parsedLanguage,
       deps.root,
       (report) =>
         withDataRootWrite(async () => {
           if (deps.waitForRecovery) await deps.waitForRecovery()
-          deps.assertProvisionAllowed?.(language)
-          await (language === 'r'
-            ? provisioner.provisionR(report)
-            : provisioner.provisionPython(report))
+          deps.assertProvisionAllowed?.(parsedLanguage)
+          switch (parsedLanguage) {
+            case 'r':
+              await provisioner.provisionR(report)
+              return
+            case 'python':
+              await provisioner.provisionPython(report)
+              return
+          }
         }),
       (progress) =>
         deps.projectProgress({
           ...progress,
-          scope: language,
+          scope: parsedLanguage,
           ...(operationId === undefined ? {} : { operationId })
         })
     )
+  }
 
-  const repair = (language: NotebookLanguage, operationId?: string): Promise<void> =>
-    runLoggedRuntimeOperation(
+  const repair = async (language: NotebookLanguage, operationId?: string): Promise<void> => {
+    const parsedLanguage = parseNotebookLanguage(language)
+    return runLoggedRuntimeOperation(
       'repair',
-      language,
+      parsedLanguage,
       deps.root,
       (report) =>
         withDataRootWrite(async () => {
           if (deps.waitForRecovery) await deps.waitForRecovery()
-          await provisioner.repair(language, report, { force: true })
-          await deps.onRepairCompleted?.(language)
+          await provisioner.repair(parsedLanguage, report, { force: true })
+          await deps.onRepairCompleted?.(parsedLanguage)
         }),
       (progress) =>
         deps.projectProgress({
           ...progress,
-          scope: language,
+          scope: parsedLanguage,
           ...(operationId === undefined ? {} : { operationId })
         })
     )
+  }
 
   const startup = async (): Promise<void> => {
     try {
@@ -159,7 +175,7 @@ const createNotebookEnvironmentLifecycle = (
     status,
     provision,
     repair,
-    cancel: (language) => provisioner.cancel(language),
+    cancel: (language) => provisioner.cancel(parseOptionalNotebookLanguage(language)),
     startup
   }
 }
