@@ -5594,6 +5594,60 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions[0].agentFrameworkId).toBe('codex')
   })
 
+  it('does not reset image history when the attached text-only target is unchanged', async () => {
+    const agentConfiguration = {
+      providerId: 'provider-1',
+      model: 'text-model',
+      reasoningEffort: 'default'
+    } as const
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect this image',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'text-model',
+      agentConfiguration
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-image-1',
+      eventId: 'image-event-1',
+      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        frameworkId: 'codex',
+        backendId: 'codex:provider-1'
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'text-model',
+      agentConfiguration,
+      supportsImageInput: false
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('resets text-only context when replay budgeting omits an older image turn', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
