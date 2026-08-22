@@ -14,7 +14,7 @@ import { ApplicationEventHub } from './application-events'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
 import {
   projectPublicTaskEvent,
-  projectTaskRuntimeEvent,
+  projectTaskRuntimeEvents,
   projectWebRendererEvent
 } from './web-service/application-event-projections'
 
@@ -54,21 +54,23 @@ describe('application event flow', () => {
     windows.push({
       isDestroyed: () => false,
       webContents: {
-        send: vi.fn((_channel, payload: AcpRuntimeEvent) => {
-          order.push(`electron:${payload.kind}`)
+        send: vi.fn((_channel, payload: readonly AcpRuntimeEvent[]) => {
+          order.push(`electron:${payload[0]?.kind}`)
         })
       }
     })
     const hub = new ApplicationEventHub()
     const uninstall = installRendererBroadcastEventHub(hub)
     const removeTask = hub.subscribe((event) => {
-      const projection = projectTaskRuntimeEvent(event)
-      if (projection) order.push(`task:${projection.kind}`)
+      for (const projection of projectTaskRuntimeEvents(event)) {
+        order.push(`task:${projection.kind}`)
+      }
     })
     const removeWeb = hub.subscribe((event) => {
       const rendererProjection = projectWebRendererEvent(event)
       if (rendererProjection) {
-        order.push(`web:${(rendererProjection.payload as AcpRuntimeEvent).kind}`)
+        const batch = rendererProjection.payload as readonly AcpRuntimeEvent[]
+        order.push(`web:${batch[0]?.kind}`)
       }
       const publicProjection = projectPublicTaskEvent(event)
       if (publicProjection?.type === 'run.event') {
@@ -76,7 +78,7 @@ describe('application event flow', () => {
       }
     })
 
-    for (const payload of payloads) broadcastToRenderers('acp:event', payload)
+    for (const payload of payloads) broadcastToRenderers('acp:event', [payload])
 
     expect(order).toEqual([
       'electron:stop',
@@ -88,8 +90,8 @@ describe('application event flow', () => {
       'web:error',
       'public:error'
     ])
-    expect(windows[0].webContents.send).toHaveBeenNthCalledWith(1, 'acp:event', payloads[0])
-    expect(windows[0].webContents.send).toHaveBeenNthCalledWith(2, 'acp:event', payloads[1])
+    expect(windows[0].webContents.send).toHaveBeenNthCalledWith(1, 'acp:event', [payloads[0]])
+    expect(windows[0].webContents.send).toHaveBeenNthCalledWith(2, 'acp:event', [payloads[1]])
 
     removeWeb()
     removeTask()

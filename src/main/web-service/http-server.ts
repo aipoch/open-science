@@ -35,7 +35,7 @@ import {
 } from '../../shared/web-rpc-contract'
 import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 import {
-  projectPublicTaskEvent,
+  projectPublicTaskEvents,
   projectPublicTaskProgressEvent,
   projectWebRendererEvent
 } from './application-event-projections'
@@ -1006,18 +1006,19 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
     const internalProjection = projectWebRendererEvent(event)
-    const publicProjection = projectPublicTaskEvent(event)
+    const publicMessages = projectPublicTaskEvents(event).map((projection) =>
+      JSON.stringify(projection)
+    )
     const legacyInternalMessage = internalProjection
       ? JSON.stringify(internalProjection)
       : undefined
     const replayInternalMessage = internalProjection
       ? internalEventStream.publish(internalProjection)
       : undefined
-    const publicMessage = publicProjection ? JSON.stringify(publicProjection) : undefined
     for (const socket of sockets) {
       if (socket.readyState !== WebSocket.OPEN) continue
       if (publicEventSockets.has(socket)) {
-        if (publicMessage) socket.send(publicMessage)
+        for (const publicMessage of publicMessages) socket.send(publicMessage)
       } else if (internalEventSockets.get(socket) === 'replay') {
         if (replayInternalMessage) socket.send(replayInternalMessage)
       } else if (legacyInternalMessage) {

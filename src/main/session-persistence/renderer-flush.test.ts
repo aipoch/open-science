@@ -140,14 +140,11 @@ describe('requestRendererSessionPersistenceFlush', () => {
 })
 
 describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
-  it.each(['conflict', 'renderer-failed', 'send-failed', 'timeout'] as const)(
-    'blocks shutdown for %s',
-    (outcome) => {
-      expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(true)
-    }
-  )
+  it.each(['conflict', 'renderer-failed'] as const)('blocks shutdown for %s', (outcome) => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(true)
+  })
 
-  it.each(['completed', 'unavailable', 'renderer-gone'] as const)(
+  it.each(['completed', 'unavailable', 'renderer-gone', 'send-failed', 'timeout'] as const)(
     'allows shutdown for %s',
     (outcome) => {
       expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(false)

@@ -45,13 +45,13 @@ describe('application event projections', () => {
       },
       raw: { providerSessionId: 'non-uuid-session' }
     }
-    const event: ApplicationEvent<'acp:event'> = { channel: 'acp:event', payload }
+    const event: ApplicationEvent<'acp:event'> = { channel: 'acp:event', payload: [payload] }
 
     expect(projectTaskRuntimeEvent(event)).toBe(payload)
     expect(projectWebRendererEvent(event)).toEqual({
       protocolVersion: 1,
       channel: 'acp:event',
-      payload
+      payload: [payload]
     })
     expect(projectPublicTaskEvent(event)).toEqual({ type: 'run.event', data: payload })
   })

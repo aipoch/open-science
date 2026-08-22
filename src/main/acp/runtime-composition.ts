@@ -32,6 +32,7 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { ProjectRepository } from '../projects/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { createAcpRuntimeEventBroadcastCoalescer } from './runtime-event-broadcast-coalescer'
 import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
 import {
   buildSpecialistIdentityAppend,
@@ -198,6 +199,9 @@ const createAcpRuntime = ({
   const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
   const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
+  const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
+    publish: (events) => broadcastToRenderers('acp:event', events)
+  })
   const callbacks: AcpRuntimeCallbacks = runtimeCallbacks ?? {
     onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
@@ -205,7 +209,7 @@ const createAcpRuntime = ({
         ? runtimeCoordinatorRef.current?.liveSessionProjectId(event.sessionId)
         : undefined
       if (event.attribution && projectId) onTrustedMessageAttribution?.(projectId, event)
-      broadcastToRenderers('acp:event', event)
+      eventBroadcast.enqueue(event)
       // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
       if (taskNotifications) {
         runTaskNotificationInBackground(

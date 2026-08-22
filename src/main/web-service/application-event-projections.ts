@@ -1,3 +1,4 @@
+import type { AcpRuntimeEvent } from '../../shared/acp'
 import { WEB_RPC_PROTOCOL_VERSION, isWebRpcEventChannel } from '../../shared/web-rpc-contract'
 import type { TaskRunProgressEvent } from '../../shared/task-api'
 import type { ApplicationEvent } from '../application-events'
@@ -9,7 +10,7 @@ type WebRendererEvent = {
 }
 
 type PublicTaskEvent =
-  | { type: 'run.event'; data: Extract<ApplicationEvent, { channel: 'acp:event' }>['payload'] }
+  | { type: 'run.event'; data: AcpRuntimeEvent }
   | {
       type: 'permission.requested'
       data: Extract<ApplicationEvent, { channel: 'acp:permission-request' }>['payload']
@@ -25,28 +26,36 @@ const projectWebRendererEvent = (event: ApplicationEvent): WebRendererEvent | un
       }
     : undefined
 
-const projectPublicTaskEvent = (event: ApplicationEvent): PublicTaskEvent | undefined => {
-  if (event.channel === 'acp:event') return { type: 'run.event', data: event.payload }
-  if (event.channel === 'acp:permission-request') {
-    return { type: 'permission.requested', data: event.payload }
+const projectPublicTaskEvents = (event: ApplicationEvent): PublicTaskEvent[] => {
+  if (event.channel === 'acp:event') {
+    return event.payload.map((item) => ({ type: 'run.event' as const, data: item }))
   }
-  return undefined
+  if (event.channel === 'acp:permission-request') {
+    return [{ type: 'permission.requested', data: event.payload }]
+  }
+  return []
 }
+
+const projectPublicTaskEvent = (event: ApplicationEvent): PublicTaskEvent | undefined =>
+  projectPublicTaskEvents(event)[0]
 
 const projectPublicTaskProgressEvent = (event: TaskRunProgressEvent): PublicTaskEvent => ({
   type: 'run.progress',
   data: event
 })
 
-const projectTaskRuntimeEvent = (
-  event: ApplicationEvent
-): Extract<ApplicationEvent, { channel: 'acp:event' }>['payload'] | undefined =>
-  event.channel === 'acp:event' ? event.payload : undefined
+const projectTaskRuntimeEvents = (event: ApplicationEvent): readonly AcpRuntimeEvent[] =>
+  event.channel === 'acp:event' ? event.payload : []
+
+const projectTaskRuntimeEvent = (event: ApplicationEvent): AcpRuntimeEvent | undefined =>
+  projectTaskRuntimeEvents(event)[0]
 
 export {
   projectPublicTaskEvent,
+  projectPublicTaskEvents,
   projectPublicTaskProgressEvent,
   projectTaskRuntimeEvent,
+  projectTaskRuntimeEvents,
   projectWebRendererEvent
 }
 export type { PublicTaskEvent, WebRendererEvent }

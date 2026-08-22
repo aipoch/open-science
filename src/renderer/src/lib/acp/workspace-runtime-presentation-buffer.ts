@@ -152,13 +152,22 @@ const createWorkspaceRuntimePresentationBuffer = (
     })
   }
 
+  const consecutiveNonTextPrefix = (pending: AcpRuntimeEvent[]): AcpRuntimeEvent[] => {
+    const end = pending.findIndex((event) => isBufferableAssistantTextEvent(event))
+    return pending.slice(0, end === -1 ? pending.length : end)
+  }
+
   const select = (
     lane: WorkspacePresentationLane,
     pending: AcpRuntimeEvent[]
   ): AcpRuntimeEvent[] => {
     if (!presentation) return pending
     const first = pending[0]
-    if (!first || !isBufferableAssistantTextEvent(first)) return first ? [first] : []
+    if (!first) return []
+    // Thought, tool, stop, and other non-text events are not grapheme-paced. Selecting only the
+    // first one made a live burst drain one event per iteration and recopy the remaining lane
+    // each time. Consecutive non-text events stay ordered and still apply sequentially.
+    if (!isBufferableAssistantTextEvent(first)) return consecutiveNonTextPrefix(pending)
 
     const textRun = pending.slice(
       0,

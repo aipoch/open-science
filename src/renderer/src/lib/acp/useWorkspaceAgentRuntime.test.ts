@@ -305,6 +305,44 @@ describe('workspace agent runtime event processing', () => {
     expect(appliedEventIds).toEqual(events.map((event) => event.id))
   })
 
+  it('keeps live presentation drain of a thought burst within a linear main-thread work budget', async () => {
+    let eventIdReads = 0
+    const appliedEventIds: string[] = []
+    const processor = createWorkspaceRuntimeEventProcessor(
+      async (event) => {
+        appliedEventIds.push(event.id)
+        return true
+      },
+      { presentation: createTimerPresentation() }
+    )
+    const events = Array.from({ length: 1_200 }, (_, index) => {
+      const event = createEvent({
+        id: `thought-event-${index + 1}`,
+        kind: 'thought',
+        role: 'assistant',
+        text: 'x'
+      })
+      const eventId = event.id
+      Object.defineProperty(event, 'id', {
+        enumerable: true,
+        get: () => {
+          eventIdReads += 1
+          return eventId
+        }
+      })
+      return event
+    })
+
+    const drains = events.map((event) => processor.processIncremental([event]))
+    await Promise.all(drains)
+    await processor.drain()
+
+    // Admission-only budget is 20 reads/event. Live drain also walks the pending lane and the
+    // selected batch, so allow a still-linear 32. The unfixed presentation path was ~4,600.
+    expect(eventIdReads).toBeLessThan(events.length * 32)
+    expect(appliedEventIds).toEqual(events.map((event) => event.id))
+  })
+
   it('releases fast assistant text in grapheme-budgeted 30 fps batches', async () => {
     vi.useFakeTimers()
     try {

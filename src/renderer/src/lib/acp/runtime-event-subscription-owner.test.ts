@@ -91,6 +91,20 @@ describe('runtime event subscription owner', () => {
     expect(replayed.at(-1)?.id).toBe('runtime-1:acp-event-601')
   })
 
+  it('publishes an incremental batch as one listener delivery', () => {
+    const owner = createRuntimeEventSubscriptionOwner()
+    owner.observeInitialSnapshot([])
+    const listener = vi.fn<(events: readonly AcpRuntimeEvent[]) => void>()
+    owner.subscribe(listener)
+    const first = runtimeEvent(1)
+    const second = runtimeEvent(2)
+
+    owner.observeEvents([first, second])
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener.mock.calls[0]?.[0]).toEqual([first, second])
+  })
+
   it('bounds rolling snapshot history without an incremental subscriber', () => {
     const owner = createRuntimeEventSubscriptionOwner()
     const events = Array.from({ length: 600 }, (_, index) => runtimeEvent(index + 1))

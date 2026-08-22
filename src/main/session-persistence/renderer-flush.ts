@@ -31,11 +31,7 @@ export type RendererSessionPersistenceFlushOutcome =
 
 export const rendererSessionPersistenceFlushBlocksShutdown = (
   outcome: RendererSessionPersistenceFlushOutcome
-): boolean =>
-  outcome === 'conflict' ||
-  outcome === 'renderer-failed' ||
-  outcome === 'send-failed' ||
-  outcome === 'timeout'
+): boolean => outcome === 'conflict' || outcome === 'renderer-failed'
 
 export const requestRendererSessionPersistenceFlush = async (
   deps: RendererSessionPersistenceFlushDeps
