@@ -530,6 +530,10 @@ const applyWorkspaceRuntimeEvent = async (
 ): Promise<boolean> => {
   const store = useSessionStore.getState()
 
+  // Thought chunks never enter the transcript. Exit before the permission / message / tool
+  // probes so a thinking-model burst cannot walk Session state once per provider token.
+  if (event.kind === 'thought') return false
+
   if (event.kind === 'permission' && event.sessionId) {
     const permission = store.sessions.find((session) => session.id === event.sessionId)
       ?.runtimeContext?.permission
