@@ -483,7 +483,13 @@ class AcpRuntimeCoordinator {
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     const runtime = this.runtimeForTarget(request.agentTarget)
-    const response = await runtime.createSession(request)
+    let response: AcpCreateSessionResponse
+    try {
+      response = await runtime.createSession(request)
+    } catch (error) {
+      await this.retireUnusedTargetedRuntime(runtime)
+      throw error
+    }
     this.sessionRuntimes.set(response.sessionId, runtime)
     this.lastRuntime = runtime
     return response
@@ -527,6 +533,7 @@ class AcpRuntimeCoordinator {
       if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
+      await this.retireUnusedTargetedRuntime(runtime)
       throw error
     }
 
