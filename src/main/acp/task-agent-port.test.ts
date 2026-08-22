@@ -41,6 +41,13 @@ describe('ACP Task Agent port', () => {
     const resolveSessionAgentTarget = vi.fn(async (configuration) =>
       configuration ? ({ frameworkId: 'opencode' as const, ...configuration } as const) : undefined
     )
+    const defaultAgentTarget = {
+      frameworkId: 'codex' as const,
+      providerId: 'provider-default',
+      model: 'model-default',
+      reasoningEffort: 'medium' as const
+    }
+    const resolveDefaultSessionAgentTarget = vi.fn(async () => defaultAgentTarget)
     const port = createAcpTaskAgentPort(
       runtime,
       { create },
@@ -55,7 +62,8 @@ describe('ACP Task Agent port', () => {
           return operation()
         }
       },
-      resolveSessionAgentTarget
+      resolveSessionAgentTarget,
+      resolveDefaultSessionAgentTarget
     )
 
     const admitted = vi.fn(async () => 'admitted')
@@ -73,7 +81,12 @@ describe('ACP Task Agent port', () => {
     ).resolves.toMatchObject({
       sessionId: 'session-created',
       frameworkId: 'codex',
-      backendId: 'codex:shared'
+      backendId: 'codex:shared',
+      agentConfiguration: {
+        providerId: 'provider-default',
+        model: 'model-default',
+        reasoningEffort: 'medium'
+      }
     })
     await expect(
       port.resumeSession({
@@ -111,8 +124,10 @@ describe('ACP Task Agent port', () => {
       projectId: 'project-1',
       permissionProfile: 'auto',
       cwd: '/workspace/external',
-      specialistId: 'specialist-1'
+      specialistId: 'specialist-1',
+      agentTarget: defaultAgentTarget
     })
+    expect(resolveDefaultSessionAgentTarget).toHaveBeenCalledOnce()
     expect(withSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable', admitted)
     expect(resolveSessionAgentTarget).toHaveBeenCalledWith({
       providerId: 'provider-1',

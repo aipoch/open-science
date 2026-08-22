@@ -708,7 +708,12 @@ describe('TaskRunner', () => {
             sessionId: 'session-1',
             cwd: canonicalCwd,
             frameworkId: 'codex',
-            backendId: 'codex:shared'
+            backendId: 'codex:shared',
+            agentConfiguration: {
+              providerId: 'provider-default',
+              model: 'model-default',
+              reasoningEffort: 'medium'
+            }
           }
         },
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -774,6 +779,11 @@ describe('TaskRunner', () => {
       cwd: canonicalCwd,
       status: 'idle',
       permissionProfile: 'auto',
+      agentConfiguration: {
+        providerId: 'provider-default',
+        model: 'model-default',
+        reasoningEffort: 'medium'
+      },
       messages: [
         { id: 'user-message-1', role: 'user', content: 'Review these papers.' },
         {
@@ -1703,6 +1713,46 @@ describe('TaskRunner', () => {
           'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
       }
     ])
+  })
+
+  it('adopts a persisted agent configuration for an attached session', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
+    }
+    const resumeSession = vi.fn(async () => ({ sessionId: existing.id, cwd: existing.cwd }))
+    const ids = ['new-user', 'run-2', 'new-agent']
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save: async () => undefined },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession,
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Continue with the saved model.'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: existing.id,
+        agentConfiguration: existing.agentConfiguration
+      })
+    )
   })
 
   it('starts a new run without replaying an interrupted task prompt or retaining recovery state', async () => {

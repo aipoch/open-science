@@ -7,7 +7,11 @@ import type {
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
-import type { SessionAgentTargetResolver } from './session-agent-target'
+import {
+  toSessionAgentConfiguration,
+  type DefaultSessionAgentTargetResolver,
+  type SessionAgentTargetResolver
+} from './session-agent-target'
 
 type AcpTaskAgentRuntime = {
   getSnapshot(): { sessionIds: string[] }
@@ -49,20 +53,28 @@ const createAcpTaskAgentPort = (
   createSessionWorkflow: AcpCreateSessionWorkflow,
   notifications?: TaskPromptNotifications,
   archiveAvailability?: SessionArchiveAvailability,
-  resolveSessionAgentTarget?: SessionAgentTargetResolver
+  resolveSessionAgentTarget?: SessionAgentTargetResolver,
+  resolveDefaultSessionAgentTarget?: DefaultSessionAgentTargetResolver
 ): TaskAgentPort => ({
   withSessionAvailable: (projectId, sessionId, operation) =>
     archiveAvailability
       ? archiveAvailability.withSessionAvailable(projectId, sessionId, operation)
       : operation(),
   listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
-  createSession: (request) =>
-    createSessionWorkflow.create({
+  createSession: async (request) => {
+    const agentTarget = await resolveDefaultSessionAgentTarget?.()
+    const response = await createSessionWorkflow.create({
       projectId: request.projectId,
       permissionProfile: request.permissionProfile,
       ...(request.cwd ? { cwd: request.cwd } : {}),
-      ...(request.specialistId ? { specialistId: request.specialistId } : {})
-    }),
+      ...(request.specialistId ? { specialistId: request.specialistId } : {}),
+      ...(agentTarget ? { agentTarget } : {})
+    })
+    return {
+      ...response,
+      ...(agentTarget ? { agentConfiguration: toSessionAgentConfiguration(agentTarget) } : {})
+    }
+  },
   resumeSession: async (request) => {
     const agentTarget = await resolveSessionAgentTarget?.(request.agentConfiguration)
     return runtime.resumeSession({
