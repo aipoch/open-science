@@ -15,6 +15,18 @@ export const SHIPPED_CLAUDE_AGENT_ACP_VERSION = '0.60.0'
 export const SHIPPED_CODEX_ACP_VERSION = '1.1.4'
 export const SHIPPED_OPENCODE_VERSION = '1.18.3'
 
+// Steering first appears in these adapters. Idle `promptRequired` is later
+// (Claude 0.70.0). Host dispatch still refuses `startedNewTurn`.
+export const FIRST_CLAUDE_STEERING_ACP_VERSION = '0.61.0'
+export const FIRST_CODEX_STEERING_ACP_VERSION = '1.2.0'
+
+// Latest adapters inspected 2026-08-22. Claude 0.70.0 and Codex 1.6.2 advertise
+// `_session/steering` and inject into the live turn. OpenCode GitHub `dev` still
+// calls `sdk.session.prompt` only.
+export const LATEST_CLAUDE_AGENT_ACP_VERSION = '0.70.0'
+export const LATEST_CODEX_ACP_VERSION = '1.6.2'
+export const LATEST_OPENCODE_VERSION = '1.18.3'
+
 // Production policy. A second `session/prompt` is rejected before it reaches the agent.
 export const HOST_CONCURRENT_PROMPT_POLICY = 'reject' as const
 
@@ -266,6 +278,16 @@ export const admitSecondSessionPrompt = (
     })
   }
   return Object.freeze({ allowed: true, mode: 'queued-prompt-adopt-after-stop' })
+}
+
+// What the host would see after upgrading adapters, without a live initialize.
+// Latest Claude and Codex always advertise steering. OpenCode still does not.
+export const resolveLatestNativeSendNowCapability = (
+  lookup: NativeSendNowLookup
+): NativeSendNowCapability => {
+  if (lookup.advertisement) return resolveShippedNativeSendNowCapability(lookup)
+  if (lookup.frameworkId === 'opencode') return resolveShippedNativeSendNowCapability(lookup)
+  return advertisedSteering()
 }
 
 export type { AgentFrameworkId, AgentModelRoute }
