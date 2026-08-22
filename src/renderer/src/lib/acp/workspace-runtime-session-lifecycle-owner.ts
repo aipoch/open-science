@@ -1,4 +1,8 @@
-import type { AcpCreateSessionResponse, AcpRuntimeEvent } from '../../../../shared/acp'
+import type {
+  AcpCreateSessionResponse,
+  AcpRuntimeEvent,
+  AcpSessionAgentTarget
+} from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
@@ -19,6 +23,7 @@ type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 type ResumeInterruptedWorkspaceSessionOptions = {
   historyReplayDescriptor?: HistoryReplayDescriptor
   supportsImageInput?: boolean
+  agentTarget?: AcpSessionAgentTarget
   flushPersistence?: () => Promise<void>
 }
 
@@ -89,9 +94,10 @@ const replaceWorkspaceProviderIdentity = (
 
 const ensureWorkspaceSessionReady = async (
   runtime: WorkspaceMessageRuntime,
-  sessionId: string
+  sessionId: string,
+  agentTarget?: AcpSessionAgentTarget
 ): Promise<boolean> => {
-  if (runtime.state.sessionIds.includes(sessionId)) return false
+  if (runtime.state.sessionIds.includes(sessionId) && !agentTarget) return false
   const session = workspaceSession(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)
   const cwd = session.cwd || runtime.state.cwd
@@ -106,7 +112,8 @@ const ensureWorkspaceSessionReady = async (
     session.specialistId,
     session.providerSessionId,
     session.providerContinuityToken,
-    session.specialistBindingPending
+    session.specialistBindingPending,
+    agentTarget
   )
   useSessionStore.getState().markResumed(
     session.id,
@@ -184,7 +191,8 @@ const resumeInterruptedWorkspaceSession = async (
 
   if (!session) return
 
-  const runtimeAlreadyAttached = runtime.state.sessionIds.includes(sessionId)
+  const runtimeAlreadyAttached =
+    runtime.state.sessionIds.includes(sessionId) && !options?.agentTarget
   const promptMessageId = session.resumeRecovery?.promptMessageId
 
   if (runtimeAlreadyAttached) {
@@ -229,7 +237,8 @@ const resumeInterruptedWorkspaceSession = async (
       session.specialistId,
       session.providerSessionId,
       session.providerContinuityToken,
-      session.specialistBindingPending
+      session.specialistBindingPending,
+      options?.agentTarget
     )
     // Ownership transfer is complete in the coordinator, but accepted events from the previous
     // runtime generation can still be queued in the renderer. Drain them before starting the
@@ -338,7 +347,9 @@ const recoverContextOverflowWorkspaceSession = async (
   supportsImageInput?: boolean,
   cancelledSessionIds?: Set<string>,
   historyReplayDescriptor?: HistoryReplayDescriptor,
-  planContinuation?: SendWorkspaceMessageIntent['planContinuation']
+  planContinuation?: SendWorkspaceMessageIntent['planContinuation'],
+  agentTarget?: AcpSessionAgentTarget,
+  supportsImageRelay?: boolean
 ): Promise<boolean> => {
   const session = workspaceSession(sessionId)
 
@@ -456,7 +467,19 @@ const recoverContextOverflowWorkspaceSession = async (
     forceHistoryReplay: !nativeCompacted,
     allowCompactionRecovery: true,
     supportsImageInput,
-    agentModel: session.agentModel,
+    supportsImageRelay,
+    agentFrameworkId: agentTarget?.frameworkId,
+    agentBackendId: agentTarget
+      ? `${agentTarget.frameworkId}:${agentTarget.providerId}`
+      : session.agentBackendId,
+    agentModel: agentTarget?.model ?? session.agentModel,
+    agentConfiguration: agentTarget
+      ? {
+          providerId: agentTarget.providerId,
+          ...(agentTarget.model ? { model: agentTarget.model } : {}),
+          reasoningEffort: agentTarget.reasoningEffort
+        }
+      : session.agentConfiguration,
     historyReplayDescriptor,
     ...(retryPlanContinuation ? { planContinuation: retryPlanContinuation } : {})
   })
@@ -550,25 +573,42 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     string,
     NonNullable<SendWorkspaceMessageIntent['planContinuation']>
   >()
+  const admittedAgentTargetBySessionId = new Map<string, AcpSessionAgentTarget>()
+  const pruneAdmittedAgentTargets = (): void => {
+    const liveSessionIds = new Set(useSessionStore.getState().sessions.map((session) => session.id))
+    for (const sessionId of admittedAgentTargetBySessionId.keys()) {
+      if (!liveSessionIds.has(sessionId)) admittedAgentTargetBySessionId.delete(sessionId)
+    }
+  }
 
   return {
     recordPromptPlanAuthority(
-      input: Pick<SendWorkspaceMessageIntent, 'sessionId' | 'planContinuation'>
+      input: Pick<SendWorkspaceMessageIntent, 'sessionId' | 'planContinuation'> & {
+        agentTarget?: AcpSessionAgentTarget
+      }
     ): void {
-      if (input.sessionId && input.planContinuation) {
+      if (!input.sessionId) return
+      pruneAdmittedAgentTargets()
+      if (input.planContinuation) {
         planContinuationBySessionId.set(input.sessionId, input.planContinuation)
-      } else if (input.sessionId) {
+      } else {
         planContinuationBySessionId.delete(input.sessionId)
+      }
+      if (input.agentTarget) {
+        admittedAgentTargetBySessionId.set(input.sessionId, input.agentTarget)
       }
     },
     processRuntimeEvents(
       runtime: WorkspaceMessageRuntime,
       events: AcpRuntimeEvent[],
       options: {
-        supportsImageInput?: boolean
+        supportsImageRelay?: boolean
+        getAgentTarget: (sessionId: string) => AcpSessionAgentTarget | undefined
+        getSupportsImageInput: (sessionId: string) => boolean | undefined
         getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
       }
     ): void {
+      pruneAdmittedAgentTargets()
       processContextOverflowRecovery(
         runtime,
         events,
@@ -581,10 +621,12 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
           return recoverContextOverflowWorkspaceSession(
             recoveryRuntime,
             sessionId,
-            options.supportsImageInput,
+            options.getSupportsImageInput(sessionId),
             cancelledOverflowRecoverySessionIds,
             options.getHistoryReplayDescriptor(sessionId),
-            planContinuation
+            planContinuation,
+            admittedAgentTargetBySessionId.get(sessionId) ?? options.getAgentTarget(sessionId),
+            options.supportsImageRelay
           ).finally(() => planContinuationBySessionId.delete(sessionId))
         }
       )
@@ -592,8 +634,12 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     compact(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<boolean> {
       return compactWorkspaceSession(runtime, sessionId)
     },
-    async ensureReady(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<void> {
-      await ensureWorkspaceSessionReady(runtime, sessionId)
+    async ensureReady(
+      runtime: WorkspaceMessageRuntime,
+      sessionId: string,
+      agentTarget?: AcpSessionAgentTarget
+    ): Promise<void> {
+      await ensureWorkspaceSessionReady(runtime, sessionId, agentTarget)
     },
     resume(
       runtime: WorkspaceMessageRuntime,
@@ -604,6 +650,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
       return resumeInterruptedWorkspaceSession(runtime, sessionId, drainRuntimeEvents, options)
     },
     cancel(runtime: WorkspaceCancellationRuntime, sessionId: string): Promise<void> {
+      admittedAgentTargetBySessionId.delete(sessionId)
       return cancelWorkspaceRun(
         runtime,
         sessionId,

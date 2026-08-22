@@ -214,6 +214,7 @@ export const createSessionMessageGraphOwner = <
     agentFrameworkId,
     agentBackendId,
     agentModel,
+    agentConfiguration,
     isPending,
     specialistId,
     enabledComputeHosts,
@@ -274,6 +275,11 @@ export const createSessionMessageGraphOwner = <
                     }
                   : {}),
                 agentModel: normalizedAgentModel,
+                // Existing Sessions keep their Composer preference. Fill only when none is stored
+                // so a send-time snapshot cannot replace a newer picker selection.
+                ...(agentConfiguration && !session.agentConfiguration
+                  ? { agentConfiguration }
+                  : {}),
                 agentStatus: undefined,
                 error: undefined,
                 errorReportable: undefined,
@@ -305,6 +311,7 @@ export const createSessionMessageGraphOwner = <
         agentFrameworkId,
         agentBackendId: normalizedAgentBackendId,
         agentModel: normalizedAgentModel,
+        ...(agentConfiguration ? { agentConfiguration } : {}),
         ...(specialistId ? { specialistId } : {}),
         ...(enabledComputeHosts?.length
           ? {
@@ -351,6 +358,7 @@ export const createSessionMessageGraphOwner = <
     agentFrameworkId,
     agentBackendId,
     agentModel,
+    agentConfiguration,
     specialistId
   }) => {
     const trimmedContent = content?.trim() ?? ''
@@ -403,6 +411,7 @@ export const createSessionMessageGraphOwner = <
       agentFrameworkId: normalizedFrameworkId,
       agentBackendId: normalizedAgentBackendId,
       agentModel: normalizedAgentModel,
+      agentConfiguration: agentConfiguration ?? source.agentConfiguration,
       ...(source.autoReviewEnabled !== undefined
         ? { autoReviewEnabled: source.autoReviewEnabled }
         : {}),

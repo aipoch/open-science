@@ -26,6 +26,11 @@ import { broadcastToRenderers } from '../renderer-broadcast'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
+import {
+  toSessionAgentConfiguration,
+  type SessionAgentTargetResolver
+} from '../acp/session-agent-target'
+import type { SessionAgentConfiguration } from '../../shared/settings'
 
 const log = createLogger('reviewer:ipc')
 
@@ -100,6 +105,11 @@ type ReviewerIpcOptions = {
     >
   }>
   projectRuntime?: Pick<ReviewerProjectRuntimeOwner, 'admit'>
+  resolveSessionAgentTarget?: SessionAgentTargetResolver
+  saveSessionAgentConfiguration?: (
+    session: PersistedChatSession,
+    configuration: SessionAgentConfiguration
+  ) => Promise<PersistedChatSession>
 }
 
 type ReviewerCommandOwner = Readonly<{
@@ -310,6 +320,25 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'not-found' })
     }
 
+    let agentTarget
+    try {
+      agentTarget = await options.resolveSessionAgentTarget?.(session)
+      if (!session.agentConfiguration && agentTarget && options.saveSessionAgentConfiguration) {
+        await options.saveSessionAgentConfiguration(
+          session,
+          toSessionAgentConfiguration(agentTarget)
+        )
+      }
+    } catch (error) {
+      inFlightReviewKeys.delete(inFlightKey)
+      log.error('review start failed: could not resolve Session agent target', {
+        sessionId,
+        turnMessageId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
+
     log.info('review triggered', { sessionId, turnMessageId })
 
     let modelAdmission: Awaited<
@@ -385,6 +414,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           ? (mutation) => options.withSessionMutation!(projectId, sessionId, mutation)
           : undefined,
         acpRuntime: options.acpRuntime,
+        ...(agentTarget ? { agentTarget } : {}),
         ...(modelAdmission.reviewerAcpRuntime
           ? { reviewerAcpRuntime: modelAdmission.reviewerAcpRuntime }
           : {}),

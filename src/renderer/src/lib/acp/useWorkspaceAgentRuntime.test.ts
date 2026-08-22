@@ -1316,7 +1316,15 @@ describe('workspace durable elicitation', () => {
       await respondToWorkspaceElicitation(
         { state: createSnapshot(), resumeSession, respondToElicitation },
         response,
-        { historyReplayDescriptor: { target: historyReplayTarget } }
+        {
+          agentTarget: {
+            frameworkId,
+            providerId: backendId.slice(backendId.indexOf(':') + 1),
+            model: 'session-model',
+            reasoningEffort: 'high'
+          },
+          historyReplayDescriptor: { target: historyReplayTarget }
+        }
       )
 
       expect(resumeSession).toHaveBeenCalledWith(
@@ -1329,7 +1337,13 @@ describe('workspace durable elicitation', () => {
         undefined,
         undefined,
         undefined,
-        undefined
+        undefined,
+        {
+          frameworkId,
+          providerId: backendId.slice(backendId.indexOf(':') + 1),
+          model: 'session-model',
+          reasoningEffort: 'high'
+        }
       )
       expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
         respondToElicitation.mock.invocationCallOrder[0]
@@ -1473,7 +1487,14 @@ describe('workspace durable elicitation', () => {
         candidate.id === session.id
           ? {
               ...candidate,
+              agentFrameworkId: 'codex',
+              agentBackendId: 'codex:provider-2',
               agentModel: 'old-model',
+              agentConfiguration: {
+                providerId: 'provider-2',
+                model: 'old-model',
+                reasoningEffort: 'default'
+              },
               messages: [
                 ...candidate.messages,
                 {
@@ -1597,6 +1618,12 @@ describe('workspace durable elicitation', () => {
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:provider-2',
         agentModel: 'new-model',
+        agentTarget: {
+          frameworkId: 'codex',
+          providerId: 'provider-2',
+          model: 'new-model',
+          reasoningEffort: 'high'
+        },
         onSendPreparationStateChange,
         flushPersistence
       }
@@ -1642,12 +1669,18 @@ describe('workspace durable elicitation', () => {
       session.cwd,
       session.projectId,
       'ask',
-      'opencode',
-      'opencode:provider-1',
+      'codex',
+      'codex:provider-2',
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      {
+        frameworkId: 'codex',
+        providerId: 'provider-2',
+        model: 'new-model',
+        reasoningEffort: 'high'
+      }
     )
     expect(onSendPreparationStateChange.mock.calls).toEqual([
       [session.id, true],
@@ -2501,6 +2534,78 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
+  it('adopts a model-only Session target before resetting a selected Branch', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'old-model',
+        reasoningEffort: 'default'
+      }
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        branchContextResetRequired: true
+      }))
+    }))
+    vi.stubGlobal('window', {
+      api: { notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) } }
+    })
+    const agentConfiguration = {
+      providerId: 'provider-1',
+      model: 'new-model',
+      reasoningEffort: 'high'
+    } as const
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project',
+      frameworkId: 'codex',
+      backendId: 'codex:provider-1',
+      contextReset: true
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession,
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue selected branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'new-model',
+      agentConfiguration
+    })
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      'transport-session-1',
+      '/workspace/project',
+      'project-1',
+      'ask',
+      'codex',
+      'codex:provider-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { frameworkId: 'codex', ...agentConfiguration }
+    )
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
   it('clears Branch replay after filtering images for a text-only model', async () => {
@@ -4426,8 +4531,15 @@ describe('resuming an interrupted session on demand', () => {
     }
     seedDetachedSession()
 
+    const agentTarget = {
+      frameworkId: 'codex',
+      providerId: 'codex-isolated',
+      model: 'gpt-5',
+      reasoningEffort: 'high'
+    } as const
     await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
-      historyReplayDescriptor: { target: 'codex-bridge' }
+      historyReplayDescriptor: { target: 'codex-bridge' },
+      agentTarget
     })
 
     expect(runtime.resumeSession).toHaveBeenCalledWith(
@@ -4440,7 +4552,8 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      agentTarget
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
@@ -5481,6 +5594,192 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions[0].agentFrameworkId).toBe('codex')
   })
 
+  it('does not reset image history when the attached text-only target is unchanged', async () => {
+    const agentConfiguration = {
+      providerId: 'provider-1',
+      model: 'text-model',
+      reasoningEffort: 'default'
+    } as const
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect this image',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'text-model',
+      agentConfiguration
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-image-1',
+      eventId: 'image-event-1',
+      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        frameworkId: 'codex',
+        backendId: 'codex:provider-1'
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'text-model',
+      agentConfiguration,
+      supportsImageInput: false
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('resets image history when an explicit model changes to the provider default', async () => {
+    const previousConfiguration = {
+      providerId: 'provider-1',
+      model: 'vision-model',
+      reasoningEffort: 'default'
+    } as const
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect this image',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'vision-model',
+      agentConfiguration: previousConfiguration
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-image-1',
+      eventId: 'image-event-1',
+      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        frameworkId: 'codex',
+        backendId: 'codex:provider-1'
+      }),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true,
+        frameworkId: 'codex',
+        backendId: 'codex:provider-1'
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'text-default',
+      agentConfiguration: {
+        providerId: 'provider-1',
+        reasoningEffort: 'default'
+      },
+      supportsImageInput: false
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+  })
+
+  it('does not replace a newer Session preference with a send-time snapshot', async () => {
+    const snapshot = {
+      providerId: 'provider-1',
+      model: 'queued-model',
+      reasoningEffort: 'default'
+    } as const
+    const preferred = {
+      providerId: 'provider-1',
+      model: 'preferred-model',
+      reasoningEffort: 'high'
+    } as const
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First turn',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'queued-model',
+      agentConfiguration: snapshot
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().setAgentConfiguration('session-1', preferred)
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      frameworkId: 'codex',
+      backendId: 'codex:provider-1'
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession,
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'queued follow-up',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'queued-model',
+      agentConfiguration: snapshot,
+      supportsImageInput: true
+    })
+    await flushRuntimeTasks()
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      'codex',
+      'codex:provider-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { frameworkId: 'codex', ...snapshot }
+    )
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].agentConfiguration).toEqual(preferred)
+  })
+
   it('resets text-only context when replay budgeting omits an older image turn', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -5671,9 +5970,13 @@ describe('recovering from a request-size overflow', () => {
       planContinuation: { artifactVersionId: 'plan-version-1', revision: 9 }
     })
     owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getAgentTarget: () => undefined,
+      getSupportsImageInput: () => undefined,
       getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
     })
     owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getAgentTarget: () => undefined,
+      getSupportsImageInput: () => undefined,
       getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
     })
 
@@ -5684,6 +5987,143 @@ describe('recovering from a request-size overflow', () => {
       artifactVersionId: 'plan-version-1',
       expectedRevision: 12
     })
+  })
+
+  it('recovers overflow with the admitted Session target after a later Composer change', async () => {
+    seedOverflowedConversation()
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    const admittedTarget = {
+      frameworkId: 'codex' as const,
+      providerId: 'admitted-provider',
+      model: 'admitted-model',
+      reasoningEffort: 'high' as const
+    }
+    owner.recordPromptPlanAuthority({
+      sessionId: 'session-1',
+      agentTarget: admittedTarget
+    })
+    owner.processRuntimeEvents(
+      runtime,
+      [
+        createEvent({
+          id: 'owner-overflow-admitted-target',
+          kind: 'error',
+          level: 'error',
+          recoverable: 'context-overflow',
+          sessionId: 'session-1'
+        })
+      ],
+      {
+        getAgentTarget: () => ({
+          frameworkId: 'codex',
+          providerId: 'later-provider',
+          model: 'later-model',
+          reasoningEffort: 'low'
+        }),
+        getSupportsImageInput: () => undefined,
+        getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+      }
+    )
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      admittedTarget
+    )
+  })
+
+  it('drops admitted Session targets when the Session is deleted', async () => {
+    seedOverflowedConversation()
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    owner.recordPromptPlanAuthority({
+      sessionId: 'session-1',
+      agentTarget: {
+        frameworkId: 'codex',
+        providerId: 'admitted-provider',
+        model: 'admitted-model',
+        reasoningEffort: 'high'
+      }
+    })
+    useSessionStore.setState({ sessions: [] })
+    owner.processRuntimeEvents(runtime, [], {
+      getAgentTarget: () => undefined,
+      getSupportsImageInput: () => undefined,
+      getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+    })
+    seedOverflowedConversation()
+    const laterTarget = {
+      frameworkId: 'codex' as const,
+      providerId: 'later-provider',
+      model: 'later-model',
+      reasoningEffort: 'low' as const
+    }
+    owner.processRuntimeEvents(
+      runtime,
+      [
+        createEvent({
+          id: 'owner-overflow-after-delete',
+          kind: 'error',
+          level: 'error',
+          recoverable: 'context-overflow',
+          sessionId: 'session-1'
+        })
+      ],
+      {
+        getAgentTarget: () => laterTarget,
+        getSupportsImageInput: () => undefined,
+        getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+      }
+    )
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
+    expect(runtime.resumeSession.mock.calls.at(-1)?.at(-1)).toEqual(laterTarget)
   })
 
   it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
@@ -5721,7 +6161,21 @@ describe('recovering from a request-size overflow', () => {
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
-    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1', false)
+    const agentTarget = {
+      frameworkId: 'codex',
+      providerId: 'provider-b',
+      model: 'model-b',
+      reasoningEffort: 'high'
+    } as const
+    const recovered = await recoverContextOverflowWorkspaceSession(
+      runtime,
+      'session-1',
+      false,
+      undefined,
+      undefined,
+      undefined,
+      agentTarget
+    )
     await flushRuntimeTasks()
 
     expect(recovered).toBe(true)
@@ -5739,6 +6193,19 @@ describe('recovering from a request-size overflow', () => {
     expect(preamble).not.toContain('now compare with this new screenshot')
     expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
     expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      'codex',
+      'codex:new',
+      undefined,
+      'provider-session-new',
+      'continuity-new',
+      undefined,
+      agentTarget
+    )
     expect(toPersistedSession(useSessionStore.getState().sessions[0])).toMatchObject({
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:new',

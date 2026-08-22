@@ -119,6 +119,8 @@ describe('live runtime event ingest', () => {
         { state: createSnapshot() },
         processLifecycleEvents,
         true,
+        () => undefined,
+        () => true,
         () => ({ target: 'codex-bridge' })
       )
     )
@@ -157,6 +159,8 @@ describe('live runtime event ingest', () => {
         },
         processLifecycleEvents,
         true,
+        () => undefined,
+        () => true,
         () => ({ target: 'codex-bridge' })
       )
     )
@@ -168,7 +172,7 @@ describe('live runtime event ingest', () => {
     expect(processLifecycleEvents).toHaveBeenCalledWith(
       expect.objectContaining({ state: snapshot }),
       [event],
-      expect.objectContaining({ supportsImageInput: true })
+      expect.objectContaining({ supportsImageRelay: true })
     )
     unmount()
     expect(unsubscribe).toHaveBeenCalledOnce()

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
 
-const unusedInterpreter = (kernelKind: 'python' | 'r') => ({
+const unusedInterpreter = (kernelKind: 'python' | 'r'): { command: string } => ({
   command: kernelKind === 'python' ? 'unused-python' : 'unused-rscript'
 })
 

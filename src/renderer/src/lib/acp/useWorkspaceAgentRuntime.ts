@@ -17,7 +17,8 @@ import {
   type AcpPermissionGrant,
   type AcpPermissionRequest,
   type AcpPermissionResponse,
-  type AcpSaveAsSkillRequest
+  type AcpSaveAsSkillRequest,
+  type AcpSessionAgentTarget
 } from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -25,14 +26,21 @@ import {
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import { resolveModelContextWindow } from '../../../../shared/provider-registry'
+import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
-import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
+import {
+  selectFrameworkApiEndpoints,
+  selectVisionRelayAvailable,
+  useSettingsStore
+} from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import {
   resolveHistoryReplayTarget,
   resolveSessionHistoryReplayDescriptor,
   type HistoryReplayDescriptor
 } from './history-preamble'
+import { resolveSessionAgentConfiguration } from './session-agent-configuration'
 import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
@@ -69,6 +77,15 @@ type WorkspacePermissionProfileRuntime = Pick<
   'state' | 'setPermissionProfile'
 >
 type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
+type WorkspaceSessionRuntimeSelection = Readonly<{
+  supportsImageInput: boolean
+  supportsImageRelay: boolean
+  agentFrameworkId: AcpSessionAgentTarget['frameworkId']
+  agentBackendId?: string
+  agentModel?: string
+  agentTarget?: AcpSessionAgentTarget
+  historyReplayDescriptor: HistoryReplayDescriptor
+}>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 const setWorkspacePermissionProfile = async (
@@ -118,6 +135,7 @@ type WorkspaceAgentRuntime = {
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
+  resolveSessionRuntimeSelection: (sessionId: string) => WorkspaceSessionRuntimeSelection
 }
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
@@ -152,45 +170,111 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     state.providers.find((candidate) => candidate.id === state.activeProviderId)
   )
   const visionRelayAvailable = useSettingsStore(selectVisionRelayAvailable)
-  const supportsNativeImageInput = activeProvider?.supportsImageInput === true
-  const supportsHistoryImageInput = supportsNativeImageInput || visionRelayAvailable
-  const activeModel = useSettingsStore((state) => state.activeModel)
-  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFramework = useSettingsStore((state) =>
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
   const providers = useSettingsStore((state) => state.providers)
+  const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const agentBackendId = activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined
-  const historyReplayDescriptor = useMemo<HistoryReplayDescriptor>(
-    () => ({
-      target: resolveHistoryReplayTarget(agentFrameworkId, activeProvider, agentFramework),
-      contextWindow: activeProvider?.vendorId
-        ? resolveModelContextWindow(
-            activeProvider.vendorId,
-            activeModel ?? activeProvider.model ?? activeProvider.models[0]
-          )
-        : activeProvider?.contextWindow
-    }),
-    [activeModel, activeProvider, agentFramework, agentFrameworkId]
+  const configuredModelCatalog = useMemo(
+    () =>
+      buildConfiguredModelCatalog({
+        providers,
+        includeAllClaudeSubscriptions: true,
+        frameworkId: agentFrameworkId,
+        frameworkEndpoints
+      }),
+    [agentFrameworkId, frameworkEndpoints, providers]
+  )
+  const resolveRuntimeSelection = useCallback(
+    (configuration: SessionAgentConfiguration | undefined): WorkspaceSessionRuntimeSelection => {
+      const provider = configuration
+        ? providers.find((candidate) => candidate.id === configuration.providerId)
+        : activeProvider
+      const model = configuration?.model ?? provider?.model ?? provider?.models[0]
+      const modelOption = configuredModelCatalog.find(
+        (option) => option.providerId === provider?.id && option.model === (model ?? '')
+      )
+      return {
+        supportsImageInput:
+          modelOption?.supportsImageInput ?? provider?.supportsImageInput === true,
+        supportsImageRelay: visionRelayAvailable,
+        agentFrameworkId,
+        agentBackendId: provider ? `${agentFrameworkId}:${provider.id}` : undefined,
+        agentModel: model,
+        agentTarget: configuration
+          ? ({ frameworkId: agentFrameworkId, ...configuration } satisfies AcpSessionAgentTarget)
+          : undefined,
+        historyReplayDescriptor: {
+          target: resolveHistoryReplayTarget(agentFrameworkId, provider, agentFramework),
+          contextWindow: provider?.vendorId
+            ? resolveModelContextWindow(provider.vendorId, model)
+            : provider?.contextWindow
+        } satisfies HistoryReplayDescriptor
+      }
+    },
+    [
+      activeProvider,
+      agentFramework,
+      agentFrameworkId,
+      configuredModelCatalog,
+      providers,
+      visionRelayAvailable
+    ]
+  )
+  const resolveStoredSessionConfiguration = useCallback(
+    (sessionId: string | undefined): SessionAgentConfiguration | undefined => {
+      if (!sessionId) return undefined
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session) return undefined
+      return resolveSessionAgentConfiguration({
+        session,
+        catalog: configuredModelCatalog,
+        activeProviderId: activeProvider?.id,
+        activeModel: activeProvider?.model,
+        activeReasoningEffort: reasoningEffort
+      }).configuration
+    },
+    [activeProvider, configuredModelCatalog, reasoningEffort]
+  )
+  const getSessionRuntimeSelection = useCallback(
+    (sessionId: string) => resolveRuntimeSelection(resolveStoredSessionConfiguration(sessionId)),
+    [resolveRuntimeSelection, resolveStoredSessionConfiguration]
+  )
+  const getSessionAgentTarget = useCallback(
+    (sessionId: string): AcpSessionAgentTarget | undefined =>
+      getSessionRuntimeSelection(sessionId).agentTarget,
+    [getSessionRuntimeSelection]
+  )
+  const getSessionSupportsImageInput = useCallback(
+    (sessionId: string): boolean => getSessionRuntimeSelection(sessionId).supportsImageInput,
+    [getSessionRuntimeSelection]
   )
   const getSessionHistoryReplayDescriptor = useCallback(
     (sessionId: string): HistoryReplayDescriptor => {
       const session = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
+      if (session?.agentConfiguration) {
+        return resolveRuntimeSelection(session.agentConfiguration).historyReplayDescriptor
+      }
       return session
         ? resolveSessionHistoryReplayDescriptor(session, providers, agentFrameworks)
         : { target: 'codex-bridge' }
     },
-    [agentFrameworks, providers]
+    [agentFrameworks, providers, resolveRuntimeSelection]
   )
   const [lifecycleOwner] = useState(createWorkspaceRuntimeSessionLifecycleOwner)
   const liveRuntimeEvents = useWorkspaceRuntimeEventIngest(
     runtime,
     lifecycleOwner.processRuntimeEvents,
-    supportsHistoryImageInput,
+    visionRelayAvailable,
+    getSessionAgentTarget,
+    getSessionSupportsImageInput,
     getSessionHistoryReplayDescriptor
   )
   const pendingPermissions = useMemo(
@@ -274,17 +358,21 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   useEffect(() => {
     if (liveRuntimeEvents) return
     lifecycleOwner.processRuntimeEvents(runtime, runtime.state.events, {
-      supportsImageInput: supportsHistoryImageInput,
+      supportsImageRelay: visionRelayAvailable,
+      getAgentTarget: getSessionAgentTarget,
+      getSupportsImageInput: getSessionSupportsImageInput,
       getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
     })
     void processWorkspaceRuntimeEvents(runtime.state)
   }, [
     getSessionHistoryReplayDescriptor,
+    getSessionAgentTarget,
+    getSessionSupportsImageInput,
     lifecycleOwner,
     liveRuntimeEvents,
     runtime,
     runtime.state,
-    supportsHistoryImageInput
+    visionRelayAvailable
   ])
 
   useEffect(() => {
@@ -327,17 +415,24 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
-      lifecycleOwner.recordPromptPlanAuthority(input)
+      const agentConfiguration =
+        input.agentConfiguration ?? resolveStoredSessionConfiguration(input.sessionId)
+      const resolvedInput = { ...input, agentConfiguration }
+      const selected = resolveRuntimeSelection(agentConfiguration)
+      lifecycleOwner.recordPromptPlanAuthority({
+        ...resolvedInput,
+        agentTarget: selected.agentTarget
+      })
       return sendWorkspaceMessage(
         runtime,
         {
-          ...input,
-          supportsImageInput: supportsNativeImageInput,
+          ...resolvedInput,
+          supportsImageInput: selected.supportsImageInput,
           supportsImageRelay: visionRelayAvailable,
-          agentFrameworkId,
-          agentBackendId,
-          agentModel: activeModel,
-          historyReplayDescriptor
+          agentFrameworkId: selected.agentFrameworkId,
+          agentBackendId: selected.agentBackendId,
+          agentModel: selected.agentModel,
+          historyReplayDescriptor: selected.historyReplayDescriptor
         },
         {
           onSendPreparationStateChange: handleSendPreparationStateChange,
@@ -348,41 +443,39 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     [
       lifecycleOwner,
       runtime,
-      supportsNativeImageInput,
       visionRelayAvailable,
-      agentFrameworkId,
-      agentBackendId,
-      activeModel,
-      historyReplayDescriptor,
+      resolveRuntimeSelection,
+      resolveStoredSessionConfiguration,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]
   )
 
   const resendEditedMessage = useCallback(
-    (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> =>
-      resendEditedWorkspaceMessage(
+    (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> => {
+      const configuration = resolveStoredSessionConfiguration(sessionId)
+      const selected = resolveRuntimeSelection(configuration)
+      return resendEditedWorkspaceMessage(
         runtime,
         { sessionId, messageId, ...input },
         {
-          supportsImageInput: supportsNativeImageInput,
+          supportsImageInput: selected.supportsImageInput,
           supportsImageRelay: visionRelayAvailable,
-          agentFrameworkId,
-          agentBackendId,
-          agentModel: activeModel,
-          historyReplayDescriptor,
+          agentFrameworkId: selected.agentFrameworkId,
+          agentBackendId: selected.agentBackendId,
+          agentModel: selected.agentModel,
+          agentConfiguration: configuration,
+          historyReplayDescriptor: selected.historyReplayDescriptor,
           onSendPreparationStateChange: handleSendPreparationStateChange,
           drainRuntimeEvents
         }
-      ),
+      )
+    },
     [
       runtime,
-      supportsNativeImageInput,
       visionRelayAvailable,
-      agentFrameworkId,
-      agentBackendId,
-      activeModel,
-      historyReplayDescriptor,
+      resolveRuntimeSelection,
+      resolveStoredSessionConfiguration,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]
@@ -393,26 +486,31 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     [lifecycleOwner, runtime]
   )
   const ensureSessionReady = useCallback(
-    (sessionId: string): Promise<void> => lifecycleOwner.ensureReady(runtime, sessionId),
-    [lifecycleOwner, runtime]
+    (sessionId: string): Promise<void> =>
+      lifecycleOwner.ensureReady(runtime, sessionId, getSessionAgentTarget(sessionId)),
+    [getSessionAgentTarget, lifecycleOwner, runtime]
   )
   const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
     runtime,
-    historyReplayDescriptor,
+    resolveSessionRuntimeSelection: getSessionRuntimeSelection,
     drainRuntimeEvents
   })
   const resumeInterruptedSession = useCallback(
-    (sessionId: string): Promise<void> =>
-      lifecycleOwner.resume(runtime, sessionId, drainRuntimeEvents, {
+    (sessionId: string): Promise<void> => {
+      const selected = getSessionRuntimeSelection(sessionId)
+      return lifecycleOwner.resume(runtime, sessionId, drainRuntimeEvents, {
         historyReplayDescriptor: getSessionHistoryReplayDescriptor(sessionId),
-        supportsImageInput: supportsHistoryImageInput
-      }),
+        supportsImageInput: selected.supportsImageInput || visionRelayAvailable,
+        agentTarget: selected.agentTarget
+      })
+    },
     [
-      lifecycleOwner,
-      runtime,
       drainRuntimeEvents,
       getSessionHistoryReplayDescriptor,
-      supportsHistoryImageInput
+      getSessionRuntimeSelection,
+      lifecycleOwner,
+      runtime,
+      visionRelayAvailable
     ]
   )
   const cancelRun = useCallback(
@@ -453,7 +551,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
                 session.specialistId,
                 session.providerSessionId,
                 session.providerContinuityToken,
-                session.specialistBindingPending
+                session.specialistBindingPending,
+                getSessionAgentTarget(session.id)
               )
               useSessionStore.getState().markResumed(
                 session.id,
@@ -523,7 +622,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       attempt.promise = tracked
       return tracked
     },
-    [pendingPermissions, permissionResponseAttemptOwner, runtime]
+    [getSessionAgentTarget, pendingPermissions, permissionResponseAttemptOwner, runtime]
   )
   const setPermissionProfile = useCallback(
     (sessionId: string, profile: PermissionProfileId): Promise<boolean> =>
@@ -560,7 +659,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     resumeInterruptedSession,
     respondToPermission,
     setPermissionProfile,
-    revokePermissionGrant
+    revokePermissionGrant,
+    resolveSessionRuntimeSelection: getSessionRuntimeSelection
   }
 }
 
@@ -597,4 +697,4 @@ export {
   useWorkspaceSubagentRuntimeSession,
   useWorkspaceAgentRuntime
 }
-export type { WorkspaceAgentRuntime }
+export type { WorkspaceAgentRuntime, WorkspaceSessionRuntimeSelection }

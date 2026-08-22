@@ -1762,6 +1762,7 @@
   "Select all": "全选",
   "Select all installed skills": "全选已安装的技能",
   "Select model": "选择模型",
+  "Session model unavailable": "会话模型不可用",
   "Select this computer, then select": "选择此电脑，然后选择",
   "Select {{name}}": "选择 {{name}}",
   "Selected capabilities": "选定的能力",

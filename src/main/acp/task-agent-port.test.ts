@@ -1,6 +1,11 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { TaskAgentPort } from '../tasks/task-runner'
+import {
+  materializeSessionAgentConfiguration,
+  toAcpSessionAgentTarget,
+  type SessionAgentTargetSource
+} from './session-agent-target'
 import { createAcpTaskAgentPort } from './task-agent-port'
 
 describe('ACP Task Agent port', () => {
@@ -38,16 +43,33 @@ describe('ACP Task Agent port', () => {
       cancelPrompt: vi.fn(async () => undefined)
     }
     const withSessionAvailable = vi.fn()
-    const port = createAcpTaskAgentPort(runtime, { create }, undefined, {
-      withSessionAvailable: async <Result>(
-        projectId: string,
-        sessionId: string,
-        operation: () => Promise<Result>
-      ) => {
-        withSessionAvailable(projectId, sessionId, operation)
-        return operation()
-      }
-    })
+    const resolveSessionAgentTarget = vi.fn(async (source: SessionAgentTargetSource) =>
+      toAcpSessionAgentTarget('opencode', source.agentConfiguration)
+    )
+    const defaultAgentTarget = {
+      frameworkId: 'codex' as const,
+      providerId: 'provider-default',
+      model: 'model-default',
+      reasoningEffort: 'medium' as const
+    }
+    const resolveDefaultSessionAgentTarget = vi.fn(async () => defaultAgentTarget)
+    const port = createAcpTaskAgentPort(
+      runtime,
+      { create },
+      undefined,
+      {
+        withSessionAvailable: async <Result>(
+          projectId: string,
+          sessionId: string,
+          operation: () => Promise<Result>
+        ) => {
+          withSessionAvailable(projectId, sessionId, operation)
+          return operation()
+        }
+      },
+      resolveSessionAgentTarget,
+      resolveDefaultSessionAgentTarget
+    )
 
     const admitted = vi.fn(async () => 'admitted')
     await expect(port.withSessionAvailable('project-1', 'session-stable', admitted)).resolves.toBe(
@@ -64,7 +86,12 @@ describe('ACP Task Agent port', () => {
     ).resolves.toMatchObject({
       sessionId: 'session-created',
       frameworkId: 'codex',
-      backendId: 'codex:shared'
+      backendId: 'codex:shared',
+      agentConfiguration: {
+        providerId: 'provider-default',
+        model: 'model-default',
+        reasoningEffort: 'medium'
+      }
     })
     await expect(
       port.resumeSession({
@@ -74,7 +101,12 @@ describe('ACP Task Agent port', () => {
         permissionProfile: 'ask',
         previousFrameworkId: 'codex',
         previousBackendId: 'codex:shared',
-        specialistId: 'specialist-1'
+        specialistId: 'specialist-1',
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-1',
+          reasoningEffort: 'high'
+        }
       })
     ).resolves.toMatchObject({
       sessionId: 'session-resumed',
@@ -97,9 +129,20 @@ describe('ACP Task Agent port', () => {
       projectId: 'project-1',
       permissionProfile: 'auto',
       cwd: '/workspace/external',
-      specialistId: 'specialist-1'
+      specialistId: 'specialist-1',
+      agentTarget: defaultAgentTarget
     })
+    expect(resolveDefaultSessionAgentTarget).toHaveBeenCalledOnce()
     expect(withSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable', admitted)
+    expect(resolveSessionAgentTarget).toHaveBeenCalledWith({
+      agentBackendId: 'codex:shared',
+      agentModel: undefined,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
+    })
     expect(runtime.resumeSession).toHaveBeenCalledWith({
       sessionId: 'session-stable',
       cwd: '/workspace/stable',
@@ -107,7 +150,13 @@ describe('ACP Task Agent port', () => {
       permissionProfile: 'ask',
       previousFrameworkId: 'codex',
       previousBackendId: 'codex:shared',
-      specialistId: 'specialist-1'
+      specialistId: 'specialist-1',
+      agentTarget: {
+        frameworkId: 'opencode',
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
     })
     expect(runtime.setPermissionProfile).toHaveBeenCalledWith({
       sessionId: 'session-stable',
@@ -124,6 +173,55 @@ describe('ACP Task Agent port', () => {
       resumeFallback: { historyPreamble: 'Fallback conversation.' }
     })
     expect(runtime.cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-stable' })
+  })
+
+  it('materializes legacy Session identity for Task resumes', async () => {
+    const runtime = {
+      getSnapshot: vi.fn(() => ({ sessionIds: [] })),
+      resumeSession: vi.fn(async () => ({ sessionId: 'session-legacy' })),
+      setPermissionProfile: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async () => undefined),
+      sendPromptObserved: vi.fn(async () => undefined),
+      cancelPrompt: vi.fn(async () => undefined)
+    }
+    const resolveSessionAgentTarget = vi.fn(async (source: SessionAgentTargetSource) =>
+      toAcpSessionAgentTarget('opencode', materializeSessionAgentConfiguration(source, 'high'))
+    )
+    const port = createAcpTaskAgentPort(
+      runtime,
+      { create: vi.fn() },
+      undefined,
+      undefined,
+      resolveSessionAgentTarget
+    )
+
+    await expect(
+      port.resumeSession({
+        sessionId: 'session-legacy',
+        cwd: '/workspace/legacy',
+        projectId: 'project-1',
+        permissionProfile: 'ask',
+        previousFrameworkId: 'opencode',
+        previousBackendId: 'opencode:provider-legacy',
+        previousModel: 'model-legacy'
+      })
+    ).resolves.toMatchObject({
+      agentConfiguration: {
+        providerId: 'provider-legacy',
+        model: 'model-legacy',
+        reasoningEffort: 'high'
+      }
+    })
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentTarget: {
+          frameworkId: 'opencode',
+          providerId: 'provider-legacy',
+          model: 'model-legacy',
+          reasoningEffort: 'high'
+        }
+      })
+    )
   })
 
   it('keeps Task prompt notification tracking equivalent on success and failure', async () => {

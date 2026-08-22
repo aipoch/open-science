@@ -4,6 +4,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  XAI_SUBSCRIPTION_PROVIDER_ID,
   type SettingsSnapshot
 } from '../../shared/settings'
 import {
@@ -11,7 +12,6 @@ import {
   type SettingsWorkflowEffects,
   type SettingsWorkflowStore
 } from './workflows'
-import type { AgentModelChangeTarget } from '../agent-framework'
 
 type TestSettingsWorkflowEffects = Partial<
   SettingsWorkflowEffects['runtime'] &
@@ -25,9 +25,7 @@ type TestSettingsWorkflowEffects = Partial<
 const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflowEffects => ({
   runtime: {
     requestProviderReconnect: effects.requestProviderReconnect ?? (() => undefined),
-    requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined),
-    applyReasoningEffort: effects.applyReasoningEffort ?? (async () => false),
-    applyModelChange: effects.applyModelChange ?? (async () => false)
+    requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined)
   },
   skills: {
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
@@ -89,6 +87,8 @@ const fakeStore = () => {
     logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+    waitXaiOAuthLogin: vi.fn().mockResolvedValue({ ok: true }),
+    logoutXaiOAuth: vi.fn().mockResolvedValue(snapshot()),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
     setSkillsEnabled: vi.fn().mockResolvedValue([]),
     createSkill: vi.fn().mockResolvedValue([]),
@@ -139,7 +139,7 @@ describe('SettingsWorkflows runtime effects', () => {
     }
   )
 
-  it('reconnects only when an affected uninstall keeps the same framework', async () => {
+  it('retires matching generations when an affected uninstall keeps the same framework', async () => {
     const { store, capability } = fakeStore()
     store.uninstallClaude.mockResolvedValue({
       snapshot: snapshot({ agentFrameworkId: 'claude-code' }),
@@ -153,8 +153,9 @@ describe('SettingsWorkflows runtime effects', () => {
       testEffects({ requestProviderReconnect, requestAgentFrameworkSwitch })
     ).runtime.uninstallRuntime('uninstallClaude', 'claude-code')
 
-    expect(requestProviderReconnect).toHaveBeenCalledOnce()
-    expect(requestAgentFrameworkSwitch).not.toHaveBeenCalled()
+    expect(requestAgentFrameworkSwitch).toHaveBeenCalledOnce()
+    expect(requestAgentFrameworkSwitch).toHaveBeenCalledWith('claude-code')
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
 
     store.uninstallClaude.mockResolvedValue({
       snapshot: snapshot({ agentFrameworkId: 'claude-code' }),
@@ -164,7 +165,8 @@ describe('SettingsWorkflows runtime effects', () => {
       capability,
       testEffects({ requestProviderReconnect, requestAgentFrameworkSwitch })
     ).runtime.uninstallRuntime('uninstallClaude', 'claude-code')
-    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(requestAgentFrameworkSwitch).toHaveBeenCalledOnce()
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 
   it('reconnects after active provider edits, selection, and deletion only after persistence', async () => {
@@ -195,146 +197,44 @@ describe('SettingsWorkflows runtime effects', () => {
     await workflows.setActiveProvider({ id: 'next' })
     await workflows.deleteProvider('active')
 
-    expect(calls).toEqual([
-      'read',
-      'upsert',
-      'reconnect',
-      'read',
-      'select',
-      'reconnect',
-      'read',
-      'delete',
-      'reconnect'
-    ])
+    expect(calls).toEqual(['read', 'upsert', 'reconnect', 'select', 'read', 'delete', 'reconnect'])
   })
 
-  it('persists a same-provider model selection before applying it live', async () => {
-    const calls: string[] = []
+  it('persists the default model without mutating live Sessions', async () => {
     const { store, capability } = fakeStore()
-    const target: AgentModelChangeTarget = {
-      frameworkId: 'claude-code',
-      backendId: 'claude-code:active',
-      route: 'claude-anthropic',
-      model: 'model-b',
-      sessionModel: 'model-b',
-      sessionModelRequired: false,
-      supportsImageInput: true,
-      reasoningEffort: 'high'
-    }
-    store.getSettingsView.mockResolvedValue(
-      snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
-    )
-    store.setActiveProvider.mockImplementation(async () => {
-      calls.push('persist')
-      return snapshot({ activeProviderId: 'active', activeModel: 'model-b' })
-    })
-    store.resolveActiveModelChangeTarget.mockImplementation(async () => {
-      calls.push('resolve')
-      return target
-    })
-    const applyModelChange = vi.fn(async () => {
-      calls.push('apply')
-      return true
-    })
-    const requestProviderReconnect = vi.fn(() => calls.push('reconnect'))
-
-    await createSettingsWorkflows(
-      capability,
-      testEffects({ applyModelChange, requestProviderReconnect })
-    ).runtime.setActiveProvider({ id: 'active', model: 'model-b' })
-
-    expect(calls).toEqual(['persist', 'resolve', 'apply'])
-    expect(applyModelChange).toHaveBeenCalledWith(target)
-    expect(requestProviderReconnect).not.toHaveBeenCalled()
-  })
-
-  it('attempts a live model switch before reconnecting across providers', async () => {
-    const calls: string[] = []
-    const { store, capability } = fakeStore()
-    const target: AgentModelChangeTarget = {
-      frameworkId: 'claude-code',
-      backendId: 'claude-code:kimi',
-      route: 'claude-anthropic',
-      model: 'kimi-k3',
-      sessionModel: 'kimi-k3',
-      sessionModelRequired: false,
-      supportsImageInput: true,
-      reasoningEffort: 'default'
-    }
-    store.getSettingsView.mockResolvedValue(
-      snapshot({ activeProviderId: 'deepseek', activeModel: 'deepseek-v4-pro' })
-    )
-    store.setActiveProvider.mockImplementation(async () => {
-      calls.push('persist')
-      return snapshot({ activeProviderId: 'kimi', activeModel: 'kimi-k3' })
-    })
-    store.resolveActiveModelChangeTarget.mockImplementation(async () => {
-      calls.push('resolve')
-      return target
-    })
-    const applyModelChange = vi.fn(async () => {
-      calls.push('apply')
-      return true
-    })
-    const requestProviderReconnect = vi.fn(() => calls.push('reconnect'))
-
-    await createSettingsWorkflows(
-      capability,
-      testEffects({ applyModelChange, requestProviderReconnect })
-    ).runtime.setActiveProvider({ id: 'kimi', model: 'kimi-k3' })
-
-    expect(calls).toEqual(['persist', 'resolve', 'apply'])
-    expect(applyModelChange).toHaveBeenCalledWith(target)
-    expect(requestProviderReconnect).not.toHaveBeenCalled()
-  })
-
-  it('falls back to reconnect when the active generation cannot switch models live', async () => {
-    const { store, capability } = fakeStore()
-    store.getSettingsView.mockResolvedValue(
-      snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
-    )
-    store.setActiveProvider.mockResolvedValue(
-      snapshot({ activeProviderId: 'active', activeModel: 'model-b' })
-    )
-    store.resolveActiveModelChangeTarget.mockResolvedValue({
-      frameworkId: 'opencode',
-      backendId: 'opencode:active',
-      route: 'opencode-openai',
-      model: 'model-b',
-      sessionModel: 'model-b',
-      sessionModelRequired: false,
-      supportsImageInput: false,
-      reasoningEffort: 'default'
-    })
+    const result = snapshot({ activeProviderId: 'active', activeModel: 'model-b' })
+    store.setActiveProvider.mockResolvedValue(result)
     const requestProviderReconnect = vi.fn()
 
-    await createSettingsWorkflows(
-      capability,
-      testEffects({ applyModelChange: async () => false, requestProviderReconnect })
-    ).runtime.setActiveProvider({ id: 'active', model: 'model-b' })
+    await expect(
+      createSettingsWorkflows(
+        capability,
+        testEffects({ requestProviderReconnect })
+      ).runtime.setActiveProvider({ id: 'active', model: 'model-b' })
+    ).resolves.toBe(result)
 
-    expect(requestProviderReconnect).toHaveBeenCalledOnce()
-  })
-
-  it('does not resolve or reconnect when the persisted effective model is unchanged', async () => {
-    const { store, capability } = fakeStore()
-    const unchanged = snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
-    store.getSettingsView.mockResolvedValue(unchanged)
-    store.setActiveProvider.mockResolvedValue(unchanged)
-    const applyModelChange = vi.fn(async () => true)
-    const requestProviderReconnect = vi.fn()
-
-    await createSettingsWorkflows(
-      capability,
-      testEffects({ applyModelChange, requestProviderReconnect })
-    ).runtime.setActiveProvider({ id: 'active', model: 'model-a' })
-
-    expect(store.resolveActiveModelChangeTarget).not.toHaveBeenCalled()
-    expect(applyModelChange).not.toHaveBeenCalled()
+    expect(store.getSettingsView).not.toHaveBeenCalled()
     expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 
-  it('does not reconnect for a new or inactive provider edit or a failed mutation', async () => {
+  it('persists the default reasoning effort without mutating live Sessions', async () => {
+    const { store, capability } = fakeStore()
+    const result = snapshot({ reasoningEffort: 'high' })
+    store.setReasoningEffort.mockResolvedValue(result)
+    const requestProviderReconnect = vi.fn()
+
+    await expect(
+      createSettingsWorkflows(
+        capability,
+        testEffects({ requestProviderReconnect })
+      ).runtime.setReasoningEffort({ effort: 'high' })
+    ).resolves.toBe(result)
+
+    expect(store.resolveActiveReasoningEffort).not.toHaveBeenCalled()
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
+  })
+
+  it('targets an edited inactive provider without reconnecting the default runtime', async () => {
     const { store, capability } = fakeStore()
     store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'active' }))
     store.upsertProvider.mockResolvedValue(snapshot({ activeProviderId: 'active' }))
@@ -349,58 +249,8 @@ describe('SettingsWorkflows runtime effects', () => {
     store.setActiveProvider.mockRejectedValue(new Error('save failed'))
     await expect(workflows.setActiveProvider({ id: 'next' })).rejects.toThrow('save failed')
 
-    expect(requestProviderReconnect).not.toHaveBeenCalled()
-  })
-
-  it('awaits live reasoning apply and reconnects only for a non-live framework', async () => {
-    const calls: string[] = []
-    const { store, capability } = fakeStore()
-    store.setReasoningEffort.mockImplementation(async () => {
-      calls.push('persist')
-      return snapshot({ reasoningEffort: 'high' })
-    })
-    store.resolveActiveReasoningEffort.mockImplementation(async () => {
-      calls.push('resolve')
-      return 'high'
-    })
-    const applyReasoningEffort = vi.fn(async () => {
-      calls.push('apply')
-      return true
-    })
-    const workflows = createSettingsWorkflows(
-      capability,
-      testEffects({
-        applyReasoningEffort,
-        requestProviderReconnect: () => calls.push('reconnect')
-      })
-    ).runtime
-
-    await workflows.setReasoningEffort({ effort: 'high' })
-    expect(calls).toEqual(['persist', 'resolve', 'apply'])
-
-    applyReasoningEffort.mockImplementation(async () => {
-      calls.push('apply')
-      return false
-    })
-    await workflows.setReasoningEffort({ effort: 'high' })
-    expect(calls.slice(-4)).toEqual(['persist', 'resolve', 'apply', 'reconnect'])
-  })
-
-  it('propagates live reasoning failures without a fallback reconnect', async () => {
-    const { capability } = fakeStore()
-    const requestProviderReconnect = vi.fn()
-    const workflows = createSettingsWorkflows(
-      capability,
-      testEffects({
-        applyReasoningEffort: vi.fn().mockRejectedValue(new Error('live apply failed')),
-        requestProviderReconnect
-      })
-    ).runtime
-
-    await expect(workflows.setReasoningEffort({ effort: 'high' })).rejects.toThrow(
-      'live apply failed'
-    )
-    expect(requestProviderReconnect).not.toHaveBeenCalled()
+    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(requestProviderReconnect).toHaveBeenCalledWith(['inactive'], false)
   })
 })
 
@@ -443,7 +293,7 @@ describe('SettingsWorkflows authentication follow-up', () => {
     expect(requestProviderReconnect).toHaveBeenCalledOnce()
   })
 
-  it('does not reconnect failed, stale, or no-longer-active login results', async () => {
+  it('ignores failed or stale logins and targets a successful no-longer-active provider', async () => {
     const { store, capability } = fakeStore()
     const requestProviderReconnect = vi.fn()
     const workflows = createSettingsWorkflows(
@@ -459,7 +309,30 @@ describe('SettingsWorkflows authentication follow-up', () => {
     store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'other' }))
     await workflows.loginClaudeShared()
 
-    expect(requestProviderReconnect).not.toHaveBeenCalled()
+    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(requestProviderReconnect).toHaveBeenCalledWith([CLAUDE_SHARED_PROVIDER_ID], false)
+  })
+
+  it('reconnects targeted XAI Sessions after login even when another provider is active', async () => {
+    const { store, capability } = fakeStore()
+    store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'other' }))
+    const requestProviderReconnect = vi.fn()
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect })
+    ).runtime.waitXaiOAuthLogin()
+    expect(requestProviderReconnect).toHaveBeenCalledWith([XAI_SUBSCRIPTION_PROVIDER_ID], false)
+  })
+
+  it('reconnects targeted XAI Sessions after logout even when another provider is active', async () => {
+    const { store, capability } = fakeStore()
+    store.logoutXaiOAuth.mockResolvedValue(snapshot({ activeProviderId: 'other' }))
+    const requestProviderReconnect = vi.fn()
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect })
+    ).runtime.logoutXaiOAuth()
+    expect(requestProviderReconnect).toHaveBeenCalledWith([XAI_SUBSCRIPTION_PROVIDER_ID], false)
   })
 
   it.each([

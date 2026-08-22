@@ -82,6 +82,9 @@ export const isCodexSubscriptionProviderId = (id: string): boolean =>
   id === CODEX_SHARED_PROVIDER_ID ||
   id === CODEX_ISOLATED_PROVIDER_ID
 
+export const canonicalSessionProviderId = (providerId: string): string =>
+  isCodexSubscriptionProviderId(providerId) ? CODEX_SUBSCRIPTION_PROVIDER_ID : providerId
+
 export const isClaudeSubscriptionProvider = (
   type: ProviderType
 ): type is 'claude-shared' | 'claude-isolated' =>
@@ -344,6 +347,14 @@ export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
 export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
+
+// Durable Composer selection for one Session. The ACP framework remains a global Settings choice;
+// this value is re-evaluated against that framework when the Session is next used.
+export type SessionAgentConfiguration = Readonly<{
+  providerId: string
+  model?: string
+  reasoningEffort: ReasoningEffort
+}>
 
 // Global routing preference for direct Subagents. Inherited mode intentionally carries no latent
 // provider/model/effort fields; selecting a fixed target commits the compound identity and effort

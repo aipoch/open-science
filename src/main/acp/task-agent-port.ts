@@ -7,6 +7,11 @@ import type {
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+import {
+  toSessionAgentConfiguration,
+  type DefaultSessionAgentTargetResolver,
+  type SessionAgentTargetResolver
+} from './session-agent-target'
 
 type AcpTaskAgentRuntime = {
   getSnapshot(): { sessionIds: string[] }
@@ -47,22 +52,36 @@ const createAcpTaskAgentPort = (
   runtime: AcpTaskAgentRuntime,
   createSessionWorkflow: AcpCreateSessionWorkflow,
   notifications?: TaskPromptNotifications,
-  archiveAvailability?: SessionArchiveAvailability
+  archiveAvailability?: SessionArchiveAvailability,
+  resolveSessionAgentTarget?: SessionAgentTargetResolver,
+  resolveDefaultSessionAgentTarget?: DefaultSessionAgentTargetResolver
 ): TaskAgentPort => ({
   withSessionAvailable: (projectId, sessionId, operation) =>
     archiveAvailability
       ? archiveAvailability.withSessionAvailable(projectId, sessionId, operation)
       : operation(),
   listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
-  createSession: (request) =>
-    createSessionWorkflow.create({
+  createSession: async (request) => {
+    const agentTarget = await resolveDefaultSessionAgentTarget?.()
+    const response = await createSessionWorkflow.create({
       projectId: request.projectId,
       permissionProfile: request.permissionProfile,
       ...(request.cwd ? { cwd: request.cwd } : {}),
-      ...(request.specialistId ? { specialistId: request.specialistId } : {})
-    }),
-  resumeSession: (request) =>
-    runtime.resumeSession({
+      ...(request.specialistId ? { specialistId: request.specialistId } : {}),
+      ...(agentTarget ? { agentTarget } : {})
+    })
+    return {
+      ...response,
+      ...(agentTarget ? { agentConfiguration: toSessionAgentConfiguration(agentTarget) } : {})
+    }
+  },
+  resumeSession: async (request) => {
+    const agentTarget = await resolveSessionAgentTarget?.({
+      agentBackendId: request.previousBackendId,
+      agentModel: request.previousModel,
+      agentConfiguration: request.agentConfiguration
+    })
+    const response = await runtime.resumeSession({
       sessionId: request.sessionId,
       cwd: request.cwd,
       projectId: request.projectId,
@@ -72,8 +91,14 @@ const createAcpTaskAgentPort = (
       providerSessionId: request.providerSessionId,
       providerContinuityToken: request.providerContinuityToken,
       ...(request.specialistId ? { specialistId: request.specialistId } : {}),
-      ...(request.specialistBindingPending === true ? { specialistBindingPending: true } : {})
-    }),
+      ...(request.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
+      ...(agentTarget ? { agentTarget } : {})
+    })
+    return {
+      ...response,
+      ...(agentTarget ? { agentConfiguration: toSessionAgentConfiguration(agentTarget) } : {})
+    }
+  },
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
   prompt: async (request, observer) => {

@@ -266,6 +266,7 @@ describe('workspace Agent Runtime hook contract', () => {
         'resendEditedMessage',
         'cancelRun',
         'resumeInterruptedSession',
+        'resolveSessionRuntimeSelection',
         'respondToPermission',
         'setPermissionProfile',
         'revokePermissionGrant'
@@ -283,6 +284,118 @@ describe('workspace Agent Runtime hook contract', () => {
       sendPreparationInFlightSessionIds: [],
       saveAsSkillInFlightSessionIds: [],
       nativeContextCompactionSessionIds: ['session-1']
+    })
+  })
+
+  it('resolves image input support from the Session-selected official model', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'deepseek',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'deepseek',
+          type: 'official',
+          vendorId: 'deepseek',
+          name: 'DeepSeek',
+          apiEndpoints: ['anthropic'],
+          model: 'deepseek-v4-pro',
+          models: ['deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect the image.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentConfiguration: {
+        providerId: 'deepseek',
+        model: 'deepseek-v4-flash-vision-exp',
+        reasoningEffort: 'default'
+      }
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(latest.resolveSessionRuntimeSelection('session-1').supportsImageInput).toBe(true)
+  })
+
+  it('resolves runtime selection from legacy backend identity when configuration is absent', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'deepseek',
+      reasoningEffort: 'low',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'deepseek',
+          type: 'official',
+          vendorId: 'deepseek',
+          name: 'DeepSeek',
+          apiEndpoints: ['anthropic'],
+          model: 'deepseek-v4-pro',
+          models: ['deepseek-v4-pro'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        },
+        {
+          id: 'legacy-provider',
+          type: 'official',
+          vendorId: 'anthropic',
+          name: 'Legacy',
+          apiEndpoints: ['anthropic'],
+          model: 'legacy-model',
+          models: ['legacy-model'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the restored chat.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:legacy-provider',
+      agentModel: 'legacy-model'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(useSessionStore.getState().sessions[0].agentConfiguration).toBeUndefined()
+    expect(latest.resolveSessionRuntimeSelection('session-1')).toMatchObject({
+      agentBackendId: 'claude-code:legacy-provider',
+      agentModel: 'legacy-model',
+      supportsImageInput: true,
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'legacy-provider',
+        model: 'legacy-model',
+        reasoningEffort: 'low'
+      }
     })
   })
 
@@ -430,6 +543,20 @@ describe('workspace Agent Runtime hook contract', () => {
       agentFrameworkId: 'claude-code'
     })
     useSessionStore.getState().finishRun('session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              agentConfiguration: {
+                providerId: 'session-provider',
+                model: 'session-model',
+                reasoningEffort: 'high'
+              }
+            }
+          : session
+      )
+    }))
 
     const resume = createDeferred<AcpCreateSessionResponse>()
     const runtime = createRuntime(createSnapshot())
@@ -452,6 +579,12 @@ describe('workspace Agent Runtime hook contract', () => {
     await act(async () => Promise.resolve())
 
     expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resumeSession.mock.calls[0]?.at(-1)).toEqual({
+      frameworkId: 'claude-code',
+      providerId: 'session-provider',
+      model: 'session-model',
+      reasoningEffort: 'high'
+    })
     expect(latest.sendPreparationInFlightSessionIds).toEqual(['session-1'])
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
@@ -644,6 +777,7 @@ describe('workspace Agent Runtime hook contract', () => {
       'project-1',
       'ask',
       'claude-code',
+      undefined,
       undefined,
       undefined,
       undefined,

@@ -1,6 +1,7 @@
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
+  AcpSessionAgentTarget,
   ElicitationResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
@@ -59,7 +60,8 @@ const useAcpRuntime = (): {
     cwd?: string,
     projectId?: string,
     permissionProfile?: PermissionProfileId,
-    specialistId?: string
+    specialistId?: string,
+    agentTarget?: AcpSessionAgentTarget
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -71,7 +73,8 @@ const useAcpRuntime = (): {
     specialistId?: AcpResumeSessionRequest['specialistId'],
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
     providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
-    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
+    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
+    agentTarget?: AcpSessionAgentTarget
   ) => Promise<AcpCreateSessionResponse>
   continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
   resetSessionContext: (
@@ -271,10 +274,17 @@ const useAcpRuntime = (): {
       cwd?: string,
       projectId?: string,
       permissionProfile?: PermissionProfileId,
-      specialistId?: string
+      specialistId?: string,
+      agentTarget?: AcpSessionAgentTarget
     ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.createSession({ cwd, projectId, permissionProfile, specialistId })
+        window.api.acp.createSession({
+          cwd,
+          projectId,
+          permissionProfile,
+          specialistId,
+          ...(agentTarget ? { agentTarget } : {})
+        })
       ),
     [runValueAction]
   )
@@ -291,7 +301,8 @@ const useAcpRuntime = (): {
       specialistId?: AcpResumeSessionRequest['specialistId'],
       providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
       providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
-      specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
+      specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
+      agentTarget?: AcpSessionAgentTarget
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.resumeSession({
@@ -304,7 +315,8 @@ const useAcpRuntime = (): {
           specialistId,
           providerSessionId,
           providerContinuityToken,
-          specialistBindingPending
+          specialistBindingPending,
+          ...(agentTarget ? { agentTarget } : {})
         })
       ),
     [runValueAction]

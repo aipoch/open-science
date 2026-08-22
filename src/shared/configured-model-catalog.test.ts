@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ProviderView } from './settings'
+import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
+  type ProviderView
+} from './settings'
 import {
   buildConfiguredModelCatalog,
   configuredModelKey,
@@ -77,5 +81,47 @@ describe('configured model catalog', () => {
     })
 
     expect(entry.supportsImageInput).toBe(true)
+  })
+
+  it('uses a custom provider singular model when its catalog array is empty', () => {
+    const entries = buildConfiguredModelCatalog({
+      providers: [provider('custom', [], { model: 'custom-model' })],
+      activeProviderId: 'custom',
+      frameworkId: 'opencode',
+      frameworkEndpoints: ['openai']
+    })
+
+    expect(entries).toMatchObject([
+      { providerId: 'custom', model: 'custom-model', label: 'custom-model', selectable: true }
+    ])
+  })
+
+  it('includes every Claude subscription only for Session catalogs', () => {
+    const providers = [
+      provider(CLAUDE_SHARED_PROVIDER_ID, ['shared-model'], {
+        type: 'claude-shared',
+        apiEndpoints: ['anthropic']
+      }),
+      provider(CLAUDE_ISOLATED_PROVIDER_ID, ['isolated-model'], {
+        type: 'claude-isolated',
+        apiEndpoints: ['anthropic']
+      })
+    ]
+    const input = {
+      providers,
+      activeProviderId: CLAUDE_SHARED_PROVIDER_ID,
+      frameworkId: 'claude-code' as const,
+      frameworkEndpoints: ['anthropic' as const]
+    }
+
+    expect(buildConfiguredModelCatalog(input).map((entry) => entry.providerId)).toEqual([
+      CLAUDE_SHARED_PROVIDER_ID
+    ])
+    expect(
+      buildConfiguredModelCatalog({
+        ...input,
+        includeAllClaudeSubscriptions: true
+      }).map((entry) => entry.providerId)
+    ).toEqual([CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID])
   })
 })

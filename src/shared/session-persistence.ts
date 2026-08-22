@@ -22,7 +22,11 @@ import {
   normalizePermissionProfile,
   type PermissionProfileId
 } from './permission-profiles'
-import type { AgentFrameworkId } from './settings'
+import {
+  isReasoningEffort,
+  type AgentFrameworkId,
+  type SessionAgentConfiguration
+} from './settings'
 import type { ResolvedReasoningEffort } from './reasoning-effort'
 import { sanitizeActivityGroupTitle } from './activity-groups'
 import { sanitizeElicitationProjection, type ElicitationProjection } from './elicitation'
@@ -501,6 +505,9 @@ export type PersistedChatSession = {
   // Model selected when the latest run started. Kept with the session so a later settings change
   // cannot misattribute a failed run's diagnostic report.
   agentModel?: string
+  // Desired provider/model/effort for this Session. Historical files omit it and materialize the
+  // preference lazily from their last applied runtime identity.
+  agentConfiguration?: SessionAgentConfiguration
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
@@ -577,6 +584,7 @@ export type SessionConflictRebaseField =
   | 'title'
   | 'permissionProfile'
   | 'autoReviewEnabled'
+  | 'agentConfiguration'
   | 'enabledComputeHosts'
   | 'selectedComputeHosts'
   | 'pinned'
@@ -3286,6 +3294,23 @@ const sanitizeSessionBranchSource = (value: unknown): PersistedSessionBranchSour
   }
 }
 
+const sanitizeSessionAgentConfiguration = (
+  value: unknown
+): SessionAgentConfiguration | undefined => {
+  if (!isRecord(value) || !hasOnlyFields(value, ['providerId', 'model', 'reasoningEffort'])) {
+    return undefined
+  }
+  const providerId = asString(value.providerId)
+  const model = asString(value.model)
+  if (!providerId || !isReasoningEffort(value.reasoningEffort)) return undefined
+  if (value.model !== undefined && !model) return undefined
+  return {
+    providerId,
+    ...(model ? { model } : {}),
+    reasoningEffort: value.reasoningEffort
+  }
+}
+
 // Rebuilds a persisted chat session and normalizes any runtime-only interrupted state.
 const sanitizeSession = (
   session: unknown,
@@ -3355,6 +3380,7 @@ const sanitizeSession = (
   const providerSessionId = asString(session.providerSessionId)
   const providerContinuityToken = asString(session.providerContinuityToken)
   const agentModel = asString(session.agentModel)
+  const agentConfiguration = sanitizeSessionAgentConfiguration(session.agentConfiguration)
   const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
     ? session.enabledComputeHosts.filter(
         (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
@@ -3390,6 +3416,7 @@ const sanitizeSession = (
   if (providerSessionId) sanitized.providerSessionId = providerSessionId
   if (providerContinuityToken) sanitized.providerContinuityToken = providerContinuityToken
   if (agentModel) sanitized.agentModel = agentModel
+  if (agentConfiguration) sanitized.agentConfiguration = agentConfiguration
   // Restore the pin only from an explicit true so malformed or legacy files stay unpinned.
   if (session.pinned === true) sanitized.pinned = true
   const archivedAt = asNumber(session.archivedAt)

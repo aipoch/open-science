@@ -20,6 +20,7 @@ import {
 } from '@/stores/session-store'
 
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
+import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
 
 // Capture the ConversationPanel props the page computes, notably canEditMessage and the resend handler.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -130,6 +131,7 @@ describe('WorkspacePage inline edit resend', () => {
   let root: Root
 
   beforeEach(() => {
+    setDefaultWorkspaceAgentSettings()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })

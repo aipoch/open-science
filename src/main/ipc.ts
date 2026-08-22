@@ -43,6 +43,12 @@ import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
+import {
+  materializeSessionAgentConfiguration,
+  toAcpSessionAgentTarget,
+  toSessionAgentConfiguration,
+  type SessionAgentTargetResolver
+} from './acp/session-agent-target'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { ImageInputCompatibilityOwner } from './acp/image-input-compatibility-owner'
@@ -274,8 +280,11 @@ import {
   CONNECTOR_TEMPLATE_MAX_BYTES,
   type AppIconPreview,
   type AppIconVariant,
-  type RespondApprovalRequest
+  type RespondApprovalRequest,
+  type SessionAgentConfiguration
 } from '../shared/settings'
+import type { AcpSessionAgentTarget } from '../shared/acp'
+import type { PersistedChatSession } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
@@ -420,6 +429,22 @@ const createApplicationModules = async (
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
   }))
+  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) => {
+    const settings = await settingsService.getSettingsView()
+    return toAcpSessionAgentTarget(
+      settings.agentFrameworkId,
+      materializeSessionAgentConfiguration(source, settings.reasoningEffort)
+    )
+  }
+  const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
+    const target = await settingsService.captureActiveExplicitAgentBackendTarget()
+    return {
+      frameworkId: target.frameworkId,
+      providerId: target.providerId,
+      ...(target.model.kind === 'required' ? { model: target.model.id } : {}),
+      reasoningEffort: target.reasoningEffort
+    }
+  }
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
@@ -1633,7 +1658,7 @@ const createApplicationModules = async (
                 }
               },
               async () => {
-                const latest = await sessionRepository.loadSession(
+                let latest = await sessionRepository.loadSession(
                   delivery.session.projectId,
                   delivery.session.sessionId
                 )
@@ -1653,13 +1678,20 @@ const createApplicationModules = async (
                     'Parent message root Branch changed before dispatch.'
                   )
                 }
+                const agentTarget = await resolveSessionAgentTarget(latest)
+                if (!latest.agentConfiguration && agentTarget) {
+                  latest = await sessionPersistenceCoordinator.saveSession({
+                    ...latest,
+                    agentConfiguration: toSessionAgentConfiguration(agentTarget)
+                  })
+                }
                 const started = await delivery.startDispatch()
                 if (started !== 'started') {
                   throw new DelegateMessageParkedError(
                     'Parent message dispatch fence was not acquired.'
                   )
                 }
-                if (!runtime.hasLiveSession(latest.projectId, latest.id)) {
+                if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
                   await runtime.resumeSession({
                     sessionId: latest.id,
                     cwd: latest.cwd,
@@ -1680,7 +1712,8 @@ const createApplicationModules = async (
                       : {}),
                     ...(latest.providerContinuityToken
                       ? { providerContinuityToken: latest.providerContinuityToken }
-                      : {})
+                      : {}),
+                    ...(agentTarget ? { agentTarget } : {})
                   })
                 }
               }
@@ -2227,7 +2260,9 @@ const createApplicationModules = async (
     runtime,
     createSessionWorkflow,
     taskNotifications,
-    archiveCoordinator
+    archiveCoordinator,
+    resolveSessionAgentTarget,
+    resolveDefaultSessionAgentTarget
   )
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
@@ -2419,31 +2454,18 @@ const createApplicationModules = async (
       }
     }
   )
-  // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
-  // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
+  // Framework changes rotate future runtime ownership; provider edits and authentication changes
+  // reconnect generations that use the affected provider. Active provider/model/effort selections are
+  // persisted defaults only and never flow through this effects port to mutate existing Sessions.
   const settingsWorkflows = createSettingsWorkflows(settingsService, {
     runtime: {
-      requestProviderReconnect: () => {
-        void runtime.requestProviderReconnect()
+      requestProviderReconnect: (providerIds, includeDefault = true) => {
+        void runtime.requestProviderReconnect(providerIds, includeDefault)
+        if (includeDefault) void sideChatRuntime.requestProviderReconnect()
+      },
+      requestAgentFrameworkSwitch: (frameworkId) => {
+        void runtime.requestAgentFrameworkSwitch(frameworkId)
         void sideChatRuntime.requestProviderReconnect()
-      },
-      requestAgentFrameworkSwitch: () => {
-        void runtime.requestAgentFrameworkSwitch()
-        void sideChatRuntime.requestProviderReconnect()
-      },
-      applyReasoningEffort: async (effort) => {
-        const [mainApplied, sideChatApplied] = await Promise.all([
-          runtime.applyReasoningEffortChange(effort),
-          sideChatRuntime.applyReasoningEffortChange(effort)
-        ])
-        return mainApplied && sideChatApplied
-      },
-      applyModelChange: async (target) => {
-        const [mainApplied, sideChatApplied] = await Promise.all([
-          runtime.applyModelChange(target),
-          sideChatRuntime.applyModelChange(target)
-        ])
-        return mainApplied && sideChatApplied
       }
     },
     skills: {
@@ -2916,6 +2938,15 @@ const createApplicationModules = async (
     projectRuntime: reviewerProjectRuntime,
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
+    resolveSessionAgentTarget,
+    saveSessionAgentConfiguration: (
+      session: PersistedChatSession,
+      configuration: SessionAgentConfiguration
+    ) =>
+      sessionPersistenceCoordinator.saveSession({
+        ...session,
+        agentConfiguration: configuration
+      }),
     withSessionMutation: <Result>(
       projectId: string,
       sessionId: string,

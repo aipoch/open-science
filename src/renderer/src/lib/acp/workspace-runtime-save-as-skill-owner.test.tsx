@@ -7,6 +7,7 @@ import { materializeSessionConversationGraph } from '../../../../shared/session-
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
+import type { WorkspaceSessionRuntimeSelection } from './useWorkspaceAgentRuntime'
 import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
 
 vi.mock('../session-persistence/session-persistence', () => ({
@@ -50,6 +51,21 @@ const session = materializeSessionConversationGraph({
   updatedAt: 2
 }) as ChatSession
 
+const sessionRuntimeSelection = (): WorkspaceSessionRuntimeSelection => ({
+  supportsImageInput: true,
+  supportsImageRelay: false,
+  agentFrameworkId: 'claude-code' as const,
+  agentBackendId: 'claude-code:session-provider',
+  agentModel: 'selected-model',
+  agentTarget: {
+    frameworkId: 'claude-code' as const,
+    providerId: 'session-provider',
+    model: 'selected-model',
+    reasoningEffort: 'high' as const
+  },
+  historyReplayDescriptor: { target: 'claude-code' as const, contextWindow: 100_000 }
+})
+
 describe('workspace Save as skill owner', () => {
   let root: Root | undefined
 
@@ -79,8 +95,25 @@ describe('workspace Save as skill owner', () => {
     vi.restoreAllMocks()
   })
 
-  it('deduplicates one Session and replays with the current Provider capability', async () => {
+  it('deduplicates one Session and keeps its target instead of the active Settings default', async () => {
     useSessionStore.setState({ sessions: [session] })
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      activeProviderId: 'global-provider',
+      activeModel: 'global-model',
+      providers: [
+        ...useSettingsStore.getState().providers,
+        {
+          id: 'global-provider',
+          type: 'custom',
+          name: 'Global provider',
+          models: ['global-model'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
     let release!: () => void
     const saveAsSkill = vi.fn(
       () =>
@@ -92,15 +125,16 @@ describe('workspace Save as skill owner', () => {
       configurable: true,
       value: { acp: { saveAsSkill } }
     })
+    const resumeSession = vi.fn()
     const runtime = {
       state: { sessionIds: ['session-1'] },
-      resumeSession: vi.fn()
+      resumeSession
     } as never
     let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
       })
       return null
     }
@@ -128,6 +162,20 @@ describe('workspace Save as skill owner', () => {
       ...request,
       promptMessageId: expect.any(String)
     })
+    expect(resumeSession).toHaveBeenCalledWith(
+      session.id,
+      session.cwd,
+      session.projectId,
+      undefined,
+      session.agentFrameworkId,
+      session.agentBackendId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      sessionRuntimeSelection().agentTarget
+    )
+    expect(useSessionStore.getState().sessions[0].agentModel).toBe('selected-model')
 
     await act(async () => {
       release()
@@ -160,7 +208,7 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
       })
       return null
     }
@@ -214,7 +262,7 @@ describe('workspace Save as skill owner', () => {
       const Harness = (): null => {
         owner = useWorkspaceRuntimeSaveAsSkillOwner({
           runtime,
-          historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
+          resolveSessionRuntimeSelection: sessionRuntimeSelection
         })
         return null
       }
@@ -333,7 +381,20 @@ describe('workspace Save as skill owner', () => {
       const Harness = (): null => {
         owner = useWorkspaceRuntimeSaveAsSkillOwner({
           runtime,
-          historyReplayDescriptor: { target: 'opencode', contextWindow: 200_000 }
+          resolveSessionRuntimeSelection: () => ({
+            supportsImageInput: false,
+            supportsImageRelay: true,
+            agentFrameworkId: 'opencode',
+            agentBackendId: 'opencode:active-provider',
+            agentModel: 'active-model',
+            agentTarget: {
+              frameworkId: 'opencode',
+              providerId: 'active-provider',
+              model: 'active-model',
+              reasoningEffort: 'default'
+            },
+            historyReplayDescriptor: { target: 'opencode', contextWindow: 200_000 }
+          })
         })
         return null
       }
@@ -392,7 +453,7 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
       })
       return null
     }
@@ -443,7 +504,7 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
       })
       return null
     }

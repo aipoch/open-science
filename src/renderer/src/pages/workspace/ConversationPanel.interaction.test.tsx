@@ -2282,7 +2282,7 @@ describe('ConversationPanel composer intake', () => {
     expect(agentControls?.getAttribute('data-grants-read-only')).toBe('true')
     expect(agentControls?.getAttribute('data-auto-review-disabled')).toBe('true')
     expect(agentControls?.getAttribute('data-specialist-read-only')).toBe('true')
-    expect((modelPicker as HTMLButtonElement).disabled).toBe(false)
+    expect(modelPicker).toBeNull()
     const followUp = container.querySelector('textarea[placeholder="Follow up…"]')
     expect(followUp).not.toBeNull()
     expect(document.activeElement).toBe(followUp)
