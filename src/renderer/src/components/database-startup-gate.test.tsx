@@ -45,11 +45,19 @@ describe('DatabaseStartupGate', () => {
     )
 
     const startupLoader = screen.getByTestId('open-science-logo-loader')
-    expect(screen.getByText('Checking database…')).toBeTruthy()
+    const startupStatus = screen.getByRole('status')
+    const checkingLabel = screen.getByText('Checking database…')
+    expect(startupStatus.className).toContain('min-h-svh')
+    expect(startupStatus.className).toContain('text-foreground')
+    expect(checkingLabel.tagName).toBe('SPAN')
+    expect(checkingLabel.className).toContain('text-sm')
+    expect(checkingLabel.className).toContain('text-muted-foreground')
 
     act(() => publish({ phase: 'migrating', migrationId: '0002_example' }))
 
-    expect(screen.getByText('Updating database…')).toBeTruthy()
+    const updatingLabel = screen.getByText('Updating database…')
+    expect(updatingLabel.tagName).toBe('SPAN')
+    expect(updatingLabel.className).toBe(checkingLabel.className)
     expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
     expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
   })

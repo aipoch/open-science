@@ -54,8 +54,79 @@ describe('OpenScienceLogoLoader', () => {
     }
   })
 
+  it('continues the animation timeline after the loader remounts', () => {
+    const context = {
+      arc: vi.fn(),
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      fill: vi.fn(),
+      fillStyle: '',
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      restore: vi.fn(),
+      save: vi.fn()
+    } as unknown as CanvasRenderingContext2D
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      bottom: 224,
+      height: 224,
+      left: 0,
+      right: 224,
+      top: 0,
+      width: 224,
+      x: 0,
+      y: 0,
+      toJSON: () => undefined
+    }))
+
+    let now = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => createTestMediaQuery(false) as unknown as MediaQueryList)
+    )
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    vi.stubGlobal(
+      'MutationObserver',
+      class {
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+
+    const animationFrames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      animationFrames.push(callback)
+      return animationFrames.length
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+
+    act(() => root.render(<OpenScienceLogoLoader />))
+    context.arc = vi.fn()
+    now = 1_000
+    act(() => animationFrames.shift()?.(now))
+    const firstFrameArc = vi.mocked(context.arc).mock.calls[0]
+
+    vi.mocked(context.arc).mockClear()
+    act(() => root.render(null))
+    now = 2_000
+    act(() => root.render(<OpenScienceLogoLoader />))
+    const remountedFrameArc = vi.mocked(context.arc).mock.calls.at(-1)
+
+    expect(firstFrameArc).toBeDefined()
+    expect(remountedFrameArc).toBeDefined()
+    expect(remountedFrameArc).not.toEqual(firstFrameArc)
+  })
+
   it('draws, reacts to motion and DPR changes, and releases browser observers', () => {
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 })
+    vi.spyOn(performance, 'now').mockReturnValue(0)
 
     const context = {
       arc: vi.fn(),
