@@ -25,12 +25,18 @@ vi.mock('electron', () => ({
 const { ProviderAccountsModule } = await import('./provider-accounts')
 const { SettingsRepository } = await import('./repository')
 
-const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+const deferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (error: unknown) => void
+} => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 describe('ProviderAccountsModule', () => {
@@ -409,6 +415,22 @@ describe('ProviderAccountsModule', () => {
     await module.deleteProvider(stored.id)
     expect(xaiOAuth.logout).toHaveBeenCalledOnce()
     expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('does not apply an in-flight xAI validation after logout', async () => {
+    await module.upsertProvider({ type: 'xai-subscription' })
+    const pendingToken = deferred<string>()
+    vi.mocked(xaiOAuth.getAccessToken).mockImplementationOnce(() => pendingToken.promise)
+
+    const pending = module.validateProvider({ providerId: 'builtin-xai-subscription' })
+    await vi.waitFor(() => expect(xaiOAuth.getAccessToken).toHaveBeenCalledOnce())
+    await module.logoutXaiOAuth()
+    pendingToken.reject(new Error('Sign in to xAI (Grok) OAuth to continue.'))
+
+    await expect(pending).resolves.toMatchObject({ ok: false, applied: false })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
   })
 
   it('exposes authentication lifecycle operations through the Module Interface', async () => {

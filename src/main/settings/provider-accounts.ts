@@ -12,6 +12,7 @@ import type {
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
+  XAI_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
@@ -290,6 +291,7 @@ class ProviderAccountsModule {
   }
 
   async logoutXaiOAuth(): Promise<void> {
+    this.advanceProviderValidationGeneration(XAI_SUBSCRIPTION_PROVIDER_ID)
     await this.xai.logout()
   }
 
