@@ -94,6 +94,50 @@ describe('XaiOAuthController', () => {
     expect(store.save).toHaveBeenCalledWith('old-ref', 'new-refresh')
   })
 
+  it('accepts xAI account verification URLs on accounts.x.ai', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(discovery)))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            device_code: 'secret-device-code',
+            user_code: 'H5N5-ECSJ',
+            verification_uri: 'https://accounts.x.ai/oauth2/device',
+            verification_uri_complete: 'https://accounts.x.ai/oauth2/device?user_code=H5N5-ECSJ',
+            expires_in: 1800,
+            interval: 5
+          })
+        )
+      )
+    const controller = new XaiOAuthController({ store, fetch })
+
+    await expect(controller.beginLogin()).resolves.toEqual(
+      expect.objectContaining({
+        userCode: 'H5N5-ECSJ',
+        verificationUri: 'https://accounts.x.ai/oauth2/device',
+        verificationUriComplete: 'https://accounts.x.ai/oauth2/device?user_code=H5N5-ECSJ'
+      })
+    )
+  })
+
+  it('rejects a verification page outside the xAI account origin', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(discovery)))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            device_code: 'secret-device-code',
+            user_code: 'ABCD-EFGH',
+            verification_uri: 'https://example.com/activate'
+          })
+        )
+      )
+    const controller = new XaiOAuthController({ store, fetch })
+    await expect(controller.beginLogin()).rejects.toThrow('untrusted OAuth endpoint')
+  })
+
   it('rejects discovered endpoints outside the xAI authorization origin', async () => {
     const fetch = vi
       .fn()

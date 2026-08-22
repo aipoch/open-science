@@ -50,13 +50,28 @@ type XaiOAuthControllerOptions = {
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>
 }
 
-const trustedEndpoint = (value: string): string => {
+const XAI_OAUTH_API_HOSTS = new Set(['auth.x.ai'])
+// Device-code user pages are issued by auth.x.ai but hosted on the accounts origin.
+const XAI_VERIFICATION_HOSTS = new Set(['auth.x.ai', 'accounts.x.ai'])
+
+const trustedHttpsHost = (value: string, allowedHosts: ReadonlySet<string>): string => {
   const url = new URL(value)
-  if (url.protocol !== 'https:' || url.hostname !== 'auth.x.ai' || url.port) {
+  if (
+    url.protocol !== 'https:' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    !allowedHosts.has(url.hostname.toLowerCase())
+  ) {
     throw new Error('xAI returned an untrusted OAuth endpoint.')
   }
   return url.toString()
 }
+
+const trustedEndpoint = (value: string): string => trustedHttpsHost(value, XAI_OAUTH_API_HOSTS)
+
+const trustedVerificationUri = (value: string): string =>
+  trustedHttpsHost(value, XAI_VERIFICATION_HOSTS)
 
 const form = (values: Record<string, string>): URLSearchParams => new URLSearchParams(values)
 
@@ -111,7 +126,7 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
       }
       const verificationUri =
         typeof body.verification_uri === 'string'
-          ? trustedEndpoint(body.verification_uri)
+          ? trustedVerificationUri(body.verification_uri)
           : undefined
       if (!verificationUri) throw new Error('xAI returned an invalid verification address.')
       const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 900
@@ -122,7 +137,7 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
         userCode: body.user_code,
         verificationUri,
         ...(typeof body.verification_uri_complete === 'string'
-          ? { verificationUriComplete: trustedEndpoint(body.verification_uri_complete) }
+          ? { verificationUriComplete: trustedVerificationUri(body.verification_uri_complete) }
           : {}),
         expiresAt: this.now() + expiresIn * 1000,
         intervalSeconds: interval
