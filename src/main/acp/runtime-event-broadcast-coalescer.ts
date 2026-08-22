@@ -16,16 +16,17 @@ const scheduleBroadcast = (flush: () => void): (() => void) => {
   return () => clearTimeout(timer)
 }
 
-const isCoalescibleAssistantStreamEvent = (event: AcpRuntimeEvent): boolean =>
-  (event.kind === 'message' || event.kind === 'thought') &&
-  event.role === 'assistant' &&
-  typeof event.text === 'string' &&
-  event.text.length > 0 &&
-  !event.image
+// Stop, error, and permission must not wait for the presentation cadence. Image-bearing
+// messages flush with the pending prefix so a 250-event batch cannot accumulate binary
+// payloads. Everything else, including tool starts, shares the 33 ms IPC batch.
+const isImmediateBroadcastEvent = (event: AcpRuntimeEvent): boolean =>
+  event.kind === 'stop' ||
+  event.kind === 'error' ||
+  event.kind === 'permission' ||
+  Boolean(event.image)
 
-// Owns one IPC batch for incremental renderer events. Stop, error, permission, and tool
-// start/end flush immediately so the UI is not delayed; streamed text and in-progress tool
-// content share the 33 ms presentation cadence.
+// Owns one IPC batch for incremental renderer events. A thinking-model or tool-call storm
+// must not structured-clone one payload per provider notification.
 const createAcpRuntimeEventBroadcastCoalescer = (
   options: AcpRuntimeEventBroadcastCoalescerOptions
 ): {
@@ -33,39 +34,7 @@ const createAcpRuntimeEventBroadcastCoalescer = (
   flush: () => void
 } => {
   const pending: AcpRuntimeEvent[] = []
-  const activeToolCallIdsBySession = new Map<string | undefined, Set<string>>()
   let cancelScheduled: (() => void) | undefined
-
-  const isCoalescible = (event: AcpRuntimeEvent): boolean => {
-    if (isCoalescibleAssistantStreamEvent(event)) return true
-    if (event.kind === 'stop' || event.kind === 'error') {
-      activeToolCallIdsBySession.delete(event.sessionId)
-      return false
-    }
-    if (event.kind !== 'tool' || !event.toolCallId) return false
-
-    const activeToolCallIds = activeToolCallIdsBySession.get(event.sessionId)
-    const wasActive = activeToolCallIds?.has(event.toolCallId) === true
-    if (event.status === 'completed' || event.status === 'failed') {
-      activeToolCallIds?.delete(event.toolCallId)
-      if (activeToolCallIds?.size === 0) {
-        activeToolCallIdsBySession.delete(event.sessionId)
-      }
-      return false
-    }
-    if (activeToolCallIds) {
-      activeToolCallIds.add(event.toolCallId)
-    } else {
-      activeToolCallIdsBySession.set(event.sessionId, new Set([event.toolCallId]))
-    }
-
-    return (
-      wasActive &&
-      (event.toolContent !== undefined ||
-        event.terminalOutput !== undefined ||
-        event.rawOutput !== undefined)
-    )
-  }
 
   const flush = (): void => {
     cancelScheduled?.()
@@ -84,7 +53,7 @@ const createAcpRuntimeEventBroadcastCoalescer = (
   return {
     enqueue(event) {
       pending.push(event)
-      if (!isCoalescible(event) || pending.length >= MAX_COALESCED_BROADCAST_EVENTS) {
+      if (isImmediateBroadcastEvent(event) || pending.length >= MAX_COALESCED_BROADCAST_EVENTS) {
         flush()
         return
       }
