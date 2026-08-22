@@ -25,6 +25,7 @@ import {
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import { resolveModelContextWindow } from '../../../../shared/provider-registry'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
@@ -155,14 +156,12 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const supportsNativeImageInput = activeProvider?.supportsImageInput === true
   const supportsHistoryImageInput = supportsNativeImageInput || visionRelayAvailable
   const activeModel = useSettingsStore((state) => state.activeModel)
-  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFramework = useSettingsStore((state) =>
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const agentBackendId = activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined
   const historyReplayDescriptor = useMemo<HistoryReplayDescriptor>(
     () => ({
       target: resolveHistoryReplayTarget(agentFrameworkId, activeProvider, agentFramework),
@@ -174,6 +173,27 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         : activeProvider?.contextWindow
     }),
     [activeModel, activeProvider, agentFramework, agentFrameworkId]
+  )
+  const resolveRuntimeSelection = useCallback(
+    (configuration: SessionAgentConfiguration | undefined) => {
+      const provider = configuration
+        ? providers.find((candidate) => candidate.id === configuration.providerId)
+        : activeProvider
+      const model = configuration?.model ?? provider?.model ?? provider?.models[0]
+      return {
+        supportsImageInput: provider?.supportsImageInput === true,
+        agentFrameworkId,
+        agentBackendId: provider ? `${agentFrameworkId}:${provider.id}` : undefined,
+        agentModel: model,
+        historyReplayDescriptor: {
+          target: resolveHistoryReplayTarget(agentFrameworkId, provider, agentFramework),
+          contextWindow: provider?.vendorId
+            ? resolveModelContextWindow(provider.vendorId, model)
+            : provider?.contextWindow
+        } satisfies HistoryReplayDescriptor
+      }
+    },
+    [activeProvider, agentFramework, agentFrameworkId, providers]
   )
   const getSessionHistoryReplayDescriptor = useCallback(
     (sessionId: string): HistoryReplayDescriptor => {
@@ -328,16 +348,17 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
       lifecycleOwner.recordPromptPlanAuthority(input)
+      const selected = resolveRuntimeSelection(input.agentConfiguration)
       return sendWorkspaceMessage(
         runtime,
         {
           ...input,
-          supportsImageInput: supportsNativeImageInput,
+          supportsImageInput: selected.supportsImageInput,
           supportsImageRelay: visionRelayAvailable,
-          agentFrameworkId,
-          agentBackendId,
-          agentModel: activeModel,
-          historyReplayDescriptor
+          agentFrameworkId: selected.agentFrameworkId,
+          agentBackendId: selected.agentBackendId,
+          agentModel: selected.agentModel,
+          historyReplayDescriptor: selected.historyReplayDescriptor
         },
         {
           onSendPreparationStateChange: handleSendPreparationStateChange,
@@ -348,41 +369,39 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     [
       lifecycleOwner,
       runtime,
-      supportsNativeImageInput,
       visionRelayAvailable,
-      agentFrameworkId,
-      agentBackendId,
-      activeModel,
-      historyReplayDescriptor,
+      resolveRuntimeSelection,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]
   )
 
   const resendEditedMessage = useCallback(
-    (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> =>
-      resendEditedWorkspaceMessage(
+    (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> => {
+      const configuration = useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === sessionId)?.agentConfiguration
+      const selected = resolveRuntimeSelection(configuration)
+      return resendEditedWorkspaceMessage(
         runtime,
         { sessionId, messageId, ...input },
         {
-          supportsImageInput: supportsNativeImageInput,
+          supportsImageInput: selected.supportsImageInput,
           supportsImageRelay: visionRelayAvailable,
-          agentFrameworkId,
-          agentBackendId,
-          agentModel: activeModel,
-          historyReplayDescriptor,
+          agentFrameworkId: selected.agentFrameworkId,
+          agentBackendId: selected.agentBackendId,
+          agentModel: selected.agentModel,
+          agentConfiguration: configuration,
+          historyReplayDescriptor: selected.historyReplayDescriptor,
           onSendPreparationStateChange: handleSendPreparationStateChange,
           drainRuntimeEvents
         }
-      ),
+      )
+    },
     [
       runtime,
-      supportsNativeImageInput,
       visionRelayAvailable,
-      agentFrameworkId,
-      agentBackendId,
-      activeModel,
-      historyReplayDescriptor,
+      resolveRuntimeSelection,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]

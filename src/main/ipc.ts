@@ -2419,8 +2419,9 @@ const createApplicationModules = async (
       }
     }
   )
-  // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
-  // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
+  // Framework changes rotate future runtime ownership; provider edits and authentication changes can
+  // reconnect the default generation. Active provider/model/effort selections are persisted defaults
+  // only and never flow through this effects port to mutate existing Sessions.
   const settingsWorkflows = createSettingsWorkflows(settingsService, {
     runtime: {
       requestProviderReconnect: () => {
@@ -2430,20 +2431,6 @@ const createApplicationModules = async (
       requestAgentFrameworkSwitch: () => {
         void runtime.requestAgentFrameworkSwitch()
         void sideChatRuntime.requestProviderReconnect()
-      },
-      applyReasoningEffort: async (effort) => {
-        const [mainApplied, sideChatApplied] = await Promise.all([
-          runtime.applyReasoningEffortChange(effort),
-          sideChatRuntime.applyReasoningEffortChange(effort)
-        ])
-        return mainApplied && sideChatApplied
-      },
-      applyModelChange: async (target) => {
-        const [mainApplied, sideChatApplied] = await Promise.all([
-          runtime.applyModelChange(target),
-          sideChatRuntime.applyModelChange(target)
-        ])
-        return mainApplied && sideChatApplied
       }
     },
     skills: {

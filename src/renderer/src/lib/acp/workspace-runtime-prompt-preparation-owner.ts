@@ -1,5 +1,5 @@
 import type { AcpMessageImage, AcpStateSnapshot } from '../../../../shared/acp'
-import type { AgentFrameworkId } from '../../../../shared/settings'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
@@ -47,6 +47,7 @@ type PrepareExistingWorkspacePromptRequest = {
   selectedRuntime: {
     frameworkId?: AgentFrameworkId
     backendId?: string
+    agentConfiguration?: SessionAgentConfiguration
     supportsImageInput?: boolean
     supportsImageRelay?: boolean
   }
@@ -194,7 +195,13 @@ const prepareExistingWorkspacePrompt = async (
       request.selectedRuntime.backendId !== currentSession.agentBackendId)
   )
   const runtimeDetached = !runtime.state.sessionIds.includes(sessionId)
-  const runtimeMustAdoptSession = selectedRuntimeChanged || runtimeDetached
+  // An explicit Session target must pass through resume even when the aggregate coordinator snapshot
+  // still shows this app Session as attached. A provider/model/effort change can keep the same backend
+  // id, while ownership still needs to move to the runtime generation keyed by the new target.
+  const runtimeMustAdoptSession =
+    Boolean(request.selectedRuntime.frameworkId && request.selectedRuntime.agentConfiguration) ||
+    selectedRuntimeChanged ||
+    runtimeDetached
   const branchResetRequired = Boolean(
     request.replay.cutMessageId || currentSession?.branchContextResetRequired
   )
@@ -259,7 +266,7 @@ const prepareExistingWorkspacePrompt = async (
         return undefined
       }
 
-      const resumeResult = await runtime.resumeSession(
+      const resumeArguments = [
         sessionId,
         resumeCwd,
         request.projectId,
@@ -270,7 +277,17 @@ const prepareExistingWorkspacePrompt = async (
         currentSession?.providerSessionId,
         currentSession?.providerContinuityToken,
         currentSession?.specialistBindingPending
-      )
+      ] as const
+      const target =
+        request.selectedRuntime.frameworkId && request.selectedRuntime.agentConfiguration
+          ? {
+              frameworkId: request.selectedRuntime.frameworkId,
+              ...request.selectedRuntime.agentConfiguration
+            }
+          : undefined
+      const resumeResult = target
+        ? await runtime.resumeSession(...resumeArguments, target)
+        : await runtime.resumeSession(...resumeArguments)
       contextResetFromResume = Boolean(resumeResult?.contextReset)
       useSessionStore.getState().markResumed(
         sessionId,

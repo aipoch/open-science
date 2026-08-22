@@ -19,6 +19,7 @@ import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   buildConfiguredModelCatalog,
   type ConfiguredModelCatalogEntry
@@ -67,11 +68,19 @@ const MenuRadioItem = ({
   </DropdownMenuItem>
 )
 
-// Model/provider switcher shown in the composer toolbar. Reads the settings store directly (the store
-// is global) so the presentational ConversationPanel needn't thread provider state through. With no
-// selectable model it shows a warning that opens Settings; with a single option it renders nothing
-// (there's nothing to switch between); otherwise it renders the switcher.
-const ComposerModelPicker = (): React.JSX.Element | null => {
+type ComposerModelPickerProps = Readonly<{
+  configuration: SessionAgentConfiguration | undefined
+  unavailable: boolean
+  onChange: (configuration: SessionAgentConfiguration) => void
+}>
+
+// Model/provider switcher shown in the composer toolbar. Provider inventory and framework
+// compatibility remain Settings-owned, while the selected value belongs to the current Session.
+const ComposerModelPicker = ({
+  configuration,
+  unavailable,
+  onChange
+}: ComposerModelPickerProps): React.JSX.Element | null => {
   // Only the shared incompatibility copy is translated here; the rest of this picker's strings belong
   // to the workspace surface and are converted with it.
   const { t } = useTranslation()
@@ -81,14 +90,13 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   const claudeSubscriptionProviderId = useSettingsStore(
     (state) => state.claudeSubscriptionProviderId
   )
-  const activeModel = useSettingsStore((state) => state.activeModel)
-  const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
-  const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
-  const setReasoningEffort = useSettingsStore((state) => state.setReasoningEffort)
+  const reasoningEffort = configuration?.reasoningEffort ?? 'default'
+  const selectedProviderId = configuration?.providerId
+  const selectedModel = configuration?.model
 
   const frameworkName =
     agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
@@ -97,9 +105,9 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   // Reasoning-effort state resolves through the same chain as the Settings page control: the
   // effective model for the active provider, that model's static effort profile, then the control
   // options the stored intent maps onto.
-  const activeProvider = providers.find((candidate) => candidate.id === activeProviderId)
-  const effectiveModel = resolveProviderEffectiveModel(activeProvider, activeModel)
-  const effortProfile = resolveProviderReasoningEffortProfile(activeProvider, effectiveModel)
+  const selectedProvider = providers.find((candidate) => candidate.id === selectedProviderId)
+  const effectiveModel = resolveProviderEffectiveModel(selectedProvider, selectedModel)
+  const effortProfile = resolveProviderReasoningEffortProfile(selectedProvider, effectiveModel)
   const effortControl = resolveReasoningEffortControl(reasoningEffort, effortProfile)
   const selectedEffortLabel = effortControl.options.find(
     (option) => option.value === effortControl.selectedValue
@@ -108,7 +116,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   // The effort row only makes sense when the active provider's model can take an effort at all;
   // without an active provider there is nothing the selection would apply to, so the row hides.
   const showEffortRow =
-    activeProvider !== undefined && effortProfile.supported && effortControl.options.length > 0
+    selectedProvider !== undefined && effortProfile.supported && effortControl.options.length > 0
 
   // The trigger advertises a non-default effort as a suffix, derived from showEffortRow so the two
   // visibility rules can never drift apart. 'default' means "whatever the provider does" — the
@@ -146,13 +154,13 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   // A single usable option leaves nothing to switch between, so the picker stays hidden. When the
   // sole provider is incompatible we instead fall through to the dropdown (hasUsable is false) so its
   // incompatibility reason stays reachable — an all-incompatible framework must never silently vanish.
-  if (options.length === 1 && hasUsable) return null
+  if (options.length === 1 && hasUsable && !unavailable) return null
 
   // The active option matches by provider and model; an undefined activeModel maps to the empty-model
   // "default" entry.
-  const activeKeyModel = activeModel ?? ''
+  const activeKeyModel = selectedModel ?? ''
   const current = options.find(
-    (option) => option.providerId === activeProviderId && option.model === activeKeyModel
+    (option) => option.providerId === selectedProviderId && option.model === activeKeyModel
   )
 
   // Group options by provider so official vendors show their catalog under one heading.
@@ -170,12 +178,18 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
           variant="ghost"
           className={cn(
             triggerClassName,
-            !hasUsable &&
+            (unavailable || !hasUsable) &&
               'text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400'
           )}
-          aria-label={hasUsable ? t('Select model') : t('No compatible model')}
+          aria-label={
+            unavailable
+              ? t('Session model unavailable')
+              : hasUsable
+                ? t('Select model')
+                : t('No compatible model')
+          }
         >
-          {hasUsable ? (
+          {hasUsable && !unavailable ? (
             <>
               {current ? (
                 <ProviderKindIcon
@@ -205,7 +219,9 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
           ) : (
             <>
               <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-              <span className="truncate">{t('No compatible model')}</span>
+              <span className="truncate">
+                {unavailable ? t('Session model unavailable') : t('No compatible model')}
+              </span>
             </>
           )}
           <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
@@ -239,7 +255,9 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
             <DropdownMenuSubContent className="w-56 p-1">
               <MenuRadioItem
                 checked={defaultEffortChecked}
-                onSelect={() => void setReasoningEffort('default')}
+                onSelect={() => {
+                  if (configuration) onChange({ ...configuration, reasoningEffort: 'default' })
+                }}
                 hint={t('provider default')}
               >
                 {t('Default')}
@@ -252,7 +270,11 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                   checked={
                     reasoningEffort !== 'default' && option.value === effortControl.selectedValue
                   }
-                  onSelect={() => void setReasoningEffort(option.intent)}
+                  onSelect={() => {
+                    if (configuration) {
+                      onChange({ ...configuration, reasoningEffort: option.intent })
+                    }
+                  }}
                 >
                   {option.label}
                 </MenuRadioItem>
@@ -342,7 +364,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                   {compatible ? (
                     group.options.map((option) => {
                       const isActive =
-                        option.providerId === activeProviderId && option.model === activeKeyModel
+                        option.providerId === selectedProviderId && option.model === activeKeyModel
                       const optionCompatible = option.selectable
 
                       if (!optionCompatible) {
@@ -371,9 +393,11 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                           key={`${option.providerId}:${option.model}`}
                           checked={isActive}
                           onSelect={() =>
-                            void setActiveProvider(option.providerId, option.model).catch(
-                              () => undefined
-                            )
+                            onChange({
+                              providerId: option.providerId,
+                              ...(option.model ? { model: option.model } : {}),
+                              reasoningEffort
+                            })
                           }
                           leading={
                             <ProviderKindIcon
@@ -415,7 +439,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
             })}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        {hasUsable ? null : (
+        {hasUsable && !unavailable ? null : (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => openSettings()}>

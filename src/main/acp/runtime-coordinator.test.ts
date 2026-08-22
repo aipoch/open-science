@@ -6,6 +6,7 @@ import type {
   AcpRuntimeEvent,
   AcpStateSnapshot
 } from '../../shared/acp'
+import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
@@ -306,6 +307,55 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('routes Sessions through runtimes keyed by their explicit agent target', async () => {
+    const targets: Array<AcpSessionAgentTarget | undefined> = []
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      targets.push(target)
+      const index = created.length
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId === 'opencode' ? 'opencode' : 'claude-code',
+        sessionIds: [`session-${index}-a`, `session-${index}-b`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const targetA = {
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    } as const
+    const targetB = {
+      frameworkId: 'opencode',
+      providerId: 'provider-b',
+      model: 'model-b',
+      reasoningEffort: 'low'
+    } as const
+
+    const first = await coordinator.createSession({ agentTarget: targetA })
+    await coordinator.createSession({ agentTarget: targetA })
+    await coordinator.resumeSession({
+      sessionId: first.sessionId,
+      cwd: '/workspace',
+      agentTarget: targetB
+    })
+
+    expect(targets).toEqual([undefined, targetA, targetB])
+    expect(created[1].createSession).toHaveBeenCalledTimes(2)
+    expect(created[2].resumeSession).toHaveBeenCalledWith({
+      sessionId: first.sessionId,
+      cwd: '/workspace',
+      agentTarget: targetB
+    })
+
+    created[1].emitState({})
+    expect(coordinator.captureSessionBackend(first.sessionId)).toMatchObject({
+      backendId: 'opencode:owned'
+    })
+  })
+
   it('publishes snapshots with a coordinator-wide monotonic revision', () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>

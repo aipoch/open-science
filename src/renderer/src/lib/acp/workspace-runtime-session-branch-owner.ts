@@ -4,7 +4,7 @@ import {
   toRuntimeUploadedAttachment,
   type UploadedAttachment
 } from '../../../../shared/uploads'
-import type { AgentFrameworkId } from '../../../../shared/settings'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
@@ -16,6 +16,7 @@ export type BranchWorkspaceSessionFromMessageIntent = {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
   agentModel?: string
+  agentConfiguration?: SessionAgentConfiguration
   specialistId?: string | null
 }
 
@@ -89,12 +90,24 @@ export const branchWorkspaceSessionFromMessage = async (
       pendingSession.messages,
       pendingSession.projectId
     )
-    const created = await runtime.createSession(
-      pendingSession.cwd || undefined,
-      pendingSession.projectId,
-      pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      pendingSession.specialistId
-    )
+    const target =
+      input.agentFrameworkId && input.agentConfiguration
+        ? { frameworkId: input.agentFrameworkId, ...input.agentConfiguration }
+        : undefined
+    const created = target
+      ? await runtime.createSession(
+          pendingSession.cwd || undefined,
+          pendingSession.projectId,
+          pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+          pendingSession.specialistId,
+          target
+        )
+      : await runtime.createSession(
+          pendingSession.cwd || undefined,
+          pendingSession.projectId,
+          pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+          pendingSession.specialistId
+        )
     const sessionId = created?.sessionId
     if (!sessionId) throw new Error('Agent session could not be created.')
     createdSessionId = sessionId

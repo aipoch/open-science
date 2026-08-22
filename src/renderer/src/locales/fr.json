@@ -1761,6 +1761,7 @@
   "Select all selects only deletable Skills. Skills used by the Main Agent or another Specialist will be kept.": "« Tout sélectionner » ne sélectionne que les compétences pouvant être supprimées. Les compétences utilisées par l'agent principal ou un autre spécialiste seront conservées.",
   "Select all installed skills": "Sélectionnez toutes les compétences installées",
   "Select model": "Sélectionnez le modèle",
+  "Session model unavailable": "Modèle de session indisponible",
   "Select this computer, then select": "Sélectionnez cet ordinateur, puis sélectionnez",
   "Select {{name}}": "Sélectionnez {{name}}",
   "Selected": "Sélectionné",

@@ -7,6 +7,7 @@ export type AcpSettingsCapabilities = Pick<
   SettingsService,
   | 'captureActiveAgentBackendSelection'
   | 'resolveAgentBackend'
+  | 'resolveExplicitAgentBackend'
   | 'skillsNeedingForceLoad'
   | 'skillNudgeNamesForIds'
   | 'codexSkillDescriptorsForIds'
@@ -17,7 +18,7 @@ export type AcpSettingsCapabilities = Pick<
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'
 > &
-  Partial<Pick<SettingsService, 'resolveExplicitAgentBackend' | 'resolveAdmittedSubagentBackend'>>
+  Partial<Pick<SettingsService, 'resolveAdmittedSubagentBackend'>>
 
 export type WindowSettingsCapabilities = Pick<
   SettingsService,

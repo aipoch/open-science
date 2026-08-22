@@ -8,8 +8,7 @@ import {
   type SetReasoningEffortRequest,
   type UpsertProviderRequest
 } from '../../../shared/settings'
-import type { ResolvedReasoningEffort } from '../../../shared/reasoning-effort'
-import type { AgentFrameworkId, AgentModelChangeTarget } from '../../agent-framework'
+import type { AgentFrameworkId } from '../../agent-framework'
 import type { SettingsService } from '../service'
 
 type RuntimeSettingsWorkflowStore = Pick<
@@ -23,8 +22,6 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'setActiveProvider'
   | 'setAgentFramework'
   | 'setReasoningEffort'
-  | 'resolveActiveReasoningEffort'
-  | 'resolveActiveModelChangeTarget'
   | 'loginClaudeShared'
   | 'logoutClaudeShared'
   | 'loginIsolatedClaude'
@@ -41,8 +38,6 @@ type RuntimeSettingsWorkflowStore = Pick<
 type RuntimeSettingsWorkflowEffects = {
   requestProviderReconnect: () => void
   requestAgentFrameworkSwitch: () => void
-  applyReasoningEffort: (effort: ResolvedReasoningEffort) => Promise<boolean>
-  applyModelChange: (target: AgentModelChangeTarget) => Promise<boolean>
 }
 
 type RuntimeUninstallMethod = 'uninstallClaude' | 'uninstallOpencode' | 'uninstallCodex'
@@ -104,19 +99,7 @@ class RuntimeSettingsWorkflows {
   async setActiveProvider(
     request: SetActiveProviderRequest
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setActiveProvider']>>> {
-    const before = await this.settings.getSettingsView()
-    const snapshot = await this.settings.setActiveProvider(request.id, request.model)
-    if (
-      before.activeProviderId === snapshot.activeProviderId &&
-      before.activeModel === snapshot.activeModel
-    ) {
-      return snapshot
-    }
-
-    const target = await this.settings.resolveActiveModelChangeTarget()
-    const appliedLive = target ? await this.effects.applyModelChange(target) : false
-    if (!appliedLive) this.effects.requestProviderReconnect()
-    return snapshot
+    return this.settings.setActiveProvider(request.id, request.model)
   }
 
   async setAgentFramework(
@@ -130,11 +113,7 @@ class RuntimeSettingsWorkflows {
   async setReasoningEffort(
     request: SetReasoningEffortRequest
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setReasoningEffort']>>> {
-    const snapshot = await this.settings.setReasoningEffort(request.effort)
-    const resolvedEffort = await this.settings.resolveActiveReasoningEffort(request.effort)
-    const appliedLive = await this.effects.applyReasoningEffort(resolvedEffort)
-    if (!appliedLive) this.effects.requestProviderReconnect()
-    return snapshot
+    return this.settings.setReasoningEffort(request.effort)
   }
 
   async loginClaudeShared(): Promise<

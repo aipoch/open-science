@@ -238,16 +238,31 @@ const createAcpRuntime = ({
   }
 
   const runtimeCoordinator = new AcpRuntimeCoordinator(
-    (runtimeCallbacks, permissionGrantStore) => {
+    (runtimeCallbacks, permissionGrantStore, target) => {
       const selection = fixedBackend
         ? undefined
-        : settingsService.captureActiveAgentBackendSelection()
+        : target
+          ? undefined
+          : settingsService.captureActiveAgentBackendSelection()
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
         resolveBackend: async (context) =>
-          fixedBackend ?? settingsService.resolveAgentBackend(await selection!, context),
+          fixedBackend ??
+          (target
+            ? settingsService.resolveExplicitAgentBackend(
+                {
+                  frameworkId: target.frameworkId,
+                  providerId: target.providerId,
+                  model: target.model
+                    ? { kind: 'required', id: target.model }
+                    : { kind: 'provider-default' },
+                  reasoningEffort: target.reasoningEffort
+                },
+                context
+              )
+            : settingsService.resolveAgentBackend(await selection!, context)),
         ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
         skills: {

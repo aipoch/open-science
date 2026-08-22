@@ -20,7 +20,6 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ComposerModelPicker } from './ComposerModelPicker'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
 import type { SideChatEntry, SideChatView } from './use-side-chat-controller'
 
@@ -323,7 +322,6 @@ const SideChatPanel = ({
             </TooltipProvider>
             {controls}
             <div className="flex-1" />
-            <ComposerModelPicker />
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>

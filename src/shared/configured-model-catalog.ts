@@ -79,17 +79,18 @@ export const buildConfiguredModelInventory = (
         !providerValidationFailed(provider)
     )
     .flatMap((provider) =>
-      (provider.models.length > 0 ? provider.models : ['']).map((model) =>
-        Object.freeze({
-          key: configuredModelKey(provider.id, model),
-          providerId: provider.id,
-          providerName: provider.name,
-          providerType: provider.type,
-          ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
-          model,
-          label: model || provider.name,
-          supportsImageInput: supportsImageInput(provider, model)
-        })
+      (provider.models.length > 0 ? provider.models : provider.model ? [provider.model] : ['']).map(
+        (model) =>
+          Object.freeze({
+            key: configuredModelKey(provider.id, model),
+            providerId: provider.id,
+            providerName: provider.name,
+            providerType: provider.type,
+            ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
+            model,
+            label: model || provider.name,
+            supportsImageInput: supportsImageInput(provider, model)
+          })
       )
     )
 }

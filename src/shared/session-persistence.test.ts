@@ -2812,7 +2812,7 @@ describe('normalizeSessionFile with activities', () => {
     expect(malformed?.filesRevision).toBeUndefined()
   })
 
-  it('round-trips agent, provider, backend, and model identity', () => {
+  it('round-trips agent, provider, backend, model identity, and Session configuration', () => {
     const session = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
@@ -2820,7 +2820,12 @@ describe('normalizeSessionFile with activities', () => {
       agentBackendId: 'codex:codex-isolated',
       providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
       providerContinuityToken: 'bridge-generation-1',
-      agentModel: 'gpt-5.6-sol'
+      agentModel: 'gpt-5.6-sol',
+      agentConfiguration: {
+        providerId: 'codex-isolated',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high'
+      }
     })
 
     expect(session?.agentFrameworkId).toBe('codex')
@@ -2828,6 +2833,25 @@ describe('normalizeSessionFile with activities', () => {
     expect(session?.providerSessionId).toBe('019fb8c8-6c66-7f22-9653-17b5b287dbbb')
     expect(session?.providerContinuityToken).toBe('bridge-generation-1')
     expect(session?.agentModel).toBe('gpt-5.6-sol')
+    expect(session?.agentConfiguration).toEqual({
+      providerId: 'codex-isolated',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('drops malformed Session agent configurations', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      agentConfiguration: {
+        providerId: 'provider',
+        model: 'model',
+        reasoningEffort: 'extreme'
+      }
+    })
+
+    expect(session?.agentConfiguration).toBeUndefined()
   })
 
   it('keeps known approval profiles and safely defaults unknown values', () => {

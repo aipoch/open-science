@@ -8,7 +8,7 @@ import type {
 import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
-import type { AgentFrameworkId } from './settings'
+import type { AgentFrameworkId, SessionAgentConfiguration } from './settings'
 import type { DelegatedQuestionAnswer, MessageAttribution } from './session-persistence'
 import type {
   AgentTurnProvenanceContext,
@@ -678,6 +678,10 @@ export type AcpConnectRequest = {
   cwd?: string
 }
 
+export type AcpSessionAgentTarget = SessionAgentConfiguration & {
+  frameworkId: AgentFrameworkId
+}
+
 export type AcpCreateSessionRequest = {
   cwd?: string
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
@@ -687,6 +691,7 @@ export type AcpCreateSessionRequest = {
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
   // stable ID. Absent or undefined means no specialist; use Main Agent.
   specialistId?: string
+  agentTarget?: AcpSessionAgentTarget
 }
 
 export type AcpCreateSessionResponse = {
@@ -719,6 +724,7 @@ export type AcpResumeSessionRequest = {
   // True when disk holds a desired Specialist that the prior runtime never confirmed. A restored
   // resume must adopt fresh provider context with that target before Main clears the durable marker.
   specialistBindingPending?: true
+  agentTarget?: AcpSessionAgentTarget
 }
 
 export type AcpContinueInterruptedTurnRequest = {

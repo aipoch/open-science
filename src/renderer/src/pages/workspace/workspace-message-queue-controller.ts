@@ -16,6 +16,7 @@ import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
 } from '../../../../shared/permission-profiles'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import {
@@ -48,6 +49,7 @@ type MessageQueueItem = {
   attachmentCount: number
   forcedSkillIds: string[]
   permissionProfile: PermissionProfileId
+  agentConfiguration: SessionAgentConfiguration
   specialistId: string | null | undefined
   projectId: string
   cwd: string | undefined
@@ -66,6 +68,7 @@ type MessageQueueAdmission = {
   text: string
   forcedSkillIds: string[]
   permissionProfile: PermissionProfileId
+  agentConfiguration: SessionAgentConfiguration
   specialistId: string | null | undefined
 }
 
@@ -457,6 +460,7 @@ const useWorkspaceMessageQueueController = (
             cwd: item.cwd,
             projectId: item.projectId,
             permissionProfile: item.permissionProfile,
+            agentConfiguration: item.agentConfiguration,
             forcedSkillIds: item.forcedSkillIds,
             specialistId: item.specialistId
           })

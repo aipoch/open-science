@@ -1691,6 +1691,7 @@
   "Select all": "すべて選択",
   "Select all installed skills": "インストールされているすべてのスキルを選択します",
   "Select model": "モデルを選択",
+  "Session model unavailable": "セッションモデルは利用できません",
   "Select this computer, then select": "このコンピューターを選択してから、",
   "Select {{name}}": "{{name}}を選択します",
   "Selected capabilities": "選択された機能",
