@@ -44,7 +44,7 @@ const useWorkspaceSpecialistReconfiguration = (
 ): {
   error: WorkspaceSpecialistReconfigureError | null
   setError: Dispatch<SetStateAction<WorkspaceSpecialistReconfigureError | null>>
-  clearIdleRetry: () => void
+  clearIdleRetry: (sessionId: string) => void
   recordIdleFailure: (sessionId: string, specialistId: string | undefined, message: string) => void
   retryIdle: (
     activeSessionId: string | undefined,
@@ -54,8 +54,8 @@ const useWorkspaceSpecialistReconfiguration = (
   const [error, setError] = useState<WorkspaceSpecialistReconfigureError | null>(null)
   const idleRetryTarget = useRef<IdleSpecialistRetryTarget | null>(null)
 
-  const clearIdleRetry = (): void => {
-    idleRetryTarget.current = null
+  const clearIdleRetry = (sessionId: string): void => {
+    if (idleRetryTarget.current?.sessionId === sessionId) idleRetryTarget.current = null
   }
   const recordIdleFailure = (
     sessionId: string,

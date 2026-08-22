@@ -353,6 +353,49 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
   })
 
+  it('keeps an idle Specialist retry available after changing another Session', async () => {
+    const first = session({ specialistId: 'specialist-a' })
+    const second = session({ id: 'session-b', specialistId: 'specialist-a' })
+    useSessionStore.setState({ sessions: [first, second], selectedSessionId: first.id })
+    const setSessionSpecialist = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('switch rejected'))
+      .mockResolvedValue({ status: 'applied' as const, contextReset: false })
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: first,
+      specialistItems: [
+        specialist('specialist-a', 'Specialist A'),
+        specialist('specialist-b', 'Specialist B')
+      ]
+    })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+    hook.rerender(second)
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+    hook.rerender(first)
+
+    expect(hook.result.current.view.specialist.reconfigureError).toMatchObject({
+      sessionId: first.id,
+      message: 'switch rejected'
+    })
+    await act(async () => {
+      expect(hook.result.current.actions.retrySpecialistSelection()).toBe(true)
+      await Promise.resolve()
+    })
+    expect(setSessionSpecialist).toHaveBeenLastCalledWith({
+      sessionId: first.id,
+      specialistId: 'specialist-b'
+    })
+  })
+
   it('keeps recovery available when switching back to Main Agent rejects', async () => {
     const active = session({ specialistId: 'specialist-a' })
     useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })

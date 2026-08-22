@@ -345,7 +345,7 @@ const useWorkspaceSessionController = ({
     }
     const sessionId = activeSession.id
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
-    reconfiguration.clearIdleRetry()
+    reconfiguration.clearIdleRetry(sessionId)
     const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
@@ -485,7 +485,7 @@ const useWorkspaceSessionController = ({
   const chooseOtherSpecialist = (): void => {
     if (!activeSession || !reconfigureError) return
     clearPending(activeSession.id)
-    reconfiguration.clearIdleRetry()
+    reconfiguration.clearIdleRetry(activeSession.id)
     setReconfigureError(null)
   }
 
@@ -494,7 +494,7 @@ const useWorkspaceSessionController = ({
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
     if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
-    reconfiguration.clearIdleRetry()
+    reconfiguration.clearIdleRetry(sessionId)
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
