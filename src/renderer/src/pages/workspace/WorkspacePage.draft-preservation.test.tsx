@@ -20,6 +20,7 @@ import {
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
+import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -173,6 +174,7 @@ describe('WorkspacePage draft preservation', () => {
   let originalFileReader: typeof FileReader
 
   beforeEach(() => {
+    setDefaultWorkspaceAgentSettings()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({
       projects: [
