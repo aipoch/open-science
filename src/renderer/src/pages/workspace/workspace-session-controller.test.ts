@@ -353,13 +353,14 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
   })
 
-  it('keeps an idle Specialist retry available after changing another Session', async () => {
+  it('keeps idle Specialist failures scoped to each Session', async () => {
     const first = session({ specialistId: 'specialist-a' })
     const second = session({ id: 'session-b', specialistId: 'specialist-a' })
     useSessionStore.setState({ sessions: [first, second], selectedSessionId: first.id })
     const setSessionSpecialist = vi
       .fn()
       .mockRejectedValueOnce(new Error('switch rejected'))
+      .mockRejectedValueOnce(new Error('other switch rejected'))
       .mockResolvedValue({ status: 'applied' as const, contextReset: false })
     window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
     const hook = renderController({
@@ -392,6 +393,20 @@ describe('workspace session controller', () => {
     })
     expect(setSessionSpecialist).toHaveBeenLastCalledWith({
       sessionId: first.id,
+      specialistId: 'specialist-b'
+    })
+
+    hook.rerender(second)
+    expect(hook.result.current.view.specialist.reconfigureError).toMatchObject({
+      sessionId: second.id,
+      message: 'other switch rejected'
+    })
+    await act(async () => {
+      expect(hook.result.current.actions.retrySpecialistSelection()).toBe(true)
+      await Promise.resolve()
+    })
+    expect(setSessionSpecialist).toHaveBeenLastCalledWith({
+      sessionId: second.id,
       specialistId: 'specialist-b'
     })
   })

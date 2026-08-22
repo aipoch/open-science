@@ -162,6 +162,9 @@ const useWorkspaceSessionController = ({
   )
   const reconfiguration = useWorkspaceSpecialistReconfiguration(specialistItems)
   const { error: reconfigureError, setError: setReconfigureError } = reconfiguration
+  const activeReconfigureError =
+    reconfiguration.idleErrorFor(activeSession?.id) ??
+    (reconfigureError?.sessionId === activeSession?.id ? reconfigureError : null)
   const barrierInFlightIds = useSyncExternalStore(
     subscribeWorkspaceSpecialistBarriers,
     getWorkspaceSpecialistBarrierSnapshot,
@@ -481,16 +484,14 @@ const useWorkspaceSessionController = ({
     setReconfigureError(null)
     return true
   }
-
   const chooseOtherSpecialist = (): void => {
-    if (!activeSession || !reconfigureError) return
+    if (!activeSession || !activeReconfigureError) return
     clearPending(activeSession.id)
     reconfiguration.clearIdleRetry(activeSession.id)
     setReconfigureError(null)
   }
-
   const useMainAgent = (): void => {
-    if (!activeSession || !reconfigureError) return
+    if (!activeSession || !activeReconfigureError) return
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
     if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
@@ -643,8 +644,7 @@ const useWorkspaceSessionController = ({
         hasPendingSwitch: activeHasPendingSwitch,
         barrierInFlight: barrierInFlightIds.has(activeSession?.id ?? ''),
         sendAvailable: specialistSendAvailable && !barrierInFlightIds.has(activeSession?.id ?? ''),
-        reconfigureError:
-          reconfigureError?.sessionId === activeSession?.id ? reconfigureError : null
+        reconfigureError: activeReconfigureError
       }
     },
     actions: {
