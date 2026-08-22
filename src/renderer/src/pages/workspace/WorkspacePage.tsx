@@ -33,6 +33,7 @@ import {
   clearSuppressNextAutoReview
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
+import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
@@ -663,21 +664,20 @@ const WorkspacePage = ({
 
   // The first agent-side notebook call reveals the new notebook entry and its preview together.
   useEffect(() => {
+    let cancelPendingOpen = (): void => undefined
     const removeNotebookAvailableListener = window.api.notebook.onAvailable((notebook) => {
       setNotebookReferences((references) => ({
         ...references,
         [notebook.sessionId]: notebook
       }))
       if (notebook.projectId !== scopedProjectId || notebook.sessionId !== activeSessionId) return
-      const preview = usePreviewWorkbenchStore.getState()
-      const previewItem = createNotebookPreviewItem(notebook)
-      preview.items.some(({ id }) => id === previewItem.id)
-        ? preview.upsertItem(previewItem)
-        : preview.upsertAndActivateItem(previewItem)
+      cancelPendingOpen()
+      cancelPendingOpen = revealNotebookWhenProjectActive(notebook)
     })
 
     return () => {
       removeNotebookAvailableListener()
+      cancelPendingOpen()
     }
   }, [activeSessionId, scopedProjectId])
 
@@ -904,7 +904,7 @@ const WorkspacePage = ({
     })()
   }
 
-  // Opens the right preview on demand instead of stealing focus when the agent first uses notebook.
+  // Opens the right preview when the user explicitly selects the notebook entry.
   const openNotebookPreview = (notebook: NotebookSessionReference): void => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createNotebookPreviewItem(notebook))
   }

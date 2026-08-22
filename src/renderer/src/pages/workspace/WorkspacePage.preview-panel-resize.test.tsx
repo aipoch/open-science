@@ -373,6 +373,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     }
     useNavigationStore.setState({ view: 'workspace', activeProjectId: projectId })
     useSessionStore.setState({ sessions: [session], selectedSessionId: sessionId })
+    usePreviewWorkbenchStore.getState().activateProject(projectId)
   }
 
   const getPreviewToggle = (): HTMLButtonElement => {
@@ -694,6 +695,39 @@ describe('WorkspacePage preview panel resize sync', () => {
       activeItemId: undefined,
       panelState: 'collapsed',
       items: []
+    })
+  })
+
+  it('waits for the target project preview slice before opening the notebook', async () => {
+    selectSession('session-1', 'project-1')
+    await renderPage(false)
+    act(() => usePreviewWorkbenchStore.getState().activateProject('previous-project'))
+
+    const notebook: NotebookSessionReference = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace/project-1',
+      notebookSessionRoot: '/notebooks/project-1/session-1',
+      dataRoot: '/notebooks/project-1/session-1/data',
+      runtimeRoot: '/notebooks/project-1/session-1/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/run.json'
+    }
+    await act(async () => notebookAvailableListener?.(notebook))
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'previous-project',
+      activeItemId: undefined,
+      panelState: 'collapsed',
+      items: []
+    })
+
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-1'))
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-1',
+      activeItemId: 'tool:session-1:notebook',
+      panelState: 'open',
+      items: [expect.objectContaining({ id: 'tool:session-1:notebook', notebook })]
     })
   })
 
