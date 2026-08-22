@@ -1283,12 +1283,12 @@ run <- base::local({
 ))
 lockEnvironment(environment(run), bindings = TRUE)
 
-# Request I/O and the read-path interrupt flag live in this local environment, not .GlobalEnv.
-# User cells eval in globalenv() and may assign names such as interrupt_during_read; those
-# assignments must not skip the next request or crash the persistent kernel. SIGINT during a
-# blocked stdin read looks like an empty read and, if left uncaught at top level, prints
-# "Execution halted" and exits.
-local({
+# Request I/O and the read-path interrupt flag live outside .GlobalEnv. User cells eval in
+# globalenv() and may assign names such as interrupt_during_read or getwd; those assignments
+# must not skip the next request or crash cancellation. Parent is baseenv() so cancellation
+# helpers resolve trusted bindings. SIGINT during a blocked stdin read looks like an empty
+# read and, if left uncaught at top level, prints "Execution halted" and exits.
+base::local({
   state <- new.env(parent = emptyenv())
   state$during_read <- FALSE
 
@@ -1299,15 +1299,13 @@ local({
         readLines(con, n = 1L, warn = FALSE),
         interrupt = function(cnd) {
           state$during_read <- TRUE
-          character()
+          NA_character_
         }
       )
+      if (length(header) == 1L && is.na(header)) next
       if (length(header) == 0L) {
-        if (!isOpen(con, rw = "read")) return(NULL)
-        if (isTRUE(state$during_read)) next
         empty_streak <- empty_streak + 1L
-        if (empty_streak >= 2L) return(NULL)
-        state$during_read <- TRUE
+        if (!isOpen(con, rw = "read") || empty_streak >= 2L) return(NULL)
         next
       }
       empty_streak <- 0L
@@ -1322,17 +1320,13 @@ local({
           readBin(con, what = "raw", n = n - length(acc)),
           interrupt = function(cnd) {
             state$during_read <- TRUE
-            raw()
+            structure(raw(), interrupt = TRUE)
           }
         )
-        # Keep draining the declared frame. An interrupt is not EOF: counting it
-        # as an empty read would close the loop and desynchronize the next request.
+        if (isTRUE(attr(chunk, "interrupt"))) next
         if (length(chunk) == 0L) {
-          if (!isOpen(con, rw = "read")) return(NULL)
-          if (isTRUE(state$during_read)) next
           body_empty <- body_empty + 1L
-          if (body_empty >= 2L) return(NULL)
-          state$during_read <- TRUE
+          if (!isOpen(con, rw = "read") || body_empty >= 2L) return(NULL)
           next
         }
         body_empty <- 0L
@@ -1399,4 +1393,12 @@ local({
     )
     emit(resp)
   }
-})
+}, envir = base::list2env(
+  base::list(
+    con = con,
+    emit = emit,
+    run = run,
+    capture_environment = capture_environment
+  ),
+  parent = base::baseenv()
+))
