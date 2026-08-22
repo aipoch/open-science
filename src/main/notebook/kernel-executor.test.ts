@@ -192,6 +192,30 @@ const procFor = (
 ): ProcStateLike | undefined =>
   (executor as unknown as ExecutorInternals).procs.get(procKeyFor(kind, env))
 
+const abortOnNextStdinWrite = (
+  child: ChildProcessWithoutNullStreams,
+  cancellation: AbortController
+): void => {
+  const originalWrite = child.stdin.write.bind(child.stdin)
+  let abortOnWrite = true
+  child.stdin.write = ((
+    chunk: string | Uint8Array,
+    encoding?: BufferEncoding | ((error?: Error | null) => void),
+    cb?: (error?: Error | null) => void
+  ) => {
+    const result =
+      typeof encoding === 'function'
+        ? originalWrite(chunk, encoding)
+        : originalWrite(chunk, encoding, cb)
+    if (abortOnWrite) {
+      abortOnWrite = false
+      child.stdin.write = originalWrite
+      cancellation.abort()
+    }
+    return result
+  }) as typeof child.stdin.write
+}
+
 let cwdDir: string | undefined
 
 const makeExecutor = (): NotebookKernelExecutor =>
@@ -1238,42 +1262,104 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
     }
   })
 
-  it('cancels a run without clearing the persistent R namespace', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-'))
-    const request = baseRequest(cwdDir)
-    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
-    const executor = new NotebookKernelExecutor({
-      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
-      platform: 'linux'
-    })
-
-    try {
-      await expect(
-        executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
-      ).resolves.toMatchObject({ status: 'completed' })
-      const child = procFor(executor, 'r')?.child
-      const cancellation = new AbortController()
-      const run = executor.execute({
-        ...request,
-        code: 'Sys.sleep(30)',
-        language: 'r',
-        signal: cancellation.signal
+  // Windows maps SIGINT to process termination, so cancellation cannot keep this namespace.
+  it.skipIf(process.platform === 'win32')(
+    'cancels a run without clearing the persistent R namespace',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-'))
+      const request = baseRequest(cwdDir)
+      await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+      const executor = new NotebookKernelExecutor({
+        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+        platform: 'linux'
       })
-      await vi.waitFor(() => expect(procFor(executor, 'r')?.pending).toBeDefined())
-      cancellation.abort()
 
-      await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
-      const next = await executor.execute({
-        ...request,
-        code: 'cat(preserved_after_cancel + 1)',
-        language: 'r'
+      try {
+        await expect(
+          executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
+        ).resolves.toMatchObject({ status: 'completed' })
+        const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
+        const cancellation = new AbortController()
+        // Abort in the same turn as the request write so SIGINT can land while the loop is still
+        // reading the framed request. Waiting until Sys.sleep starts hides the read-path crash.
+        abortOnNextStdinWrite(child, cancellation)
+        const run = executor.execute({
+          ...request,
+          code: 'Sys.sleep(30)',
+          language: 'r',
+          signal: cancellation.signal
+        })
+
+        await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+        const next = await executor.execute({
+          ...request,
+          code: 'cat(preserved_after_cancel + 1)',
+          language: 'r'
+        })
+        expect(next).toMatchObject({ status: 'completed', stdout: '42', traceback: '' })
+        expect(procFor(executor, 'r')?.child).toBe(child)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves the R namespace across an in-eval cancel and 50 dispatch cancels',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-stress-'))
+      const request = baseRequest(cwdDir)
+      await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+      const executor = new NotebookKernelExecutor({
+        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+        platform: 'linux'
       })
-      expect(next).toMatchObject({ status: 'completed', stdout: '42' })
-      expect(procFor(executor, 'r')?.child).toBe(child)
-    } finally {
-      await executor.shutdown()
-    }
-  }, 15_000)
+
+      try {
+        await expect(
+          executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
+        ).resolves.toMatchObject({ status: 'completed' })
+        const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
+
+        const inEval = new AbortController()
+        const sleeping = executor.execute({
+          ...request,
+          code: 'Sys.sleep(30)',
+          language: 'r',
+          signal: inEval.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'r')?.pending).toBeDefined())
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        inEval.abort()
+        await expect(sleeping).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+
+        for (let i = 0; i < 50; i++) {
+          const cancellation = new AbortController()
+          abortOnNextStdinWrite(child, cancellation)
+          await expect(
+            executor.execute({
+              ...request,
+              code: 'Sys.sleep(30)',
+              language: 'r',
+              signal: cancellation.signal
+            })
+          ).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+        }
+
+        const next = await executor.execute({
+          ...request,
+          code: 'cat(preserved_after_cancel + 1)',
+          language: 'r'
+        })
+        expect(next).toMatchObject({ status: 'completed', stdout: '42', traceback: '' })
+        expect(procFor(executor, 'r')?.child).toBe(child)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    60_000
+  )
 
   it.each([
     {

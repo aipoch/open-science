@@ -629,15 +629,54 @@ capture_environment <- function() {
   )
 }
 
+# SIGINT during a blocked stdin read looks like an empty read and, if left uncaught at top level,
+# prints "Execution halted" and exits the persistent kernel. Remember it so the request we were
+# about to read can be acknowledged without dropping the namespace.
+interrupt_during_read <- FALSE
+
 # Reads one request off the length-prefixed protocol; returns list(req_id, code) or NULL at EOF.
 read_request <- function() {
-  header <- readLines(con, n = 1L, warn = FALSE)
-  if (length(header) == 0L) return(NULL)
-  parts <- strsplit(header, " ", fixed = TRUE)[[1]]
-  req_id <- parts[1]
-  n <- as.integer(parts[2])
-  code <- if (n > 0L) readChar(con, n, useBytes = TRUE) else ""
-  list(req_id = req_id, code = code)
+  empty_streak <- 0L
+  repeat {
+    header <- tryCatch(
+      readLines(con, n = 1L, warn = FALSE),
+      interrupt = function(cnd) {
+        interrupt_during_read <<- TRUE
+        character()
+      }
+    )
+    if (length(header) == 0L) {
+      empty_streak <- empty_streak + 1L
+      if (!isOpen(con, rw = "read") || empty_streak >= 2L) return(NULL)
+      interrupt_during_read <<- TRUE
+      next
+    }
+    parts <- strsplit(header, " ", fixed = TRUE)[[1]]
+    req_id <- parts[1]
+    n <- as.integer(parts[2])
+    if (is.na(n) || n < 0L) n <- 0L
+    acc <- raw()
+    body_empty <- 0L
+    while (length(acc) < n) {
+      chunk <- tryCatch(
+        readBin(con, what = "raw", n = n - length(acc)),
+        interrupt = function(cnd) {
+          interrupt_during_read <<- TRUE
+          raw()
+        }
+      )
+      if (length(chunk) == 0L) {
+        body_empty <- body_empty + 1L
+        if (!isOpen(con, rw = "read") || body_empty >= 2L) return(NULL)
+        interrupt_during_read <<- TRUE
+        next
+      }
+      body_empty <- 0L
+      acc <- c(acc, chunk)
+    }
+    code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
+    return(list(req_id = req_id, code = code))
+  }
 }
 
 # User code may manage its own output sinks, but it must never pop the kernel-owned capture sink and
@@ -1294,10 +1333,59 @@ run <- base::local({
 ))
 lockEnvironment(environment(run), bindings = TRUE)
 
+interrupted_response <- function(req_id) {
+  environment <- tryCatch(
+    capture_environment(),
+    interrupt = function(cnd) {
+      list(
+        runtime_version = paste(R.version$major, R.version$minor, sep = "."),
+        packages = list()
+      )
+    },
+    error = function(cnd) {
+      list(
+        runtime_version = paste(R.version$major, R.version$minor, sep = "."),
+        packages = list()
+      )
+    }
+  )
+  list(
+    stdout = "",
+    stderr = "",
+    error = "interrupted",
+    interrupt_ack = TRUE,
+    error_line = NULL,
+    result = NA,
+    cwd = getwd(),
+    figures = list(),
+    output_truncated = FALSE,
+    environment = environment,
+    req_id = req_id
+  )
+}
+
 repeat {
-  req <- read_request()
+  req <- tryCatch(
+    read_request(),
+    interrupt = function(cnd) {
+      interrupt_during_read <<- TRUE
+      "retry"
+    }
+  )
   if (is.null(req)) break
-  resp <- run(req)
-  resp$req_id <- req$req_id
+  if (identical(req, "retry")) next
+  resp <- tryCatch(
+    {
+      if (isTRUE(interrupt_during_read)) {
+        interrupt_during_read <<- FALSE
+        interrupted_response(req$req_id)
+      } else {
+        result <- run(req)
+        result$req_id <- req$req_id
+        result
+      }
+    },
+    interrupt = function(cnd) interrupted_response(req$req_id)
+  )
   emit(resp)
 }

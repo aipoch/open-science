@@ -168,6 +168,28 @@ gate('r_loop.R', () => {
     60_000
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'acknowledges SIGINT that arrives while the next request is still being read',
+    async () => {
+      const { child, send } = startLoop(rscriptBin(), {})
+      try {
+        expect((await send('cancel_state <- 41'))?.error).toBeNull()
+        const sleeping = send('Sys.sleep(30)')
+        child.kill('SIGINT')
+
+        const interrupted = await sleeping
+        expect(interrupted.error).toBe('interrupted')
+        expect(interrupted.interruptAck).toBe(true)
+        const next = await send('cat(cancel_state + 1)')
+        expect(next.error).toBeNull()
+        expect(next.stdout).toContain('42')
+      } finally {
+        child.kill()
+      }
+    },
+    60_000
+  )
+
   it.each(['file.link', 'file.symlink'] as const)(
     'blocks %s aliases sourced from the managed runtime',
     async (operation) => {
