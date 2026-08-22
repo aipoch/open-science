@@ -21,8 +21,9 @@ export const FIRST_CLAUDE_STEERING_ACP_VERSION = '0.61.0'
 export const FIRST_CODEX_STEERING_ACP_VERSION = '1.2.0'
 
 // Latest adapters inspected 2026-08-22. Claude 0.70.0 and Codex 1.6.2 advertise
-// `_session/steering` and inject into the live turn. OpenCode GitHub `dev` still
-// calls `sdk.session.prompt` only.
+// `_session/steering` and inject into the live turn. OpenCode ACP still has no
+// `_session/steering`; the same process exposes HTTP POST
+// `/api/session/{id}/prompt` with `delivery: "steer" | "queue"`.
 export const LATEST_CLAUDE_AGENT_ACP_VERSION = '0.70.0'
 export const LATEST_CODEX_ACP_VERSION = '1.6.2'
 export const LATEST_OPENCODE_VERSION = '1.18.3'
@@ -229,6 +230,8 @@ export const resolveShippedNativeSendNowCapability = (
         delivery: 'unavailable',
         overlappingPrompt: 'admit-and-join-runner',
         nativeCliHasMidTurnInput: true,
+        // ACP overlapping prompt is not Send now. HTTP `delivery: steer` on the
+        // same `opencode acp --port` process is the native side-band.
         frameworkCanDispatch: true,
         usesSecondSessionPrompt: false
       },
