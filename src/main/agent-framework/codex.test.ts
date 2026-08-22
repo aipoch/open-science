@@ -265,7 +265,7 @@ describe('codexFramework', () => {
     expect(config.authentication).toBeUndefined()
     expect(config.sessionModel).toBe(CODEX_BRIDGE_MODEL)
     expect(config.providerConfiguration).toEqual({
-      providerId: 'custom-gateway',
+      providerId: 'openai',
       apiType: 'openai',
       baseUrl: 'http://127.0.0.1:43123/v1',
       headers: { authorization: 'Bearer local-token' }
@@ -402,7 +402,7 @@ describe('codexFramework', () => {
     expect(config.authentication).toBeUndefined()
     expect(config.sessionModel).toBeUndefined()
     expect(config.providerConfiguration).toEqual({
-      providerId: 'custom-gateway',
+      providerId: 'openai',
       apiType: 'openai',
       baseUrl: 'http://127.0.0.1:43123/v1',
       headers: { authorization: 'Bearer local-token' }

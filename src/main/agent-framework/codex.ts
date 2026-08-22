@@ -15,16 +15,17 @@ import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import type { OfficialVendorId } from '../../shared/provider-registry'
-import type {
-  AgentFramework,
-  AgentAuthentication,
-  AgentModelCatalogEntry,
-  AgentProviderConfiguration,
-  AgentModelConfig,
-  AgentSpawnInput,
-  ModelConfigContext,
-  SessionSetup,
-  SessionSetupContext
+import {
+  CODEX_ACP_CONFIGURABLE_PROVIDER_ID,
+  type AgentFramework,
+  type AgentAuthentication,
+  type AgentModelCatalogEntry,
+  type AgentProviderConfiguration,
+  type AgentModelConfig,
+  type AgentSpawnInput,
+  type ModelConfigContext,
+  type SessionSetup,
+  type SessionSetupContext
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { isCodexSubscriptionProvider } from '../../shared/settings'
@@ -528,7 +529,7 @@ export const createCodexFramework = ({
       ...(useLocalResponsesEndpoint
         ? {
             providerConfiguration: {
-              providerId: 'custom-gateway',
+              providerId: CODEX_ACP_CONFIGURABLE_PROVIDER_ID,
               apiType: 'openai',
               baseUrl: bridge.baseUrl,
               headers: { authorization: `Bearer ${bridge.token}` }
