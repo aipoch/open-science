@@ -40,6 +40,7 @@ import {
   resolveSessionHistoryReplayDescriptor,
   type HistoryReplayDescriptor
 } from './history-preamble'
+import { resolveSessionAgentConfiguration } from './session-agent-configuration'
 import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
@@ -174,6 +175,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
   const providers = useSettingsStore((state) => state.providers)
+  const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const configuredModelCatalog = useMemo(
@@ -222,14 +224,26 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       visionRelayAvailable
     ]
   )
-  const getSessionRuntimeSelection = useCallback(
-    (sessionId: string) => {
-      const configuration = useSessionStore
+  const resolveStoredSessionConfiguration = useCallback(
+    (sessionId: string | undefined): SessionAgentConfiguration | undefined => {
+      if (!sessionId) return undefined
+      const session = useSessionStore
         .getState()
-        .sessions.find((session) => session.id === sessionId)?.agentConfiguration
-      return resolveRuntimeSelection(configuration)
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session) return undefined
+      return resolveSessionAgentConfiguration({
+        session,
+        catalog: configuredModelCatalog,
+        activeProviderId: activeProvider?.id,
+        activeModel: activeProvider?.model,
+        activeReasoningEffort: reasoningEffort
+      }).configuration
     },
-    [resolveRuntimeSelection]
+    [activeProvider, configuredModelCatalog, reasoningEffort]
+  )
+  const getSessionRuntimeSelection = useCallback(
+    (sessionId: string) => resolveRuntimeSelection(resolveStoredSessionConfiguration(sessionId)),
+    [resolveRuntimeSelection, resolveStoredSessionConfiguration]
   )
   const getSessionAgentTarget = useCallback(
     (sessionId: string): AcpSessionAgentTarget | undefined =>
@@ -402,11 +416,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
       const agentConfiguration =
-        input.agentConfiguration ??
-        (input.sessionId
-          ? useSessionStore.getState().sessions.find((session) => session.id === input.sessionId)
-              ?.agentConfiguration
-          : undefined)
+        input.agentConfiguration ?? resolveStoredSessionConfiguration(input.sessionId)
       const resolvedInput = { ...input, agentConfiguration }
       const selected = resolveRuntimeSelection(agentConfiguration)
       lifecycleOwner.recordPromptPlanAuthority({
@@ -435,6 +445,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       runtime,
       visionRelayAvailable,
       resolveRuntimeSelection,
+      resolveStoredSessionConfiguration,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]
@@ -442,9 +453,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   const resendEditedMessage = useCallback(
     (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> => {
-      const configuration = useSessionStore
-        .getState()
-        .sessions.find((session) => session.id === sessionId)?.agentConfiguration
+      const configuration = resolveStoredSessionConfiguration(sessionId)
       const selected = resolveRuntimeSelection(configuration)
       return resendEditedWorkspaceMessage(
         runtime,
@@ -466,6 +475,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       runtime,
       visionRelayAvailable,
       resolveRuntimeSelection,
+      resolveStoredSessionConfiguration,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]

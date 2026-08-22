@@ -332,6 +332,73 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(latest.resolveSessionRuntimeSelection('session-1').supportsImageInput).toBe(true)
   })
 
+  it('resolves runtime selection from legacy backend identity when configuration is absent', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'deepseek',
+      reasoningEffort: 'low',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'deepseek',
+          type: 'official',
+          vendorId: 'deepseek',
+          name: 'DeepSeek',
+          apiEndpoints: ['anthropic'],
+          model: 'deepseek-v4-pro',
+          models: ['deepseek-v4-pro'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        },
+        {
+          id: 'legacy-provider',
+          type: 'official',
+          vendorId: 'anthropic',
+          name: 'Legacy',
+          apiEndpoints: ['anthropic'],
+          model: 'legacy-model',
+          models: ['legacy-model'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the restored chat.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:legacy-provider',
+      agentModel: 'legacy-model'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(useSessionStore.getState().sessions[0].agentConfiguration).toBeUndefined()
+    expect(latest.resolveSessionRuntimeSelection('session-1')).toMatchObject({
+      agentBackendId: 'claude-code:legacy-provider',
+      agentModel: 'legacy-model',
+      supportsImageInput: true,
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'legacy-provider',
+        model: 'legacy-model',
+        reasoningEffort: 'low'
+      }
+    })
+  })
+
   it('routes live events into Workspace before snapshot reconciliation', async () => {
     const pending = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
