@@ -345,6 +345,14 @@ export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
+// Durable Composer selection for one Session. The ACP framework remains a global Settings choice;
+// this value is re-evaluated against that framework when the Session is next used.
+export type SessionAgentConfiguration = Readonly<{
+  providerId: string
+  model?: string
+  reasoningEffort: ReasoningEffort
+}>
+
 // Global routing preference for direct Subagents. Inherited mode intentionally carries no latent
 // provider/model/effort fields; selecting a fixed target commits the compound identity and effort
 // intent as one value so renderers can never observe a torn configuration.

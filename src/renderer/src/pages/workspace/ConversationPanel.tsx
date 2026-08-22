@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 
 import type {
   AcpPermissionGrant,
@@ -270,6 +271,9 @@ type ConversationPanelElicitation = {
 
 type ConversationPanelAgentControls = {
   canChange: boolean
+  modelConfiguration?: SessionAgentConfiguration
+  modelUnavailable?: boolean
+  changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
   autoReviewEnabled: boolean
   enabledComputeHosts: string[]
   selectedComputeHosts?: string[]
@@ -417,6 +421,9 @@ const ConversationPanel = ({
   const { requests: pendingElicitations, respond: onRespondToElicitation } = elicitation
   const {
     canChange: canChangeAgentControls,
+    modelConfiguration,
+    modelUnavailable = false,
+    changeModelConfiguration = () => undefined,
     autoReviewEnabled,
     enabledComputeHosts,
     selectedComputeHosts = [],
@@ -1720,7 +1727,11 @@ const ConversationPanel = ({
 
                         {/* Model/provider switcher; hides itself unless more than one is configured.
                             Grouped on the right with Send, mirroring the reference composer layout. */}
-                        <ComposerModelPicker />
+                        <ComposerModelPicker
+                          configuration={modelConfiguration}
+                          unavailable={modelUnavailable}
+                          onChange={changeModelConfiguration}
+                        />
 
                         {rootTurnBusy ? (
                           // Running sessions expose cancel instead of send to prevent overlapping turns.

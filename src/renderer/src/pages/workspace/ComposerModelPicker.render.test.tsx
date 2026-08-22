@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ProviderView } from '../../../../shared/settings'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   reasoningEffortProfile,
   resolveReasoningEffortControl
@@ -53,11 +54,13 @@ if (!globalThis.matchMedia) {
 
 let container: HTMLDivElement
 let root: Root
+let onChange: ReturnType<typeof vi.fn<(configuration: SessionAgentConfiguration) => void>>
 
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
+  onChange = vi.fn()
   useSettingsStore.setState(createInitialSettingsState())
 })
 
@@ -78,8 +81,24 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   ...overrides
 })
 
-const render = (): void => {
-  act(() => root.render(<ComposerModelPicker />))
+const render = (unavailable = false): void => {
+  const state = useSettingsStore.getState()
+  const configuration = state.activeProviderId
+    ? {
+        providerId: state.activeProviderId,
+        ...(state.activeModel ? { model: state.activeModel } : {}),
+        reasoningEffort: state.reasoningEffort
+      }
+    : undefined
+  act(() =>
+    root.render(
+      <ComposerModelPicker
+        configuration={configuration}
+        unavailable={unavailable}
+        onChange={onChange}
+      />
+    )
+  )
 }
 
 // The repo carries no @testing-library/user-event (no @testing-library at all — every existing
@@ -203,7 +222,6 @@ describe('ComposerModelPicker', () => {
     // keyboard-unreachable), keep it unselectable, and still offer a way out to Settings. The reason
     // row now lives inside the "Model" submenu; "Open Settings" stays on the first level.
     const openSettings = vi.fn()
-    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: [
@@ -217,8 +235,7 @@ describe('ComposerModelPicker', () => {
       providers: [
         provider({ id: 'p1', apiEndpoints: ['openai'], name: 'OpenAI Gateway', models: ['gpt-x'] })
       ],
-      openSettings,
-      setActiveProvider
+      openSettings
     })
     render()
 
@@ -280,7 +297,7 @@ describe('ComposerModelPicker', () => {
 
     // 4. Activating the reason item must not switch the model (it is informational only).
     act(() => reasonItem!.click())
-    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
 
     // 5. Open Settings still works as the escape hatch, from the first level.
     const openSettingsItem = menuItems().find((el) => el.textContent?.includes('Open Settings'))
@@ -363,7 +380,7 @@ describe('ComposerModelPicker', () => {
   it('offers one trigger across providers and reflects a custom provider label', () => {
     useSettingsStore.setState({
       providers: [
-        provider({ id: 'c', name: 'Gateway', model: 'my-model', models: ['my-model'] }),
+        provider({ id: 'c', name: 'Gateway', model: 'my-model', models: [] }),
         provider({ id: 'local', type: 'custom', name: 'Local', model: undefined, models: [] })
       ],
       activeProviderId: 'c',
@@ -373,6 +390,17 @@ describe('ComposerModelPicker', () => {
 
     const trigger = container.querySelector('[aria-label="Select model"]')
     expect(trigger?.textContent).toContain('my-model')
+  })
+
+  it('shows an actionable warning when the Session configuration is unavailable', () => {
+    useSettingsStore.setState({
+      providers: [provider({ id: 'active', name: 'Gateway', model: 'model', models: [] })],
+      activeProviderId: 'active',
+      activeModel: 'model'
+    })
+    render(true)
+
+    expect(container.querySelector('[aria-label="Session model unavailable"]')).not.toBeNull()
   })
 
   it('suffixes the trigger with the effort label when a non-default effort is set and supported', () => {
@@ -496,7 +524,6 @@ describe('ComposerModelPicker', () => {
   it('lists the profile effort levels in the effort submenu and applies the picked intent', async () => {
     // DeepSeek's catalog profile is none-high-max: the submenu offers Default plus that profile's
     // rungs, and picking one stores the intent the profile maps the rung to.
-    const setReasoningEffort = vi.fn()
     useSettingsStore.setState({
       providers: [
         provider({
@@ -508,8 +535,7 @@ describe('ComposerModelPicker', () => {
         })
       ],
       activeProviderId: 'ds',
-      activeModel: 'deepseek-v4-pro',
-      setReasoningEffort
+      activeModel: 'deepseek-v4-pro'
     })
     render()
 
@@ -545,7 +571,11 @@ describe('ComposerModelPicker', () => {
     const highItem = effortOptions.find((el) => el.textContent === 'High')
     const highOption = control.options.find((option) => option.label === 'High')
     act(() => highItem!.click())
-    expect(setReasoningEffort).toHaveBeenCalledWith(highOption?.intent)
+    expect(onChange).toHaveBeenCalledWith({
+      providerId: 'ds',
+      model: 'deepseek-v4-pro',
+      reasoningEffort: highOption?.intent
+    })
   })
 
   it('summarizes the current pick in the Model row as provider line over model name', async () => {
@@ -626,7 +656,6 @@ describe('ComposerModelPicker', () => {
   })
 
   it('keeps the grouped provider catalog in the Model submenu and switches on pick', async () => {
-    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       providers: [
         provider({
@@ -639,8 +668,7 @@ describe('ComposerModelPicker', () => {
         provider({ id: 'gw', name: 'Gateway', models: ['gm'] })
       ],
       activeProviderId: 'off',
-      activeModel: 'gpt-5.2',
-      setActiveProvider
+      activeModel: 'gpt-5.2'
     })
     render()
 
@@ -666,6 +694,10 @@ describe('ComposerModelPicker', () => {
     const gatewayModel = radioItems().find((el) => el.textContent === 'gm')
     expect(gatewayModel, 'expected the Gateway model menu item').toBeDefined()
     act(() => gatewayModel!.click())
-    expect(setActiveProvider).toHaveBeenCalledWith('gw', 'gm')
+    expect(onChange).toHaveBeenCalledWith({
+      providerId: 'gw',
+      model: 'gm',
+      reasoningEffort: 'default'
+    })
   })
 })

@@ -1699,6 +1699,7 @@
   "Select all selects only deletable Skills. Skills used by the Main Agent or another Specialist will be kept.": "모두 선택은 삭제 가능한 스킬만 선택합니다. 메인 에이전트 또는 다른 스페셜리스트가 사용하는 스킬은 유지됩니다.",
   "Select all installed skills": "설치된 모든 스킬 선택",
   "Select model": "모델 선택",
+  "Session model unavailable": "세션 모델을 사용할 수 없음",
   "Select this computer, then select": "이 컴퓨터를 선택한 다음",
   "Select {{name}}": "{{name}} 선택",
   "Selected capabilities": "선택된 기능",

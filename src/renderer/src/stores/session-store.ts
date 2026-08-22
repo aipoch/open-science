@@ -3,6 +3,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type { AcpContextUsage } from '../../../shared/acp'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
+import type { SessionAgentConfiguration } from '../../../shared/settings'
 import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
 import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
 import type { SessionMessageGraphActions } from './session-store-message-graph-helpers'
@@ -64,6 +65,7 @@ type SessionStore = SessionStoreData &
     clearSpecialistSwitchResetRequired: (sessionId: string) => void
     setContextUsage: (sessionId: string, contextUsage: AcpContextUsage | undefined) => void
     setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
+    setAgentConfiguration: (sessionId: string, configuration: SessionAgentConfiguration) => void
     // Persists the per-session auto-review toggle. true = on; false = off (default).
     setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
     // Mirrors Main's desired Specialist binding and its durable pending marker. Passing undefined
@@ -172,6 +174,16 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
               permissionProfile: profile,
               updatedAt: Date.now()
             }
+          : session
+      )
+    }))
+  },
+
+  setAgentConfiguration: (sessionId, configuration) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? { ...session, agentConfiguration: configuration, updatedAt: Date.now() }
           : session
       )
     }))

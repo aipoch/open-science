@@ -78,4 +78,17 @@ describe('configured model catalog', () => {
 
     expect(entry.supportsImageInput).toBe(true)
   })
+
+  it('uses a custom provider singular model when its catalog array is empty', () => {
+    const entries = buildConfiguredModelCatalog({
+      providers: [provider('custom', [], { model: 'custom-model' })],
+      activeProviderId: 'custom',
+      frameworkId: 'opencode',
+      frameworkEndpoints: ['openai']
+    })
+
+    expect(entries).toMatchObject([
+      { providerId: 'custom', model: 'custom-model', label: 'custom-model', selectable: true }
+    ])
+  })
 })

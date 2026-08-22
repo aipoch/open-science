@@ -1767,6 +1767,7 @@
   "Select all selects only deletable Skills. Skills used by the Main Agent or another Specialist will be kept.": "Команда «Выбрать все» выбирает только навыки, которые можно удалить. Навыки, используемые главным агентом или другим специалистом, будут сохранены.",
   "Select all installed skills": "Выбрать все установленные навыки",
   "Select model": "Выбрать модель",
+  "Session model unavailable": "Модель сессии недоступна",
   "Select this computer, then select": "Выберите этот компьютер, затем выберите",
   "Select {{name}}": "Выберите {{name}}",
   "Selected": "Выбрано",

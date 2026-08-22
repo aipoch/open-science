@@ -16,6 +16,7 @@ import type {
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
   AcpSetPermissionProfileRequest,
+  AcpSessionAgentTarget,
   AcpStateSnapshot
 } from '../../shared/acp'
 import type { AcpHandoffFailure } from '../../shared/acp'
@@ -46,7 +47,8 @@ const hasArtifactProvenance = (event: AcpRuntimeEvent): boolean =>
 
 type RuntimeFactory = (
   callbacks: AcpRuntimeCallbacks,
-  permissionGrantStore: ConversationPermissionGrantStore
+  permissionGrantStore: ConversationPermissionGrantStore,
+  target?: AcpSessionAgentTarget
 ) => AcpRuntime
 
 type AcpRuntimeCoordinatorTeardownCallbacks = {
@@ -133,6 +135,8 @@ class AcpRuntimeCoordinator {
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
+  private readonly runtimeTargetKeys = new WeakMap<AcpRuntime, string>()
+  private readonly targetedRuntimes = new Map<string, AcpRuntime>()
   private readonly publishedRuntimeEventIds = new WeakMap<AcpRuntime, Set<string>>()
   private readonly applicationEvents: AcpRuntimeEvent[] = []
   private readonly durableQuitDetachedSessionIds = new Set<string>()
@@ -477,7 +481,7 @@ class AcpRuntimeCoordinator {
 
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
-    const runtime = this.getActiveRuntime()
+    const runtime = this.runtimeForTarget(request.agentTarget)
     const response = await runtime.createSession(request)
     this.sessionRuntimes.set(response.sessionId, runtime)
     this.lastRuntime = runtime
@@ -502,7 +506,12 @@ class AcpRuntimeCoordinator {
       return pendingReconciliation.response
     }
     if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
-    const runtime = owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime()
+    const targetedRuntime = request.agentTarget
+      ? this.runtimeForTarget(request.agentTarget)
+      : undefined
+    const runtime =
+      targetedRuntime ??
+      (owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime())
     const transfersOwnership = runtime !== owner
 
     // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
@@ -1448,7 +1457,25 @@ class AcpRuntimeCoordinator {
     return undefined
   }
 
-  private addRuntime(): AcpRuntime {
+  private runtimeForTarget(target: AcpSessionAgentTarget | undefined): AcpRuntime {
+    if (!target) return this.getActiveRuntime()
+    const key = JSON.stringify([
+      target.frameworkId,
+      target.providerId,
+      target.model ?? null,
+      target.reasoningEffort
+    ])
+    const existing = this.targetedRuntimes.get(key)
+    if (existing && this.runtimes.has(existing) && !this.retiredRuntimes.has(existing)) {
+      return existing
+    }
+    const runtime = this.addRuntime(target)
+    this.runtimeTargetKeys.set(runtime, key)
+    this.targetedRuntimes.set(key, runtime)
+    return runtime
+  }
+
+  private addRuntime(target?: AcpSessionAgentTarget): AcpRuntime {
     const runtime = this.createRuntime(
       {
         onStateChanged: (snapshot) => this.handleRuntimeState(runtime, snapshot),
@@ -1509,7 +1536,8 @@ class AcpRuntimeCoordinator {
         },
         onRetired: () => this.handleRuntimeRetired(runtime)
       },
-      this.permissionGrantStore
+      this.permissionGrantStore,
+      target
     )
     this.runtimeSequence += 1
     this.runtimeIds.set(runtime, `runtime-${this.runtimeSequence}-${this.eventNamespace}`)
@@ -1536,7 +1564,11 @@ class AcpRuntimeCoordinator {
       const owner = this.sessionRuntimes.get(sessionId)
       // A late state emission from a retiring runtime must not steal back a session already adopted by
       // the current generation.
-      if (!owner || !this.retiredRuntimes.has(runtime) || this.retiredRuntimes.has(owner)) {
+      if (
+        !owner ||
+        owner === runtime ||
+        (this.retiredRuntimes.has(owner) && !this.retiredRuntimes.has(runtime))
+      ) {
         this.sessionRuntimes.set(sessionId, runtime)
         this.sessionConnectionStatuses.set(sessionId, snapshot.status)
       }
@@ -1572,6 +1604,10 @@ class AcpRuntimeCoordinator {
   }
 
   private releaseRuntimeOwnership(runtime: AcpRuntime): void {
+    const targetKey = this.runtimeTargetKeys.get(runtime)
+    if (targetKey && this.targetedRuntimes.get(targetKey) === runtime) {
+      this.targetedRuntimes.delete(targetKey)
+    }
     const retiredStatus = runtime.getSnapshot().status
     this.runtimes.delete(runtime)
     this.retiredRuntimes.delete(runtime)

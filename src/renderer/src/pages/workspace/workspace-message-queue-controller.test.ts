@@ -72,6 +72,11 @@ const admission = (text: string): MessageQueueAdmission => ({
   text,
   forcedSkillIds: [],
   permissionProfile: 'full',
+  agentConfiguration: {
+    providerId: 'anthropic',
+    model: 'claude-sonnet-4-5',
+    reasoningEffort: 'medium'
+  },
   specialistId: undefined
 })
 
