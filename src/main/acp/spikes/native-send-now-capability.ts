@@ -153,26 +153,42 @@ export const buildSteerRequest = (sessionId: string, prompt: unknown[]): SteerRe
 export const parseSteerOutcome = (result: unknown): SteerOutcome => {
   const record = recordValue(result)
   if (!record) {
-    return Object.freeze({ kind: 'rejected', reason: 'missing-outcome', raw: result })
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'missing-outcome' as const,
+      raw: result
+    })
   }
 
   const keys = Object.keys(record)
   if (keys.length === 0) {
-    return Object.freeze({ kind: 'rejected', reason: 'unrecognized-success', raw: result })
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'unrecognized-success' as const,
+      raw: result
+    })
   }
 
   const outcome = record.outcome
-  if (outcome === 'injected') return Object.freeze({ kind: 'injected' })
-  if (outcome === 'startedNewTurn') return Object.freeze({ kind: 'started-new-turn' })
+  if (outcome === 'injected') return Object.freeze({ kind: 'injected' as const })
+  if (outcome === 'startedNewTurn') return Object.freeze({ kind: 'started-new-turn' as const })
   if (outcome === 'promptRequired') {
     const reason =
       typeof record.reason === 'string' && record.reason.trim() ? record.reason : 'noRunningTurn'
-    return Object.freeze({ kind: 'prompt-required', reason })
+    return Object.freeze({ kind: 'prompt-required' as const, reason })
   }
   if (typeof outcome !== 'string') {
-    return Object.freeze({ kind: 'rejected', reason: 'missing-outcome', raw: result })
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'missing-outcome' as const,
+      raw: result
+    })
   }
-  return Object.freeze({ kind: 'rejected', reason: 'unknown-outcome', raw: result })
+  return Object.freeze({
+    kind: 'rejected' as const,
+    reason: 'unknown-outcome' as const,
+    raw: result
+  })
 }
 
 const withHostBlockers = (

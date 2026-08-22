@@ -93,7 +93,7 @@ const openConnection = async (
       connectionHooks
     )
     candidate.transferTo(attempt)
-    return attempt.publish({ close: false, delete: false, resume: false })
+    return attempt.publish({ close: false, delete: false, resume: false, steering: false })
   })
   return { connection: ready.connection, close: () => owner.teardown(owner.epoch) }
 }
@@ -259,7 +259,7 @@ describe('AcpAgentConnectionAdapter', () => {
       expect(releaseBridge).not.toHaveBeenCalled()
       expect(releaseAnthropic).not.toHaveBeenCalled()
       expect(releaseProviderTransport).not.toHaveBeenCalled()
-      return attempt.publish({ close: false, delete: false, resume: false })
+      return attempt.publish({ close: false, delete: false, resume: false, steering: false })
     })
 
     await candidateDispose?.()

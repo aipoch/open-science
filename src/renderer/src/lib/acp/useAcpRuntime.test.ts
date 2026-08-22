@@ -95,6 +95,7 @@ let acpApi: {
   deleteSession: ReturnType<typeof vi.fn>
   cancel: ReturnType<typeof vi.fn>
   sendPrompt: ReturnType<typeof vi.fn>
+  steerFollowUp: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
 }
 
@@ -136,6 +137,7 @@ beforeEach(() => {
     deleteSession: vi.fn().mockResolvedValue(createSnapshot()),
     cancel: vi.fn().mockResolvedValue(createSnapshot()),
     sendPrompt: vi.fn().mockResolvedValue(createSnapshot()),
+    steerFollowUp: vi.fn().mockResolvedValue({ injected: false, reason: 'not-advertised' }),
     respondToPermission: vi.fn().mockResolvedValue(createSnapshot())
   }
 

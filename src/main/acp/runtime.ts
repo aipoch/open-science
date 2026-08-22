@@ -26,6 +26,8 @@ import {
   type AcpPermissionSettlementState,
   type ElicitationResponse,
   type AcpPromptRequest,
+  type AcpSteerFollowUpRequest,
+  type AcpSteerFollowUpResult,
   type AcpResumeSessionRequest,
   type AcpRevokePermissionGrantRequest,
   type AcpSetPermissionProfileRequest,
@@ -89,6 +91,7 @@ import type {
 } from './reviewer-session-owner'
 import type { ArtifactTurnOwner } from './artifact-turn-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
+import { AcpNativeFollowUpWorkflow } from './native-follow-up-workflow'
 import type { AcpSessionRegistry } from './session-registry'
 import type {
   AcpConnectionResourceOwner,
@@ -440,6 +443,7 @@ class AcpRuntime {
   private readonly sessionPlanWorkflow: AcpRuntimePlanWorkflow
   private readonly contextCompactionWorkflow: AcpContextCompactionWorkflow
   private readonly promptTurnWorkflow: AcpPromptTurnWorkflow
+  private readonly nativeFollowUp: AcpNativeFollowUpWorkflow
   private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
   private readonly modelChanges: AcpModelChangeWorkflow
@@ -498,6 +502,24 @@ class AcpRuntime {
     })
     this.contextCompactionWorkflow = prompt.contextCompactionWorkflow
     this.promptTurnWorkflow = prompt.promptTurnWorkflow
+    this.nativeFollowUp = new AcpNativeFollowUpWorkflow({
+      connection: () => this.connection,
+      capabilities: () => this.connectionResources.capabilities,
+      frameworkId: () => this.framework.id,
+      openCodeUsageApi: () => this.backendGeneration.openCodeUsageApi(),
+      activeProviderSessionId: (sessionId) => this.activeSessionFor(sessionId)?.sessionId,
+      hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
+      sessionCwd: (sessionId) => this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd,
+      publishUserMessage: ({ sessionId, messageId, text }) =>
+        this.publication.pushEvent({
+          kind: 'message',
+          level: 'info',
+          sessionId,
+          messageId,
+          role: 'user',
+          text
+        })
+    })
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
@@ -1071,6 +1093,11 @@ class AcpRuntime {
       },
       hooks
     )
+  }
+
+  // Side-band follow-up into the live prompt. Does not open a second prompt interaction.
+  async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
+    return this.withOperationLease(() => this.nativeFollowUp.steerFollowUp(request))
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.

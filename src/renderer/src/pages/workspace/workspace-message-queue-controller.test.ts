@@ -690,4 +690,100 @@ describe('workspace message queue controller', () => {
     })
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
+
+  it('injects Send now through native follow-up without interrupting', async () => {
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'message-steer'
+    }))
+    const input = options(session(), {
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(),
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('steer me')))
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+    expect(steerFollowUp).toHaveBeenCalledWith('session-a', 'steer me')
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.composer.discardSnapshot).toHaveBeenCalledOnce()
+    expect(hook.result.current.items).toEqual([])
+  })
+
+  it('falls back to interrupt when native follow-up is refused', async () => {
+    let currentSession = session()
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: {
+        cancelRun: vi.fn(async () => {
+          currentSession = session('idle')
+        }),
+        sendMessage: vi.fn(async () => ({ sessionId: 'session-a', messageId: 'message-sent' })),
+        steerFollowUp: vi.fn(async () => ({
+          injected: false as const,
+          reason: 'not-advertised' as const
+        }))
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('fallback')))
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.cancelRun).toHaveBeenCalledWith('session-a')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+  })
+
+  it('does not use native follow-up when the queued item has attachments', async () => {
+    let currentSession = session()
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: {
+        cancelRun: vi.fn(async () => {
+          currentSession = session('idle')
+        }),
+        sendMessage: vi.fn(async () => ({ sessionId: 'session-a', messageId: 'message-sent' })),
+        steerFollowUp: vi.fn()
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('with file'),
+        snapshot: {
+          draftKey: 'session-a',
+          version: 1,
+          doc: textDoc('with file'),
+          attachments: [
+            {
+              id: 'upload-1',
+              name: 'notes.md',
+              mimeType: 'text/markdown',
+              size: 12
+            } as never
+          ]
+        }
+      })
+    )
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.cancelRun).toHaveBeenCalledWith('session-a')
+  })
 })

@@ -16,7 +16,7 @@ import {
 } from './native-send-now-steering-dispatch'
 
 // Live ACP probe against latest adapters. Isolated install lives outside the
-// shared worktree node_modules. Production pins stay 0.60.0 / 1.1.4 until a
+// shared worktree node_modules. Production pins are upgraded separately.
 // dedicated compatibility change.
 
 export const LIVE_ADAPTER_ROOT =

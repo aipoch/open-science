@@ -2940,6 +2940,7 @@
   "Queued message removed.": "排队消息已移除。",
   "Queued message moved to the composer for editing.": "排队消息已移至输入框以供编辑。",
   "Stopping the current run before sending the queued message.": "正在停止当前运行，随后发送排队消息。",
+  "Sending the queued message into the current run.": "正在将排队消息发送到当前运行。",
   "Category breakdown is unavailable for this run.": "无法获取此次运行的分类明细。",
   "Category breakdown is unavailable for this snapshot.": "无法获取此快照的分类明细。",
   "One bar per terminal run; hover or focus to preview, then select to keep details visible.": "每个终止运行对应一个柱形；悬停或聚焦可预览，选择后可保持显示详情。",

@@ -16,6 +16,7 @@ import type {
   AcpPermissionResponse,
   ElicitationResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
   AcpResumeSessionRequest,
   AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
@@ -92,6 +93,12 @@ const registerAcpIpcHandlerSet = (
     }
     return workflows.sendPrompt(rendererRequest)
   })
+  ipcMainHandle('acp:steer-follow-up', (_event, request: AcpSteerFollowUpRequest) =>
+    runtime.steerFollowUp({
+      sessionId: request.sessionId,
+      text: typeof request.text === 'string' ? request.text : ''
+    })
+  )
   ipcMainHandle('acp:save-as-skill', (_event, request: AcpSaveAsSkillRequest) =>
     workflows.saveAsSkill(request)
   )

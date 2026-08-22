@@ -13,7 +13,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       epoch: 1,
       connection,
       framework: 'claude-code' as const,
-      capabilities: { close: true, delete: false, resume: true },
+      capabilities: { close: true, delete: false, resume: true, steering: false },
       assertCurrent: vi.fn()
     }
     const attempt = {
@@ -96,7 +96,76 @@ describe('AcpConnectionLifecycleWorkflow', () => {
         clientCapabilities: expect.objectContaining({ elicitation: { form: {} } })
       })
     )
-    expect(attempt.publish).toHaveBeenCalledWith({ close: true, delete: false, resume: true })
+    expect(attempt.publish).toHaveBeenCalledWith({
+      close: true,
+      delete: false,
+      resume: true,
+      steering: false
+    })
+  })
+
+  it('retains advertised steering from initialize _meta', async () => {
+    const snapshot = { status: 'connected' } as AcpStateSnapshot
+    const attempt = {
+      epoch: 1,
+      assertCurrent: vi.fn(),
+      attach: vi.fn(),
+      publish: vi.fn(() => ({
+        epoch: 1,
+        connection,
+        framework: 'claude-code' as const,
+        capabilities: { close: true, delete: true, resume: true, steering: true },
+        assertCurrent: vi.fn()
+      })),
+      owns: vi.fn(() => true)
+    }
+    const candidate = {
+      transferTo: vi.fn(() => ({
+        backendAttempt: {
+          consumeInitializeMaterial: () => undefined,
+          fail: vi.fn()
+        },
+        initialize: async () => ({
+          protocolVersion: 1,
+          agentCapabilities: { sessionCapabilities: { close: {}, delete: {}, resume: {} } },
+          _meta: { steering: { supported: true } }
+        }),
+        authenticate: async () => undefined,
+        setProvider: async () => undefined
+      })),
+      dispose: vi.fn(async () => undefined)
+    }
+    const workflow = new AcpConnectionLifecycleWorkflow({
+      appVersion: 'test',
+      defaultCwd: '/workspace',
+      currentConnection: () => undefined,
+      currentStatus: () => 'closed',
+      currentGeneration: () => 1,
+      currentFramework: () => 'claude-code',
+      reconnectBarrier: () => undefined,
+      getSnapshot: () => snapshot,
+      invalidatePendingSessionStartups: vi.fn(),
+      disconnectCurrent: vi.fn(async () => snapshot),
+      updateCwd: vi.fn(),
+      updateError: vi.fn(),
+      setStatus: vi.fn(),
+      pushEvent: vi.fn(),
+      transitionStatus: vi.fn(),
+      emitState: vi.fn(),
+      diagnosticContext: () => ({ framework: 'claude-code', generation: 1, status: 'closed' }),
+      openCandidate: vi.fn(async () => candidate) as never,
+      connectResources: {
+        connect: async (operation) => operation(attempt)
+      } as never
+    })
+
+    await workflow.connect({ cwd: '/workspace' })
+    expect(attempt.publish).toHaveBeenCalledWith({
+      close: true,
+      delete: true,
+      resume: true,
+      steering: true
+    })
   })
 
   it('coalesces concurrent connects through the resource owner', async () => {
@@ -109,7 +178,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
         epoch: 1,
         connection,
         framework: 'claude-code' as const,
-        capabilities: { close: false, delete: false, resume: false },
+        capabilities: { close: false, delete: false, resume: false, steering: false },
         assertCurrent: vi.fn()
       })),
       owns: vi.fn(() => true)
@@ -330,7 +399,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
         epoch: 1,
         connection,
         framework: 'claude-code' as const,
-        capabilities: { close: true, delete: true, resume: true },
+        capabilities: { close: true, delete: true, resume: true, steering: false },
         assertCurrent: vi.fn(() => {
           if (generation !== 1) throw new Error('ACP connection superseded.')
         })

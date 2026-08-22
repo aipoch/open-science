@@ -67,6 +67,7 @@ type RuntimeMock = {
   resumeSession: Mock
   resetSessionContext: Mock
   sendPrompt: Mock
+  steerFollowUp: Mock
   compactSession: Mock
   cancel: Mock
   deleteSession: Mock
@@ -87,6 +88,7 @@ const createRuntime = (state: AcpStateSnapshot): RuntimeMock => ({
   resumeSession: vi.fn(),
   resetSessionContext: vi.fn(),
   sendPrompt: vi.fn().mockResolvedValue(state),
+  steerFollowUp: vi.fn().mockResolvedValue({ injected: false, reason: 'not-advertised' }),
   compactSession: vi.fn(),
   cancel: vi.fn(),
   deleteSession: vi.fn(),
@@ -265,6 +267,7 @@ describe('workspace Agent Runtime hook contract', () => {
         'sendMessage',
         'resendEditedMessage',
         'cancelRun',
+        'steerFollowUp',
         'resumeInterruptedSession',
         'respondToPermission',
         'setPermissionProfile',

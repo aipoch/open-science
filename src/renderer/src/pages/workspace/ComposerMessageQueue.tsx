@@ -66,6 +66,9 @@ const queueAnnouncementText = (t: TFunction, announcement: string): string => {
   if (announcement === 'Stopping the current run before sending the queued message.') {
     return t('Stopping the current run before sending the queued message.')
   }
+  if (announcement === 'Sending the queued message into the current run.') {
+    return t('Sending the queued message into the current run.')
+  }
   return ''
 }
 
