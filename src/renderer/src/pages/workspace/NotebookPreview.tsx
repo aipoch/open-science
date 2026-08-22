@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { PreviewToolItem } from '@/stores/preview-workbench-store'
+import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSessionStore } from '@/stores/session-store'
 import { cn } from '@/lib/utils'
@@ -29,6 +29,8 @@ import { notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
+import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
+import { useFollowScrollBottom } from './use-follow-scroll-bottom'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import {
   resolveRunErrorLine,
@@ -165,26 +167,35 @@ const NotebookRunCell = ({
 }
 
 // Mirrors terminal-originated runs in the bottom terminal scrollback.
-const TerminalScrollback = ({ runs }: { runs: NotebookRunRecord[] }): React.JSX.Element => (
+const TerminalScrollback = ({
+  runs,
+  viewportRef
+}: {
+  runs: NotebookRunRecord[]
+  viewportRef: RefObject<HTMLDivElement | null>
+}): React.JSX.Element => (
   <div
+    ref={viewportRef}
     className="min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-5"
     data-testid="kernel-terminal-scrollback"
   >
-    {runs
-      .filter((run) => run.inputKind === 'terminal')
-      .map((run) => (
-        <div key={run.runId} className="whitespace-pre-wrap">
-          <div>
-            <span className="text-text-300">&gt;&gt;&gt; </span>
-            <span className="text-text-100">{run.script}</span>
-          </div>
-          {getRunOutputText(run) ? (
-            <div className={isProblemRunStatus(run.status) ? 'text-danger-000' : 'text-text-200'}>
-              {getRunOutputText(run)}
+    <div>
+      {runs
+        .filter((run) => run.inputKind === 'terminal')
+        .map((run) => (
+          <div key={run.runId} className="whitespace-pre-wrap">
+            <div>
+              <span className="text-text-300">&gt;&gt;&gt; </span>
+              <span className="text-text-100">{run.script}</span>
             </div>
-          ) : null}
-        </div>
-      ))}
+            {getRunOutputText(run) ? (
+              <div className={isProblemRunStatus(run.status) ? 'text-danger-000' : 'text-text-200'}>
+                {getRunOutputText(run)}
+              </div>
+            ) : null}
+          </div>
+        ))}
+    </div>
   </div>
 )
 
@@ -245,6 +256,22 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const session = useSessionStore((state) =>
     state.sessions.find((candidate) => candidate.id === item.notebook.sessionId)
   )
+  const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
+  const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
+  const previewActiveItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
+  const notebookItemInWorkbench = usePreviewWorkbenchStore((state) =>
+    state.items.some((entry) => entry.id === item.id)
+  )
+  const followEnabled = isCurrentSessionNotebookView({
+    notebookSessionId: item.notebook.sessionId,
+    selectedSessionId,
+    notebookItemId: item.id,
+    previewPanelState,
+    previewActiveItemId,
+    notebookItemInWorkbench
+  })
+  const cellsViewportRef = useFollowScrollBottom(followEnabled)
+  const terminalViewportRef = useFollowScrollBottom(followEnabled)
   // Selected environment within the active python/r pane; undefined lets the effective-env
   // computation below default to the first (canonical-default-first) environment.
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
@@ -601,6 +628,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           className="min-h-0 overflow-hidden"
         >
           <div
+            ref={cellsViewportRef}
             className="h-full min-h-0 overflow-y-auto overscroll-contain"
             data-testid="notebook-cells"
           >
@@ -636,7 +664,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                 {actionError}
               </div>
             ) : null}
-            <TerminalScrollback runs={projectedRuns} />
+            <TerminalScrollback runs={projectedRuns} viewportRef={terminalViewportRef} />
             <TerminalInput
               code={terminalCode}
               disabled={isTerminalLocked}
