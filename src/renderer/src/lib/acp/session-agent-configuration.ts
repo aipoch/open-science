@@ -35,7 +35,7 @@ const isConfigurationSelectable = (
       (option) =>
         option.selectable &&
         option.providerId === configuration.providerId &&
-        option.model === (configuration.model ?? '')
+        (configuration.model === undefined || option.model === configuration.model)
     )
   )
 
@@ -79,8 +79,20 @@ const resolveSessionAgentConfiguration = (input: {
         }
       : undefined)
 
-  if (isConfigurationSelectable(preferred, input.catalog)) {
-    return { status: 'ready', configuration: preferred, changed: !input.session.agentConfiguration }
+  const selectablePreferred = preferred
+    ? resolveSelectableConfiguration(
+        input.catalog,
+        preferred.providerId,
+        preferred.model,
+        preferred.reasoningEffort
+      )
+    : undefined
+  if (selectablePreferred) {
+    return {
+      status: 'ready',
+      configuration: selectablePreferred,
+      changed: !input.session.agentConfiguration
+    }
   }
 
   const fallback = resolveSelectableConfiguration(
