@@ -262,7 +262,7 @@ const ProviderForm = ({
             ? t('{{masked}} — leave blank to keep', {
                 masked: maskedKey ?? t('stored key')
               })
-            : 'sk-...'
+            : t('Paste API key')
         }
         onChange={(event) => onChange({ key: event.target.value })}
       />
@@ -340,7 +340,7 @@ const ProviderForm = ({
             aria-label={t('Provider name')}
             value={value.name}
             disabled={disabled}
-            placeholder={vendor ? vendor.label : t('e.g. My gateway')}
+            placeholder={vendor ? vendor.label : t('Optional display name')}
             onChange={(event) => onChange({ name: event.target.value })}
           />
         </div>
@@ -529,7 +529,7 @@ const ProviderForm = ({
               aria-label={t('Model')}
               value={value.model}
               disabled={disabled}
-              placeholder="claude-sonnet-4-5"
+              placeholder={t('Model ID from provider documentation')}
               onChange={(event) => onChange({ model: event.target.value })}
             />
             {errors.model ? (
@@ -553,7 +553,7 @@ const ProviderForm = ({
               presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
               locale={i18n.language}
               disabled={disabled}
-              placeholder="200000"
+              placeholder={t('Use provider default')}
               status={errors.contextWindow ? 'error' : 'idle'}
               describedBy={errors.contextWindow ? 'provider-context-window-error' : undefined}
               onValueChange={(contextWindow) => onChange({ contextWindow })}

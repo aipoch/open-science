@@ -60,10 +60,17 @@ describe('ProviderForm field switching', () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
 
     expect(container.querySelector('[aria-label="Base URL"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="API key"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
+    expect(
+      container.querySelector<HTMLInputElement>('[aria-label="Provider name"]')?.placeholder
+    ).toBe('Optional display name')
+    expect(container.querySelector<HTMLInputElement>('[aria-label="API key"]')?.placeholder).toBe(
+      'Paste API key'
+    )
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.placeholder).toBe(
+      'Model ID from provider documentation'
+    )
     const contextWindow = container.querySelector<HTMLInputElement>('[aria-label="Context window"]')
-    expect(contextWindow?.placeholder).toBe('200000')
+    expect(contextWindow?.placeholder).toBe('Use provider default')
     expect(contextWindow?.getAttribute('role')).toBe('combobox')
     expect(contextWindow?.getAttribute('aria-autocomplete')).toBe('none')
     expect(contextWindow?.getAttribute('list')).toBeNull()

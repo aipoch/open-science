@@ -1295,7 +1295,7 @@ describe('Russian catalog quality', () => {
       '{{fileName}}: неподдерживаемый файл — загрузите файл .md либо пакет .zip или .skill.'
     ],
     ['remote commands on {{host}}', 'удалённые команды на {{host}}'],
-    ['e.g. My gateway', 'например, мой шлюз'],
+    ['Optional display name', 'Необязательное отображаемое имя'],
     ['scheduler', 'планировщик'],
     ['Cache share', 'Доля кэша'],
     ['Signing key fingerprint: {{fingerprint}}', 'Отпечаток ключа подписи: {{fingerprint}}'],
