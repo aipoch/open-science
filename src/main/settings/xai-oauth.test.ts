@@ -189,9 +189,7 @@ describe('XaiOAuthController', () => {
     const pending = controller.getAccessToken()
     await vi.waitFor(() => expect(finishRefresh).toBeDefined())
     await controller.logout()
-    finishRefresh!(
-      new Response(JSON.stringify({ access_token: 'stale-access', expires_in: 3600 }))
-    )
+    finishRefresh!(new Response(JSON.stringify({ access_token: 'stale-access', expires_in: 3600 })))
 
     await expect(pending).rejects.toThrow('Sign in to xAI (Grok) OAuth to continue.')
     await expect(controller.getAccessToken()).rejects.toThrow(

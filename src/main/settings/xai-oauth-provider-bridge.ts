@@ -49,7 +49,9 @@ const CLAUDE_CODE_COMPAT_MODEL_IDS = Object.freeze([
   'claude-haiku-4-5-20251001'
 ])
 
-const anthropicModel = (id: string): Readonly<{ id: string; type: 'model'; display_name: string }> =>
+const anthropicModel = (
+  id: string
+): Readonly<{ id: string; type: 'model'; display_name: string }> =>
   Object.freeze({ id, type: 'model', display_name: id })
 
 export class XaiOAuthProviderBridge {
@@ -128,7 +130,8 @@ export class XaiOAuthProviderBridge {
     }
     if (pathname !== expected) return json(response, 404, { error: { message: 'Not found' } })
     const body = await request.readJsonObject()
-    const requestModel = typeof body.model === 'string' && body.model ? body.model : this.target.model
+    const requestModel =
+      typeof body.model === 'string' && body.model ? body.model : this.target.model
     this.advertise(requestModel)
     log.info('loopback request', {
       wire: this.wire,
