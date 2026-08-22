@@ -1796,6 +1796,7 @@ class AcpRuntimeCoordinator {
   private clearRuntimeOwnership(): void {
     this.runtimes.clear()
     this.retiredRuntimes.clear()
+    this.targetedRuntimes.clear()
     this.sessionRuntimes.clear()
     this.pendingSessionAdoptions.clear()
     this.pendingResumeReconciliations.clear()

@@ -1653,6 +1653,12 @@ const createApplicationModules = async (
                     'Parent message root Branch changed before dispatch.'
                   )
                 }
+                const agentTarget = latest.agentConfiguration
+                  ? {
+                      frameworkId: (await settingsService.getSettingsView()).agentFrameworkId,
+                      ...latest.agentConfiguration
+                    }
+                  : undefined
                 const started = await delivery.startDispatch()
                 if (started !== 'started') {
                   throw new DelegateMessageParkedError(
@@ -1680,7 +1686,8 @@ const createApplicationModules = async (
                       : {}),
                     ...(latest.providerContinuityToken
                       ? { providerContinuityToken: latest.providerContinuityToken }
-                      : {})
+                      : {}),
+                    ...(agentTarget ? { agentTarget } : {})
                   })
                 }
               }

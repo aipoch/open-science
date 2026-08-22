@@ -71,6 +71,15 @@ type WorkspacePermissionProfileRuntime = Pick<
   'state' | 'setPermissionProfile'
 >
 type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
+type WorkspaceSessionRuntimeSelection = Readonly<{
+  supportsImageInput: boolean
+  supportsImageRelay: boolean
+  agentFrameworkId: AcpSessionAgentTarget['frameworkId']
+  agentBackendId?: string
+  agentModel?: string
+  agentTarget?: AcpSessionAgentTarget
+  historyReplayDescriptor: HistoryReplayDescriptor
+}>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 const setWorkspacePermissionProfile = async (
@@ -120,6 +129,7 @@ type WorkspaceAgentRuntime = {
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
+  resolveSessionRuntimeSelection: (sessionId: string) => WorkspaceSessionRuntimeSelection
 }
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
@@ -154,33 +164,21 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     state.providers.find((candidate) => candidate.id === state.activeProviderId)
   )
   const visionRelayAvailable = useSettingsStore(selectVisionRelayAvailable)
-  const activeModel = useSettingsStore((state) => state.activeModel)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFramework = useSettingsStore((state) =>
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const historyReplayDescriptor = useMemo<HistoryReplayDescriptor>(
-    () => ({
-      target: resolveHistoryReplayTarget(agentFrameworkId, activeProvider, agentFramework),
-      contextWindow: activeProvider?.vendorId
-        ? resolveModelContextWindow(
-            activeProvider.vendorId,
-            activeModel ?? activeProvider.model ?? activeProvider.models[0]
-          )
-        : activeProvider?.contextWindow
-    }),
-    [activeModel, activeProvider, agentFramework, agentFrameworkId]
-  )
   const resolveRuntimeSelection = useCallback(
-    (configuration: SessionAgentConfiguration | undefined) => {
+    (configuration: SessionAgentConfiguration | undefined): WorkspaceSessionRuntimeSelection => {
       const provider = configuration
         ? providers.find((candidate) => candidate.id === configuration.providerId)
         : activeProvider
       const model = configuration?.model ?? provider?.model ?? provider?.models[0]
       return {
         supportsImageInput: provider?.supportsImageInput === true,
+        supportsImageRelay: visionRelayAvailable,
         agentFrameworkId,
         agentBackendId: provider ? `${agentFrameworkId}:${provider.id}` : undefined,
         agentModel: model,
@@ -195,7 +193,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         } satisfies HistoryReplayDescriptor
       }
     },
-    [activeProvider, agentFramework, agentFrameworkId, providers]
+    [activeProvider, agentFramework, agentFrameworkId, providers, visionRelayAvailable]
   )
   const getSessionRuntimeSelection = useCallback(
     (sessionId: string) => {
@@ -447,7 +445,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   )
   const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
     runtime,
-    historyReplayDescriptor,
+    resolveSessionRuntimeSelection: getSessionRuntimeSelection,
     drainRuntimeEvents
   })
   const resumeInterruptedSession = useCallback(
@@ -614,7 +612,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     resumeInterruptedSession,
     respondToPermission,
     setPermissionProfile,
-    revokePermissionGrant
+    revokePermissionGrant,
+    resolveSessionRuntimeSelection: getSessionRuntimeSelection
   }
 }
 
@@ -651,4 +650,4 @@ export {
   useWorkspaceSubagentRuntimeSession,
   useWorkspaceAgentRuntime
 }
-export type { WorkspaceAgentRuntime }
+export type { WorkspaceAgentRuntime, WorkspaceSessionRuntimeSelection }
