@@ -1,6 +1,7 @@
 import type { ConfiguredModelCatalogEntry } from '../../../../shared/configured-model-catalog'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import {
+  canonicalSessionProviderId,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   type ReasoningEffort,
@@ -27,7 +28,8 @@ const providerIdFromBackendId = (backendId: string | undefined): string | undefi
   if (!backendId) return undefined
   const separator = backendId.indexOf(':')
   const providerId = separator < 0 ? backendId : backendId.slice(separator + 1)
-  return providerId.trim() || undefined
+  const normalized = providerId.trim()
+  return normalized ? canonicalSessionProviderId(normalized) : undefined
 }
 
 const isConfigurationSelectable = (
@@ -39,7 +41,7 @@ const isConfigurationSelectable = (
     catalog.some(
       (option) =>
         option.selectable &&
-        option.providerId === configuration.providerId &&
+        option.providerId === canonicalSessionProviderId(configuration.providerId) &&
         (configuration.model === undefined || option.model === configuration.model)
     )
   )
@@ -51,10 +53,11 @@ const resolveSelectableConfiguration = (
   reasoningEffort: ReasoningEffort
 ): SessionAgentConfiguration | undefined => {
   if (!providerId) return undefined
+  const resolvedProviderId = canonicalSessionProviderId(providerId)
   const option = catalog.find(
     (candidate) =>
       candidate.selectable &&
-      candidate.providerId === providerId &&
+      candidate.providerId === resolvedProviderId &&
       (model === undefined || candidate.model === model)
   )
   if (!option) return undefined
@@ -65,7 +68,7 @@ const resolveSelectableConfiguration = (
     (isCodexSubscriptionProvider(option.providerType) ||
       isClaudeSubscriptionProvider(option.providerType))
   return {
-    providerId,
+    providerId: option.providerId,
     ...(!preserveAccountOwnedDefault && option.model ? { model: option.model } : {}),
     reasoningEffort
   }
@@ -101,7 +104,9 @@ const resolveSessionAgentConfiguration = (input: {
     return {
       status: 'ready',
       configuration: selectablePreferred,
-      changed: !input.session.agentConfiguration
+      changed:
+        !input.session.agentConfiguration ||
+        selectablePreferred.providerId !== input.session.agentConfiguration.providerId
     }
   }
 

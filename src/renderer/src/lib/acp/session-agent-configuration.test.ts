@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import type { ConfiguredModelCatalogEntry } from '../../../../shared/configured-model-catalog'
 import {
+  CODEX_ISOLATED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../../../shared/settings'
+import {
   isConfigurationSelectable,
   resolveSelectableConfiguration,
   resolveSessionAgentConfiguration
@@ -101,6 +105,33 @@ describe('Session agent configuration', () => {
         activeReasoningEffort: 'low'
       })
     ).toEqual({ status: 'ready', configuration, changed: false })
+  })
+
+  it('resolves a legacy Codex provider alias to the current subscription Provider', () => {
+    const catalog = [
+      option(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-5.4', true, 'codex-isolated'),
+      option(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-5', true, 'codex-isolated')
+    ]
+
+    expect(
+      resolveSessionAgentConfiguration({
+        session: {
+          agentBackendId: `codex:${CODEX_ISOLATED_PROVIDER_ID}`,
+          agentConfiguration: {
+            providerId: CODEX_ISOLATED_PROVIDER_ID,
+            reasoningEffort: 'high'
+          }
+        },
+        catalog,
+        activeProviderId: 'active',
+        activeModel: 'new',
+        activeReasoningEffort: 'low'
+      })
+    ).toEqual({
+      status: 'ready',
+      configuration: { providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, reasoningEffort: 'high' },
+      changed: true
+    })
   })
 
   it('materializes a Codex historical Session without pinning the first catalog model', () => {
