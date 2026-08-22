@@ -516,6 +516,45 @@ describe('workspace session controller', () => {
     expect(setSessionSpecialist).toHaveBeenCalledOnce()
   })
 
+  it('discards an idle Specialist failure after a newer pending-switch update', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    let pendingSwitchListener:
+      ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const setSessionSpecialist = vi.fn().mockRejectedValue(new Error('switch rejected'))
+    window.api = {
+      specialist: {
+        setSessionSpecialist,
+        onPendingSwitch: vi.fn((listener) => {
+          pendingSwitchListener = listener
+          return () => undefined
+        })
+      }
+    } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [
+        specialist('specialist-b', 'Specialist B'),
+        specialist('specialist-c', 'Specialist C')
+      ]
+    })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+    act(() => pendingSwitchListener?.({ sessionId: active.id, targetName: 'Specialist C' }))
+
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: true,
+      pendingSpecialistId: 'specialist-c'
+    })
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+    expect(hook.result.current.actions.retrySpecialistSelection()).toBe(false)
+    expect(setSessionSpecialist).toHaveBeenCalledOnce()
+  })
+
   it('keeps recovery available when switching back to Main Agent rejects', async () => {
     const active = session({ specialistId: 'specialist-a' })
     useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
