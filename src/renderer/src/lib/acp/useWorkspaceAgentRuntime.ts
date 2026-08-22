@@ -408,8 +408,11 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
               ?.agentConfiguration
           : undefined)
       const resolvedInput = { ...input, agentConfiguration }
-      lifecycleOwner.recordPromptPlanAuthority(resolvedInput)
       const selected = resolveRuntimeSelection(agentConfiguration)
+      lifecycleOwner.recordPromptPlanAuthority({
+        ...resolvedInput,
+        agentTarget: selected.agentTarget
+      })
       return sendWorkspaceMessage(
         runtime,
         {
