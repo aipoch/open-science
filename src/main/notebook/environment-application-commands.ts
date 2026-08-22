@@ -1,3 +1,4 @@
+import { notebookEnvironmentApplicationCommandContracts } from '../../shared/notebook'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -32,17 +33,17 @@ const notebookEnvironmentProvisionCommand = defineApplicationCommand<
   'notebook-env:provision',
   LifecycleArgs<'provision'>,
   LifecycleResult<'provision'>
->('notebook-env:provision')
+>('notebook-env:provision', notebookEnvironmentApplicationCommandContracts.provision)
 const notebookEnvironmentRepairCommand = defineApplicationCommand<
   'notebook-env:repair',
   LifecycleArgs<'repair'>,
   LifecycleResult<'repair'>
->('notebook-env:repair')
+>('notebook-env:repair', notebookEnvironmentApplicationCommandContracts.repair)
 const notebookEnvironmentCancelCommand = defineApplicationCommand<
   'notebook-env:cancel',
   LifecycleArgs<'cancel'>,
   LifecycleResult<'cancel'>
->('notebook-env:cancel')
+>('notebook-env:cancel', notebookEnvironmentApplicationCommandContracts.cancel)
 
 const notebookEnvironmentApplicationCommands = defineApplicationCommandGroup(
   'notebook-environment',

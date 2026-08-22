@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   createApplicationCommandRouter,
   type ApplicationInvocation
@@ -331,6 +332,35 @@ describe('Notebook application commands', () => {
       )
     ).rejects.toThrow('Channel only available from the local app: notebook-env:cancel')
     expect(status).toHaveBeenCalledOnce()
+    expect(provision).not.toHaveBeenCalled()
+    expect(repair).not.toHaveBeenCalled()
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unknown Environment language before the lifecycle runs', async () => {
+    const provision = vi.fn()
+    const repair = vi.fn()
+    const cancel = vi.fn()
+    const router = createApplicationCommandRouter()
+    installNotebookEnvironmentApplicationCommands(router.registrar, {
+      status: vi.fn(),
+      provision,
+      repair,
+      cancel,
+      startup: vi.fn()
+    })
+
+    const error = await router.dispatcher
+      .invoke(notebookEnvironmentProvisionCommand, invocation(['julia'] as never))
+      .catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ApplicationCommandError)
+    expect(error).toMatchObject({ code: 'invalid-command-arguments' })
+    await expect(
+      router.dispatcher.invoke(notebookEnvironmentRepairCommand, invocation(['julia'] as never))
+    ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+    await expect(
+      router.dispatcher.invoke(notebookEnvironmentCancelCommand, invocation(['julia'] as never))
+    ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
     expect(provision).not.toHaveBeenCalled()
     expect(repair).not.toHaveBeenCalled()
     expect(cancel).not.toHaveBeenCalled()

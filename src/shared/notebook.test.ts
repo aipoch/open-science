@@ -1,10 +1,42 @@
 import { describe, it, expect } from 'vitest'
-import type { NotebookLanguage, NotebookOutput, NotebookCell } from './notebook'
+import {
+  notebookEnvironmentApplicationCommandContracts,
+  parseNotebookLanguage,
+  parseOptionalNotebookLanguage,
+  type NotebookOutput,
+  type NotebookCell
+} from './notebook'
 
 describe('shared notebook types', () => {
-  it('NotebookLanguage admits python and r', () => {
-    const langs: NotebookLanguage[] = ['python', 'r']
-    expect(langs).toEqual(['python', 'r'])
+  it('parses only python and r as NotebookLanguage', () => {
+    expect(parseNotebookLanguage('python')).toBe('python')
+    expect(parseNotebookLanguage('r')).toBe('r')
+    expect(parseOptionalNotebookLanguage(undefined)).toBeUndefined()
+    expect(() => parseNotebookLanguage('julia')).toThrow(/python or r/i)
+    expect(() => parseNotebookLanguage('R')).toThrow(/python or r/i)
+    expect(() => parseOptionalNotebookLanguage('julia')).toThrow(/python or r/i)
+  })
+
+  it('rejects an unknown Environment command language before the owner runs', () => {
+    expect(notebookEnvironmentApplicationCommandContracts.provision.args.parse(['python'])).toEqual(
+      ['python']
+    )
+    expect(
+      notebookEnvironmentApplicationCommandContracts.provision.args.parse(['r', 'op-1'])
+    ).toEqual(['r', 'op-1'])
+    expect(notebookEnvironmentApplicationCommandContracts.cancel.args.parse([])).toEqual([])
+    expect(notebookEnvironmentApplicationCommandContracts.cancel.args.parse(['python'])).toEqual([
+      'python'
+    ])
+    expect(() =>
+      notebookEnvironmentApplicationCommandContracts.provision.args.parse(['julia'])
+    ).toThrow()
+    expect(() =>
+      notebookEnvironmentApplicationCommandContracts.repair.args.parse(['julia'])
+    ).toThrow()
+    expect(() =>
+      notebookEnvironmentApplicationCommandContracts.cancel.args.parse(['julia'])
+    ).toThrow()
   })
 
   it('NotebookOutput supports a display (mime bundle) variant', () => {
