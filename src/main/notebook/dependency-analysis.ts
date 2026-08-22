@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
 import type {
@@ -960,7 +960,8 @@ const parseRAnalyzerOutput = (
 const runInterpreter = (
   interpreter: NotebookDependencyInterpreter,
   language: 'python' | 'r',
-  sources: readonly string[]
+  sources: readonly string[],
+  platform: NodeJS.Platform = process.platform
 ): Promise<NotebookRunDependencyFacts[]> =>
   new Promise((resolve) => {
     const args = [
@@ -975,7 +976,7 @@ const runInterpreter = (
       delete env[name]
     }
     if (language === 'r' && interpreter.condaPrefix) {
-      env.PATH = condaActivatedPath(interpreter.condaPrefix, process.env.PATH, 'win32')
+      env.PATH = condaActivatedPath(interpreter.condaPrefix, process.env.PATH, platform)
     }
     let settled = false
     let stdout = ''
@@ -1063,6 +1064,9 @@ const cachedAnalysisIsReusable = (
     cached.facts.reasons.some((reason) => RETRYABLE_ANALYSIS_FAILURES.has(reason))
   )
 
+const externalInterpreterKey = (run: NotebookRunRecord): string =>
+  `${run.kernelKind}\0${run.runtimeId ?? ''}`
+
 class NotebookDependencyAnalyzer {
   private queue: Promise<void> = Promise.resolve()
 
@@ -1074,6 +1078,7 @@ class NotebookDependencyAnalyzer {
       resolveInterpreter?: (
         run: NotebookRunRecord
       ) => Promise<NotebookDependencyInterpreter | undefined>
+      platform?: NodeJS.Platform
     }
   ) {}
 
@@ -1109,6 +1114,10 @@ class NotebookDependencyAnalyzer {
       string,
       { interpreter: NotebookDependencyInterpreter; runs: NotebookRunRecord[] }
     >()
+    const resolvedExternalInterpreters = new Map<
+      string,
+      NotebookDependencyInterpreter | undefined
+    >()
     for (const run of runs) {
       if (run.kernelKind !== 'python' && run.kernelKind !== 'r') continue
       const checksum = checksumFor(run)
@@ -1119,7 +1128,7 @@ class NotebookDependencyAnalyzer {
         continue
       }
       const interpreter = run.runtimeId
-        ? await this.options.resolveInterpreter?.(run)
+        ? await this.resolveExternalInterpreter(run, resolvedExternalInterpreters)
         : this.managedInterpreter(run)
       if (!interpreter) {
         sidecar.runs[run.runId] = { checksum, facts: unknownFacts('parser-unavailable') }
@@ -1162,11 +1171,15 @@ class NotebookDependencyAnalyzer {
     if (pending.length === 0) return false
     const language = pending[0]?.kernelKind
     if (language !== 'python' && language !== 'r') return false
-    const facts = await (this.options.analyze ?? runInterpreter)(
-      interpreter,
-      language,
-      pending.map((run) => run.script)
-    )
+    const sources = pending.map((run) => run.script)
+    const facts = this.options.analyze
+      ? await this.options.analyze(interpreter, language, sources)
+      : await runInterpreter(
+          interpreter,
+          language,
+          sources,
+          this.options.platform ?? process.platform
+        )
     pending.forEach((run, index) => {
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),
@@ -1174,6 +1187,17 @@ class NotebookDependencyAnalyzer {
       }
     })
     return true
+  }
+
+  private async resolveExternalInterpreter(
+    run: NotebookRunRecord,
+    resolved: Map<string, NotebookDependencyInterpreter | undefined>
+  ): Promise<NotebookDependencyInterpreter | undefined> {
+    const key = externalInterpreterKey(run)
+    if (resolved.has(key)) return resolved.get(key)
+    const interpreter = await this.options.resolveInterpreter?.(run)
+    resolved.set(key, interpreter)
+    return interpreter
   }
 
   private managedInterpreter(run: NotebookRunRecord): NotebookDependencyInterpreter | undefined {
@@ -1281,7 +1305,7 @@ class NotebookDependencyAnalyzer {
     path: string,
     sidecar: NotebookDependencyAnalysisSidecar
   ): Promise<void> {
-    await mkdir(join(path, '..'), { recursive: true })
+    await mkdir(dirname(path), { recursive: true })
     const temporaryPath = `${path}.${randomUUID()}.tmp`
     try {
       await writeFile(temporaryPath, `${JSON.stringify(sidecar, null, 2)}\n`, 'utf8')

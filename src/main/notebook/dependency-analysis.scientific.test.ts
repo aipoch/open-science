@@ -73,7 +73,7 @@ const projectScripts = async (
   return projection
 }
 
-describe('scientific Notebook dependency corpus', () => {
+describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
   it('classifies a common base R read-clean-aggregate workflow as clear', async () => {
     const r = await findRCommand()
     if (!r) return

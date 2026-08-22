@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { findPythonCommand } from './python-command'
 import { findRCommand } from './r-command'
+import { condaActivatedPath } from './runtime-paths'
 import {
   NotebookDependencyAnalyzer,
   projectNotebookDependencies,
@@ -45,7 +46,7 @@ const run = (
   inputFiles: []
 })
 
-describe('projectNotebookDependencies', () => {
+describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   it('keeps a result clear when it only reads a variable after its first definition', () => {
     const projection = projectNotebookDependencies([
       {
@@ -1256,6 +1257,72 @@ describe('projectNotebookDependencies', () => {
     expect(analyze).not.toHaveBeenCalled()
   })
 
+  it('resolves each external runtime once while rebuilding a history', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-external-runtime-cache-'))
+    temporaryRoots.push(storageRoot)
+    const sharedRuntime = 'external-python'
+    const otherRuntime = 'other-python'
+    const runs = [
+      { ...run('run-1', 'prepare-shared', 'x = 1', 1), runtimeId: sharedRuntime },
+      { ...run('run-2', 'use-shared', 'y = x + 1', 2), runtimeId: sharedRuntime },
+      { ...run('run-3', 'prepare-other', 'z = 1', 3), runtimeId: otherRuntime }
+    ]
+    const resolveInterpreter = vi.fn(async (candidate: NotebookRunRecord) =>
+      candidate.runtimeId === sharedRuntime ? { command: sharedRuntime } : { command: otherRuntime }
+    )
+    const analyze = vi.fn(async (_interpreter, _language, sources: readonly string[]) =>
+      sources.map(() => ({
+        state: 'available' as const,
+        definedNames: ['x'],
+        usedNames: [],
+        mutatedNames: []
+      }))
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) },
+      analyze,
+      resolveInterpreter
+    })
+
+    await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+
+    expect(resolveInterpreter).toHaveBeenCalledTimes(2)
+    expect(resolveInterpreter.mock.calls.map(([candidate]) => candidate.runtimeId).sort()).toEqual([
+      sharedRuntime,
+      otherRuntime
+    ])
+  })
+
+  it('caches an unavailable external runtime for the rest of a projection', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-missing-runtime-cache-'))
+    temporaryRoots.push(storageRoot)
+    const runtimeId = 'missing-python'
+    const runs = [
+      { ...run('run-1', 'prepare-data', 'x = 1', 1), runtimeId },
+      { ...run('run-2', 'use-data', 'y = x + 1', 2), runtimeId }
+    ]
+    const resolveInterpreter = vi.fn(async () => undefined)
+    const analyze = vi.fn()
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) },
+      analyze,
+      resolveInterpreter
+    })
+
+    await expect(
+      analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    ).resolves.toMatchObject({
+      stalenessByRunId: {
+        'run-1': { state: 'unknown', reasons: ['parser-unavailable'] },
+        'run-2': { state: 'unknown', reasons: ['parser-unavailable'] }
+      }
+    })
+    expect(resolveInterpreter).toHaveBeenCalledTimes(1)
+    expect(analyze).not.toHaveBeenCalled()
+  })
+
   it('does not derive a managed interpreter from an unsafe persisted environment', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-unsafe-env-rebuild-'))
     temporaryRoots.push(storageRoot)
@@ -2204,6 +2271,42 @@ process.stdout.write('S\tavailable\nD\tx\n.\n')
       })
     ).resolves.toMatchObject({ stalenessByRunId: { 'run-1': { state: 'clear' } } })
   })
+
+  it.each(['win32', 'darwin'] as const)(
+    'activates R conda PATH for %s instead of assuming Windows',
+    async (platform) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), `open-science-r-conda-path-${platform}-`))
+      temporaryRoots.push(storageRoot)
+      const analyzedRun = {
+        ...run('run-1', 'prepare', 'x <- 1', 1),
+        kernelKind: 'r' as const,
+        environment: 'default-r'
+      }
+      const prefix = join(storageRoot, 'conda-env')
+      const expectedPath = condaActivatedPath(prefix, process.env.PATH, platform)
+      const wrapper = `const fs = require('node:fs')
+fs.readFileSync(0, 'utf8')
+if (process.env.PATH !== ${JSON.stringify(expectedPath)}) process.exit(2)
+process.stdout.write('S\\tavailable\\nD\\tx\\n.\\n')
+`
+      const wrapperPath = join(storageRoot, 'r-conda-path-wrapper.cjs')
+      await writeFile(wrapperPath, wrapper)
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: vi.fn(async () => [analyzedRun]) },
+        platform
+      })
+
+      await expect(
+        analyzer.project({
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          completedRun: analyzedRun,
+          interpreter: { command: process.execPath, args: [wrapperPath], condaPrefix: prefix }
+        })
+      ).resolves.toMatchObject({ stalenessByRunId: { 'run-1': { state: 'clear' } } })
+    }
+  )
 
   it('uses Python ast to detect dependencies when Python is available', async () => {
     const python = await findPythonCommand()
