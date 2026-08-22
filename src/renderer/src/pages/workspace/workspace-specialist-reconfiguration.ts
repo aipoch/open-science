@@ -1,4 +1,4 @@
-import { useCallback, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
 import type {
   CompletionHandoffLifecycleEvent,
@@ -15,6 +15,11 @@ type WorkspaceSpecialistReconfigureError = {
 type IdleSpecialistFailure = {
   specialistId: string | undefined
   error: WorkspaceSpecialistReconfigureError
+}
+
+type IdleSpecialistAttempt = {
+  complete: () => boolean
+  recordFailure: (message: string) => void
 }
 
 const specialistNameFor = (
@@ -46,7 +51,7 @@ const useWorkspaceSpecialistReconfiguration = (
   setError: Dispatch<SetStateAction<WorkspaceSpecialistReconfigureError | null>>
   idleErrorFor: (sessionId: string | undefined) => WorkspaceSpecialistReconfigureError | null
   clearIdleRetry: (sessionId: string) => void
-  recordIdleFailure: (sessionId: string, specialistId: string | undefined, message: string) => void
+  beginIdleAttempt: (sessionId: string, specialistId: string | undefined) => IdleSpecialistAttempt
   retryIdle: (
     activeSessionId: string | undefined,
     retry: (specialistId: string | undefined) => void
@@ -54,12 +59,14 @@ const useWorkspaceSpecialistReconfiguration = (
 } => {
   const [error, setError] = useState<WorkspaceSpecialistReconfigureError | null>(null)
   const [idleFailures, setIdleFailures] = useState<Record<string, IdleSpecialistFailure>>({})
+  const nextIdleAttemptGeneration = useRef(0)
+  const idleAttemptGenerations = useRef(new Map<string, number>())
 
   const idleErrorFor = (
     sessionId: string | undefined
   ): WorkspaceSpecialistReconfigureError | null =>
     sessionId ? (idleFailures[sessionId]?.error ?? null) : null
-  const clearIdleRetry = useCallback((sessionId: string): void => {
+  const removeIdleFailure = useCallback((sessionId: string): void => {
     setIdleFailures((current) => {
       if (!Object.hasOwn(current, sessionId)) return current
       const next = { ...current }
@@ -67,25 +74,45 @@ const useWorkspaceSpecialistReconfiguration = (
       return next
     })
   }, [])
-  const recordIdleFailure = (
-    sessionId: string,
-    specialistId: string | undefined,
-    message: string
-  ): void => {
-    const failure = {
-      specialistId,
-      error: {
-        sessionId,
-        specialistName: specialistNameFor(items, specialistId),
-        message,
-        committed: false
+  const clearIdleRetry = useCallback(
+    (sessionId: string): void => {
+      idleAttemptGenerations.current.delete(sessionId)
+      removeIdleFailure(sessionId)
+    },
+    [removeIdleFailure]
+  )
+  const beginIdleAttempt = useCallback(
+    (sessionId: string, specialistId: string | undefined): IdleSpecialistAttempt => {
+      const generation = ++nextIdleAttemptGeneration.current
+      idleAttemptGenerations.current.set(sessionId, generation)
+      removeIdleFailure(sessionId)
+      return {
+        complete: (): boolean => {
+          if (idleAttemptGenerations.current.get(sessionId) !== generation) return false
+          idleAttemptGenerations.current.delete(sessionId)
+          return true
+        },
+        recordFailure: (message: string): void => {
+          setIdleFailures((current) => {
+            if (idleAttemptGenerations.current.get(sessionId) !== generation) return current
+            return {
+              ...current,
+              [sessionId]: {
+                specialistId,
+                error: {
+                  sessionId,
+                  specialistName: specialistNameFor(items, specialistId),
+                  message,
+                  committed: false
+                }
+              }
+            }
+          })
+        }
       }
-    }
-    setIdleFailures((current) => ({
-      ...current,
-      [sessionId]: failure
-    }))
-  }
+    },
+    [items, removeIdleFailure]
+  )
   const retryIdle = (
     activeSessionId: string | undefined,
     retry: (specialistId: string | undefined) => void
@@ -97,7 +124,7 @@ const useWorkspaceSpecialistReconfiguration = (
     return true
   }
 
-  return { error, setError, idleErrorFor, clearIdleRetry, recordIdleFailure, retryIdle }
+  return { error, setError, idleErrorFor, clearIdleRetry, beginIdleAttempt, retryIdle }
 }
 
 const compareHandoffEventOrder = (

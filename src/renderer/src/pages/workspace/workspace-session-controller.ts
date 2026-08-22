@@ -341,7 +341,6 @@ const useWorkspaceSessionController = ({
         })
       })
   }
-
   const selectSpecialist = (specialistId: string | undefined): void => {
     if (!activeSession) {
       setNewConversationSpecialistId(specialistId)
@@ -356,10 +355,12 @@ const useWorkspaceSessionController = ({
     } else {
       const setter = window.api?.specialist?.setSessionSpecialist
       if (!setter) return
+      const attempt = reconfiguration.beginIdleAttempt(sessionId, specialistId)
       clearPending(sessionId)
       setBarrier(sessionId, true)
       void setter({ sessionId, specialistId })
         .then((result) => {
+          if (!attempt.complete()) return
           if (result?.status === 'pending') {
             setSessionSpecialistId(sessionId, specialistId, true)
             setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
@@ -373,13 +374,12 @@ const useWorkspaceSessionController = ({
         })
         .catch((error: unknown) => {
           console.warn('setSessionSpecialist failed', error)
-          reconfiguration.recordIdleFailure(sessionId, specialistId, errorMessage(error))
+          attempt.recordFailure(errorMessage(error))
         })
         .finally(() => setBarrier(sessionId, false))
     }
     if (reconfigureError?.sessionId === sessionId) setReconfigureError(null)
   }
-
   const canStartSend = (sessionId?: string): boolean => {
     if (sessionId && sessionId !== activeSession?.id) {
       const session = useSessionStore
@@ -496,10 +496,11 @@ const useWorkspaceSessionController = ({
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
     if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
-    clearIdleRetry(sessionId)
+    const attempt = reconfiguration.beginIdleAttempt(sessionId, undefined)
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
+        if (!attempt.complete()) return
         if (result?.status === 'pending') {
           setSessionSpecialistId(sessionId, undefined, true)
           setPendingSpecialists((current) => ({ ...current, [sessionId]: undefined }))
@@ -515,11 +516,10 @@ const useWorkspaceSessionController = ({
       })
       .catch((error: unknown) => {
         console.warn('setSessionSpecialist (none) failed', error)
-        reconfiguration.recordIdleFailure(sessionId, undefined, errorMessage(error))
+        attempt.recordFailure(errorMessage(error))
       })
       .finally(() => setBarrier(sessionId, false))
   }
-
   useEffect(() => {
     if (!activeSession || activeSession.specialistBindingPending !== true) return
     // The durable Session store is an external source. Mirror its restored recovery state so the

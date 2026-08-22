@@ -468,6 +468,41 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
   })
 
+  it('ignores an idle Specialist rejection that arrives after archival', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const updateSessionArchive = vi.fn().mockResolvedValue({ ...active, archivedAt: 2 })
+    let rejectSwitch!: (error: Error) => void
+    const switchPromise = new Promise<never>((_resolve, reject) => {
+      rejectSwitch = reject
+    })
+    useSessionStore.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      updateSessionArchive
+    })
+    const setSessionSpecialist = vi.fn(() => switchPromise)
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [specialist('specialist-b', 'Specialist B')]
+    })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.selectSpecialist('specialist-b'))
+    await act(async () => {
+      hook.result.current.actions.archive(active)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      rejectSwitch(new Error('late switch rejection'))
+      await switchPromise.catch(() => undefined)
+    })
+    hook.rerender(session({ id: active.id }))
+
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+    expect(hook.result.current.actions.retrySpecialistSelection()).toBe(false)
+  })
+
   it('discards an idle Specialist failure after an authoritative handoff', async () => {
     const active = session({ specialistId: 'specialist-a' })
     const authoritative = specialist('specialist-c', 'Specialist C')
