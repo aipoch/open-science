@@ -235,7 +235,7 @@ const prepareExistingWorkspacePrompt = async (
       }
 
       await shutdownNotebookForBranchChange(sessionId, resetCwd, request.projectId)
-      if (!selectedRuntimeChanged && !runtimeDetached) {
+      if (!runtimeMustAdoptSession) {
         const reset = await runtime.resetSessionContext(
           sessionId,
           resetCwd,

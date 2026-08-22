@@ -2,15 +2,14 @@ import { useCallback, useRef, useState } from 'react'
 
 import type { AcpSaveAsSkillRequest } from '../../../../shared/acp'
 import { useSessionStore } from '../../stores/session-store'
-import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
-import type { HistoryReplayDescriptor } from './history-preamble'
+import type { WorkspaceSessionRuntimeSelection } from './useWorkspaceAgentRuntime'
 import { prepareExistingWorkspacePrompt } from './workspace-runtime-prompt-preparation-owner'
 
 type WorkspaceSaveAsSkillOwnerOptions = {
   runtime: ReturnType<typeof useAcpRuntime>
-  historyReplayDescriptor: HistoryReplayDescriptor
+  resolveSessionRuntimeSelection: (sessionId: string) => WorkspaceSessionRuntimeSelection
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
 }
 
@@ -23,7 +22,7 @@ type WorkspaceSaveAsSkillOwner = {
 // same exact Session set while the durable command is prepared and dispatched.
 const useWorkspaceRuntimeSaveAsSkillOwner = ({
   runtime,
-  historyReplayDescriptor,
+  resolveSessionRuntimeSelection,
   drainRuntimeEvents
 }: WorkspaceSaveAsSkillOwnerOptions): WorkspaceSaveAsSkillOwner => {
   const inFlightRef = useRef(new Set<string>())
@@ -40,20 +39,10 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           .getState()
           .sessions.find((candidate) => candidate.id === request.sessionId)
         if (!initialSession) throw new Error(`Session not found: ${request.sessionId}`)
-        const settings = useSettingsStore.getState()
-        const activeProvider = settings.providers.find(({ id }) => id === settings.activeProviderId)
-        const currentRuntime = {
-          frameworkId: settings.agentFrameworkId,
-          backendId: settings.activeProviderId
-            ? `${settings.agentFrameworkId}:${settings.activeProviderId}`
-            : undefined,
-          agentModel: settings.activeModel,
-          supportsImageInput: activeProvider?.supportsImageInput === true,
-          supportsImageRelay: selectVisionRelayAvailable(settings)
-        }
+        const selected = resolveSessionRuntimeSelection(request.sessionId)
         const replayPolicy = {
-          ...historyReplayDescriptor,
-          supportsImageInput: currentRuntime.supportsImageInput || currentRuntime.supportsImageRelay
+          ...selected.historyReplayDescriptor,
+          supportsImageInput: selected.supportsImageInput || selected.supportsImageRelay
         }
         const prepared = await prepareExistingWorkspacePrompt(runtime, {
           sessionId: request.sessionId,
@@ -62,10 +51,17 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           projectId: initialSession.projectId,
           permissionProfile: initialSession.permissionProfile,
           selectedRuntime: {
-            frameworkId: currentRuntime.frameworkId,
-            backendId: currentRuntime.backendId,
-            supportsImageInput: currentRuntime.supportsImageInput,
-            supportsImageRelay: currentRuntime.supportsImageRelay
+            frameworkId: selected.agentFrameworkId,
+            backendId: selected.agentBackendId,
+            agentConfiguration: selected.agentTarget
+              ? {
+                  providerId: selected.agentTarget.providerId,
+                  model: selected.agentTarget.model,
+                  reasoningEffort: selected.agentTarget.reasoningEffort
+                }
+              : undefined,
+            supportsImageInput: selected.supportsImageInput,
+            supportsImageRelay: selected.supportsImageRelay
           },
           replay: { descriptor: replayPolicy },
           drainRuntimeEvents
@@ -98,14 +94,14 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           sessionId: session.id,
           content: 'Save as skill',
           turnIntent: 'save-as-skill',
-          agentModel: currentRuntime.agentModel
+          agentModel: selected.agentModel
         })
         if (!controlMessage) throw new Error('Save as skill control message could not be created.')
         controlMessageId = controlMessage.messageId
         await flushSessionPersistence()
         await window.api.acp.saveAsSkill({
           ...request,
-          ...(currentRuntime.supportsImageRelay ? { supportsImageRelay: true } : {}),
+          ...(selected.supportsImageRelay ? { supportsImageRelay: true } : {}),
           promptMessageId: controlMessage.messageId
         })
         prepared.acceptPrompt(controlMessage.messageId)
@@ -134,7 +130,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         )
       }
     },
-    [drainRuntimeEvents, historyReplayDescriptor, runtime]
+    [drainRuntimeEvents, resolveSessionRuntimeSelection, runtime]
   )
 
   return { saveAsSkillInFlightSessionIds, saveAsSkill }

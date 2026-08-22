@@ -392,6 +392,32 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[2].requestProviderReconnect).not.toHaveBeenCalled()
   })
 
+  it('recreates a targeted runtime after synchronous shutdown clears ownership', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    } as const
+
+    await coordinator.createSession({ agentTarget })
+    coordinator.shutdown()
+    await coordinator.createSession({ agentTarget })
+
+    expect(created).toHaveLength(3)
+    expect(created[2].createSession).toHaveBeenCalledOnce()
+  })
+
   it('publishes snapshots with a coordinator-wide monotonic revision', () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>

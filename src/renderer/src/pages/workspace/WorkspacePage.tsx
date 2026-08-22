@@ -233,7 +233,7 @@ const WorkspacePage = ({
     setPermissionProfile,
     revokePermissionGrant
   } = runtime
-  const { respondToElicitation } = useWorkspaceElicitation()
+  const { respondToElicitation } = useWorkspaceElicitation(runtime.resolveSessionRuntimeSelection)
 
   // Auto-trigger an analysis turn when a remote job finishes (design §11).
   useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage: runtime.sendMessage })

@@ -1316,7 +1316,15 @@ describe('workspace durable elicitation', () => {
       await respondToWorkspaceElicitation(
         { state: createSnapshot(), resumeSession, respondToElicitation },
         response,
-        { historyReplayDescriptor: { target: historyReplayTarget } }
+        {
+          agentTarget: {
+            frameworkId,
+            providerId: backendId.slice(backendId.indexOf(':') + 1),
+            model: 'session-model',
+            reasoningEffort: 'high'
+          },
+          historyReplayDescriptor: { target: historyReplayTarget }
+        }
       )
 
       expect(resumeSession).toHaveBeenCalledWith(
@@ -1329,7 +1337,13 @@ describe('workspace durable elicitation', () => {
         undefined,
         undefined,
         undefined,
-        undefined
+        undefined,
+        {
+          frameworkId,
+          providerId: backendId.slice(backendId.indexOf(':') + 1),
+          model: 'session-model',
+          reasoningEffort: 'high'
+        }
       )
       expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
         respondToElicitation.mock.invocationCallOrder[0]
@@ -1473,7 +1487,14 @@ describe('workspace durable elicitation', () => {
         candidate.id === session.id
           ? {
               ...candidate,
+              agentFrameworkId: 'codex',
+              agentBackendId: 'codex:provider-2',
               agentModel: 'old-model',
+              agentConfiguration: {
+                providerId: 'provider-2',
+                model: 'old-model',
+                reasoningEffort: 'default'
+              },
               messages: [
                 ...candidate.messages,
                 {
@@ -1597,6 +1618,12 @@ describe('workspace durable elicitation', () => {
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:provider-2',
         agentModel: 'new-model',
+        agentTarget: {
+          frameworkId: 'codex',
+          providerId: 'provider-2',
+          model: 'new-model',
+          reasoningEffort: 'high'
+        },
         onSendPreparationStateChange,
         flushPersistence
       }
@@ -1642,12 +1669,18 @@ describe('workspace durable elicitation', () => {
       session.cwd,
       session.projectId,
       'ask',
-      'opencode',
-      'opencode:provider-1',
+      'codex',
+      'codex:provider-2',
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      {
+        frameworkId: 'codex',
+        providerId: 'provider-2',
+        model: 'new-model',
+        reasoningEffort: 'high'
+      }
     )
     expect(onSendPreparationStateChange.mock.calls).toEqual([
       [session.id, true],
@@ -2501,6 +2534,78 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
+  it('adopts a model-only Session target before resetting a selected Branch', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'old-model',
+        reasoningEffort: 'default'
+      }
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        branchContextResetRequired: true
+      }))
+    }))
+    vi.stubGlobal('window', {
+      api: { notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) } }
+    })
+    const agentConfiguration = {
+      providerId: 'provider-1',
+      model: 'new-model',
+      reasoningEffort: 'high'
+    } as const
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project',
+      frameworkId: 'codex',
+      backendId: 'codex:provider-1',
+      contextReset: true
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession,
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue selected branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'new-model',
+      agentConfiguration
+    })
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      'transport-session-1',
+      '/workspace/project',
+      'project-1',
+      'ask',
+      'codex',
+      'codex:provider-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { frameworkId: 'codex', ...agentConfiguration }
+    )
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
   it('clears Branch replay after filtering images for a text-only model', async () => {
