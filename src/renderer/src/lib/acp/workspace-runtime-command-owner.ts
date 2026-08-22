@@ -505,6 +505,7 @@ const sendWorkspaceMessage = async (
       selectedRuntime: {
         frameworkId: input.agentFrameworkId,
         backendId: input.agentBackendId,
+        agentModel: input.agentModel,
         agentConfiguration: input.agentConfiguration,
         supportsImageInput: input.supportsImageInput,
         supportsImageRelay: input.supportsImageRelay

@@ -53,6 +53,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           selectedRuntime: {
             frameworkId: selected.agentFrameworkId,
             backendId: selected.agentBackendId,
+            agentModel: selected.agentModel,
             agentConfiguration: selected.agentTarget
               ? {
                   providerId: selected.agentTarget.providerId,
