@@ -266,6 +266,7 @@ describe('workspace Agent Runtime hook contract', () => {
         'resendEditedMessage',
         'cancelRun',
         'resumeInterruptedSession',
+        'resolveSessionRuntimeSelection',
         'respondToPermission',
         'setPermissionProfile',
         'revokePermissionGrant'
@@ -430,6 +431,20 @@ describe('workspace Agent Runtime hook contract', () => {
       agentFrameworkId: 'claude-code'
     })
     useSessionStore.getState().finishRun('session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              agentConfiguration: {
+                providerId: 'session-provider',
+                model: 'session-model',
+                reasoningEffort: 'high'
+              }
+            }
+          : session
+      )
+    }))
 
     const resume = createDeferred<AcpCreateSessionResponse>()
     const runtime = createRuntime(createSnapshot())
@@ -452,6 +467,12 @@ describe('workspace Agent Runtime hook contract', () => {
     await act(async () => Promise.resolve())
 
     expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resumeSession.mock.calls[0]?.at(-1)).toEqual({
+      frameworkId: 'claude-code',
+      providerId: 'session-provider',
+      model: 'session-model',
+      reasoningEffort: 'high'
+    })
     expect(latest.sendPreparationInFlightSessionIds).toEqual(['session-1'])
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
@@ -644,6 +665,7 @@ describe('workspace Agent Runtime hook contract', () => {
       'project-1',
       'ask',
       'claude-code',
+      undefined,
       undefined,
       undefined,
       undefined,
