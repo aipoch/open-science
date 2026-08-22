@@ -12,7 +12,11 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import {
+  createInitialSessionState,
+  type ChatSession,
+  useSessionStore
+} from '@/stores/session-store'
 
 const workspacePageHarness = vi.hoisted(() => ({
   isMobile: false,
@@ -355,6 +359,22 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
   }
 
+  const selectSession = (sessionId: string, projectId: string): void => {
+    const now = Date.now()
+    const session: ChatSession = {
+      id: sessionId,
+      projectId,
+      title: 'Session',
+      cwd: `/workspace/${projectId}`,
+      status: 'idle',
+      messages: [],
+      createdAt: now,
+      updatedAt: now
+    }
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: projectId })
+    useSessionStore.setState({ sessions: [session], selectedSessionId: sessionId })
+  }
+
   const getPreviewToggle = (): HTMLButtonElement => {
     const toggleButton = container.querySelector<HTMLButtonElement>(
       '[data-testid="workspace-preview-toggle"]'
@@ -621,6 +641,7 @@ describe('WorkspacePage preview panel resize sync', () => {
   })
 
   it('opens and activates the notebook preview when its entry first becomes available', async () => {
+    selectSession('session-1', 'project-1')
     await renderPage(false)
 
     const notebook: NotebookSessionReference = {
@@ -647,6 +668,32 @@ describe('WorkspacePage preview panel resize sync', () => {
           notebook
         })
       ]
+    })
+  })
+
+  it.each([
+    ['another session', 'project-1', 'session-2'],
+    ['another project', 'project-2', 'session-1']
+  ])('does not open the notebook preview for %s', async (_label, projectId, sessionId) => {
+    selectSession('session-1', 'project-1')
+    await renderPage(false)
+
+    await act(async () => {
+      notebookAvailableListener?.({
+        projectId,
+        sessionId,
+        workspaceCwd: `/workspace/${projectId}`,
+        notebookSessionRoot: `/notebooks/${projectId}/${sessionId}`,
+        dataRoot: `/notebooks/${projectId}/${sessionId}/data`,
+        runtimeRoot: `/notebooks/${projectId}/${sessionId}/runtime`,
+        runJsonPath: `/notebooks/${projectId}/${sessionId}/run.json`
+      })
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: undefined,
+      panelState: 'collapsed',
+      items: []
     })
   })
 

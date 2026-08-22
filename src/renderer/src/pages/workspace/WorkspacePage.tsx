@@ -671,13 +671,14 @@ const WorkspacePage = ({
         ...references,
         [notebook.sessionId]: notebook
       }))
+      if (notebook.projectId !== scopedProjectId || notebook.sessionId !== activeSessionId) return
       upsertAndActivatePreviewItem(createNotebookPreviewItem(notebook))
     })
 
     return () => {
       removeNotebookAvailableListener()
     }
-  }, [upsertAndActivatePreviewItem])
+  }, [activeSessionId, scopedProjectId, upsertAndActivatePreviewItem])
 
   // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
   useEffect(() => {
