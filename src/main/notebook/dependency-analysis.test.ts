@@ -6,8 +6,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { findPythonCommand } from './python-command'
-import { findRCommand } from './r-command'
 import {
   NotebookDependencyAnalyzer,
   projectNotebookDependencies,
@@ -15,6 +13,8 @@ import {
 } from './dependency-analysis'
 
 const temporaryRoots: string[] = []
+const unusedPython = { command: 'unused-python' }
+const unusedR = { command: 'unused-rscript' }
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })))
@@ -2249,8 +2249,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('uses Python ast to detect dependencies when Python is available', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-dependencies-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2267,7 +2265,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2275,8 +2273,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('detects Python subscript mutation when Python is available', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-mutation-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2293,7 +2289,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2301,8 +2297,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks results unknown after an opaque Python receiver call', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-opaque-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2319,7 +2313,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2327,8 +2321,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks results unknown after an opaque Python function mutates an argument', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-function-mutation-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2345,7 +2337,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2356,8 +2348,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('extracts definite aliases from simple Python assignments', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2374,7 +2364,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2386,8 +2376,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps alias invalidation definite after inspecting object identities', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-identity-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2410,7 +2398,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2423,8 +2411,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks a subscript alias mutation within one run without marking the run unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-subscript-alias-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2442,15 +2428,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('marks opaque Python loaders without rooted arguments as unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-hidden-state-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run('run-1', 'load-data', 'data = load_data()', 1)
@@ -2463,7 +2447,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({
@@ -2473,8 +2457,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not trust a safe Python call name after the notebook shadows it', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-shadowed-safe-call-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2491,7 +2473,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2502,8 +2484,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('drops an obsolete Python alias after a later assignment in the same run', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-alias-order-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2520,7 +2500,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2528,8 +2508,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks the namespace unknown when a Python alias source is rebound in the same run', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-source-rebind-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2546,7 +2524,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2554,8 +2532,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks Python conditional-expression bindings unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-control-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2572,7 +2548,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
       if (index === 1) {
         expect(projection.stalenessByRunId['run-2']).toMatchObject({
@@ -2589,8 +2565,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks Python loop-target bindings unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-loop-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2607,7 +2581,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2618,8 +2592,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('analyzes Python comprehension-local bindings without marking the run unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-comprehension-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2637,15 +2609,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('does not confuse a comprehension-local mutation with a same-named global', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-comprehension-shadow-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2666,7 +2636,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2675,8 +2645,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('maps a comprehension-local mutation back to its iterable root', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-comprehension-root-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2697,7 +2665,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2709,8 +2677,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps a comprehension-local NumPy out target as a possible root mutation', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-comprehension-out-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -2732,7 +2698,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -2744,8 +2710,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('classifies ordinary NumPy array creation and read methods without marking the run unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-numpy-effects-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2768,15 +2732,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('classifies an ordinary NumPy and Matplotlib plotting run without marking it unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-plot-effects-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2818,15 +2780,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('classifies a Matplotlib sine plot with a deterministic marker loop without marking it unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-plot-loop-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2865,7 +2825,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
@@ -2879,8 +2839,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   ])(
     'classifies a deterministic Python %s loop without marking it unknown',
     async (_name, script) => {
-      const python = await findPythonCommand()
-      if (!python) return
       const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-static-loop-'))
       temporaryRoots.push(storageRoot)
       const completedRun = run('run-1', 'static-loop', script, 1)
@@ -2893,7 +2851,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
 
       expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
@@ -2901,8 +2859,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   )
 
   it('keeps Python loop-body assignments conservative even for a static range', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-static-loop-write-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2920,7 +2876,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toMatchObject({
@@ -2930,8 +2886,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps short-circuited Python loop effects conservative', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-static-loop-branch-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2949,7 +2903,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toMatchObject({
@@ -2959,8 +2913,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('classifies an ordinary pandas value-count pie chart without marking it unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-pandas-pie-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
@@ -2999,15 +2951,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('propagates pandas return types so read-only Series calls do not invalidate consumers', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-pandas-types-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3030,7 +2980,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
       expect(projection.stalenessByRunId, `after pandas run ${index + 1}`).toEqual(
         Object.fromEntries(runs.map(({ runId }) => [runId, { state: 'clear' }]))
@@ -3042,8 +2992,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not let a scoped file-inspection run poison a later pandas chart', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-file-then-pandas-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3079,7 +3027,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3090,8 +3038,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks a NumPy out parameter as a definite array mutation across runs', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-numpy-out-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3113,7 +3059,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3125,8 +3071,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps a monkey-patched library method unknown across import aliases', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-library-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3149,7 +3093,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3164,8 +3108,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks Python writes without a root object unknown', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-rootless-write-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run('run-1', 'rootless-write', 'get_obj().field = 1', 1)
@@ -3178,7 +3120,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedPython
     })
 
     expect(projection.stalenessByRunId['run-1']).toMatchObject({
@@ -3188,8 +3130,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('taints later Python safe calls after the builtins namespace is modified', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-builtins-mutation-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3206,7 +3146,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3217,8 +3157,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('taints later Python safe calls after the builtins dictionary is mutated', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-builtins-dict-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3239,7 +3177,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3250,8 +3188,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('propagates Python dynamic namespace identity through aliases', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-builtins-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3268,7 +3204,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3279,8 +3215,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('preserves Python builtins import aliases across runs', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-builtins-import-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3297,7 +3231,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3308,8 +3242,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('treats Python subscript callables as opaque calls', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-complex-callable-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3326,7 +3258,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3337,8 +3269,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks Python built-in container subscript aliases as definite across runs', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-field-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3360,7 +3290,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3373,8 +3303,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks split Python subscript chains back to their root container', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-split-subscript-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3397,7 +3325,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3732,8 +3660,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('classifies simple local Python class methods across runs', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-class-summary-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3766,7 +3692,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3780,8 +3706,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('binds instances of lowercase local Python classes', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-lowercase-class-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3805,7 +3729,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
           projectId: 'default-project',
           sessionId: 'session-1',
           completedRun,
-          interpreter: { command: python.command, args: python.baseArgs }
+          interpreter: unusedPython
         })
       )
     }
@@ -3819,8 +3743,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks free variables read by local Python methods', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-method-free-name-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3849,7 +3771,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3861,8 +3783,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps later Python reads unknown after a summarized method writes global state', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-method-global-write-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3891,7 +3811,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3906,8 +3826,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not trust a safe call used by a local Python method after shadowing', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-method-safe-call-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3929,7 +3847,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3940,8 +3858,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks a Python method parameter that shadows a safe call as dynamic', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-local-safe-shadow-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -3964,7 +3880,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -3979,8 +3895,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks an earlier Python method safe-call result when the name is first shadowed', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-late-safe-shadow-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4002,7 +3916,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4020,8 +3934,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('stops trusting a local Python method after an instance monkey patch', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-monkey-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4045,7 +3957,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4056,8 +3968,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('invalidates method summaries after a Python __dict__ monkey patch', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-dict-monkey-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4082,7 +3992,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4097,8 +4007,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('invalidates all known instances after a Python class monkey patch', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-type-monkey-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4122,7 +4030,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4137,8 +4045,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not trust a Python class method patched through a class alias', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-class-alias-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4161,7 +4067,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4172,8 +4078,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not trust a same-run Python method call after patching through an alias', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-alias-monkey-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4194,7 +4098,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4205,8 +4109,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks plain fields from a simple local Python class as root references', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-class-field-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4229,7 +4131,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4242,8 +4144,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not link extracted scalar fields back to a simple Python instance', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-value-field-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4266,7 +4166,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4275,8 +4175,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks only prior receiver dependents unknown for conditional Python methods', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-conditional-method-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4305,7 +4203,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4395,8 +4293,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps Python class-body and opaque-call hidden bindings unknown for the epoch', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-hidden-bindings-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4417,7 +4313,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedPython
       })
     }
 
@@ -4425,8 +4321,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('uses R parse data to detect dependencies when R is available', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-dependencies-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4447,7 +4341,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4455,8 +4349,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('classifies an ordinary base R pie chart without marking it unknown', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-base-pie-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -4490,15 +4382,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedR
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('classifies a base R plot with a deterministic marker loop without marking it unknown', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-plot-loop-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -4529,7 +4419,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedR
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
@@ -4539,8 +4429,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     ['colon sequence', 'for (value in 1:3) print(value)'],
     ['constant vector', 'for (label in c("control", "treated")) print(label)']
   ])('classifies a deterministic R %s loop without marking it unknown', async (_name, script) => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-static-loop-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -4557,15 +4445,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedR
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('keeps R loop-body assignments conservative even for a static sequence', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-static-loop-write-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -4582,7 +4468,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedR
     })
 
     expect(projection.stalenessByRunId['run-1']).toMatchObject({
@@ -4592,8 +4478,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not treat base R math and graphics calls as mutations of their arguments', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-base-pie-effects-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4624,7 +4508,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4634,8 +4518,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('classifies an ordinary ggplot2 pie chart without marking it unknown', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-ggplot2-pie-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -4678,15 +4560,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedR
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('separates ggplot2 data-mask columns from explicit environment dependencies', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-ggplot2-data-mask-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4714,7 +4594,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
       if (index === 5) {
         expect(projection.stalenessByRunId['run-5']).toEqual({ state: 'clear' })
@@ -4729,8 +4609,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps field replacement on an ordinary copied R list clear', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4757,7 +4635,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4767,8 +4645,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps ordinary R list copy-on-modify assignments clear', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-list-copy-on-modify-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4794,7 +4670,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4808,8 +4684,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('propagates R copy-on-modify metadata through a cross-run list constructor', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-cross-run-value-list-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4830,7 +4704,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4840,8 +4714,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('drops R copy-on-modify metadata when a name is rebound to an environment', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-value-reference-rebind-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4862,7 +4734,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4874,8 +4746,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('drops R copy-on-modify metadata after writing a reference member', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-reference-member-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4902,7 +4772,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4914,8 +4784,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps an R list copyable after writing a previously known value member', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-value-member-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4942,7 +4810,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4951,8 +4819,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks an R callable name read after a local value assignment', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-callable-dependency-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -4973,7 +4839,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -4985,8 +4851,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks the receiver of a standalone R6 member call', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-member-call-receiver-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5011,7 +4875,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5023,8 +4887,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps an R value snapshot copy after its source is rebound later in the same run', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-value-snapshot-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5050,7 +4912,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5059,8 +4921,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not treat an R reference snapshot as a value after its source is rebound', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-reference-snapshot-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5086,7 +4946,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5098,8 +4958,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps R environment assignments as possible reference aliases', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-environment-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5120,7 +4978,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5133,8 +4991,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps an environment nested in an R list as a possible reference', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-nested-environment-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5160,7 +5016,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5172,8 +5028,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('treats an S4 object with only value slots as copy-on-modify', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-s4-copy-on-modify-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5200,7 +5054,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5209,8 +5063,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not tag a completed R external read as a variable-tracking failure', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-hidden-state-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -5227,15 +5079,13 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedR
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('does not trust a safe R call name after the notebook shadows it', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-shadowed-safe-call-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5256,7 +5106,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5267,8 +5117,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('drops an obsolete R alias after a later assignment in the same run', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-alias-order-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5289,7 +5137,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5297,8 +5145,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks the namespace unknown when an R alias source is rebound in the same run', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-source-rebind-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5319,7 +5165,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5327,8 +5173,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks R conditional-expression bindings unknown', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-control-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5349,7 +5193,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5360,8 +5204,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks R loop-target bindings unknown', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-loop-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5382,7 +5224,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5393,8 +5235,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('taints later R safe calls after search-path changes', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-search-path-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5415,7 +5255,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5426,8 +5266,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('taints later R safe calls after the global environment is modified', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-global-environment-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5448,7 +5286,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5459,8 +5297,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('propagates the R global environment identity through aliases', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-global-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5481,7 +5317,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5492,8 +5328,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks R field and slot extraction as possible aliases of the root', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-field-alias-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5519,7 +5353,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5682,8 +5516,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('classifies simple local R6 methods across runs', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-summary-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5709,7 +5541,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5722,8 +5554,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('tracks free variables read by local R6 methods', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-free-name-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5750,7 +5580,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5762,8 +5592,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps prior and later R reads unknown after an R6 method writes global state', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-global-write-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5791,7 +5619,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5806,8 +5634,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not trust a safe call used by an R6 method after shadowing', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-safe-call-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5833,7 +5659,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5844,8 +5670,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks an R6 method parameter that shadows a safe call as dynamic', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-local-safe-shadow-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5872,7 +5696,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5887,8 +5711,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('invalidates R6 method summaries after a dynamic subscript patch', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-subscript-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5917,7 +5739,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5932,8 +5754,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not trust a same-run R6 method call after patching through an alias', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-alias-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5958,7 +5778,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -5969,8 +5789,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('does not trust an R6 method patched through a possible alias across runs', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-cross-run-patch-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -5997,7 +5815,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -6008,8 +5826,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks existing R6 instance results after a class method is replaced', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-class-set-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6035,7 +5851,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -6046,8 +5862,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('keeps R6 active bindings outside static type summaries', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-active-binding-'))
     temporaryRoots.push(storageRoot)
     const analyzedRun = {
@@ -6069,7 +5883,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun: analyzedRun,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedR
     })
 
     expect(projection.stalenessByRunId['run-1']).toMatchObject({
@@ -6079,8 +5893,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('uses local S4 slot declarations to distinguish value and reference fields', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-s4-summary-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6111,7 +5923,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
           projectId: 'default-project',
           sessionId: 'session-1',
           completedRun,
-          interpreter: { command: r.command, args: r.baseArgs }
+          interpreter: unusedR
         })
       )
     }
@@ -6125,8 +5937,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('classifies simple local S4 methods across runs', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-s4-method-summary-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6155,7 +5965,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -6175,8 +5985,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('marks existing S4 instance results when a method summary is replaced', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-s4-method-replace-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6203,7 +6011,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -6214,8 +6022,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('treats S4 slot writes as definite mutations of the root object', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-s4-slot-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6236,7 +6042,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -6249,8 +6055,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('treats S4 slot replacement functions as definite root-object mutations', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-s4-slot-replacement-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6275,7 +6079,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -6283,8 +6087,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('limits an opaque R6 method mutation to the receiver dependency chain', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-r6-method-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6311,7 +6113,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun,
-        interpreter: { command: r.command, args: r.baseArgs }
+        interpreter: unusedR
       })
     }
 
@@ -6332,8 +6134,6 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
   })
 
   it('recognizes right assignment and keeps nonlocal and assign writes unknown', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-assignment-forms-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -6355,7 +6155,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
           projectId: 'default-project',
           sessionId: 'session-1',
           completedRun,
-          interpreter: { command: r.command, args: r.baseArgs }
+          interpreter: unusedR
         })
       )
     }

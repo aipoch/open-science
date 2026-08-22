@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
-import { findPythonCommand } from './python-command'
-import { findRCommand } from './r-command'
+
+const unusedInterpreter = (kernelKind: 'python' | 'r') => ({
+  command: kernelKind === 'python' ? 'unused-python' : 'unused-rscript'
+})
 
 const temporaryRoots: string[] = []
 
@@ -44,9 +46,7 @@ const projectScripts = async (
   kernelKind: 'python' | 'r',
   scripts: string[],
   storagePrefix: string
-): Promise<Awaited<ReturnType<NotebookDependencyAnalyzer['project']>> | undefined> => {
-  const interpreter = kernelKind === 'python' ? await findPythonCommand() : await findRCommand()
-  if (!interpreter) return undefined
+): Promise<Awaited<ReturnType<NotebookDependencyAnalyzer['project']>>> => {
   const storageRoot = await mkdtemp(join(tmpdir(), storagePrefix))
   temporaryRoots.push(storageRoot)
   const runs: NotebookRunRecord[] = []
@@ -54,7 +54,7 @@ const projectScripts = async (
     storageRoot,
     repository: { readSessionRuns: vi.fn(async () => runs) }
   })
-  let projection
+  let projection: Awaited<ReturnType<NotebookDependencyAnalyzer['project']>> | undefined
   for (const [index, script] of scripts.entries()) {
     const run = {
       ...completedRun(`run-${index + 1}`, `cell-${index + 1}`, kernelKind, script),
@@ -67,16 +67,15 @@ const projectScripts = async (
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun: run,
-      interpreter: { command: interpreter.command, args: interpreter.baseArgs }
+      interpreter: unusedInterpreter(kernelKind)
     })
   }
+  if (!projection) throw new Error('projectScripts requires at least one script')
   return projection
 }
 
 describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
   it('classifies a common base R read-clean-aggregate workflow as clear', async () => {
-    const r = await findRCommand()
-    if (!r) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-base-analysis-'))
     temporaryRoots.push(storageRoot)
     const run = completedRun(
@@ -101,15 +100,13 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun: run,
-      interpreter: { command: r.command, args: r.baseArgs }
+      interpreter: unusedInterpreter('r')
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('keeps directly imported NumPy function effects across runs', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-numpy-import-runs-'))
     temporaryRoots.push(storageRoot)
     const runs: NotebookRunRecord[] = []
@@ -135,7 +132,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun: run,
-        interpreter: { command: python.command, args: python.baseArgs }
+        interpreter: unusedInterpreter('python')
       })
     }
 
@@ -157,8 +154,6 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
   })
 
   it('classifies direct imports of common NumPy functions as clear', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-numpy-imports-'))
     temporaryRoots.push(storageRoot)
     const run = completedRun(
@@ -181,15 +176,13 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun: run,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedInterpreter('python')
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
   it('classifies a common pandas cleaning and grouped-summary chain as clear', async () => {
-    const python = await findPythonCommand()
-    if (!python) return
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-pandas-chain-'))
     temporaryRoots.push(storageRoot)
     const run = completedRun(
@@ -217,7 +210,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       completedRun: run,
-      interpreter: { command: python.command, args: python.baseArgs }
+      interpreter: unusedInterpreter('python')
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
