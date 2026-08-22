@@ -228,7 +228,9 @@ describe('AcpTurnSkillOwner', () => {
     expect(needForceLoad).not.toHaveBeenCalled()
     expect(requestSkillsReload).not.toHaveBeenCalled()
     expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
-    expect(presented.text).toBe('Use the following skill(s) for this task: Research.\n\nfind papers')
+    expect(presented.text).toBe(
+      'Use the following skill(s) for this task: Research.\n\nfind papers'
+    )
   })
 
   it('rejects out-of-scope follow-up Skills without force-loading', async () => {
