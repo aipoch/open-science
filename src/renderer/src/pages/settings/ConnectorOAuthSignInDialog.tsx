@@ -43,12 +43,13 @@ const ConnectorOAuthSignInDialog = ({
   const pendingRef = useRef(false)
   const generationRef = useRef(0)
   const handleAuthenticated = useEffectEvent(onAuthenticated)
+  const serverId = server.id
 
   useEffect(() => {
     const generation = ++generationRef.current
     pendingRef.current = true
 
-    void authenticateCustomServer({ id: server.id }).then(
+    void authenticateCustomServer({ id: serverId }).then(
       () => {
         if (generationRef.current !== generation) return
         pendingRef.current = false
@@ -65,15 +66,15 @@ const ConnectorOAuthSignInDialog = ({
       if (generationRef.current !== generation || !pendingRef.current) return
       generationRef.current += 1
       pendingRef.current = false
-      void cancelCustomServerAuthentication({ id: server.id })
+      void cancelCustomServerAuthentication({ id: serverId })
     }
-  }, [attempt, authenticateCustomServer, cancelCustomServerAuthentication, server, t])
+  }, [attempt, authenticateCustomServer, cancelCustomServerAuthentication, serverId, t])
 
   const finish = (): void => {
     generationRef.current += 1
     if (pendingRef.current) {
       pendingRef.current = false
-      void cancelCustomServerAuthentication({ id: server.id })
+      void cancelCustomServerAuthentication({ id: serverId })
     }
     onFinish()
   }

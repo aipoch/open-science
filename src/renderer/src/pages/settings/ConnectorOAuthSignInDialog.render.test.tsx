@@ -86,6 +86,30 @@ describe('ConnectorOAuthSignInDialog', () => {
     expect(document.body.textContent).not.toContain('cancelled')
   })
 
+  it('does not restart a pending attempt when the server projection object refreshes', () => {
+    useSettingsStore.setState({
+      authenticateCustomServer: vi.fn(() => new Promise<void>(() => undefined))
+    })
+    act(() => {
+      root.render(
+        <ConnectorOAuthSignInDialog server={server} onAuthenticated={vi.fn()} onFinish={vi.fn()} />
+      )
+    })
+    act(() => {
+      root.render(
+        <ConnectorOAuthSignInDialog
+          server={{ ...server, displayName: 'Renamed OAuth MCP' }}
+          onAuthenticated={vi.fn()}
+          onFinish={vi.fn()}
+        />
+      )
+    })
+
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().cancelCustomServerAuthentication).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Sign in to Renamed OAuth MCP')
+  })
+
   it('keeps a failed attempt open and retries from the same dialog', async () => {
     const authenticate = vi
       .fn()
