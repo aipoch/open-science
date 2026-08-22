@@ -2419,14 +2419,14 @@ const createApplicationModules = async (
       }
     }
   )
-  // Framework changes rotate future runtime ownership; provider edits and authentication changes can
-  // reconnect the default generation. Active provider/model/effort selections are persisted defaults
-  // only and never flow through this effects port to mutate existing Sessions.
+  // Framework changes rotate future runtime ownership; provider edits and authentication changes
+  // reconnect generations that use the affected provider. Active provider/model/effort selections are
+  // persisted defaults only and never flow through this effects port to mutate existing Sessions.
   const settingsWorkflows = createSettingsWorkflows(settingsService, {
     runtime: {
-      requestProviderReconnect: () => {
-        void runtime.requestProviderReconnect()
-        void sideChatRuntime.requestProviderReconnect()
+      requestProviderReconnect: (providerIds, includeDefault = true) => {
+        void runtime.requestProviderReconnect(providerIds, includeDefault)
+        if (includeDefault) void sideChatRuntime.requestProviderReconnect()
       },
       requestAgentFrameworkSwitch: () => {
         void runtime.requestAgentFrameworkSwitch()

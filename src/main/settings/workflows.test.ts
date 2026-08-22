@@ -229,7 +229,7 @@ describe('SettingsWorkflows runtime effects', () => {
     expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 
-  it('does not reconnect for a new or inactive provider edit or a failed mutation', async () => {
+  it('targets an edited inactive provider without reconnecting the default runtime', async () => {
     const { store, capability } = fakeStore()
     store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'active' }))
     store.upsertProvider.mockResolvedValue(snapshot({ activeProviderId: 'active' }))
@@ -244,7 +244,8 @@ describe('SettingsWorkflows runtime effects', () => {
     store.setActiveProvider.mockRejectedValue(new Error('save failed'))
     await expect(workflows.setActiveProvider({ id: 'next' })).rejects.toThrow('save failed')
 
-    expect(requestProviderReconnect).not.toHaveBeenCalled()
+    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(requestProviderReconnect).toHaveBeenCalledWith(['inactive'], false)
   })
 })
 
@@ -287,7 +288,7 @@ describe('SettingsWorkflows authentication follow-up', () => {
     expect(requestProviderReconnect).toHaveBeenCalledOnce()
   })
 
-  it('does not reconnect failed, stale, or no-longer-active login results', async () => {
+  it('ignores failed or stale logins and targets a successful no-longer-active provider', async () => {
     const { store, capability } = fakeStore()
     const requestProviderReconnect = vi.fn()
     const workflows = createSettingsWorkflows(
@@ -303,7 +304,8 @@ describe('SettingsWorkflows authentication follow-up', () => {
     store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'other' }))
     await workflows.loginClaudeShared()
 
-    expect(requestProviderReconnect).not.toHaveBeenCalled()
+    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(requestProviderReconnect).toHaveBeenCalledWith([CLAUDE_SHARED_PROVIDER_ID], false)
   })
 
   it.each([

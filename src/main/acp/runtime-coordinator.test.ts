@@ -335,7 +335,7 @@ describe('AcpRuntimeCoordinator', () => {
     } as const
 
     const first = await coordinator.createSession({ agentTarget: targetA })
-    await coordinator.createSession({ agentTarget: targetA })
+    const second = await coordinator.createSession({ agentTarget: targetA })
     await coordinator.resumeSession({
       sessionId: first.sessionId,
       cwd: '/workspace',
@@ -349,11 +349,47 @@ describe('AcpRuntimeCoordinator', () => {
       cwd: '/workspace',
       agentTarget: targetB
     })
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+
+    await coordinator.resumeSession({
+      sessionId: second.sessionId,
+      cwd: '/workspace',
+      agentTarget: targetB
+    })
+
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
 
     created[1].emitState({})
     expect(coordinator.captureSessionBackend(first.sessionId)).toMatchObject({
       backendId: 'opencode:owned'
     })
+  })
+
+  it('reconnects only targeted runtimes using the edited provider', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = (providerId: string): AcpSessionAgentTarget => ({
+      frameworkId: 'claude-code',
+      providerId,
+      model: 'model',
+      reasoningEffort: 'high'
+    })
+
+    await coordinator.createSession({ agentTarget: target('provider-a') })
+    await coordinator.createSession({ agentTarget: target('provider-b') })
+    await coordinator.requestProviderReconnect(['provider-a'], false)
+
+    expect(created[0].requestProviderReconnect).not.toHaveBeenCalled()
+    expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(created[2].requestProviderReconnect).not.toHaveBeenCalled()
   })
 
   it('publishes snapshots with a coordinator-wide monotonic revision', () => {
