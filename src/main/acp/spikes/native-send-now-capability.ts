@@ -13,6 +13,7 @@ export const ACP_STEERING_METHOD = '_session/steering'
 
 export const SHIPPED_CLAUDE_AGENT_ACP_VERSION = '0.60.0'
 export const SHIPPED_CODEX_ACP_VERSION = '1.1.4'
+export const SHIPPED_OPENCODE_VERSION = '1.18.3'
 
 // Production policy. A second `session/prompt` is rejected before it reaches the agent.
 export const HOST_CONCURRENT_PROMPT_POLICY = 'reject' as const
@@ -27,19 +28,27 @@ export type NativeSendNowKind = 'steering-extension' | 'queued-prompt' | 'none'
 
 export type NativeSendNowDelivery = 'safe-breakpoint' | 'next-model-pause' | 'unavailable'
 
+// What a second outstanding `session/prompt` does in the shipped ACP adapter.
+// Native CLI steer/queue is a different surface and is not this field.
+export type OverlappingSessionPromptBehavior =
+  'queue-and-handoff' | 'admit-and-join-runner' | 'replace-and-interrupt' | 'none'
+
 export type HostFollowUpBlocker =
   | (typeof PRODUCTION_HOST_FOLLOW_UP_BLOCKERS)[number]
   | 'no-steering-side-band'
   | 'framework-unsupported'
-  | 'acp-adapter-unverified'
+  | 'admit-and-join-runner'
+  | 'replace-and-interrupt'
 
 export type NativeSendNowCapability = Readonly<{
   kind: NativeSendNowKind
   delivery: NativeSendNowDelivery
   method?: typeof ACP_STEERING_METHOD
+  overlappingPrompt: OverlappingSessionPromptBehavior
   // Native CLI/TUI mid-turn input (Codex turn/steer, OpenCode session.steer / busy queue).
   nativeCliHasMidTurnInput: boolean
-  // Shipped ACP adapter is known to accept a second `session/prompt` while one is outstanding.
+  // Shipped ACP adapter accepts a second `session/prompt` while one is outstanding.
+  // Acceptance is not the same as Send now without interrupt.
   frameworkCanDispatch: boolean
   hostCanDispatch: boolean
   usesSecondSessionPrompt: boolean
@@ -51,7 +60,11 @@ export type SecondSessionPromptAdmission =
   | Readonly<{
       allowed: false
       reason:
-        'framework-unsupported' | 'wrong-mechanism' | 'host-not-ready' | 'acp-adapter-unverified'
+        | 'framework-unsupported'
+        | 'wrong-mechanism'
+        | 'host-not-ready'
+        | 'admit-and-join-runner'
+        | 'replace-and-interrupt'
       hostBlockers: readonly HostFollowUpBlocker[]
     }>
 
@@ -152,6 +165,7 @@ const advertisedSteering = (): NativeSendNowCapability =>
       kind: 'steering-extension',
       delivery: 'safe-breakpoint',
       method: ACP_STEERING_METHOD,
+      overlappingPrompt: 'none',
       nativeCliHasMidTurnInput: true,
       frameworkCanDispatch: true,
       usesSecondSessionPrompt: false
@@ -159,8 +173,11 @@ const advertisedSteering = (): NativeSendNowCapability =>
     ['no-steering-side-band']
   )
 
-// Advertisement always wins. Without it, only the shipped Claude adapter is known to
-// queue a second `session/prompt`. Codex-response and Codex-bridge share one adapter.
+// Advertisement always wins. Without it, overlapping `session/prompt` is the only
+// ACP lever. Claude 0.60.0 queues and hands off. OpenCode 1.18.3 persists the
+// user then joins the running loop. Codex ACP 1.1.4 overwrites the tracked
+// prompt and interrupts the previous turn. Codex-response and Codex-bridge
+// share that adapter.
 export const resolveShippedNativeSendNowCapability = (
   lookup: NativeSendNowLookup
 ): NativeSendNowCapability => {
@@ -171,6 +188,7 @@ export const resolveShippedNativeSendNowCapability = (
       {
         kind: 'queued-prompt',
         delivery: 'next-model-pause',
+        overlappingPrompt: 'queue-and-handoff',
         nativeCliHasMidTurnInput: true,
         frameworkCanDispatch: true,
         usesSecondSessionPrompt: true
@@ -179,23 +197,36 @@ export const resolveShippedNativeSendNowCapability = (
     )
   }
 
-  // Codex CLI and OpenCode both have native mid-turn steer/queue. The shipped ACP
-  // adapters have not been live-probed: do not treat missing advertisement as
-  // "the CLI cannot do it", and do not invent overlapping-prompt support.
+  if (lookup.frameworkId === 'opencode') {
+    return withHostBlockers(
+      {
+        kind: 'none',
+        delivery: 'unavailable',
+        overlappingPrompt: 'admit-and-join-runner',
+        nativeCliHasMidTurnInput: true,
+        frameworkCanDispatch: true,
+        usesSecondSessionPrompt: false
+      },
+      ['admit-and-join-runner']
+    )
+  }
+
   return withHostBlockers(
     {
       kind: 'none',
       delivery: 'unavailable',
+      overlappingPrompt: 'replace-and-interrupt',
       nativeCliHasMidTurnInput: true,
-      frameworkCanDispatch: false,
+      frameworkCanDispatch: true,
       usesSecondSessionPrompt: false
     },
-    ['acp-adapter-unverified']
+    ['replace-and-interrupt']
   )
 }
 
-// A second `session/prompt` is the Claude queued-prompt mechanism. Steering uses a
-// different method and must not lift the prompt interaction lock.
+// A second `session/prompt` is only Claude queued-prompt. Steering is a side-band.
+// OpenCode join and Codex replace both accept the RPC; neither is Send now
+// without interrupt, so an empty host-blocker list still must not admit them.
 export const admitSecondSessionPrompt = (
   capability: NativeSendNowCapability
 ): SecondSessionPromptAdmission => {
@@ -206,10 +237,17 @@ export const admitSecondSessionPrompt = (
       hostBlockers: capability.hostBlockers
     })
   }
-  if (capability.hostBlockers.includes('acp-adapter-unverified')) {
+  if (capability.overlappingPrompt === 'replace-and-interrupt') {
     return Object.freeze({
       allowed: false,
-      reason: 'acp-adapter-unverified',
+      reason: 'replace-and-interrupt',
+      hostBlockers: capability.hostBlockers
+    })
+  }
+  if (capability.overlappingPrompt === 'admit-and-join-runner') {
+    return Object.freeze({
+      allowed: false,
+      reason: 'admit-and-join-runner',
       hostBlockers: capability.hostBlockers
     })
   }

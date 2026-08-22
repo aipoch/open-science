@@ -122,6 +122,7 @@ describe('overlapping session/prompt protocol spike', () => {
     )
   })
 
+  // Protocol shape only. Shipped OpenCode ACP is admit-and-join-runner, not this.
   it('shows a serialize-until-idle adapter is wait-until-idle, not Send now', async () => {
     const order: string[] = []
     let gate!: () => void
@@ -165,6 +166,7 @@ describe('overlapping session/prompt protocol spike', () => {
     })
   })
 
+  // Protocol shape only. Shipped Codex ACP 1.1.4 is replace-and-interrupt, not this.
   it('shows a busy-reject adapter can refuse the second prompt without cancelling the first', async () => {
     let busy = false
     let releaseFirst!: () => void
@@ -207,6 +209,113 @@ describe('overlapping session/prompt protocol spike', () => {
       await expect(second).rejects.toThrow(/busy/i)
       releaseFirst()
       await expect(first).resolves.toEqual({ stopReason: 'end_turn' })
+    })
+  })
+
+  it('shows shipped OpenCode ACP overlapping prompt admits then joins the runner', async () => {
+    let running: Promise<acp.PromptResponse> | undefined
+    const admitted: string[] = []
+    const started: string[] = []
+    let enteredFirst!: () => void
+    const firstStarted = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    let releaseFirst!: () => void
+    const firstHold = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const agent = initializeAgent('opencode-admit-join-fake').onRequest(
+      acp.methods.agent.session.prompt,
+      async (ctx) => {
+        const text = promptText(ctx.params)
+        admitted.push(text)
+        if (running) return running
+        started.push(text)
+        const work = (async () => {
+          await firstHold
+          return { stopReason: 'end_turn' as const }
+        })()
+        running = work
+        enteredFirst()
+        try {
+          return await work
+        } finally {
+          if (running === work) running = undefined
+        }
+      }
+    )
+
+    await connectSpike(agent, async (ctx) => {
+      const created = await ctx.request(acp.methods.agent.session.new, {
+        cwd: '/tmp',
+        mcpServers: []
+      })
+      const first = ctx.request(acp.methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: 'one' }]
+      })
+      await firstStarted
+      const second = ctx.request(acp.methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: 'two' }]
+      })
+      await vi.waitFor(() => expect(admitted).toEqual(['one', 'two']))
+      expect(started).toEqual(['one'])
+      releaseFirst()
+      await expect(first).resolves.toEqual({ stopReason: 'end_turn' })
+      await expect(second).resolves.toEqual({ stopReason: 'end_turn' })
+      expect(started).toEqual(['one'])
+    })
+  })
+
+  it('shows shipped Codex ACP overlapping prompt replaces and interrupts', async () => {
+    let activeGeneration = 0
+    const events: string[] = []
+    let enteredFirst!: () => void
+    const firstStarted = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    let releaseFirst!: () => void
+    const firstHold = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const agent = initializeAgent('codex-replace-interrupt-fake').onRequest(
+      acp.methods.agent.session.prompt,
+      async (ctx) => {
+        const generation = ++activeGeneration
+        const text = promptText(ctx.params)
+        events.push(`start:${text}`)
+        if (text === 'one') {
+          enteredFirst()
+          await firstHold
+          if (generation !== activeGeneration) {
+            events.push(`interrupt:${text}`)
+            return { stopReason: 'cancelled' as const }
+          }
+        }
+        events.push(`end:${text}`)
+        return { stopReason: 'end_turn' as const }
+      }
+    )
+
+    await connectSpike(agent, async (ctx) => {
+      const created = await ctx.request(acp.methods.agent.session.new, {
+        cwd: '/tmp',
+        mcpServers: []
+      })
+      const first = ctx.request(acp.methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: 'one' }]
+      })
+      await firstStarted
+      const second = ctx.request(acp.methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: 'two' }]
+      })
+      await expect(second).resolves.toEqual({ stopReason: 'end_turn' })
+      releaseFirst()
+      await expect(first).resolves.toEqual({ stopReason: 'cancelled' })
+      expect(events).toEqual(['start:one', 'start:two', 'end:two', 'interrupt:one'])
     })
   })
 
