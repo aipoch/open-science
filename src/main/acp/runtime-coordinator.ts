@@ -1079,7 +1079,6 @@ class AcpRuntimeCoordinator {
     await this.delegatedWork?.deleteSession(request.sessionId)
     await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
     await runtime.deleteSession(request)
-    await this.retireUnusedTargetedRuntime(runtime)
     const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
     // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
     // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
@@ -1092,6 +1091,7 @@ class AcpRuntimeCoordinator {
       this.clearApplicationSessionEvents(request.sessionId)
       this.onSessionUnavailable?.(request.sessionId)
     }
+    await this.retireUnusedTargetedRuntime(runtime)
     return this.getSnapshot()
   }
 
