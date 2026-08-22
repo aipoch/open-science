@@ -68,7 +68,7 @@ describe('XaiOAuthController', () => {
     await expect(controller.waitForLogin()).resolves.toEqual({
       accountEmail: 'researcher@example.com'
     })
-    expect(store.save).toHaveBeenCalledWith(undefined, 'refresh', 'researcher@example.com')
+    expect(store.save).toHaveBeenCalledWith(undefined, 'refresh', 'researcher@example.com', true)
   })
 
   it('coalesces refreshes and saves a rotated refresh token', async () => {

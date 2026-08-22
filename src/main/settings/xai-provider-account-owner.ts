@@ -28,15 +28,20 @@ export class XaiProviderAccountOwner {
               ...(provider?.accountEmail ? { accountEmail: provider.accountEmail } : {})
             }
           },
-          save: (expectedKeyRef, refreshToken, accountEmail) =>
+          save: (expectedKeyRef, refreshToken, accountEmail, clearValidation) =>
             serialize(async () => {
               const provider = await this.provider()
               if (!provider || provider.keyRef !== expectedKeyRef) return false
-              await this.repository.upsertProvider({
+              const updated = {
                 ...provider,
                 keyRef: encryptKey(refreshToken),
                 accountEmail: accountEmail ?? provider.accountEmail
-              })
+              }
+              if (clearValidation) {
+                delete updated.lastValidatedAt
+                delete updated.lastValidationFailure
+              }
+              await this.repository.upsertProvider(updated)
               return true
             }),
           clear: () =>
@@ -46,6 +51,8 @@ export class XaiProviderAccountOwner {
               const withoutCredential = { ...provider }
               delete withoutCredential.keyRef
               delete withoutCredential.accountEmail
+              delete withoutCredential.lastValidatedAt
+              delete withoutCredential.lastValidationFailure
               await this.repository.upsertProvider(withoutCredential)
             })
         }

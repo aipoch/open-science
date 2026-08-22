@@ -117,7 +117,7 @@ describe('getProviderFormErrors', () => {
 })
 
 describe('provider-kind helpers', () => {
-  it('uses registry endpoints for official providers and the selected endpoint for custom gateways', () => {
+  it('uses owned endpoints for built-in providers and the selected endpoint for custom gateways', () => {
     expect(
       providerFormApiEndpoints(
         createEmptyProviderFormValue({
@@ -132,6 +132,9 @@ describe('provider-kind helpers', () => {
         createEmptyProviderFormValue({ type: 'custom', apiEndpoint: 'responses' })
       )
     ).toEqual(['responses'])
+    expect(
+      providerFormApiEndpoints(createEmptyProviderFormValue({ type: 'xai-subscription' }))
+    ).toEqual(['anthropic', 'openai', 'responses'])
   })
 
   it('groups each subscription on its own, official vendors under API, and custom under Other', () => {

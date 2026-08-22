@@ -93,12 +93,13 @@ export const defaultCustomApiEndpoint = (
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): ChatApiEndpoint => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'anthropic'
 
-// Official providers expose the registry's complete protocol set; `apiEndpoint` only represents the
-// single format selected for a custom gateway and may be stale after switching provider kinds.
-export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpoint[] =>
-  value.type === 'official' && value.vendorId
-    ? resolveVendorApiEndpoints(value.vendorId)
-    : [value.apiEndpoint]
+// Built-in providers expose their complete protocol set; `apiEndpoint` only represents the single
+// format selected for a custom gateway and may be stale after switching provider kinds.
+export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpoint[] => {
+  if (value.type === 'official' && value.vendorId) return resolveVendorApiEndpoints(value.vendorId)
+  if (value.type === 'xai-subscription') return ['anthropic', 'openai', 'responses']
+  return [value.apiEndpoint]
+}
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
 // framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,

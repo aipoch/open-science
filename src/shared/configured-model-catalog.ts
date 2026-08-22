@@ -4,6 +4,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isXaiSubscriptionProvider,
   providerValidationFailed,
   selectClaudeSubscriptionProvider,
   type AgentFrameworkId,
@@ -65,6 +66,7 @@ export const buildConfiguredModelInventory = (
     if (isClaudeSubscriptionProvider(provider.type) || isCodexSubscriptionProvider(provider.type)) {
       return true
     }
+    if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
     if (provider.type === 'custom') return provider.supportsImageInput === true
     return provider.vendorId ? isVendorModelMultimodal(provider.vendorId, model) : false
   }

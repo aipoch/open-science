@@ -29,7 +29,8 @@ export type XaiOAuthCredentialStore = {
   save: (
     expectedKeyRef: string | undefined,
     refreshToken: string,
-    accountEmail?: string
+    accountEmail?: string,
+    clearValidation?: boolean
   ) => Promise<boolean>
   clear: () => Promise<void>
 }
@@ -175,7 +176,8 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
         const saved = await this.options.store.save(
           pending.expectedKeyRef,
           tokens.refresh_token,
-          accountEmail
+          accountEmail,
+          true
         )
         if (!saved) throw new Error('The xAI provider changed while sign-in was pending.')
         this.cache(tokens)

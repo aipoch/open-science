@@ -62,4 +62,20 @@ describe('configured model catalog', () => {
       ['ready', true, undefined]
     ])
   })
+
+  it('projects xAI subscription models as image-capable', () => {
+    const [entry] = buildConfiguredModelCatalog({
+      providers: [
+        provider('builtin-xai-subscription', ['grok-4.6'], {
+          type: 'xai-subscription',
+          apiEndpoints: ['anthropic', 'openai', 'responses'],
+          supportsImageInput: true
+        })
+      ],
+      frameworkId: 'opencode',
+      frameworkEndpoints: ['openai']
+    })
+
+    expect(entry.supportsImageInput).toBe(true)
+  })
 })
