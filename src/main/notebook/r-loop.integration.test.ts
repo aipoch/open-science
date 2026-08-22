@@ -168,6 +168,19 @@ gate('r_loop.R', () => {
     60_000
   )
 
+  it('does not skip the next request when user code assigns interrupt_during_read', async () => {
+    const { child, send } = startLoop(rscriptBin(), {})
+    try {
+      expect((await send('interrupt_during_read <- TRUE; during_read <- TRUE')).error).toBeNull()
+      const next = await send('cat(40 + 2)')
+      expect(next.error).toBeNull()
+      expect(next.stdout).toContain('42')
+      expect(next.interruptAck).not.toBe(true)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it.skipIf(process.platform === 'win32')(
     'acknowledges SIGINT that arrives while the next request is still being read',
     async () => {
